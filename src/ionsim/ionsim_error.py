@@ -1,0 +1,2 @@
+class IonSimError(Exception):
+    pass

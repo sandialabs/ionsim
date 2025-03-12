@@ -1,0 +1,265 @@
+from ionsim.custom_math import trapz_for_matrix
+from ionsim.custom_types import Vector, Matrix
+from ionsim.noise import Noise
+from ionsim.basis import DegreeOfFreedom, Basis, StandardBasis
+from ionsim.ionsim_error import IonSimError
+from ionsim.hamiltonian import Hamiltonian
+from ionsim.state import State
+
+import numpy as np
+from dataclasses import dataclass, field
+from typing import Callable
+from abc import ABC
+
+from icecream import ic
+
+@dataclass(frozen=True, eq=False)
+class Process(ABC): 
+    """A quantum process represented in a basis of states."""
+    basis: Basis
+    process_matrix: Matrix
+        
+    def compute_process_fidelity(self, target_process_matrix: Matrix):
+        """Compute the process fidelity with respect to a target process matrix."""
+        total = 0
+        for basis_state_vector in np.eye(len(self.process_matrix), dtype='complex'):
+            # TODO: is dtype='complex' necessary here? When is it?
+            final_state_vector = self.process_matrix.dot(basis_state_vector)
+            target_state_vector = target_process_matrix.dot(basis_state_vector)
+            total += np.dot(target_state_vector.conj().T, final_state_vector).real
+        return total/len(self.process_matrix)
+
+@dataclass(frozen=True, eq=False)
+class Gate(Process):
+    """A quantum gate represented in a basis of states."""
+    process_matrix_function: Callable | None = None
+    parameters: dict[str, float] = field(default_factory=dict)
+
+    unitary: Matrix | None = None
+
+    @classmethod #TODO: let default target_dofs be all degrees of freedom
+    def from_unitary(cls, basis: Basis, unitary: Matrix, target_dofs: list[DegreeOfFreedom]):
+        """Build a gate from a unitary-gate matrix."""
+        full_unitary = basis.enlarge_matrix(unitary, target_dofs)
+        process_matrix = basis.compute_superoperator_from_unitary_operator(full_unitary)
+        return cls(basis, process_matrix, unitary=full_unitary)
+
+    @classmethod
+    def from_unitary_function(cls, basis: Basis, unitary_function: Callable,
+            parameters: dict[str, float], target_dofs: list[DegreeOfFreedom], noise: Noise | None = None):
+        """Build a gate from a unitary-gate function and its arguments."""
+        parameter_names, arguments = list(parameters.keys()), list(parameters.values())
+        full_function = basis.enlarge_matrix_function(unitary_function, target_dofs)
+        process_matrix_function = basis.create_superoperator_function_from_unitary_operator_function(full_function)
+        if noise is not None:
+            noisy_parameter_index = parameter_names.index(noise.parameter_name)
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
+        return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+
+    @classmethod
+    def from_process_matrix_function(cls, basis: Basis, process_matrix_function: Callable,
+            parameters: dict[str, float], target_dofs: list[DegreeOfFreedom], noise: Noise | None = None):
+        """Build a gate from a process-matrix function and its arguments."""
+        # TODO: It looks like this function doesn't use the target_dofs input parameter. Should it?
+        parameter_names, arguments = list(parameters.keys()), list(parameters.values())
+        if noise is None or noise.parameter_name not in parameter_names:
+            return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+        noisy_parameter_index = parameter_names.index(noise.parameter_name)
+        process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
+        return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+
+    @classmethod
+    def from_hamiltonian(cls, basis: StandardBasis, hamiltonian: Hamiltonian, duration: float,
+            dofs_to_trace_out: list[DegreeOfFreedom] | None = None,
+            initial_wavefunctions_for_dofs_to_trace_out: list[Vector] | None = None,
+            ode_solver: str = 'odeintz',
+            **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
+        """Build a gate by solving the Schrodinger equation for a complete set of initial states.""" 
+        if dofs_to_trace_out is not None:
+            assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
+            assert(len(dofs_to_trace_out) == len(initial_wavefunctions_for_dofs_to_trace_out))
+            assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
+            dof_to_trace_out = dofs_to_trace_out[0]
+            initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
+            # TODO: consider if this function should just accept a reduced basis...?
+
+        if dofs_to_trace_out is None:
+            reduced_basis = basis
+        else:
+            reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
+
+        import time
+        final_states = []
+        ic(len(reduced_basis.vectors))
+        ic(reduced_basis.vectors)
+        for vector in reduced_basis.vectors:
+            if dofs_to_trace_out is None:
+                initial_state = State.from_wavefunction(basis, vector)
+            else:
+                initial_state = State.from_wavefunction_with_new_component(
+                    basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
+                )
+            ic(len(initial_state.wavefunction))
+            # start = time.perf_counter()
+            final_states.append(
+                initial_state.propagate_using_schrodinger_equation(
+                    hamiltonian, duration,
+                    ode_solver=ode_solver, **ode_solver_kwargs
+                )
+            )
+            # end = time.perf_counter()
+            # ic(f'State propagation took {end-start} seconds.')
+
+        # TODO: how can we do multiprocessing outside of main?
+        # from concurrent.futures import ProcessPoolExecutor
+        # def propagate(vector):
+        #     if traced_out_dofs is None:
+        #         initial_state = State.from_wavefunction(basis, vector)
+        #     else:
+        #         # wavefunction = basis.build_wavefunction(vector, traced_out_initial_wavefunction, [traced_out_dof])
+        #         # TODO: crate the method above and use instead of line below
+        #         wavefunction = np.kron(vector, traced_out_initial_wavefunction)
+        #         initial_state = State.from_wavefunction(basis, wavefunction)
+        #     initial_state.propagate_using_schrodinger_equation(hamiltonian, duration)
+        # with ProcessPoolExecutor() as executor:
+        #     results = executor.map(propagate, reduced_basis.vectors)
+        # final_states = list(results)
+
+        if dofs_to_trace_out is None:
+            final_wavefunctions = [fs.wavefunction for fs in final_states]
+            unitary = np.array(final_wavefunctions).T
+        else:
+            unitary = None
+
+        supervectors = []
+        for final_state_p in final_states:
+            for final_state in final_states: # iterate rows with inner loop for column-stacked supervectors
+                density_matrix = np.outer(final_state.wavefunction, final_state_p.wavefunction.conj().T)
+                if dofs_to_trace_out is None:
+                    spin_state = State.from_density_matrix(basis, density_matrix)
+                else:
+                    spin_state = State.from_density_matrix(
+                        basis, density_matrix
+                    ).trace_out_degree_of_freedom(dof_to_trace_out)
+                supervectors.append(spin_state.supervector)
+        process_matrix = np.array(supervectors).T
+
+        return cls(reduced_basis, process_matrix, unitary=unitary)
+
+# @dataclass(frozen=True, eq=False)
+# class PauliGate(Gate):
+#     """A quantum gate in the z-Pauli spin basis.""" # TODO: Should we say "qubit basis" instead?
+
+#     # TODO: check if basis is a z-Pauli spin basis.
+#     # TODO: does this class require a StandardBasis input?
+
+#     @staticmethod
+#     def get_unitary(name: str):
+#         """Get a unitary-gate matrix from its name."""
+#         return _UNITARY_GATES[name]
+
+#     @classmethod
+#     def from_named_unitary(cls, basis: Basis, name: str, *args, **kwargs):
+#         """Build a gate from the name of a unitary gate."""
+#         unitary = cls.get_unitary(name)
+#         return cls.from_unitary(basis, unitary, *args, **kwargs)
+
+#     @staticmethod
+#     def get_unitary_function(name: str):
+#         """Get a unitary-gate function from its name."""
+#         return _UNITARY_GATE_FUNCTIONS[name]
+
+#     @classmethod
+#     def from_named_unitary_function(cls, basis: Basis, name: str, *args, **kwargs):
+#         """Build a gate from the name of a unitary-gate function."""
+#         unitary_function = cls.get_unitary_function(name)
+#         return cls.from_unitary_function(basis, unitary_function, *args, **kwargs)
+
+
+@dataclass(frozen=True, eq=False)
+class Circuit(Process):
+    """A quantum circuit (i.e., a series of gates) in a basis of states."""
+    gates: list[Gate]
+
+    @classmethod
+    def from_gates(cls, gates: list[Gate], noise: Noise | None = None):
+        """Build a circuit from a series of gates in the same basis."""
+        if any(gate.basis is not gates[0].basis for gate in gates):
+            raise IonSimError('All gates in a circuit must be in the same basis.')
+        if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
+            process_matrix = _combine_process_matrices([gate.process_matrix for gate in gates])
+            return cls(gates[0].basis, process_matrix, gates)
+        pmats_list = []
+        for gate in gates:
+            if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
+                arguments = np.array(list(gate.parameters.values()))
+                vec = np.array([1 if noise.parameter_name == name else 0 for name in gate.parameters])
+                pmats = [gate.process_matrix_function(*list(arguments + darg * vec)) for darg in noise.domain_arguments]
+            else:
+                pmats = [gate.process_matrix for darg in noise.domain_arguments]
+            pmats_list.append(pmats)
+        new_pmats_list = [[pmats[i] for pmats in pmats_list] for i in range(len(pmats_list[0]))]
+        process_mats = [_combine_process_matrices(ps) for ps in new_pmats_list]
+        probs = [noise.probability_density_function(darg) for darg in noise.domain_arguments]
+        ys = np.array([p * chi for p, chi in zip(probs, process_mats)])
+        process_matrix = trapz_for_matrix(ys, noise.domain_arguments) 
+        return cls(gates[0].basis, process_matrix, gates)
+
+def _combine_process_matrices(process_matrices: list[Matrix]):
+    """Combine a series of process matrices (in chronological order) into a single process matrix for the whole circuit."""
+    if len(process_matrices) == 1:
+        return process_matrices[0]
+    else:
+        return np.linalg.multi_dot(process_matrices[::-1])
+
+def main():
+    """Script to execute."""
+    import time
+    from ionsim.degree_of_freedom import AtomicSpin, MotionalMode
+    from ionsim.basis import StandardBasis
+    from ionsim.named_operators import Unitary
+
+    spin_a = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+    spin_b = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+    basis = StandardBasis([spin_a, spin_b])
+
+    Sx = Gate.from_unitary(basis, Unitary.sqrtX, [spin_a])
+
+    xs = np.linspace(-np.pi, np.pi, 21)
+
+    phi_noise = Noise.from_named_pdf('phi', 'gaussian', {'standard_deviation': np.pi/10}, xs)
+    noisy_phi_gate = Gate.from_unitary_function(
+        basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [spin_a], phi_noise,
+    )
+    ic(noisy_phi_gate.compute_process_fidelity(Sx.process_matrix))
+
+    theta_noise = Noise.from_named_pdf('theta', 'gaussian', {'standard_deviation': np.pi/10}, xs)
+    noisy_theta_gate = Gate.from_unitary_function(
+        basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [spin_a], theta_noise,
+    )
+    ic(noisy_theta_gate.compute_process_fidelity(Sx.process_matrix))
+
+    start = time.perf_counter()
+    extra_noisy_gate = Gate.from_process_matrix_function(
+        basis, noisy_phi_gate.process_matrix_function, {'phi': 0, 'theta': np.pi/2}, [spin_a], theta_noise,
+    )
+    ic(extra_noisy_gate.compute_process_fidelity(Sx.process_matrix))
+    end = time.perf_counter()
+    ic(end-start)
+
+    start = time.perf_counter()
+    ramsey = Circuit.from_gates(
+        [
+            Gate.from_unitary(basis, Unitary.sqrtX, [spin_a]),
+            Gate.from_unitary_function(basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [spin_a], phi_noise),
+        ],
+        theta_noise,
+    )
+    Px = Gate.from_unitary(basis, Unitary.X, [spin_a])
+    ic(ramsey.compute_process_fidelity(Px.process_matrix))
+    end = time.perf_counter()
+    ic(end-start)
+
+
+if __name__ == '__main__':
+    main()

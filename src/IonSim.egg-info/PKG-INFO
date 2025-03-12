@@ -1,0 +1,19 @@
+Metadata-Version: 2.1
+Name: IonSim
+Version: 0.0.0
+Summary: Tools for simulating trapped ion physics.
+Author: Brandon Ruzic
+Author-email: bruzic@sandia.gov
+Platform: any
+Classifier: Development Status :: 2 - Beta
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: Other/Proprietary License
+Classifier: Programming Language :: Python
+Classifier: Topic :: Scientific/Engineering :: Physics
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Operating System :: MacOS :: MacOS X
+Classifier: Operating System :: Unix
+Requires: numpy
+Requires: scipy
+Requires: matplotlib
+Requires: fractions

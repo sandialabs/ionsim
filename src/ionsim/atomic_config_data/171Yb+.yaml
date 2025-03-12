@@ -1,0 +1,74 @@
+---
+species: '171Yb+'
+mass: 170.936323 # units!
+nuclear_spin: 0.5
+charge: 1.0 # Coulomb
+magnetic_moment: 0.4919 # units!
+levels:
+  - term_symbol: 'S1/2' # l = 0; j = 1/2
+    coupling_scheme: 'ls'
+    fine_energy: 0.0
+    hyperfine_A: 12.6428121185e+9 # Hz
+    lifetime: null
+    n: 6
+    s: 0.5
+
+  - term_symbol: 'F7/2' # l = 3; j = 7/2
+    coupling_scheme: 'ls'
+    fine_energy: 642.1179709e+12 # Hz
+    hyperfine_A: 0.905e+9 # Hz
+    lifetime: null
+    n: 4
+    s: 0.5
+
+  - term_symbol: 'D3/2' # l = 2; j = 3/2
+    coupling_scheme: 'ls'
+    fine_energy: 688.3474669e+12 # Hz
+    hyperfine_A: 0.43e+9 # Hz
+    lifetime: 0.0527 # seconds
+    branching_ratios: {'S1/2': 1.0}
+    n: 5
+    s: 0.5
+
+  - term_symbol: 'D5/2' # l = 2; j = 5/2
+    coupling_scheme: 'ls'
+    fine_energy: 729.4756944e+12 # Hz
+    hyperfine_A: -0.0636e+9 # Hz
+    lifetime: 7.2e-3 # seconds
+    branching_ratios: {'S1/2': 0.17, 'F7/2': 0.83}
+    n: 5
+    s: 0.5
+
+  - term_symbol: 'P1/2' # l = 1; j = 1/2
+    coupling_scheme: 'ls'
+    fine_energy: 811.2929535e+12 # Hz
+    hyperfine_A: 2.105e+9 # Hz
+    lifetime: 8.12e-9 # seconds
+    branching_ratios: {'S1/2': 0.995, 'D3/2': 0.005}
+    n: 6
+    s: 0.5
+
+  - term_symbol: 'P3/2' # l = 1; j = 3/2
+    coupling_scheme: 'ls'
+    fine_energy: 911.1361335e+12 # Hz
+    hyperfine_A: 0.8754e+9 # Hz
+    lifetime: 6.30e-9 # 8.12e-9 # seconds
+    branching_ratios: {'S1/2': 0.998, 'D3/2': 0.002}
+    n: 6
+    s: 0.5
+
+  - term_symbol: '[3/2]1/2' # k = 3/2; j = 1/2
+    coupling_scheme: 'j1l2'
+    fine_energy: 1.0089173341e+15 # Hz
+    hyperfine_A: -2.2095e+9 # Hz
+    lifetime: 37.7e-9 # seconds
+    branching_ratios: {'S1/2': 0.982, 'D3/2': 0.018}
+    n: 4
+    j1: 3.5
+    l2: 2.0
+    s2: 1.0
+
+# TODO: ADD REFERENCES FOR ALL NUMBERS!
+
+
+  
