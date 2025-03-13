@@ -318,27 +318,3 @@ def trapz_for_matrix(ys: Vector, xs: Vector, *args, **kwargs):
         row, column = index_map[k]
         integral[row, column] = result
     return integral
-
-def main():
-    """Script to execute."""
-    xs = np.linspace(-10, 10, 101)
-    def f(x):
-        return 1/np.sqrt(2*np.pi)*np.exp(-x**2/2)
-    ys = [np.array([[0, f(x)], [2*f(x), (3j+1)*f(x)]]) for x in xs]
-
-    import time
-    start = time.perf_counter()
-    result = slow_trapz_for_matrix(ys, xs)
-    ic(result.round(14) == np.array([[0, 1], [2, (3j+1)]]))
-    end = time.perf_counter()
-    ic(end-start)
-
-    start = time.perf_counter()
-    result = trapz_for_matrix(ys, xs)
-    ic(result.round(14) == np.array([[0, 1], [2, (3j+1)]]))
-    end = time.perf_counter()
-    ic(end-start)
-
-
-if __name__ == '__main__':
-    main()

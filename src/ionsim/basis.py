@@ -255,36 +255,3 @@ class XPauliAndFockBasis(Basis):
             ]
         ))
         return [ft.reduce(np.kron, group) for group in groups]
-
-def main():
-    """Script to execute if module is ran directly."""
-    import numpy as np
-    from ionsim.degree_of_freedom import MotionalMode
-
-    spin_a = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-    spin_b = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-    # spin_basis = StandardBasis([spin_a, spin_b])
-    # ic([state.name for state in spin_basis.states])
-
-    mode_0 = MotionalMode.from_frequency(frequency=3e6*2*np.pi, fock_dimension=3)
-    mode_1 = MotionalMode.from_frequency(frequency=4e6*2*np.pi, fock_dimension=2)
-    # motional_basis = StandardBasis([mode_0, mode_1])
-    # ic([state.name for state in motional_basis.states])
-
-    full_basis = StandardBasis([spin_a, spin_b, mode_0, mode_1])
-    ic([state.name for state in full_basis.states])
-
-    # basis_z = ZPauliBasis([spin_a])
-    # ic(basis_z.vectors)
-
-    # basis_x = XPauliBasis([spin_a])
-    # ic(basis_x.vectors)
-
-    # basis_xx = XPauliBasis([spin_a, spin_b])
-    # ic(basis_xx.vectors)
-
-
-if __name__ == '__main__':
-    main()
-
-

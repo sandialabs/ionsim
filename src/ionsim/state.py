@@ -169,27 +169,3 @@ class State:
 
 def lowering_motion(fock_dimension: int):
     return np.diag([np.sqrt(n+1) for n in range(fock_dimension-1)], k=1)
-
-
-def main():
-    """Script to execute if module is ran directly."""
-    from ionsim.degree_of_freedom import AtomicSpin
-    from ionsim.basis import StandardBasis, XPauliBasis
-    from ionsim.named_operators import Pauli
-
-    spin_a = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-    spin_b = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-    basis = StandardBasis([spin_a, spin_b])
-
-    basis_x = XPauliBasis([spin_a, spin_b])
-    eig_x = np.array([[1, 0],[0, -1]])
-    state = State.from_density_matrix(basis_x, np.kron(eig_x, Pauli.I))
-    rho_p = State.from_state(basis, state).density_matrix
-    # rho_p = state.get_density_matrix_in_new_basis(basis)
-    ic(rho_p.round(14))
-    ic(rho_p.round(14) == np.kron(Pauli.X, Pauli.I).round(14))
-
-            
-if __name__ == '__main__':
-    main()
-
