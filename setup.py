@@ -28,7 +28,7 @@ setup(
     packages=find_packages(where='src'),
     # package_data={  'ionsim.physics'  :['data/*.data'],
     #                 'ionsim.tests'    :['functionTestData/*']},
-    install_requires=['numpy','scipy','matplotlib'],
+    install_requires=['numpy','scipy','matplotlib', "csaps"],
     platforms=['any'],
     classifiers=filter(None, classifiers.split("\n")),
 )

@@ -5,6 +5,8 @@
 # from state import State
 # from named_operators import Pauli, Fock
 
+from pathlib import Path
+
 import ionsim as sm
 
 import numpy as np
@@ -100,7 +102,10 @@ def main():
     compute_gate_on_grid = True
     compute_interpolated_gate = True
 
-    data_directory = '/Users/bruzic/Projects/epic/ionsim_data'
+    # data_directory = '/Users/bruzic/Projects/epic/ionsim_data'
+    data_directory = Path.home() / "tmp" / "ionsim_examples_data"
+    if not data_directory.exists():
+        data_directory.mkdir(parents=True, exist_ok=True)
 
     if compute_state_fidelity:
 
@@ -204,15 +209,15 @@ def main():
                 F_data[i,j] = np.array([gd[i,j] for gd in gate_data]).reshape(*lens)
         # ic(F_data)
 
-        file = data_directory + f'/{dx_name}s_for_{gate_name}_{dx_name}_{dy_name}.npy'
+        file = data_directory / f'{dx_name}s_for_{gate_name}_{dx_name}_{dy_name}.npy'
         with open(file, 'wb') as output:
             np.save(output, dxs)
 
-        file = data_directory + f'/{dy_name}s_for_{gate_name}_{dx_name}_{dy_name}.npy'
+        file = data_directory / f'{dy_name}s_for_{gate_name}_{dx_name}_{dy_name}.npy'
         with open(file, 'wb') as output:
             np.save(output, dys)
 
-        file = data_directory + f'/relative_error_matrix_for_{gate_name}_{dx_name}_{dy_name}.npy'
+        file = data_directory / f'relative_error_matrix_for_{gate_name}_{dx_name}_{dy_name}.npy'
         with open(file, 'wb') as output:
             np.save(output, F_data)
 
@@ -229,15 +234,15 @@ def main():
 
         size = len(basis.states)**2
 
-        file = data_directory + f'/{dx_name}s_for_{gate_name}_{dx_name}_{dy_name}.npy'
+        file = data_directory / f'{dx_name}s_for_{gate_name}_{dx_name}_{dy_name}.npy'
         with open(file, 'rb') as data:
             dxs = np.load(data)
 
-        file = data_directory + f'/{dy_name}s_for_{gate_name}_{dx_name}_{dy_name}.npy'
+        file = data_directory / f'{dy_name}s_for_{gate_name}_{dx_name}_{dy_name}.npy'
         with open(file, 'rb') as data:
             dys = np.load(data)
 
-        file = data_directory + f'/relative_error_matrix_for_{gate_name}_{dx_name}_{dy_name}.npy'
+        file = data_directory / f'relative_error_matrix_for_{gate_name}_{dx_name}_{dy_name}.npy'
         with open(file, 'rb') as data:
             F_data = np.load(data)
 
@@ -299,7 +304,7 @@ def main():
         plt.xlabel(f'Frequency Error (kHz)')
         plt.ylabel('Infidelity')
         plt.legend()
-        plt.savefig(data_directory + f'/infidelity_vs_{dx_name}.pdf', bbox_inches='tight')
+        plt.savefig(data_directory / f'infidelity_vs_{dx_name}.pdf', bbox_inches='tight')
         plt.show()
 
         dx = dxs[-1]
@@ -326,7 +331,7 @@ def main():
         plt.xlabel(f'Half-Width of Boxed White Noise (kHz)')
         plt.ylabel('Infidelity')
         plt.legend()
-        plt.savefig(data_directory + f'/infidelity_vs_{dy_name}.pdf', bbox_inches='tight')
+        plt.savefig(data_directory / f'infidelity_vs_{dy_name}.pdf', bbox_inches='tight')
         plt.show()
 
 
