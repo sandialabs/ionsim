@@ -102,7 +102,6 @@ def main():
     compute_gate_on_grid = True
     compute_interpolated_gate = True
 
-    # data_directory = '/Users/bruzic/Projects/epic/ionsim_data'
     data_directory = Path.home() / "tmp" / "ionsim_examples_data"
     if not data_directory.exists():
         data_directory.mkdir(parents=True, exist_ok=True)
