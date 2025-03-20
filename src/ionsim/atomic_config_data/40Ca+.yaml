@@ -8,35 +8,40 @@ levels:
   - term_symbol: 'S1/2' #L=0; J=1/2
     coupling_scheme: 'ls'
     fine_energy: 0.0
+    hyperfine_A: 0.0  # This is needed in parsing. Probably should handle missing
     lifetime: null
     n: 4 
     s: 0.5
   
   - term_symbol: 'D3/2'  # l=2; j=3/2
-    coupling_sheme: 'ls'
+    coupling_scheme: 'ls'
     fine_energy: 409.22253103e+12  # Derived from [9] and [11]
+    hyperfine_A: 0.0  # This is needed in parsing. Probably should handle missing
     lifetime: 1.176 # [8]
     n: 3
     s: 0.5
 
   - term_symbol: 'D5/2'  # l=2; j=5/2
-    coupling_sheme: 'ls'
+    coupling_scheme: 'ls'
     fine_energy: 411.0421297763932e+12 # [6]
+    hyperfine_A: 0.0  # This is needed in parsing. Probably should handle missing
     lifetime: 1.168  # [7,8]
     n: 3
     s: 0.5
   
   - term_symbol: 'P1/2'  # l=1; j=1/2
-    coupling_sheme: 'ls'
+    coupling_scheme: 'ls'
     fine_energy: 755.222765896e+12 # [9, 10]
+    hyperfine_A: 0.0  # This is needed in parsing. Probably should handle missing
     lifetime: 6.904e-9  # [3]
     branching_ratios: {"D3/2": 0.06435, "S1/2": 0.93565} # [2]
     n: 4
     s: 0.5
   
   - term_symbol: 'P3/2'  # l=1; j=3/2
-    coupling_sheme: 'ls'
+    coupling_scheme: 'ls'
     fine_energy: 761.90501253e+12 # [10]
+    hyperfine_A: 0.0  # This is needed in parsing. Probably should handle missing
     lifetime: 6.924e-9 # [5]
     branching_ratios: {"S1/2": 0.9347, "D3/2": 0.00661, "D5/2": 0.0587} # [4]
     n: 4
