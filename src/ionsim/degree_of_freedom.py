@@ -3,6 +3,7 @@ from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.atomic_internal_energy_level import LSFineLevel, LSHyperfineLevel, J1L2FineLevel, J1L2HyperfineLevel
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel
 
+import importlib
 from pathlib import Path
 from dataclasses import dataclass
 from abc import ABC
@@ -129,8 +130,7 @@ class AtomicSpin(DegreeOfFreedom):
     @staticmethod
     def get_config_data(species: str):
         """Load the configuration data for the internal energy levels of a particular species of atom."""
-        datadir = Path(__file__).parent / "atomic_config_data"
-        with open(datadir / f'{species}.yaml', 'r') as file:
+        with importlib.resources.files('ionsim.atomic_config_data').joinpath(f'{species}.yaml').open('r') as file:
             config_data = yaml.safe_load(file)
         return config_data
 
