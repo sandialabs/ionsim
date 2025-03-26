@@ -354,7 +354,7 @@ def main():
     operator_b = CouplingOperator.from_matrix(basis, static_operator, omega, [spin_b])
     
     interaction_frame_energies = [-1*state.energy for state in basis.states]
-    hamiltonian = Hamiltonian.from_operators(basis, [operator_a, operator_b], interaction_frame_energies, sparse=False)
+    hamiltonian = Hamiltonian(basis, [operator_a, operator_b], interaction_frame_energies, sparse=False)
 
     start = time.perf_counter()
     ic(hamiltonian.hamiltonian_function(0))
@@ -366,7 +366,7 @@ def main():
     times = np.linspace(0, duration, 21)
 
     start = time.perf_counter()
-    ts, ys = hamiltonian.evolve_wavefunction(wavefunction, duration, times, 'odeintz')
+    ts, ys = hamiltonian.evolve_wavefunction(wavefunction, duration, times, ode_solver='odeintz')
     end = time.perf_counter()
     ic(f'Simulating gate took {end - start} s.')
     ic(ys[-1])
