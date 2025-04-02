@@ -19,7 +19,7 @@ Operating System :: Unix
 
 setup(
     name='IonSim',
-    # version=__version__,
+    version='0.0.0',
     description='Tools for simulating trapped ion physics.',
     # long_description=open('README.md').read(),
     author='Brandon Ruzic',
@@ -31,4 +31,7 @@ setup(
     install_requires=['numpy','scipy','matplotlib', "csaps", "icecream", "pyyaml", "nptyping"],
     platforms=['any'],
     classifiers=filter(None, classifiers.split("\n")),
+    package_data={
+        'ionsim.atomic_config_data': ['*.yaml'],  # Include all YAML files in the atomic_config_data package
+    },
 )
