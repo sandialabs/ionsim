@@ -11,6 +11,7 @@ import ionsim as sm
 
 import numpy as np
 from scipy.sparse import kron as skron
+import h5py
 
 from icecream import ic
 
@@ -105,6 +106,11 @@ def main():
     data_directory = Path.home() / "tmp" / "ionsim_examples_data"
     if not data_directory.exists():
         data_directory.mkdir(parents=True, exist_ok=True)
+
+    # Opening the file with 'w' allows reading and writing and
+    # truncates existing data. See
+    # https://docs.h5py.org/en/stable/high/file.html
+    datafile = h5py.File(data_directory / "simr.hdf5", 'w')
 
     if compute_state_fidelity:
 
@@ -208,17 +214,14 @@ def main():
                 F_data[i,j] = np.array([gd[i,j] for gd in gate_data]).reshape(*lens)
         # ic(F_data)
 
-        file = data_directory / f'{dx_name}s_for_{gate_name}_{dx_name}_{dy_name}.npy'
-        with open(file, 'wb') as output:
-            np.save(output, dxs)
-
-        file = data_directory / f'{dy_name}s_for_{gate_name}_{dx_name}_{dy_name}.npy'
-        with open(file, 'wb') as output:
-            np.save(output, dys)
-
-        file = data_directory / f'relative_error_matrix_for_{gate_name}_{dx_name}_{dy_name}.npy'
-        with open(file, 'wb') as output:
-            np.save(output, F_data)
+        attributes = {
+            'gate_name': gate_name,
+            'dx_name': dx_name,
+            'dy_name': dy_name,
+        }
+        save_matrix(datafile, dxs, 'dx', attributes)
+        save_matrix(datafile, dys, 'dy', attributes)
+        save_matrix(datafile, F_data, 'relative_error', attributes)
 
     if compute_interpolated_gate:
 
@@ -233,17 +236,9 @@ def main():
 
         size = len(basis.states)**2
 
-        file = data_directory / f'{dx_name}s_for_{gate_name}_{dx_name}_{dy_name}.npy'
-        with open(file, 'rb') as data:
-            dxs = np.load(data)
-
-        file = data_directory / f'{dy_name}s_for_{gate_name}_{dx_name}_{dy_name}.npy'
-        with open(file, 'rb') as data:
-            dys = np.load(data)
-
-        file = data_directory / f'relative_error_matrix_for_{gate_name}_{dx_name}_{dy_name}.npy'
-        with open(file, 'rb') as data:
-            F_data = np.load(data)
+        dxs, _ = load_matrix(datafile, 'dx')
+        dys, _ = load_matrix(datafile, 'dy')
+        F_data, _ = load_matrix(datafile, 'relative_error')
 
         # ic(dphi0s, half_box_widths)
         # ic(F_data)
@@ -332,6 +327,25 @@ def main():
         plt.legend()
         plt.savefig(data_directory / f'infidelity_vs_{dy_name}.pdf', bbox_inches='tight')
         plt.show()
+
+
+def save_matrix(datafile, matrix, pathname, attributes=None):
+    """Save a matrix in as a dataset in an HDF5 file."""
+    dataset = datafile.require_dataset(pathname, shape=matrix.shape, dtype=matrix.dtype, data=matrix)
+    if attributes:
+        for name, value in attributes.items():
+            dataset.attrs[name] = value
+    return dataset
+
+
+def load_matrix(datafile, pathname):
+    """Load a matrix into a numpy array and return the attributes
+    associated with the HDF5 dataset."""
+    dataset = datafile[pathname]
+    arr = np.empty(dataset.shape, dtype=dataset.dtype)
+    dataset.read_direct(arr)
+    attributes = {name: value for name, value in dataset.attrs.items()}
+    return arr, attributes
 
 
 if __name__ == '__main__':
