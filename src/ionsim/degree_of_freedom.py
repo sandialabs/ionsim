@@ -3,7 +3,7 @@ from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.atomic_internal_energy_level import LSFineLevel, LSHyperfineLevel, J1L2FineLevel, J1L2HyperfineLevel
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel
 
-import importlib
+import importlib.resources
 from pathlib import Path
 from dataclasses import dataclass
 from abc import ABC
