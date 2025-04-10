@@ -19,7 +19,8 @@ Operating System :: Unix
 
 setup(
     name='IonSim',
-    version='0.0.0',
+    use_scm_version=True,
+    setup_requires=['setuptools>=42', 'setuptools_scm'],
     description='Tools for simulating trapped ion physics.',
     # long_description=open('README.md').read(),
     author='Brandon Ruzic',
