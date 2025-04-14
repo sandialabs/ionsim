@@ -1,0 +1,7 @@
+${module} module
+================
+
+.. automodule:: ${module}
+   :undoc-members:
+   :members:
+
