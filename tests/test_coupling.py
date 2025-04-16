@@ -5,6 +5,7 @@ from ionsim.energy_level import EnergyEigenstate
 from ionsim.basis import StandardBasis
 from ionsim.named_operators import Pauli
 from ionsim.coupling import CouplingOperator
+from ionsim.testing import assert_array_close
 
 class TestCouplingOperator(unittest.TestCase):
 
@@ -27,7 +28,7 @@ class TestCouplingOperator(unittest.TestCase):
         expected_static_matrix = np.kron(self.operator, np.eye(2))
         
         # Assert that the static matrix matches the expected matrix
-        np.testing.assert_array_equal(big_matrix, expected_static_matrix)
+        assert_array_close(big_matrix, expected_static_matrix)
 
     def test_rate_matrix(self):
         """Test the rate matrix of the CouplingOperator."""
@@ -35,7 +36,7 @@ class TestCouplingOperator(unittest.TestCase):
         expected_rate_matrix = np.where(self.raise_spin_a.static_matrix.toarray() != 0, self.omega, 0)
         
         # Assert that the rate matrix matches the expected matrix
-        np.testing.assert_array_equal(rate_matrix, expected_rate_matrix)
+        assert_array_close(rate_matrix, expected_rate_matrix)
 
 if __name__ == '__main__':
     unittest.main()

@@ -4,6 +4,7 @@ from inspect import getfullargspec
 import numpy as np
 
 from ionsim.noise import Noise
+from ionsim.testing import assert_array_close
 
 class TestNoise(unittest.TestCase):
 
@@ -32,7 +33,7 @@ class TestNoise(unittest.TestCase):
 
         # Check that the noisy function returns the same result as f(z)
         for z in zs:
-            np.testing.assert_array_almost_equal(noisy_f(z), f(z), decimal=14)
+            assert_array_close(noisy_f(z), f(z))
 
 if __name__ == '__main__':
     unittest.main()

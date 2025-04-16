@@ -2,12 +2,13 @@ import unittest
 import numpy as np
 from scipy.linalg import expm
 from ionsim.named_operators import Pauli, Unitary
+from ionsim.testing import assert_array_close
 
 class TestNamedOperators(unittest.TestCase):
 
     def test_unitary_y(self):
         """Test that Unitary.Y is equal to Pauli.Y."""
-        np.testing.assert_array_almost_equal(Unitary.Y, Pauli.Y, decimal=14)
+        assert_array_close(Unitary.Y, Pauli.Y)
 
     def test_expm_equivalence(self):
         """Test the equivalence of the matrix exponential and the expected result."""
@@ -19,7 +20,7 @@ class TestNamedOperators(unittest.TestCase):
         )
         
         result = expm(-1j * theta / 2 * np.kron(sig_phi, sig_phi))
-        np.testing.assert_array_almost_equal(result, expected_result, decimal=14)
+        assert_array_close(result, expected_result)
 
 if __name__ == '__main__':
     unittest.main()

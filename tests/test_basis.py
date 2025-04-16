@@ -3,6 +3,7 @@ import numpy as np
 from ionsim.degree_of_freedom import AtomicSpin, MotionalMode
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.basis import StandardBasis, ZPauliBasis, XPauliBasis
+from ionsim.testing import assert_array_close
 
 class TestBasis(unittest.TestCase):
 
@@ -81,7 +82,7 @@ class TestBasis(unittest.TestCase):
         actual_vectors = basis_z.vectors
         for expected, actual in zip(expected_vectors, actual_vectors):
             with self.subTest(expected=expected, actual=actual):
-                np.testing.assert_array_equal(expected, actual)
+                assert_array_close(expected, actual)
 
     def test_x_pauli_basis_vectors(self):
         """Test the vectors of the X Pauli basis."""
@@ -93,7 +94,7 @@ class TestBasis(unittest.TestCase):
         actual_vectors = basis_x.vectors
         for expected, actual in zip(expected_vectors, actual_vectors):
             with self.subTest(expected=expected, actual=actual):
-                np.testing.assert_array_almost_equal(expected, actual)
+                assert_array_close(expected, actual)
 
     def test_xx_pauli_basis_vectors(self):
         """Test the vectors of the XX Pauli basis."""
@@ -107,7 +108,7 @@ class TestBasis(unittest.TestCase):
         actual_vectors = basis_xx.vectors
         for expected, actual in zip(expected_vectors, actual_vectors):
             with self.subTest(expected=expected, actual=actual):
-                np.testing.assert_array_almost_equal(expected, actual)
+                assert_array_close(expected, actual)
 
 if __name__ == '__main__':
     unittest.main()

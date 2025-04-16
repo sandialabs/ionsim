@@ -6,6 +6,7 @@ from ionsim.state import State
 from ionsim.degree_of_freedom import AtomicSpin
 from ionsim.basis import StandardBasis, XPauliBasis
 from ionsim.named_operators import Pauli
+from ionsim.testing import assert_array_close
 
 class TestState(unittest.TestCase):
 
@@ -24,7 +25,7 @@ class TestState(unittest.TestCase):
         expected_rho_p = np.kron(Pauli.X, Pauli.I)
 
         # Check that the density matrix matches the expected value
-        np.testing.assert_array_almost_equal(rho_p, expected_rho_p, decimal=14)
+        assert_array_close(rho_p, expected_rho_p)
 
 if __name__ == '__main__':
     unittest.main()

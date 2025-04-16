@@ -1,6 +1,7 @@
 import unittest
 import numpy as np
 from ionsim.custom_math import slow_trapz_for_matrix, trapz_for_matrix
+from ionsim.testing import assert_array_close
 
 class TestCustomMath(unittest.TestCase):
 
@@ -18,16 +19,14 @@ class TestCustomMath(unittest.TestCase):
         result = slow_trapz_for_matrix(self.ys, self.xs)
         expected_result = np.array([[0, 1], [2, (3j + 1)]])
         
-        # Assert that the result matches the expected result with a precision of 14 decimal places
-        np.testing.assert_array_almost_equal(result, expected_result, decimal=14)
+        assert_array_close(result, expected_result)
 
     def test_trapz_for_matrix(self):
         """Test the trapz_for_matrix function."""
         result = trapz_for_matrix(self.ys, self.xs)
         expected_result = np.array([[0, 1], [2, (3j + 1)]])
         
-        # Assert that the result matches the expected result with a precision of 14 decimal places
-        np.testing.assert_array_almost_equal(result, expected_result, decimal=14)
+        assert_array_close(result, expected_result)
 
 if __name__ == '__main__':
     unittest.main()
