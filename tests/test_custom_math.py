@@ -28,5 +28,14 @@ class TestCustomMath(unittest.TestCase):
         
         assert_array_close(result, expected_result)
 
+    def test_compare_slow_fast_trapz(self):
+        """Test trapz_for_matrix using slow_trapz_for_matrix as an
+        oracle."""
+        for _ in range(16):
+            ys = np.random.uniform(size=(len(self.xs), 2, 2), low=-1.0) + np.random.uniform(size=(len(self.xs), 2, 2), low=-1.0) * 1j
+            exp = slow_trapz_for_matrix(ys, self.xs)
+            act = trapz_for_matrix(ys, self.xs)
+            assert_array_close(act, exp)
+
 if __name__ == '__main__':
     unittest.main()
