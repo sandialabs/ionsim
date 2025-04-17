@@ -107,13 +107,9 @@ def main():
     if not data_directory.exists():
         data_directory.mkdir(parents=True, exist_ok=True)
 
-    # Opening the file with 'w' allows reading and writing and
-    # truncates existing data. See
-    # https://docs.h5py.org/en/stable/high/file.html
-    datafile = h5py.File(data_directory / "simr.hdf5", 'w')
+    data_filename = data_directory / "simr.hdf5"
 
     if compute_state_fidelity:
-
         phi = 0
         theta = np.pi/2
         tau = abs(theta)/rabi_rate
@@ -219,12 +215,16 @@ def main():
             'dx_name': dx_name,
             'dy_name': dy_name,
         }
-        save_matrix(datafile, dxs, 'dx', attributes)
-        save_matrix(datafile, dys, 'dy', attributes)
-        save_matrix(datafile, F_data, 'relative_error', attributes)
+
+        # Opening the file with 'w' allows reading and writing and
+        # truncates existing data. See
+        # https://docs.h5py.org/en/stable/high/file.html
+        with h5py.File(data_filename, 'w') as datafile:
+            save_matrix(datafile, dxs, 'dx', attributes)
+            save_matrix(datafile, dys, 'dy', attributes)
+            save_matrix(datafile, F_data, 'relative_error', attributes)
 
     if compute_interpolated_gate:
-
         from csaps import NdGridCubicSmoothingSpline
 
         phi = 0
@@ -236,9 +236,11 @@ def main():
 
         size = len(basis.states)**2
 
-        dxs, _ = load_matrix(datafile, 'dx')
-        dys, _ = load_matrix(datafile, 'dy')
-        F_data, _ = load_matrix(datafile, 'relative_error')
+        # This time open the data file read-only
+        with h5py.File(data_filename, 'r') as datafile:
+            dxs, _ = load_matrix(datafile, 'dx')
+            dys, _ = load_matrix(datafile, 'dy')
+            F_data, _ = load_matrix(datafile, 'relative_error')
 
         # ic(dphi0s, half_box_widths)
         # ic(F_data)
