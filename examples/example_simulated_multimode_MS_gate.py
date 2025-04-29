@@ -7,7 +7,7 @@ from icecream import ic
 
 sparse = False
 
-modulate_amplitude = True
+modulate_amplitude = False
 
 include_deybe_waller_effect = False
 
@@ -71,7 +71,7 @@ def MS_hamiltonian(basis, modes, etas, rabi_rate, omega_b, omega_r, sparse=False
             ism.CouplingOperator.from_matrix(basis, operator_1b, omega_b, modulation_function=mod),
             ism.CouplingOperator.from_matrix(basis, operator_1r, omega_r, modulation_function=mod),
         ])
-    interaction_frame_energies = [-state.energy for state in basis.states] # implement arbitrary hamiltonian (with time-dependence? need an adiabatic intertwiner)
+    interaction_frame_energies = [-state.energy for state in basis.states]
     return ism.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
 
 etas = [0.1 for _ in range(num_modes)]
@@ -96,7 +96,7 @@ if modulate_amplitude:
     tau = 125e-6 # s
     detuning_0 = 2*np.pi * 52e3 # rad./s
     def amp_mod(t):
-        width = 16.58e-6 # 33.1e-6
+        width = 16.58e-6
         gaussian = np.exp(-(t - tau/2)**2 / (2 * width**2))
         return gaussian
     ts = np.linspace(0, tau, 2001)
@@ -154,7 +154,7 @@ def main():
         end = time.perf_counter()
         ic(f'Propagating state took {end - start} s.')
 
-        basis_xx = ism.XPauliAndFockBasis([*spins, *modes], spins) # TODO: consider making a 'from' method with seperate spin and motion inputs.
+        basis_xx = ism.XPauliAndFockBasis([*spins, *modes], spins)
         psis_xx = [ism.State.from_state(basis_xx, psi) for psi in psis]
 
         alphas = np.array([psi.compute_coherent_displacements(spins, modes[0]) for psi in psis_xx])
