@@ -1,10 +1,3 @@
-# from basis import StandardBasis, XPauliBasis, XPauliAndFockBasis
-# from degree_of_freedom import AtomicSpin, MotionalMode
-# from hamiltonian import Hamiltonian
-# from coupling import CouplingOperator
-# from state import State
-# from named_operators import Pauli, Fock
-
 import ionsim as ism
 
 import numpy as np
@@ -14,7 +7,9 @@ from icecream import ic
 
 sparse = False
 
-modulate_amplitude = True
+modulate_amplitude = False
+
+include_deybe_waller_effect = False
 
 num_spins = 2
 
@@ -42,11 +37,6 @@ modes = [
     for k in range(num_modes)   
 ]
 
-# mode_0 = sm.MotionalMode.from_frequency(frequency=3e6 * 2*np.pi, fock_dimension=fock_dimension) # use angular_frequency
-# mode_1 = sm.MotionalMode.from_frequency(frequency=(3e6 + 88.5e3) * 2*np.pi, fock_dimension=fock_dimension) 
-# mode_2 = sm.MotionalMode.from_frequency(frequency=(3e6 + 2*88.5e3) * 2*np.pi, fock_dimension=fock_dimension) 
-# modes = [mode_0, mode_1]
-
 basis = ism.StandardBasis([*spins, *modes])
 
 def MS_hamiltonian(basis, modes, etas, rabi_rate, omega_b, omega_r, sparse=False, mod=None):
@@ -63,13 +53,13 @@ def MS_hamiltonian(basis, modes, etas, rabi_rate, omega_b, omega_r, sparse=False
         raise_target_spins = [spin_basis.enlarge_matrix(ism.Pauli.plus, [spin]) for spin in target_spins]
 
         fock_dimension = len(mode.energy_levels)
-        std_raise_motion = motional_basis.enlarge_matrix(ism.Fock.raising(fock_dimension), [mode])
-        std_lower_motion = motional_basis.enlarge_matrix(ism.Fock.lowering(fock_dimension), [mode])
-        dw_raise_motion = motional_basis.enlarge_matrix(ism.Fock.debye_waller_raising(fock_dimension, eta), [mode])
-        dw_lower_motion = motional_basis.enlarge_matrix(ism.Fock.debye_waller_lowering(fock_dimension, eta), [mode])
+        if include_deybe_waller_effect:
+            raise_motion = motional_basis.enlarge_matrix(ism.Fock.debye_waller_raising(fock_dimension, eta), [mode])
+            lower_motion = motional_basis.enlarge_matrix(ism.Fock.debye_waller_lowering(fock_dimension, eta), [mode])
+        else:
+            raise_motion = motional_basis.enlarge_matrix(ism.Fock.raising(fock_dimension), [mode])
+            lower_motion = motional_basis.enlarge_matrix(ism.Fock.lowering(fock_dimension), [mode])
 
-        raise_motion = dw_raise_motion
-        lower_motion = dw_lower_motion
         operator_0b = prefactor * skron(raise_target_spins[0], raise_motion)
         operator_0r = prefactor * skron(raise_target_spins[0], lower_motion)
         operator_1b = prefactor * skron(raise_target_spins[1], raise_motion)
@@ -81,7 +71,7 @@ def MS_hamiltonian(basis, modes, etas, rabi_rate, omega_b, omega_r, sparse=False
             ism.CouplingOperator.from_matrix(basis, operator_1b, omega_b, modulation_function=mod),
             ism.CouplingOperator.from_matrix(basis, operator_1r, omega_r, modulation_function=mod),
         ])
-    interaction_frame_energies = [-state.energy for state in basis.states] # implement arbitrary hamiltonian (with time-dependence? need an adiabatic intertwiner)
+    interaction_frame_energies = [-state.energy for state in basis.states]
     return ism.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
 
 etas = [0.1 for _ in range(num_modes)]
@@ -103,13 +93,10 @@ def compute_pst_area(rabi_rate, detunings, ts, relative_phases=None, amp_mod=Non
     return etas[0]*etas[0]*betas[-1]
 
 if modulate_amplitude:
-    # tau = 250e-6 # s
-    # detuning_0 = 2*np.pi * 40e3 # rad./s
-    # rabi_rate = 2*np.pi * 110e3 # rad./s
     tau = 125e-6 # s
     detuning_0 = 2*np.pi * 52e3 # rad./s
     def amp_mod(t):
-        width = 16.58e-6 # 33.1e-6
+        width = 16.58e-6
         gaussian = np.exp(-(t - tau/2)**2 / (2 * width**2))
         return gaussian
     ts = np.linspace(0, tau, 2001)
@@ -126,13 +113,6 @@ else:
 ic(detuning_0/(2*np.pi*1e3))
 ic(rabi_rate/(2*np.pi*1e3))
 
-    # loops = 2
-    # rabi_rate = 100e3 * 2*np.pi # rad./s
-    # detuning_0 = 2 * rabi_rate * etas[0] * np.sqrt(loops)
-    # tau = 2 * np.pi * loops / detuning_0
-    # amp_mod = None
-
-
 omega_b = (
     + target_spins[0].energy_levels[1].energy - target_spins[0].energy_levels[0].energy
     + modes[0].energy_levels[1].energy - modes[0].energy_levels[0].energy
@@ -143,7 +123,6 @@ omega_r = (
     - (modes[0].energy_levels[1].energy - modes[0].energy_levels[0].energy)
     - detuning_0
 )
-
 
 hamiltonian = MS_hamiltonian(basis, modes, etas, rabi_rate, omega_b, omega_r, sparse=sparse, mod=amp_mod)
 
@@ -158,8 +137,7 @@ def main():
 
     duration = tau
     coefs = np.zeros(len(basis.states))
-    # coefs[0] = 1
-    coefs[2] = 1
+    coefs[0] = 1
     ic(len(spin_basis.states), len(basis.states))
     ic(len(spin_basis.states)*fock_dimension, len(basis.states))
     zero_zero = ism.State.from_coefficients(basis, list(coefs))
@@ -176,32 +154,32 @@ def main():
         end = time.perf_counter()
         ic(f'Propagating state took {end - start} s.')
 
-        # basis_xx = XPauliAndFockBasis([spin_0, spin_1, mode_0, mode_1], [spin_0, spin_1]) # TODO: consider making a 'from' method with seperate spin and motion inputs.
-        # psis_xx = [State.from_state(basis_xx, psi) for psi in psis]
+        basis_xx = ism.XPauliAndFockBasis([*spins, *modes], spins)
+        psis_xx = [ism.State.from_state(basis_xx, psi) for psi in psis]
 
-        # alphas = np.array([psi.compute_coherent_displacements([spin_0, spin_1], mode_0) for psi in psis_xx])
-        # spin_basis_xx = XPauliBasis([spin_0, spin_1])
+        alphas = np.array([psi.compute_coherent_displacements(spins, modes[0]) for psi in psis_xx])
+        spin_basis_xx = ism.XPauliBasis(spins)
 
-        # for i,vector in enumerate(spin_basis_xx.vectors):
-        #     plt.plot(times, alphas[:, i].real, label=i)
-        # plt.ylabel(r'Re[$\alpha$]')
-        # plt.xlabel('Gate Duration (s)')
-        # plt.legend()
-        # plt.show()
+        for i,vector in enumerate(spin_basis_xx.vectors):
+            plt.plot(times, alphas[:, i].real, label=i)
+        plt.ylabel(r'Re[$\alpha$]')
+        plt.xlabel('Gate Duration (s)')
+        plt.legend()
+        plt.show()
 
-        # for i,vector in enumerate(spin_basis_xx.vectors):
-        #     plt.plot(times, alphas[:, i].imag, label=i)
-        # plt.ylabel(r'Im[$\alpha$]')
-        # plt.xlabel('Gate Duration (s)')
-        # plt.legend()
-        # plt.show()
+        for i,vector in enumerate(spin_basis_xx.vectors):
+            plt.plot(times, alphas[:, i].imag, label=i)
+        plt.ylabel(r'Im[$\alpha$]')
+        plt.xlabel('Gate Duration (s)')
+        plt.legend()
+        plt.show()
 
-        # for i,vector in enumerate(spin_basis_xx.vectors):
-        #     plt.plot(alphas[:, i].real, alphas[:, i].imag, label=i)
-        # plt.ylabel(r'Im[$\alpha$]')
-        # plt.xlabel(r'Re[$\alpha$]')
-        # plt.legend()
-        # plt.show()
+        for i,vector in enumerate(spin_basis_xx.vectors):
+            plt.plot(alphas[:, i].real, alphas[:, i].imag, label=i)
+        plt.ylabel(r'Im[$\alpha$]')
+        plt.xlabel(r'Re[$\alpha$]')
+        plt.legend()
+        plt.show()
 
         for mode in modes:
             psis = [psi.trace_out_degree_of_freedom(mode) for psi in psis]
