@@ -92,30 +92,3 @@ class CouplingOperator:
             column = self.basis.states.index(coupling.lower_state)
             matrices.append(csr_matrix(([coupling.oscillation_rate], ([row], [column])), shape=(size, size)))
         return np.sum(matrices)
-
-
-def main():
-    """Script to execute if module is ran directly."""
-    from ionsim.degree_of_freedom import AtomicSpin
-    from ionsim.named_operators import Pauli
-
-    spin_a = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-    spin_b = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-    basis = StandardBasis([spin_a, spin_b]) # 00, 01, 10, 11 
-
-    rabi_rate = 100e3 * 2*np.pi # rad./s
-    omega = spin_a.energy_levels[1].energy - spin_a.energy_levels[0].energy
-
-    operator = rabi_rate/2 * Pauli.plus
-
-    raise_spin_a = CouplingOperator.from_matrix(basis, operator, omega, [spin_a])
-
-    big_matrix = raise_spin_a.static_matrix.toarray()
-    ic(big_matrix == np.kron(operator, np.eye(2)))
-    rate_matrix = raise_spin_a.rate_matrix.toarray()
-    ic(rate_matrix == np.where(big_matrix != 0, omega, 0))
-
-if __name__ == '__main__':
-    main()
-
-

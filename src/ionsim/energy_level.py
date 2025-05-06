@@ -3,8 +3,6 @@ from dataclasses import dataclass
 from typing import Sequence
 import numpy as np
 
-from icecream import ic
-
 @dataclass(frozen=True, eq=False)
 class EnergyLevel(ABC):
     """An energy level."""
@@ -32,17 +30,4 @@ class EnergyEigenstate(EnergyLevel): #TODO: consider renaming this something lik
     def name(self):
         """A unique name for the state."""
         return ' : '.join([component.name for component in self.components])
-
-def main():
-    """Script to execute if module is ran directly."""
-    from ionsim.atomic_internal_energy_level import build_internal_levels
-
-    levels_a = build_internal_levels('171Yb+', ['S1/2'], ['S1/2,0,0', 'S1/2,1,0'])
-    levels_b = build_internal_levels('171Yb+', ['S1/2'], ['S1/2,0,0', 'S1/2,1,0'])
-
-    level = EnergyEigenstate([levels_a[0], levels_b[1]])
-    ic(level)
-
-if __name__ == '__main__':
-    main()
 

@@ -151,20 +151,3 @@ class MotionalMode(DegreeOfFreedom):
         """Build a motional normal-mode degree of freedom for an ion chain."""
         levels = [CollectiveMotionalEnergyLevel(frequency, fock_number) for fock_number in range(fock_dimension)]
         return cls(levels, name)
-
-def main():
-    """Script to execute if module is ran directly."""
-
-    # spin_a = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2', 'P1/2'])
-    # ic(spin_a)
-
-    # spin_b = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-    # ic(spin_b)
-
-    mode_0 = MotionalMode.from_frequency(frequency=3e6*2*np.pi, fock_dimension=3)
-    ic(mode_0)
-
-
-if __name__ == "__main__":
-    main()
-

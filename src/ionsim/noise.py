@@ -63,21 +63,3 @@ class Noise:
             ys = np.array([p*fv for p, fv in zip(probs, function_values)])
             return trapz_for_matrix(ys, self.domain_arguments)
         return wrapper
-
-def main():
-    """Script to execute."""
-    dzs = np.linspace(-10, 10, 101)
-    noise = Noise.from_named_pdf('z', 'gaussian', {'standard_deviation': 1, 'mean': 0}, dzs)
-
-    def f(z):
-        return np.array([[1, 1],[1, 1]])
-
-    from inspect import getfullargspec
-    parameter_index = getfullargspec(f)[0].index('z')
-    noisy_f = noise.add_noise_to_matrix_function(f, parameter_index)
-
-    zs = np.linspace(-1, 1, 3)
-    ic([noisy_f(z).round(14) == f(z) for z in zs])
-
-if __name__ == '__main__':
-    main()

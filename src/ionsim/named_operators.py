@@ -77,21 +77,3 @@ class Unitary:
         """The Molmer-Sorensen entangling gate."""
         sigma_phi = np.cos(phi) * Pauli.X + np.sin(phi) * Pauli.Y
         return np.cos(theta/2) * np.kron(Pauli.I, Pauli.I) - 1j*np.sin(theta/2) * np.kron(sigma_phi, sigma_phi)
-
-def main():
-    """Script to execute if module is ran directly."""
-    from scipy.linalg import expm
-
-    ic(Unitary.Y.round(14) == Pauli.Y)
-
-    phi, theta = np.pi/8, -2*np.pi/3
-    sig_phi = np.cos(phi) * Pauli.X + np.sin(phi) * Pauli.Y
-    ic(
-        expm(-1j * theta/2 * np.kron(sig_phi, sig_phi)).round(14) == (
-            + np.cos(theta/2) * np.kron(Pauli.I, Pauli.I) - 1j*np.sin(theta/2) * np.kron(sig_phi, sig_phi)
-        ).round(14)
-    )
-
-if __name__ == '__main__':
-    main()
-
