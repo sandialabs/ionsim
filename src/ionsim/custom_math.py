@@ -5,7 +5,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import numpy as np
 from typing import Any, Callable
-from nptyping import NDArray, Shape
 from scipy.integrate import trapezoid as trapz
 import itertools as it
 from concurrent.futures import ProcessPoolExecutor

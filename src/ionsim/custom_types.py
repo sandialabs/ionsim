@@ -1,11 +1,12 @@
-from typing import Any, Type
-from nptyping import NDArray, Shape
+from typing import Any
+from numpy.typing import NDArray
+from scipy.sparse import spmatrix
 
-from icecream import ic
+Vector = NDArray[Any]
+Matrix = NDArray[Any]
 
-Vector = NDArray[Shape['*'], Any] # TODO: make this actually specifiy a vector. At the moment, I think it takes any shape. 
-Matrix = NDArray[Shape['Size, Size'], Any]
+SparseVector = spmatrix
+SparseMatrix = spmatrix
 
-# def update_annotations(annotations: dict['str', Any], bases: list[type]) -> None:
-#     for base in bases:
-#         annotations.update(getattr(base, '__annotations__', dict()))
+AnyVector = Vector | SparseVector
+AnyMatrix = Matrix | SparseMatrix

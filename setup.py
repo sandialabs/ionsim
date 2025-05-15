@@ -29,7 +29,7 @@ setup(
     packages=find_packages(where='src'),
     # package_data={  'ionsim.physics'  :['data/*.data'],
     #                 'ionsim.tests'    :['functionTestData/*']},
-    install_requires=['numpy','scipy','matplotlib', "csaps", "icecream", "pyyaml", "nptyping"],
+    install_requires=['numpy','scipy','matplotlib', "csaps", "icecream", "pyyaml"],
     platforms=['any'],
     classifiers=filter(None, classifiers.split("\n")),
     package_data={
