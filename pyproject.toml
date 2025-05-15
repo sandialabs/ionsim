@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "IonSim"
+version = "0.0.0"
+description = "Tools for simulating trapped ion physics."
+authors = [
+    {name = "Brandon Ruzic", email = "bruzic@sandia.gov"}
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "csaps",
+    "icecream",
+    "pyyaml"
+]
+classifiers = [
+    "Development Status :: 2 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: Other/Proprietary License",
+    "Programming Language :: Python",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Unix"
+]
+requires-python = ">=3.9"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"ionsim.atomic_config_data" = ["*.yaml"]
