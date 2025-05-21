@@ -1,0 +1,21 @@
+${package} documentation
+====================
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Contents:
+
+   ${children}
+
+API Reference
+-------------
+
+Top level: :mod:`ionsim`
+
+
+Indices and tables
+==================
+
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`
