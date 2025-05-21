@@ -63,7 +63,7 @@ class LSFineLevel(AtomicInternalEnergyLevel):
     @property
     def name(self):
         """A unique name for the fine-structure level."""
-        return ','.join([self.term_symbol, str(Fraction(self.mf))])
+        return ','.join([self.term_symbol, str(Fraction(self.mj))])
  
 # @update_annotations   
 @dataclass(frozen=True, eq=False)
