@@ -34,7 +34,6 @@ class Gate(Process):
     """A quantum gate represented in a basis of states."""
     process_matrix_function: Callable | None = None
     parameters: dict[str, float] = field(default_factory=dict)
-
     unitary: Matrix | None = None
 
     @classmethod #TODO: let default target_dofs be all degrees of freedom
@@ -176,38 +175,130 @@ class Gate(Process):
 #         return cls.from_unitary_function(basis, unitary_function, *args, **kwargs)
 
 
+# @dataclass(frozen=True, eq=False)
+# class Circuit(Process):
+#     """A quantum circuit (i.e., a series of gates) in a basis of states."""
+#     gates: list[Gate]
+
+#     @classmethod
+#     def from_gates(cls, gates: list[Gate], noise: Noise | None = None):
+#         """Build a circuit from a series of gates in the same basis."""
+#         if any(gate.basis is not gates[0].basis for gate in gates):
+#             raise IonSimError('All gates in a circuit must be in the same basis.')
+#         if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
+#             process_matrix = _combine_transformation_matrices([gate.process_matrix for gate in gates])
+#             return cls(gates[0].basis, process_matrix, gates)
+#         pmats_list = []
+#         for gate in gates:
+#             if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
+#                 arguments = np.array(list(gate.parameters.values()))
+#                 vec = np.array([1 if noise.parameter_name == name else 0 for name in gate.parameters])
+#                 pmats = [gate.process_matrix_function(*list(arguments + darg * vec)) for darg in noise.domain_arguments]
+#             else:
+#                 pmats = [gate.process_matrix for darg in noise.domain_arguments]
+#             pmats_list.append(pmats)
+#         new_pmats_list = [[pmats[i] for pmats in pmats_list] for i in range(len(pmats_list[0]))]
+#         process_mats = [_combine_transformation_matrices(ps) for ps in new_pmats_list]
+#         probs = [noise.probability_density_function(darg) for darg in noise.domain_arguments]
+#         ys = np.array([p * chi for p, chi in zip(probs, process_mats)])
+#         process_matrix = trapz_for_matrix(ys, noise.domain_arguments) 
+#         return cls(gates[0].basis, process_matrix, gates)
+
+# @dataclass(frozen=True, eq=False)
+# class Circuit(Process):
+#     """A quantum circuit (i.e., a series of gates) in a basis of states."""
+#     gates: list[Gate]
+
+#     @classmethod
+#     def from_gates(cls, gates: list[Gate], noise: Noise | None = None):
+#         """Build a circuit from a series of gates in the same basis."""
+#         if any(gate.basis is not gates[0].basis for gate in gates):
+#             raise IonSimError('All gates in a circuit must be in the same basis.')
+#         if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
+#             process_matrix = _combine_transformation_matrices([gate.process_matrix for gate in gates])
+#             return cls(gates[0].basis, process_matrix, gates)
+#         process_mats = []
+#         for darg in noise.domain_arguments:
+#             pmats = []
+#             for gate in gates:
+#                 if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
+#                     arguments = np.array(list(gate.parameters.values()))
+#                     vec = np.array([1 if noise.parameter_name == name else 0 for name in gate.parameters])
+#                     pmats += [gate.process_matrix_function(*list(arguments + darg * vec))]
+#                 else:
+#                     pmats += [gate.process_matrix]
+#             process_mats += [_combine_transformation_matrices(pmats)]
+#         probs = [noise.probability_density_function(darg) for darg in noise.domain_arguments]
+#         ys = np.array([p * chi for p, chi in zip(probs, process_mats)])
+#         process_matrix = trapz_for_matrix(ys, noise.domain_arguments) 
+#         return cls(gates[0].basis, process_matrix, gates)
+
 @dataclass(frozen=True, eq=False)
 class Circuit(Process):
     """A quantum circuit (i.e., a series of gates) in a basis of states."""
     gates: list[Gate]
+    process_matrix_function: Callable | None = None
+    parameters: dict[str, float] = field(default_factory=dict)
+    unitary: Matrix | None = None # TODO: add unitary to class methods if available 
 
     @classmethod
     def from_gates(cls, gates: list[Gate], noise: Noise | None = None):
         """Build a circuit from a series of gates in the same basis."""
         if any(gate.basis is not gates[0].basis for gate in gates):
             raise IonSimError('All gates in a circuit must be in the same basis.')
-        if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
-            process_matrix = _combine_process_matrices([gate.process_matrix for gate in gates])
-            return cls(gates[0].basis, process_matrix, gates)
-        pmats_list = []
-        for gate in gates:
-            if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
-                arguments = np.array(list(gate.parameters.values()))
-                vec = np.array([1 if noise.parameter_name == name else 0 for name in gate.parameters])
-                pmats = [gate.process_matrix_function(*list(arguments + darg * vec)) for darg in noise.domain_arguments]
-            else:
-                pmats = [gate.process_matrix for darg in noise.domain_arguments]
-            pmats_list.append(pmats)
-        new_pmats_list = [[pmats[i] for pmats in pmats_list] for i in range(len(pmats_list[0]))]
-        process_mats = [_combine_process_matrices(ps) for ps in new_pmats_list]
-        probs = [noise.probability_density_function(darg) for darg in noise.domain_arguments]
-        ys = np.array([p * chi for p, chi in zip(probs, process_mats)])
-        process_matrix = trapz_for_matrix(ys, noise.domain_arguments) 
-        return cls(gates[0].basis, process_matrix, gates)
+        parameters = _determine_circuit_parameters(gates)
+        parameter_names, arguments = list(parameters.keys()), list(parameters.values())
+        gate_set = _determine_gate_set(gates)
 
-def _combine_process_matrices(process_matrices: list[Matrix]):
-    """Combine a series of process matrices (in chronological order) into a single process matrix for the whole circuit."""
-    if len(process_matrices) == 1:
-        return process_matrices[0]
-    else:
-        return np.linalg.multi_dot(process_matrices[::-1])
+        def process_matrix_function(*args):
+            inputs = [*args]
+            assert(len(inputs) == len(parameter_names))
+            process_matrix_set = {}
+            for gate in gate_set:
+                if gate.process_matrix_function is not None:
+                    names = list(gate.parameters.keys())
+                    gate_args = [inputs[parameter_names.index(name)] for name in names]
+                    process_matrix_set[gate] = gate.process_matrix_function(*gate_args)
+                else:
+                    process_matrix_set[gate] = gate.process_matrix
+            process_matrices = [process_matrix_set[gate] for gate in gates]
+            return _combine_transformation_matrices(process_matrices)
+
+        if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
+            process_matrix = _combine_transformation_matrices([gate.process_matrix for gate in gates])
+            return cls(gates[0].basis, process_matrix, gates, process_matrix_function, parameters)
+
+        noisy_parameter_index = parameter_names.index(noise.parameter_name)
+        process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
+        return cls(gates[0].basis, process_matrix_function(*arguments), gates, process_matrix_function, parameters)
+
+def _determine_gate_set(gates: list[Gate]):
+    """Determine the set of unique gates in the circuit."""
+    set = []
+    for gate in gates:
+        if gate not in set:
+            set +=[gate]
+    return set
+
+def _determine_circuit_parameters(gates: list[Gate]):
+    """Determine the set of parameters that includes the parameters of each gate in the circuit without repeating."""
+    params = {}
+    for gate in gates:
+        for name, value in gate.parameters.items():
+            if name not in params.keys():
+                params[name] = value
+            else:
+                if params[name] != value:
+                    raise IonSimError(
+                        f"In a previous gate, the value of {name} was {params[name]}. In the current gate,"
+                        f"the value of {name} is {value}. Parameters with the same name must have the same value "
+                        "in all gates. Otherwise, they are different parameters and must have different names. "
+                        )
+    return params
+
+def _combine_transformation_matrices(matrices: list[Matrix]):
+    """Combine a series of transformation matrices (in chronological order) into a single transformation matrix."""
+    if len(matrices) == 1:
+        return matrices[0]
+    return np.linalg.multi_dot(matrices[::-1])
+
