@@ -1,6 +1,6 @@
 from ionsim.basis import StandardBasis
 from ionsim.coupling import Coupling, CouplingOperator
-from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix
+from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix, as_dense_matrix
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, SMALLEST_ENERGY_SCALE
 from ionsim.custom_math import solve_time_evolution_equation
 from ionsim.ionsim_error import IonSimError
@@ -8,7 +8,7 @@ from ionsim.ionsim_error import IonSimError
 from dataclasses import dataclass
 import numpy as np
 from scipy.sparse import csr_matrix
-from typing import Callable, cast
+from typing import Callable
 from functools import cached_property
 
 from icecream import ic
@@ -321,9 +321,7 @@ class Hamiltonian:
         """Evolve a supervector by solving the time-dependent Lindblad master equation."""
         # TODO: add suport for sparse matrices
         assert(self.size == np.sqrt(len(initial_supervector)))
-        from scipy.sparse import issparse
-        if issparse(dissipation_matrix):
-            dissipation_matrix = cast(SparseMatrix, dissipation_matrix).toarray()
+        dissipation_matrix = as_dense_matrix(dissipation_matrix)
         super_ham = lambda t: (
             np.kron(np.eye(self.size), self.hamiltonian_function(t))
             - np.kron(self.hamiltonian_function(t).T, np.eye(self.size))
