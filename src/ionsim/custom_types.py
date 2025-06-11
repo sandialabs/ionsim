@@ -1,11 +1,23 @@
-from typing import Any, Type
-from nptyping import NDArray, Shape
+import sys
+from typing import Any, TypeAlias
+from numpy.typing import NDArray
+from scipy.sparse import spmatrix
 
-from icecream import ic
+if sys.version_info >= (3, 10):
+    Vector: TypeAlias = NDArray[Any]
+    Matrix: TypeAlias = NDArray[Any]
 
-Vector = NDArray[Shape['*'], Any] # TODO: make this actually specifiy a vector. At the moment, I think it takes any shape. 
-Matrix = NDArray[Shape['Size, Size'], Any]
+    SparseVector: TypeAlias = spmatrix
+    SparseMatrix: TypeAlias = spmatrix
 
-# def update_annotations(annotations: dict['str', Any], bases: list[type]) -> None:
-#     for base in bases:
-#         annotations.update(getattr(base, '__annotations__', dict()))
+    AnyVector: TypeAlias = Vector | SparseVector
+    AnyMatrix: TypeAlias = Matrix | SparseMatrix
+else:
+    Vector = NDArray[Any]
+    Matrix = NDArray[Any]
+
+    SparseVector = spmatrix
+    SparseMatrix = spmatrix
+
+    AnyVector = Vector | SparseVector
+    AnyMatrix = Matrix | SparseMatrix
