@@ -15,21 +15,41 @@ private/public key pair (by default in `~/.ssh/rsa_id` and
 ### Create a virtual environment (optional)
 
 First, make sure you have a version of Python downloaded from
-python.org. IonSim is intended to work with all current versions of
-Python, but support for newer releases may lag by a few months.
+python.org, homebrew, apt, yum, etc. depending on your system. IonSim
+is intended to work with all current versions of Python, but support
+for newer releases may lag by a few months.
+
+#### Windows
 
 Assuming the binary downloaded to
-`~/AppData/Local/Programs/Python/Python313/python.exe` (as on
-Windows), run the following command (change myvenv to the name you
-want to call the virtual environment):
+`~/AppData/Local/Programs/Python/Python313/python.exe`, run the
+following commands (change myvenv to the name you want to call the
+virtual environment):
 
 ```bash
 # Create the virtual environment
 ~/AppData/Local/Programs/Python/Python313/python.exe -m venv myvenv
 
-# Activate the virtual environment. Note that in Linux or Mac the Scripts
-# directory may be called bin instead.
+# Activate the virtual environment.
 source myvenv/Scripts/activate
+```
+
+#### Linux/Mac
+
+Exact instructions may vary by system.
+
+Typing `python` or `python3` at the command prompt will use the
+system's default Python. If you want a more recent version, install it
+with your system's package manager. It will then often be called
+something like `python313`. Run the following from the command line:
+
+```bash
+# Create the virtual environment. Use the python version (python, python3,
+# python313, etc.) you wish to the virtual environment to have.
+python -m venv myvenv
+
+# Activate the virtual environment.
+source myvenv/bin/activate
 ```
 
 ### Set up Nexus
