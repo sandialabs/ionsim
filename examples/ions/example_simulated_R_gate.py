@@ -19,8 +19,8 @@ sparse = False
 
 modulate_amplitude = False
 
+# number of qubits: 
 num_spins = 1
-
 spins = [
     sm.AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
     for _ in range(num_spins)
@@ -41,7 +41,10 @@ def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
     operators = [
         sm.CouplingOperator.from_matrix(basis, operator, omega, modulation_function=mod),
     ]
+    # Extract carrier / resonant frequencies of each state for interaction frame: 
     interaction_frame_energies = [-state.energy for state in basis.states] # implement arbitrary hamiltonian (with time-dependence? need an adiabatic intertwiner)
+
+    # Create a Hamiltonian from the list of basis states (basis), the list of operators (operators).
     return sm.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
 
 rabi_rate = 100e3 * 2*np.pi # rad./s

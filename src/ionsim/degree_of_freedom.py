@@ -58,6 +58,14 @@ class AtomicSpin(DegreeOfFreedom):
                     if level_names is None or level.name in level_names: 
                         levels.append(level)
             else:
+                # TODO: Shouldn't this loop do: np.arange(-(I - J), I + J + 1)?
+                # i.e. np.arange(np.abs(I - J), I + J + 1) ?
+                # ex) I = 1/2, J = 1/2. the np.arange() will give you [-1, 0, +1]
+                # errors here are saved by the if statement to only create user specified levels
+                # TODO: replace np.arange() set up with testable function. 
+                # The current code does work for F = 1/2 (J = 0, I =1/2) nuclear qubits
+                # TODO: Should we add functionality to produce a warning or error if the user-specified levels are not 
+                # part of the spectrum? e.g. if they ask for a level that doesn't exist. 
                 for f in np.arange(-(j + nuclear_spin), j + nuclear_spin + 1):
                     for mf in np.arange(-f, f + 1):
                         level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf)
