@@ -58,7 +58,7 @@ class AtomicSpin(DegreeOfFreedom):
                     if level_names is None or level.name in level_names: 
                         levels.append(level)
             else:
-                for f in np.arange(-(j + nuclear_spin), j + nuclear_spin + 1):
+                for f in np.arange(np.abs(j - nuclear_spin), j + nuclear_spin + 1):
                     for mf in np.arange(-f, f + 1):
                         level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf)
                         if level_names is None or level.name in level_names:
