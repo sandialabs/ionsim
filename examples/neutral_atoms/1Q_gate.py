@@ -13,16 +13,12 @@ num_spins = 1 # single qubit for now
 
 # Define neutral atom qubit(s). 
 # Qubit = ground levels of F = 1/2 hyperfine manifold of the 6s^2 orbital. In the neutral atom, this orbital has a singlet configuration. 
-
-
 print('Testing script for Neutral atom 171Yb')
-
 
 spins = [
     sm.AtomicSpin.from_species(species='171Yb', term_symbols=['S0'], level_names=['S0,1/2,-1/2', 'S0,1/2,1/2'])
     for _ in range(num_spins)
 ]
-
 
 # Nuclear spin qubit in J = 0 manifold has degenerate levels naturally. Therefore, apply a bias magnetic field to set the qubit frequency. 
 # Assuming all qubits have same frequency 
@@ -42,7 +38,7 @@ def compute_qubit_frequency(B_field: float, Zeeman_prefactor: float) -> float:
   print('Qubit frequency: ' + str(omega_qubit) + ' kHz ') 
   return np.abs(omega_qubit)
 
-compute_qubit_frequency(bias_magnetic_field, Zeeman_prefactor_1S0)
+ground_qubit_freq = compute_qubit_frequency(bias_magnetic_field, Zeeman_prefactor_1S0)
 
 # Create basis of spins 
 basis = sm.StandardBasis([*spins])
@@ -50,28 +46,32 @@ basis = sm.StandardBasis([*spins])
 # Perform rotation on the one spin 
 target_spins = [spins[0]]
 
+# Define physical R gate Hamiltonian
+def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
+    ''' phi is the overall gate phase '''
+    ''' omega is the qubit frequency'''
+    ''' rabi_rate is the Rabi frequency of the effective or true 1-photon pulse '''
+    
+    prefactor = np.exp(1j*phi) * rabi_rate/2  
+    # Raising operator for spin of interest. # enlarge operation will expand for N-qubit hilber space even though 1Q op
+    # list of raising operators 
 
+    # XY rotation operator requires \sigma_{+} and \sigma_{-} operators. Can take H.C. of \sigma_{+} to get \sigma_{-}
+    raise_target_spins = [basis.enlarge_matrix(sm.Pauli.plus, [spin]) for spin in target_spins]
 
+    operator = prefactor * raise_target_spins[0]
 
+    operators = [
+        sm.CouplingOperator.from_matrix(basis, operator, omega, modulation_function=mod),
+    ]
+    # Extract carrier / resonant frequencies of each state for interaction frame: 
+    interaction_frame_energies = [-state.energy for state in basis.states] # implement arbitrary hamiltonian (with time-dependence? need an adiabatic intertwiner)
 
- #
- #def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
- #
- #    phase = phi
- #    prefactor = np.exp(1j*phase) * rabi_rate/2  
- #
- #    raise_target_spins = [basis.enlarge_matrix(sm.Pauli.plus, [spin]) for spin in target_spins]
- #
- #    operator = prefactor * raise_target_spins[0]
- #
- #    operators = [
- #        sm.CouplingOperator.from_matrix(basis, operator, omega, modulation_function=mod),
- #    ]
- #    interaction_frame_energies = [-state.energy for state in basis.states] # implement arbitrary hamiltonian (with time-dependence? need an adiabatic intertwiner)
- #    return sm.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
- #
- #rabi_rate = 100e3 * 2*np.pi # rad./s
- #detuning = 0
+    # Create a Hamiltonian from the list of basis states (basis), the list of operators (operators).
+    return sm.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
+
+rabi_rate = 100e3 * 2*np.pi # rad./s
+detuning = 0
  #
  #omega = (
  #    + target_spins[0].energy_levels[1].energy - target_spins[0].energy_levels[0].energy
