@@ -52,29 +52,35 @@ python -m venv myvenv
 source myvenv/bin/activate
 ```
 
-### Set up Nexus
+### Set up Nexus (Optional)
 
-Sandia's network proxy makes it difficult to use pypi.org, the general
-source of all Python packages. As a workaround, Sandia maintains a
-mirror inside the SRN, `nexus.web.sandia.gov`. Use the below bash
-commands to configure pip. Make sure you have activated the virtual
-environment created above.
+In the past, Sandia's network proxy made it difficult to use pypi.org,
+the general source of all Python packages. As a workaround, Sandia
+maintains a mirror inside the SRN, `nexus.web.sandia.gov`. Use the
+below bash commands to configure pip to use Nexus. Make sure you have
+activated the virtual environment created above.
+
+Before performing these commands, try the following `pip` command. If
+no errors occur, you do not need to set up Nexus.
+
+```bash
+# Test connectivity to pypi.org
+pip install --dry-run requests
+```
+
+If the above command failed, proceed with the following:
 
 ```bash
 # Unset any bash environment variables for the proxy
 unset http_proxy
 unset https_proxy
 
-# Unset any previous sandia proxy configuration in pip
+# Unset any previous sandia proxy configuration in pip. It is ok if this command errors.
 pip config unset global.proxy
 
 # Set Sandia Nexus pip configuration variables
 pip config set global.index "https://nexus.web.sandia.gov/repository/pypi-proxy/pypi"
 pip config set global.index-url "https://nexus.web.sandia.gov/repository/pypi-proxy/simple"
-
-# If you want to add our private Nexus.
-# However, pip will ask for a user and password and you must be a member of wg-ioncontrol-users or wg-qscout
-pip config set global.extra-index-url "https://resnexus.web.sandia.gov/repository/iontraps/simple"
 
 # Add trusted hosts if you get certificate errors.
 pip config set global.trusted-host "pypi.org files.pythonhosted.org nexus.web.sandia.gov resnexus.web.sandia.gov"
