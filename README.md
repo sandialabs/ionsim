@@ -99,6 +99,16 @@ option. Click that, then the "Add new key" button. Copy the key from
 earlier (located in `~/.ssh/id_rsa.pub`) into the "Key" text
 box. Click the "Add key" button.
 
+Test your connection by running `ssh -T git@gitlab-ex.sandia.gov`.
+You should see a welcome message without being prompted for a password.
+
+If there is a problem with your connection, as has sometimes happened when running the above instruction on a Mac, try adding the following lines to your `~/.ssh/config` file:
+
+```
+PubkeyAcceptedAlgorithms +ssh-rsa
+IdentityFile ~/.ssh/id_rsa
+```
+
 ### Install IonSim
 
 In a bash terminal, activate your virtual environment. Now type the
