@@ -1,7 +1,8 @@
 ---
 species: '171Yb+'
-mass: 170.936323 # units!
-nuclear_spin: 0.5
+mass: 170.936323 # Daltons 
+Z: 70  # number of protons, must be integral 
+nuclear_spin: 0.5 
 charge: 1.0 # Coulomb
 magnetic_moment: 0.4919 # units!
 levels:

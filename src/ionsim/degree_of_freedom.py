@@ -14,6 +14,8 @@ from typing import Sequence
 
 from icecream import ic
 
+from zeeman_solver import Zeeman_Hyperfine_Solver
+
 @dataclass(frozen=True, eq=False)
 class DegreeOfFreedom(ABC):
     """A degree of freedom in a basis of states."""
@@ -27,12 +29,14 @@ class AtomicSpin(DegreeOfFreedom):
 
     @classmethod
     def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None,
-            name: str | None = None):
+            name: str | None = None, magnetic_field: float=0.):
         """Build the atomic spin degree of freedom for a particular species of atom."""
         config_data = cls.get_config_data(species)
         nuclear_spin = config_data['nuclear_spin']
         levels_data = config_data['levels']
-        structure = 'fine' if nuclear_spin == 0 else 'hyperfine'
+        mass = config_data['mass'] # Daltons
+        magnetic_moment = config_data['magnetic_moment'] # units of \mu_{N}
+        structure = 'fine' if nuclear_spin == 0 else 'hyperfine' 
 
         if term_symbols is not None:
             levels_data = cls.select_some_data(term_symbols, levels_data)
@@ -48,27 +52,32 @@ class AtomicSpin(DegreeOfFreedom):
             get_fine_data, FineLevel, HyperfineLevel = cls.get_level_factory(level_data['coupling_scheme'])
             fine_data = get_fine_data(level_data)
             j = fine_data['j']
+            l = fine_data['l']
+            s = fine_data['s']
 
             # ic(FineLevel.__annotations__, FineLevel(**fine_data, mj={'key': 1}))
             # TODO: why is mypy not catching this??
 
+            # Use Zeeman Solver here based on level manifold. 
+            # TODO: Consider adding a constant vector magnetic field. Currently assumes one direction 
+            if magnetic_field != 0. :
+                Zeeman_solver = Zeeman_Hyperfine_Solver(nuclear_spin, j, l, s, fine_data['hyperfine_A'], mass, magnetic_moment, Z, False)
+                zeeman_energy_shifts, zeeman_eigenvecs = Zeeman_solver.solve_at_field(magnetic_field)
+                state_labels = Zeeman_solver.m_F_labels(zeeman_eigenvecs)
+                
+            # - this will yield a set of energy shifts for each level
+            # - feed in energy shifts to the FineLevel() and HyperFineLevel() constructors in the following loop
+
+            # Construct levels based on coupling structure 
             if structure == 'fine':
                 for mj in np.arange(-j, j + 1):
-                    level = FineLevel(**fine_data, mj=mj)
+                    level = FineLevel(**fine_data, mj=mj, magnetic_field_strength=magnetic_field)
                     if level_names is None or level.name in level_names: 
                         levels.append(level)
             else:
-                # TODO: Shouldn't this loop do: np.arange(-(I - J), I + J + 1)?
-                # i.e. np.arange(np.abs(I - J), I + J + 1) ?
-                # ex) I = 1/2, J = 1/2. the np.arange() will give you [-1, 0, +1]
-                # errors here are saved by the if statement to only create user specified levels
-                # TODO: replace np.arange() set up with testable function. 
-                # The current code does work for F = 1/2 (J = 0, I =1/2) nuclear qubits
-                # TODO: Should we add functionality to produce a warning or error if the user-specified levels are not 
-                # part of the spectrum? e.g. if they ask for a level that doesn't exist. 
-                for f in np.arange(-(j + nuclear_spin), j + nuclear_spin + 1):
+                for f in np.arange(np.abs(j - nuclear_spin), j + nuclear_spin + 1):
                     for mf in np.arange(-f, f + 1):
-                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf)
+                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, magnetic_field_strength=magnetic_field)
                         if level_names is None or level.name in level_names:
                             levels.append(level)
         return cls(levels, name)

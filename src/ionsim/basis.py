@@ -102,6 +102,8 @@ class Basis(ABC):
 
     # TODO: change name to array since it works for vectors too. We use it for both row and columns vectors. 
     # TODO: implement sparse matrices
+    # Function can take a 1 qubit operator and enlarge it to act on multiple qubits, .e.g
+    # \sigma_+ \kron I_2 => raise qubit 1 while keeping qubit 2 the same 
     def enlarge_matrix(self, matrix: Matrix, current_dofs: list[DegreeOfFreedom]): 
         """Enlarge the dimension of a matrix with some degrees of freedome to include all degrees of freedom in the basis."""
         if len(current_dofs) == len(self.degrees_of_freedom):

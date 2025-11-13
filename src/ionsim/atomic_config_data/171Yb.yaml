@@ -1,6 +1,7 @@
 ---
 species: '171Yb'  # Neutral 
 mass: 170.936323 # Daltons
+Z: 70  # number of protons, must be integral 
 nuclear_spin: 0.5
 charge: 0.0 # Coulomb
 magnetic_moment: 0.4919 # \times \mu_{N}, the nuclear magneton  
@@ -66,7 +67,7 @@ levels:
     n: 6
     s: 1.
 
-# TODO: ADD REFERENCES FOR ALL NUMBERS!
+# References: 
 # arxiv.org/pdf/2509.04416
 
 # lifetime excited state: \tau = 1/\Gamma , \Gamma = decay rate

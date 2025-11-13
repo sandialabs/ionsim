@@ -13,10 +13,11 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     n: float 
     j: float
     term_symbol: str
-    fine_energy: float
+    fine_energy: float 
     hyperfine_A: float
     lifetime: float
     branching_ratios: dict[str, float] # TODO: Shouldn't this need " | None "? Why doesn't this cause a mypy error?
+    magnetic_field_strength : float = 0 
 
     @property
     @abstractmethod
@@ -38,11 +39,23 @@ class AtomicInternalEnergyLevel(EnergyLevel):
         if self.i == 0:
             return self.fine_energy
         else:
-            return self.fine_energy + self.hyperfine_energy_shift
+            return self.fine_energy + self.hyperfine_energy_shift 
+
+    @property
+    def shift_energy(self):
+        """ Energy shifts from external fields, such as time-independent Zeeman or Stark shifts.""" 
+        Zeeman_shift = 0.
+        Stark_shift = 0.
+        if magnetic_field_strength != 0. : 
+            Zeeman_shift = compute_Zeeman_shift(self.magnetic_field_strength)
+            # TODO: Consider cacheing this shift if the calculation is expenses and needs to be done throughout a time evolution 
+        return Zeeman_shift + Shark_shift
 
     @property
     def energy(self): # TODO: see comment next to 'bare_energy'
-        return self.bare_energy
+        # Maybe incorporate a magnetic field strength argument here to compute a Zeeman shift? 
+        # Add an attribute to the class for the magnetic field, default to zero or None 
+        return self.bare_energy + self.shift_energy # + self.compute_Zeeman_energy(magnetic_field_strength)
 
 @dataclass(frozen=True, eq=False)
 class LSFineLevel(AtomicInternalEnergyLevel): 

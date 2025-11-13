@@ -9,7 +9,7 @@ from icecream import ic
 @dataclass(frozen=True, eq=False)
 class CollectiveMotionalEnergyLevel(EnergyLevel):
     """An energy level of a normal mode of motion of an ion chain."""
-    mode_frequency: float
+    mode_frequency: float # rad/s  
     fock_number: float # TODO: someday we'll need to make a motional basis of coherent states
 
     @property

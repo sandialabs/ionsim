@@ -20,7 +20,7 @@ sparse = False
 modulate_amplitude = False
 
 # number of qubits: 
-num_spins = 1
+num_spins = 2
 spins = [
     sm.AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
     for _ in range(num_spins)
@@ -47,7 +47,7 @@ def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
     # Create a Hamiltonian from the list of basis states (basis), the list of operators (operators).
     return sm.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
 
-rabi_rate = 100e3 * 2*np.pi # rad./s
+rabi_rate = 200e3 * 2*np.pi # rad./s
 detuning = 0
 
 omega = (
