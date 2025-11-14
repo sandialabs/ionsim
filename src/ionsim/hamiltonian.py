@@ -85,12 +85,17 @@ class Hamiltonian:
                     for column, column_state in enumerate(self.basis.states):
                         if (row_state, column_state) == (coupling.upper_state, coupling.lower_state):
                             op_Hints.append(csr_matrix(([coupling.strength], ([row], [column])), shape=(self.size, self.size)))
-                            total_rate = (
-                                + coupling.oscillation_rate
-                                + self.rotating_frame_energies[row]
-                                - self.rotating_frame_energies[column]
-                            )
-                            total_rate = total_rate if abs(total_rate) > SMALLEST_ENERGY_SCALE else 0
+                            # Only add rotating_frame_energies to rate if oscillation_rate is non-zero
+                            # For time-independent H (oscillation_rate=0), rate should be zero
+                            if abs(coupling.oscillation_rate) > SMALLEST_ENERGY_SCALE:
+                                total_rate = (
+                                    + coupling.oscillation_rate
+                                    + self.rotating_frame_energies[row]
+                                    - self.rotating_frame_energies[column]
+                                )
+                                total_rate = total_rate if abs(total_rate) > SMALLEST_ENERGY_SCALE else 0
+                            else:
+                                total_rate = 0
                             op_Rates.append(csr_matrix(([total_rate], ([row], [column])), shape=(self.size, self.size)))
                             ### [row, column] corresponds to phase factor next to raising operator: sigma^dagger exp[-i rate t]
             Hints.append(np.sum(op_Hints, axis=0))
@@ -308,6 +313,34 @@ class Hamiltonian:
     def evolve_wavefunction(self, initial_wavefunction: Vector, duration: float, time_evals: Vector | None = None, **kwargs):
         """Evolve a wavefunction by solving the time-dependent Schrodinger equation."""
         assert(self.size == len(initial_wavefunction))
+        
+        # Fast path: if H is time-independent, use matrix exponential
+        if self.all_rates_are_zero and self.all_mods_are_none:
+            from scipy.linalg import expm
+            from icecream import ic
+            H_matrix = self.hamiltonian_function(0.0)
+            if hasattr(H_matrix, 'toarray'):  # sparse
+                H_matrix = H_matrix.toarray()
+            unitary = expm(-1j * H_matrix * duration)
+            final_wavefunction = unitary @ initial_wavefunction
+            
+            if time_evals is None:
+                # Return only final state
+                ic('Used fast expm path for wavefunction evolution (final state only).')
+                return [0.0, duration], [initial_wavefunction, final_wavefunction]
+            else:
+                # Return states at requested times
+                ic('Used fast expm path for wavefunction evolution (with time_evals).')
+                wavefunctions = []
+                for t in time_evals:
+                    if t == 0.0:
+                        wavefunctions.append(initial_wavefunction)
+                    else:
+                        U_t = expm(-1j * H_matrix * t)
+                        wavefunctions.append(U_t @ initial_wavefunction)
+                return list(time_evals), wavefunctions
+        
+        # Slow path: time-dependent Hamiltonian requires ODE integration
         import time
         from icecream import ic
         start = time.perf_counter()
