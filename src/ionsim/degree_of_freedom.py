@@ -2,6 +2,7 @@ from ionsim.energy_level import EnergyLevel
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.atomic_internal_energy_level import LSFineLevel, LSHyperfineLevel, J1L2FineLevel, J1L2HyperfineLevel
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel
+from ionsim.zeeman_solver import Zeeman_Hyperfine_Solver
 
 import importlib.resources
 from pathlib import Path
@@ -13,8 +14,6 @@ import numpy as np
 from typing import Sequence
 
 from icecream import ic
-
-from zeeman_solver import Zeeman_Hyperfine_Solver
 
 @dataclass(frozen=True, eq=False)
 class DegreeOfFreedom(ABC):
@@ -35,6 +34,7 @@ class AtomicSpin(DegreeOfFreedom):
         nuclear_spin = config_data['nuclear_spin']
         levels_data = config_data['levels']
         mass = config_data['mass'] # Daltons
+        Z = config_data['Z'] # Atomic number, number of protons 
         magnetic_moment = config_data['magnetic_moment'] # units of \mu_{N}
         structure = 'fine' if nuclear_spin == 0 else 'hyperfine' 
 
@@ -58,26 +58,33 @@ class AtomicSpin(DegreeOfFreedom):
             # ic(FineLevel.__annotations__, FineLevel(**fine_data, mj={'key': 1}))
             # TODO: why is mypy not catching this??
 
-            # Use Zeeman Solver here based on level manifold. 
-            # TODO: Consider adding a constant vector magnetic field. Currently assumes one direction 
+            # Use Zeeman Solver based on level manifold to compute Zeeman shifts 
             if magnetic_field != 0. :
-                Zeeman_solver = Zeeman_Hyperfine_Solver(nuclear_spin, j, l, s, fine_data['hyperfine_A'], mass, magnetic_moment, Z, False)
+                #print('Applying Zeeman shift to level manifold ' + level_data['unique_term_symbol'])
+                Zeeman_solver = Zeeman_Hyperfine_Solver(nuclear_spin, j, l, s, fine_data['hyperfine_A'], mass, magnetic_moment, Z, suppress_output = True)
                 zeeman_energy_shifts, zeeman_eigenvecs = Zeeman_solver.solve_at_field(magnetic_field)
-                state_labels = Zeeman_solver.m_F_labels(zeeman_eigenvecs)
-                
-            # - this will yield a set of energy shifts for each level
-            # - feed in energy shifts to the FineLevel() and HyperFineLevel() constructors in the following loop
 
             # Construct levels based on coupling structure 
             if structure == 'fine':
                 for mj in np.arange(-j, j + 1):
-                    level = FineLevel(**fine_data, mj=mj, magnetic_field_strength=magnetic_field)
+                    # Extract any Zeeman or stark shifts for this mF state 
+                    zeeman_shift_energy = 0.
+                    if magnetic_field != 0. :
+                        zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, F = j, m_F = mj)
+                    # Create the level 
+                    level = FineLevel(**fine_data, mj=mj, zeeman_shift=zeeman_shift_energy)
                     if level_names is None or level.name in level_names: 
                         levels.append(level)
             else:
                 for f in np.arange(np.abs(j - nuclear_spin), j + nuclear_spin + 1):
                     for mf in np.arange(-f, f + 1):
-                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, magnetic_field_strength=magnetic_field)
+                        # Extract any Zeeman or stark shifts for this mF state 
+                        zeeman_shift_energy = 0.
+                        if magnetic_field != 0. :
+                            zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, F = f, m_F = mf)
+
+                        # Create the level 
+                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, zeeman_shift = zeeman_shift_energy)
                         if level_names is None or level.name in level_names:
                             levels.append(level)
         return cls(levels, name)

@@ -6,3 +6,4 @@ from .state import State
 from .named_operators import Pauli, Fock, Unitary
 from .process import Gate, Circuit
 from .noise import Noise
+from .zeeman_solver import Zeeman_Hyperfine_Solver
