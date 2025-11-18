@@ -61,8 +61,9 @@ class AtomicSpin(DegreeOfFreedom):
             # Use Zeeman Solver based on level manifold to compute Zeeman shifts 
             if magnetic_field != 0. :
                 #print('Applying Zeeman shift to level manifold ' + level_data['unique_term_symbol'])
-                Zeeman_solver = Zeeman_Hyperfine_Solver(nuclear_spin, j, l, s, fine_data['hyperfine_A'], mass, magnetic_moment, Z, suppress_output = True)
+                Zeeman_solver = Zeeman_Hyperfine_Solver(nuclear_spin, j, l, s, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, Z, suppress_output = True)
                 zeeman_energy_shifts, zeeman_eigenvecs = Zeeman_solver.solve_at_field(magnetic_field)
+                zeeman_energy_shifts *= np.pi*2. # convert to rad/s 
 
             # Construct levels based on coupling structure 
             if structure == 'fine':

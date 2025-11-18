@@ -347,25 +347,34 @@ class Zeeman_Hyperfine_Solver():
         m_F = results['m_F']
 
         xlabel = 'Magnetic Field [' + self.magnetic_units_str + ']'
-        
+
+        # Get number of total |F| states 
+        F_range = np.arange(np.abs(self.I - self.J), self.I + self.J + 1)
+        F_states = len(F_range)
+        num_states_per_F = (2*F_range + 1).astype(int)
+
+        if show_labels: 
+            pcnt_offset = 1.0 # vertical offset for F hyperfine label 
+            for i, f in enumerate(F_range):
+                # Place label above the highest state curve within F manifold at low-field  
+                state_indx = num_states_per_F[i] + np.sum(num_states_per_F[0:i])
+                ax.text(-0.06*np.abs(B_fields[-1] - B_fields[0]), energies[0, state_indx-1]*(pcnt_offset), f"$F = {int(f)}$", ha='center', va='center')
+
         # Plot each level's Zeeman shift:
         for i in range(self.dim):
+            line, = ax.plot(B_fields, energies[:, i], linewidth = 2.)
             if show_labels:
-                # TODO: Add labels using F in low-field region, and m_{J} in high-field region 
-                #ax.text(B_fields[-1], energies[-1, i], f"(mJ, mI) = {self.basis_states[i]}")
-                #label_str = f' $m_F = ${m_F[-1, i]:.1f}' # use final field value for label 
-                label_str = f"(mJ, mI) = {self.basis_states[i][0]},{self.basis_states[i][1]}"
-                line, = ax.plot(B_fields, energies[:, i], linewidth = 2., label = label_str)
-            else:
-                line, = ax.plot(B_fields, energies[:, i], linewidth = 2.)
+                # TODO: Check labels for accuracy  
+                label_str = f"({self.basis_states[i][0]}, {self.basis_states[i][1]})"
+                ax.text(B_fields[-1]*1.02, energies[-1, i], label_str, va='center', ha='left', color = 'darkblue', fontsize=8)
 
         ax.set_xlabel(xlabel, fontsize = 24)
+        if show_labels:
+            ax.text(B_fields[-1]*0.8, 0.,'High field ($m_{J}$, $m_{I}$)', va = 'center', ha='left')
+            ax.set_xlim(-0.15*np.abs(B_fields[-1] - B_fields[0]), B_fields[-1]*1.2)
         ax.set_title(f'Zeeman shifts: L = {self.L}, J = {self.J}, I = {self.I}\n', fontsize = 16)
         ax.set_ylabel('$E/h$ \n [' + self.freq_units_str + ']', rotation = 0, fontsize=16, labelpad = 15)
         plt.tight_layout()
-        if show_labels:
-            # At low field, plot the total F quantum numbers 
-            plt.legend()
         return fig, ax
 
     @property
