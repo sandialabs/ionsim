@@ -38,6 +38,7 @@ def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
 
     operator = prefactor * raise_target_spins[0]
 
+    # Assumes working in qubit rotation frame (freq. omega)
     operators = [
         sm.CouplingOperator.from_matrix(basis, operator, omega, modulation_function=mod),
     ]
@@ -73,8 +74,10 @@ def main():
     # dphis = np.linspace(-np.pi, np.pi, 21)
     # phi_noise = sm.Noise.from_named_pdf('dphi', 'gaussian', {'standard_deviation': np.pi/10}, dphis)
 
+    # R gate from AMO physics 
     def simulated_R(phi, theta, domega):
         tau = abs(theta)/rabi_rate
+        # R_hamiltonian contains the target spin couplings for R-gate 
         hamiltonian = R_hamiltonian(basis, phi, rabi_rate, omega + domega, sparse=sparse, mod=amp_mod)
         start = time.perf_counter()
         ic(hamiltonian.hamiltonian_function(0))
@@ -101,7 +104,7 @@ def main():
     def process_fidelity(phi, theta, dx, dy):
         return R(phi, theta, dx, dy).compute_process_fidelity(ideal_R(phi, theta).process_matrix)
 
-    compute_state_fidelity = False
+    compute_state_fidelity = True 
     compute_process_fidelity = False
     compute_gate_on_grid = True
     compute_interpolated_gate = True
@@ -126,7 +129,7 @@ def main():
         ic(f'Building Hamiltonian took {end - start} s.')
 
         coefs = np.zeros(len(basis.states))
-        coefs[0] = 1
+        coefs[0] = 1 # presumably |00...0 (for N qubits)> state 
         initial_state = sm.State.from_coefficients(basis, list(coefs))
 
         times = np.linspace(0, tau, 41) # setting to None will return only the final spin state
@@ -136,6 +139,7 @@ def main():
         end = time.perf_counter()
         ic(f'Propagating state took {end - start} s.')
 
+        # What is the shape of psis? 
         probs = np.array([psi.compute_basis_state_probabilities() for psi in psis])
         ic(probs[-1,:])
 

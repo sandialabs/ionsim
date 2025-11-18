@@ -17,7 +17,7 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     hyperfine_A: float
     lifetime: float
     branching_ratios: dict[str, float] # TODO: Shouldn't this need " | None "? Why doesn't this cause a mypy error?
-    zeeman_shift : float
+    #external_energy_shift : float # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
 
     @property
     @abstractmethod
@@ -34,23 +34,24 @@ class AtomicInternalEnergyLevel(EnergyLevel):
         )
 
     @property
-    def bare_energy(self): # TODO: handle the dressed energy and A/C Stark shifts in the atom class since you need other levels
+    def bare_energy(self): 
         """The field-free energy of the hyperfine-structure level."""
         if self.i == 0:
             return self.fine_energy
         else:
             return self.fine_energy + self.hyperfine_energy_shift
 
-    @property
-    def shift_energy(self):
-        """ Energy shifts from external fields, such as time-independent Zeeman or Stark shifts.""" 
-        #Stark_shift = 0.
-        return self.zeeman_shift #+ self.Stark_shift
+    # @property
+    # def shift_energy(self):
+    #     """ Energy shifts from external fields, such as time-independent Zeeman or Stark shifts.""" 
+    #     #Stark_shift = 0.
+    #     # Consider just setting the shift energy upon construction  
+    #     return self.zeeman_shift #+ self.Stark_shift
 
     @property
     def energy(self):
         # Total energy: bare energy + shifts (e.g. Zeeman, stark)
-        return self.bare_energy + self.shift_energy 
+        return self.bare_energy + self.external_energy_shift 
 
 @dataclass(frozen=True, eq=False)
 class LSFineLevel(AtomicInternalEnergyLevel): 
@@ -58,6 +59,8 @@ class LSFineLevel(AtomicInternalEnergyLevel):
     l: float
     s: float
     mj: float
+    external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
+
 
     @property
     def i(self):
@@ -85,6 +88,7 @@ class LSHyperfineLevel(AtomicInternalEnergyLevel):
     i: float
     f: float
     mf: float
+    external_energy_shift: float = 0.
 
     @property
     def coupling_scheme(self):
@@ -104,6 +108,8 @@ class J1L2FineLevel(AtomicInternalEnergyLevel):
     k: float
     s2: float
     mj: float
+    external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
+
 
     @property
     def i(self):
@@ -129,6 +135,8 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
     i: float
     f: float
     mf: float
+    external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
+
 
     @property
     def coupling_scheme(self):
@@ -144,6 +152,3 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
 # def _check_uniqueness_of_term_symbols(term_symbols: list[str], levels_data: list[dict]):
 #     """Check whether the term symbol corresponds to a single energy level in the configuration data."""
 #     return all([_check_uniqueness_of_term_symbol(term_symbol, levels_data) for term_symbol in term_symbols])
-
-
-

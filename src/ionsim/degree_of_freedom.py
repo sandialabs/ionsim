@@ -67,24 +67,24 @@ class AtomicSpin(DegreeOfFreedom):
             # Construct levels based on coupling structure 
             if structure == 'fine':
                 for mj in np.arange(-j, j + 1):
-                    # Extract any Zeeman or stark shifts for this mF state 
+                    # Extract any Zeeman shifts for this state 
                     zeeman_shift_energy = 0.
                     if magnetic_field != 0. :
                         zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, F = j, m_F = mj)
                     # Create the level 
-                    level = FineLevel(**fine_data, mj=mj, zeeman_shift=zeeman_shift_energy)
+                    level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy)
                     if level_names is None or level.name in level_names: 
                         levels.append(level)
             else:
                 for f in np.arange(np.abs(j - nuclear_spin), j + nuclear_spin + 1):
                     for mf in np.arange(-f, f + 1):
-                        # Extract any Zeeman or stark shifts for this mF state 
+                        # Extract any Zeeman shifts for this mF state 
                         zeeman_shift_energy = 0.
                         if magnetic_field != 0. :
                             zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, F = f, m_F = mf)
 
                         # Create the level 
-                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, zeeman_shift = zeeman_shift_energy)
+                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy)
                         if level_names is None or level.name in level_names:
                             levels.append(level)
         return cls(levels, name)
