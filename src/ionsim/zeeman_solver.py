@@ -12,7 +12,7 @@ class Zeeman_Hyperfine_Solver():
 
     def __init__(self, I: float, J: float, L: int, S: float, A_hf:float, atomic_mass: float | None=None, 
                 nuclear_moment: float | None = None, Z: int | None = None, gI: float | None = None, 
-                suppress_output: bool=True, freq_units: str = 'Hz', magnetic_field_units = 'gauss'):
+                suppress_output: bool=True, freq_units: str = 'Hz', magnetic_field_units = 'gauss', mode: str = 'exact'):
         """ Initialize the solver. 
         Parameters: 
           I : Nuclear spin angular momentum magnitude (float)
@@ -38,6 +38,15 @@ class Zeeman_Hyperfine_Solver():
         self.nuclear_moment = nuclear_moment # in mu_{N} units
         self.gI = gI
         self.Z = Z
+        
+        # Set up the mode for solving:
+        # Options: 
+        #  "exact": considers both hyperfine and zeeman hamiltonian
+        #  "weak field": weak field limit, considers an effective linear Zeeman Hamiltonian 
+        self.mode = mode.lower()
+        print(self.mode)
+        if self.mode != 'exact' and self.mode != 'weak field':
+            raise ValueError("Invalid mode specified. Mode variable must be either 'exact' or 'weak field'.")
 
         # Create set of basis states in terms of Tuples (m_{J}, m_{I})
         self.basis_states = self.create_basis()
@@ -79,25 +88,53 @@ class Zeeman_Hyperfine_Solver():
             print(f"Initialized Zeeman-Hyperfine Solver:")
             print(f"    J = {self.J}, I = {self.I}, L = {self.L}, S = {self.S}")
             print(f"    A_HF = {self.A_hf} ") 
-            print(f"    basis states (m_J, m_I): ")
             self.print_basis_states()
 
 
 
     def create_basis(self) -> List[Tuple[float, float]]:
-        """ Creates the uncoupled basis |J, m_{J}, I, m_{I}>.
+        """ Creates a basis depending on the solver mode. 
+        For exact mode, the uncoupled basis |J, m_{J}, I, m_{I}> is used.
         The basis is a list of tuples, each containing a pair of m_J, m_I eigenvalues.
         Returns a list of tuples, where each tuple is (m_{J}, m_{I})
+
+        For weak field mode, the coupled basis |F, mF> is used.
+        The basis is a list of tuples containing F, mF pairs.
         """
         basis = []
-        for m_J in np.arange(-self.J, self.J + 1):
-            for m_I in np.arange(-self.I, self.I + 1):
-                basis.append((m_J, m_I))
+        
+        if self.mode == 'exact':
+            for m_J in np.arange(-self.J, self.J + 1):
+                for m_I in np.arange(-self.I, self.I + 1):
+                    basis.append((m_J, m_I))
+        elif self.mode == 'weak field':
+            # |F, mF> are good quatnum numbers
+            # The |mJ, mI> states are coupled. 
+            F_range = np.arange(np.abs(self.I - self.J), self.I + self.J + 1) 
+            for f in F_range:
+                for mF in np.arange(-f, f+1):
+                    basis.append((f, mF))
+        else:
+            raise ValueError("Invalid mode specified. Mode variable must be either 'exact' or 'weak field'.")
         return basis 
 
     def print_basis_states(self):
+        """ Function for printing out basis state information """
+
+        if self.mode == 'exact':
+            state_str = '(mJ, mI)'
+            #print(f"    basis states (mJ, mI): ")
+            # for state in self.basis_states:
+            #     print(f"    (mJ, mI) = {state[0]},{state[1]}")
+        elif self.mode == 'weak field':
+            state_str = '(F, mF)'
+            # print(f"    basis states (F, mF): ")
+            # for state in self.basis_states:
+            #     print(f"    (F, mF) = {state[0]},{state[1]}")
+        print(f"    basis states " + state_str + ": ")
         for state in self.basis_states:
-            print(f"    (mJ, mI) = {state[0]},{state[1]}")
+            print(f"    " + state_str + f" = {state[0]},{state[1]}")
+
 
     def hyperfine_matrix_element(self, m_J1: float, m_I1: float, m_J2: float, m_I2: float) -> float :
         """ Comptues the matrix element of hyperfine operator (I dot J) in the basis: 
@@ -105,6 +142,8 @@ class Zeeman_Hyperfine_Solver():
         
         I dot J = I_z J_z + 1/2 (I+ J- + J+ I-)
         """
+        assert self.mode == 'exact', "Error: Incorrect mode specified by user."
+
         J, I = self.J, self.I
         # Iz,Jz term: 
         if m_J1 == m_J2 and m_I1 == m_I2:
@@ -154,8 +193,14 @@ class Zeeman_Hyperfine_Solver():
 
         # Convention where the nuclear Zeeman term has \mu_{B} as its prefactor, with gI factor taking into account the nuclear magneton, e.g.: mu_B x gI x I x Bz / hbar 
         # Zeeman matrix is diagonal: I_{z} |J, m_{J}, I, m_{I} > = m_{I} |J, m_{J}, I, m_{I} >
-        for i, (m_J, m_I) in enumerate(self.basis_states):
-            H[i,i] = (self.Lande_gJ * m_J) + (self.Lande_gI * m_I)
+        if self.mode == 'exact':       
+            for i, (m_J, m_I) in enumerate(self.basis_states):
+                H[i,i] = (self.Lande_gJ * m_J) + (self.Lande_gI * m_I)
+        elif self.mode.lower() == 'weak field' :
+            for i, (f, mF) in enumerate(self.basis_states): 
+                H[i,i] = (self.Lande_gF(f) * mF)
+        else:
+            raise ValueError("Invalid mode specified. Mode variable must be either 'exact' or 'weak field'.")
 
         # Apply the units to the entire array simultaneously
         return (H * B_field * self.mu_B * planck_inverse).to(self.internal_freq_units) 
@@ -169,7 +214,10 @@ class Zeeman_Hyperfine_Solver():
             - energy eigenvalues (NDArray)
             - energy eigenvectors (d x d array), i.e. each eigenvector is a vector of dimension d
         """
-        H_total = self.hyperfine_hamiltonian() + self.zeeman_hamiltonian(B_z)
+        H_total = self.zeeman_hamiltonian(B_z)
+        if self.mode == 'exact':
+            H_total += self.hyperfine_hamiltonian() 
+
         energies, eigenvectors = eigh(H_total.magnitude)
         return energies, eigenvectors
 
@@ -180,27 +228,33 @@ class Zeeman_Hyperfine_Solver():
 
         Returns a 2D array of dimension N_Bfields x d 
         """
-        #print(eigvectors.shape)
         if len(eigvectors.shape) == 2:
             num_Bfields = 1
         else:
             num_Bfields = eigvectors.shape[0]
         m_F = np.zeros((num_Bfields, self.dim))
 
-        # Compute expectation for each B-field value via a sum over eigenstates
-        for i in range(num_Bfields):
-            for j in range(self.dim):
-                # j'th eigenvector:
-                if num_Bfields == 1:
-                    psi = eigvectors[:, j]
-                else:
-                    psi = eigvectors[i, :, j]
+        if self.mode == 'exact':
+            # Compute expectation for each B-field value via a sum over eigenstates
+            for i in range(num_Bfields):
+                for j in range(self.dim):
+                    # j'th eigenvector:
+                    if num_Bfields == 1:
+                        psi = eigvectors[:, j]
+                    else:
+                        psi = eigvectors[i, :, j]
 
-                m_F_avg = 0.
-                for k, (m_J, m_I) in enumerate(self.basis_states):
-                    m_F_avg += (np.abs(psi[k])**2)*(m_J + m_I)
+                    m_F_avg = 0.
+                    for k, (m_J, m_I) in enumerate(self.basis_states):
+                        m_F_avg += (np.abs(psi[k])**2)*(m_J + m_I)
 
-                m_F[i, j] = m_F_avg
+                    m_F[i, j] = m_F_avg
+
+        elif self.mode == 'weak field':
+            for i in range(num_Bfields):
+                for j, (f,mF) in enumerate(self.basis_states):
+                    m_F[i, j] = mF
+
         return m_F
 
 
@@ -247,79 +301,32 @@ class Zeeman_Hyperfine_Solver():
         except:
             raise ValueError(f"Invalid F value. Please choose in the range {F_range}")
 
-        left_indx = np.sum(num_states_per_F[0:F_indx]) # number of states to ignore 
+        if self.mode == 'exact':
+            left_indx = np.sum(num_states_per_F[0:F_indx]) # number of states to ignore 
 
-        mF_subarray = m_F_values[left_indx:left_indx + num_states_per_F[F_indx]] # to search for mF state 
-        try:
-            match_index = np.where(np.abs(mF_subarray - m_F) < 0.1)[0][0]
-            #match_index = list(mF_subarray).index(m_F)
-        except:
-            raise ValueError(f"Invalid mF value. Please choose in the range {mF_subarray}")
+            mF_subarray = m_F_values[left_indx:left_indx + num_states_per_F[F_indx]] # to search for mF state 
+            try:
+                match_index = np.where(np.abs(mF_subarray - m_F) < 0.1)[0][0]
+                #match_index = list(mF_subarray).index(m_F)
+            except:
+                raise ValueError(f"Invalid mF value. Please choose in the range {mF_subarray}")
+            return energies[left_indx + match_index]
+        elif self.mode == 'weak field':
+            requested_state = (F, m_F)
+            state_indx = -1
+            try:
+                state_indx = next(i for i, state in enumerate(self.basis_states) if state == requested_state)
+            except StopIteration:
+                raise("Basis state not found in the list of basis states.")
+            return energies[state_indx]
 
-        return energies[left_indx + match_index]
-
-        # m_F_values array has structure based on num_states_per_F
-        # start_indx = int(num_states_per_F[F_indx]) - 1
-        # end_indx = 
-        # mF_list_F = np.arange(-F, F+1)
-        # num_mF_states = len(mF_list_F)
-        # mF_indx = np.argmin(np.abs(mF_list_F - m_F))
-        # # Search sub-array of m_F_values to find index where desired mF occurs 
-        # match_index = 
-
-        # # Return energy of the F, mF state:
-        # solver_indx = num_mF_states*(F-1) + mF_indx
-        # return 
-
-        # TODO need to return state within correct F manifold 
-        # e.g. for Rb87, F = 1 and mF=-1 currently returns mF=-1 from both F = 1 and 2 manifolds for s orbital
-        # 2F+1 states per level 
-        # F_solver = (self.dim - 1)*0.5
-
-
-        # # Find matching states:
-        # for i in range(self.dim):
-        #     if m_F is not None:
-        #         if abs(m_F_values[0, i] - m_F) > tolerance :
-        #             continue
-        
-        #     if F is not None:
-        #         F_char = self.F_character(eigenvectors[:, i], F)
-        #         if F_char < 0.1:
-        #             continue
-        #     else:
-        #         F_char = None
-        #     # Dominant basis state: 
-        #     psi = eigenvectors[:, i]
-        #     dominant_indx = np.argmax(np.abs(psi)**2)
-        #     dominant_coeff = psi[dominant_indx]
-        #     dominant_basis = self.basis_states[dominant_indx]
-
-        #     matching_states.append({
-        #         'state_index' : i,
-        #         'energy' : energies[i],
-        #         'F_character' : F_char
-        #         'm_F' : m_F_values[0, i],
-        #         'dominant basis' : dominant_basis
-        #     })
-
-        # # Safety Checks:
-        # if len(matching_states) == 0.:
-        #     raise ValueError(f"No state found matching F = {F}, m_F = {m_F}")
-
-        # if len(matching_states) > 1:
-        #     if matching_states[0]['energy'] != matching_states[1]['energy']:
-        #         print(f"Energy of state {matching_states[0]['dominant basis']} = {matching_states[0]['energy']}")
-        #         print(f"Energy of state {matching_states[1]['dominant basis']} = {matching_states[1]['energy']}")
-        #         raise ValueError(f"Zeeman shifts are degenerate at this field condition.")
-
-        # return matching_states[0]
 
     def get_state_energy_from_mJmI_pair(self, energies: NDArray, mJ: float, mI: float) -> float:
         """ Returns the energy for a basis angular momentum state of interest: |mJ, mI> 
         At zero or low field, F is a good quantum number. At high field, (mJ, mI) are good quantum numbers/
         Assumes energies and eigenvectors at one magnetic field condition.
         Returns state energy. """
+        assert self.mode == 'exact', "Error. Request energies from (mJ, mI) pairs only in exact basis."
         # Get index at mJ, mI pair 
         mJ_states = [state[0] for state in self.basis_states]
         mI_states = [state[1] for state in self.basis_states]
@@ -348,29 +355,42 @@ class Zeeman_Hyperfine_Solver():
 
         xlabel = 'Magnetic Field [' + self.magnetic_units_str + ']'
 
-        # Get number of total |F| states 
-        F_range = np.arange(np.abs(self.I - self.J), self.I + self.J + 1)
-        F_states = len(F_range)
-        num_states_per_F = (2*F_range + 1).astype(int)
-
         if show_labels: 
             pcnt_offset = 1.0 # vertical offset for F hyperfine label 
-            for i, f in enumerate(F_range):
-                # Place label above the highest state curve within F manifold at low-field  
-                state_indx = num_states_per_F[i] + np.sum(num_states_per_F[0:i])
-                ax.text(-0.06*np.abs(B_fields[-1] - B_fields[0]), energies[0, state_indx-1]*(pcnt_offset), f"$F = {int(f)}$", ha='center', va='center')
+            # Get number of total |F| states 
+            if self.mode == 'exact':
+                F_range = np.arange(np.abs(self.I - self.J), self.I + self.J + 1)
+                # F_states = len(F_range)
+                num_states_per_F = (2*F_range + 1).astype(int)
+                for i, f in enumerate(F_range):
+                    # Place label above the highest state curve within F manifold at low-field  
+                    state_indx = num_states_per_F[i] + np.sum(num_states_per_F[0:i])
+                    ax.text(-0.06*np.abs(B_fields[-1] - B_fields[0]), energies[0, state_indx-1]*(pcnt_offset), f"$F = {int(f)}$", ha='center', va='center')
+            elif self.mode == 'weak field':
+                for i, (f, mf) in enumerate(self.basis_states):
+                    ax.text(-0.06*np.abs(B_fields[-1] - B_fields[0]), energies[0, i]*(pcnt_offset), f"$F = {int(f)}$", ha='center', va='center')
 
         # Plot each level's Zeeman shift:
         for i in range(self.dim):
-            line, = ax.plot(B_fields, energies[:, i], linewidth = 2.)
+            # Plot each curve with same color to prevent confusion with level mixing in intermediate region 
+            line, = ax.plot(B_fields, energies[:, i], linewidth = 1.25, color='k') 
             if show_labels:
-                # TODO: Check labels for accuracy  
-                label_str = f"({self.basis_states[i][0]}, {self.basis_states[i][1]})"
+                # TODO: Check labels for accuracy 
+                label_str = f"({self.basis_states[i][0]}, {self.basis_states[i][1]})" 
                 ax.text(B_fields[-1]*1.02, energies[-1, i], label_str, va='center', ha='left', color = 'darkblue', fontsize=8)
 
         ax.set_xlabel(xlabel, fontsize = 24)
         if show_labels:
-            ax.text(B_fields[-1]*0.8, 0.,'High field ($m_{J}$, $m_{I}$)', va = 'center', ha='left')
+            # Option 1, right section 
+            x_annotate = B_fields[1]*0.8
+            y_annotate = 0.
+            # Option 2 (better), top left corner 
+            x_annotate = -0.025*np.abs(B_fields[-1] - B_fields[0])
+            y_annotate = np.max(energies)
+            if self.mode == 'exact':
+                ax.text(x_annotate, y_annotate,'High field ($m_{J}$, $m_{I}$)', va = 'center', ha='left')
+            elif self.mode == 'weak field':
+                ax.text(x_annotate, y_annotate,'($F$, $m_{F}$)', va = 'center', ha='left')
             ax.set_xlim(-0.15*np.abs(B_fields[-1] - B_fields[0]), B_fields[-1]*1.2)
         ax.set_title(f'Zeeman shifts: L = {self.L}, J = {self.J}, I = {self.I}\n', fontsize = 16)
         ax.set_ylabel('$E/h$ \n [' + self.freq_units_str + ']', rotation = 0, fontsize=16, labelpad = 15)
@@ -380,7 +400,7 @@ class Zeeman_Hyperfine_Solver():
     @property
     def Lande_gL(self):
         """ Compute Lande g factor for orbital angular momentum: """
-        # g_L = 1. - (m_e / nuclear_mass)
+        """ gL = 1. - (m_e / nuclear_mass) """
         m_e = 9.109383713928E-31 * self.unit_reg("kg") # mass of electron in kg 
         m_e = m_e.to("dalton") # Daltons   
         # TODO: Change this to an exception to raise rather than having this hidden logic 
@@ -411,4 +431,16 @@ class Zeeman_Hyperfine_Solver():
         else:
             LLp1 = self.L*(self.L+1)
             SSp1 = self.S*(self.S+1)
-            return (self.Lande_gL*(JJp1 - SSp1 + LLp1) + gS*(JJp1 + SSp1 - LLp1) )*0.5/JJp1 
+            return (self.Lande_gL*(JJp1 - SSp1 + LLp1) + gS*(JJp1 + SSp1 - LLp1) )*0.5/JJp1 #
+
+    def Lande_gF(self, f: float) -> float:
+        """ Lande g factor for total hyperfine angular momentum. 
+        - takes in "F" the total angular momentum magnitude as an input """
+        ffp1 = f*(f+1)
+        if ffp1 == 0:
+            raise ValueError('Division by zero error. Do not use this function if F = 0.')
+        if self.Lande_gJ is None:
+            return self.Lande_gI
+        IIp1 = self.I*(self.I+1)
+        JJp1 = self.J*(self.J+1)
+        return ((self.Lande_gJ*0.5*(ffp1 - IIp1 + JJp1)) + self.Lande_gI*0.5*(ffp1 + IIp1 - JJp1))/ffp1
