@@ -17,7 +17,6 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     hyperfine_A: float
     lifetime: float
     branching_ratios: dict[str, float] # TODO: Shouldn't this need " | None "? Why doesn't this cause a mypy error?
-    #external_energy_shift : float # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
 
     @property
     @abstractmethod
@@ -40,13 +39,6 @@ class AtomicInternalEnergyLevel(EnergyLevel):
             return self.fine_energy
         else:
             return self.fine_energy + self.hyperfine_energy_shift
-
-    # @property
-    # def shift_energy(self):
-    #     """ Energy shifts from external fields, such as time-independent Zeeman or Stark shifts.""" 
-    #     #Stark_shift = 0.
-    #     # Consider just setting the shift energy upon construction  
-    #     return self.zeeman_shift #+ self.Stark_shift
 
     @property
     def energy(self):

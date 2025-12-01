@@ -13,62 +13,65 @@ levels:
     lifetime: null
     n: 6
     s: 0.0      # ground 6s^2 orbital is filled. 
-    #Zeeman_prefactor: -0.75056 # kHz/G 
 
   - term_symbol: 'P0' # 3P_0, Clock state: l = 1; j = 0
     coupling_scheme: 'ls'
     fine_energy: 518.29583659086363e+12 # Hz 
     hyperfine_A: 0  #  Hz
     lifetime: 21.0  # s 
-    n: 5
+    n: 6
     s: 1.0  # S = 1 triplet state  
-    #Zeeman_prefactor: -1.14966 # kHz/G  
 
   - term_symbol: 'P1' # 3P_1: l = 1; j = 1
     coupling_scheme: 'ls'
     fine_energy: 539.1950683453238e+12 # Hz 
     hyperfine_A: 3.95785e+9 # Hz
     lifetime: 872.6e-9 # s 
-    n: 5
+    n: 6
     s: 1.0  # S = 1 triplet state  
 
   - term_symbol: 'P2' # 3P_2 (green clock):  l = 1; j = 2
     coupling_scheme: 'ls'
-    fine_energy: 642.1179709e+12 # Hz , different than 590 THz 
+    fine_energy: 590.904e+12 # Hz 
     hyperfine_A: 2.6814e+9 # Hz
     lifetime: 8.9 
-    n: 5
+    n: 6
     s: 1.0  # S = 1 triplet state  
 
-  - term_symbol: 'P1' # 1P_1: l = 1; j = 1
+  - term_symbol: 'P1' # 6s6p 1P_1: l = 1; j = 1
     coupling_scheme: 'ls'
     fine_energy: 751.3595438596491e+12 # Hz
     hyperfine_A: -0.2140617e+9 # Hz
-    lifetime: null
-    n: 5
+    lifetime: 5.464e-9 # s  
+    n: 6
     s: 0.0  # S = 0 singlet state  
-
 
   - term_symbol: 'D1' # 3D_1: l = 2; j = 1 
     coupling_scheme: 'ls'
-    fine_energy: 734.1659811608636 # 1S0->3P0->3D1: 215.87014457 + 518.29583659086363 
+    fine_energy: 734.1659811608636e+12 # 1S0->3P0->3D1: 215.87014457 + 518.29583659086363 
     hyperfine_A: -2.03830e+9 # Hz
     lifetime: 0.0527 # seconds, decay from 3D_1 to 3P_0, 
-    branching_ratios: {'S1/2': 1.0} # TODO 
+    branching_ratios: {'3P2': 0.01, '3P1': 0.352, '3P0': 0.638}
     n: 5
     s: 0.5
 
-  - term_symbol: '' # 6sns 3S_1 , Rydberg state  
-    coupling_scheme: ''
-    fine_energy:  # Hz
-    hyperfine_A:  # Hz
-    lifetime:  # seconds
-    branching_ratios: {'S1/2': 0.982, 'D3/2': 0.018}
-    n: 6
+  # TODO: Ask Brandon about this: 
+  - term_symbol: 'S1' # 6s (n=65)s 3S_1 , Rydberg state  
+    coupling_scheme: 'ls'
+    fine_energy:  1.511673320034572e+15 # Hz,  993.3774834437085e+12 Hz, estimated from 302nm Rydberg laser, + ground to 3P0 transition  
+    hyperfine_A:  0.  # TODO: what should this be? null # Hz
+    lifetime:  65.0e-6 # seconds
+    n: 65
     s: 1.
+    # will this term symbol be unique? In this case, it will be  
+    # Branching ratios?  
 
 # References: 
 # arxiv.org/pdf/2509.04416
+
+# for rydberg n = 65 state, see 
+# - Muniz et al., PRX 2025; DOI: 10.1103/PRXQuantum.6.020334 
+# - Peper et al., PRX 2025; DOI: 10.1103/PhysRevX.15.011009 
 
 # lifetime excited state: \tau = 1/\Gamma , \Gamma = decay rate
 #   Natural linewidth \Delta \nu / 2\pi = Number reported  

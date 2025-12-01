@@ -77,3 +77,7 @@ class Unitary:
         """The Molmer-Sorensen entangling gate."""
         sigma_phi = np.cos(phi) * Pauli.X + np.sin(phi) * Pauli.Y
         return np.cos(theta/2) * np.kron(Pauli.I, Pauli.I) - 1j*np.sin(theta/2) * np.kron(sigma_phi, sigma_phi)
+
+    @staticmethod
+    def CZ(): 
+        return np.kron(Pauli.I, Pauli.Z)

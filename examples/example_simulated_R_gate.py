@@ -19,8 +19,8 @@ sparse = False
 
 modulate_amplitude = False
 
-# number of qubits: 
-num_spins = 2
+num_spins = 1
+
 spins = [
     sm.AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
     for _ in range(num_spins)
@@ -38,17 +38,13 @@ def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
 
     operator = prefactor * raise_target_spins[0]
 
-    # Assumes working in qubit rotation frame (freq. omega)
     operators = [
         sm.CouplingOperator.from_matrix(basis, operator, omega, modulation_function=mod),
     ]
-    # Extract carrier / resonant frequencies of each state for interaction frame: 
     interaction_frame_energies = [-state.energy for state in basis.states] # implement arbitrary hamiltonian (with time-dependence? need an adiabatic intertwiner)
-
-    # Create a Hamiltonian from the list of basis states (basis), the list of operators (operators).
     return sm.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
 
-rabi_rate = 200e3 * 2*np.pi # rad./s
+rabi_rate = 100e3 * 2*np.pi # rad./s
 detuning = 0
 
 omega = (
@@ -77,7 +73,6 @@ def main():
     # R gate from AMO physics 
     def simulated_R(phi, theta, domega):
         tau = abs(theta)/rabi_rate
-        # R_hamiltonian contains the target spin couplings for R-gate 
         hamiltonian = R_hamiltonian(basis, phi, rabi_rate, omega + domega, sparse=sparse, mod=amp_mod)
         start = time.perf_counter()
         ic(hamiltonian.hamiltonian_function(0))
@@ -129,7 +124,7 @@ def main():
         ic(f'Building Hamiltonian took {end - start} s.')
 
         coefs = np.zeros(len(basis.states))
-        coefs[0] = 1 # presumably |00...0 (for N qubits)> state 
+        coefs[0] = 1 
         initial_state = sm.State.from_coefficients(basis, list(coefs))
 
         times = np.linspace(0, tau, 41) # setting to None will return only the final spin state
@@ -139,7 +134,6 @@ def main():
         end = time.perf_counter()
         ic(f'Propagating state took {end - start} s.')
 
-        # What is the shape of psis? 
         probs = np.array([psi.compute_basis_state_probabilities() for psi in psis])
         ic(probs[-1,:])
 
