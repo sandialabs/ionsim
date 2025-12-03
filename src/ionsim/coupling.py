@@ -26,6 +26,7 @@ class CouplingOperator:
     basis: StandardBasis
     couplings: list[Coupling]
     modulation_function: Callable | None = None
+    stochastic_info: dict | None = None
     # TODO: add static_operator and oscillation rate as attributes; make couplings a cached property
     # Then, build Hamiltonian from the static_operators and rates directly, instead of the from the couplings.
 
@@ -40,7 +41,8 @@ class CouplingOperator:
     # TODO: change Matrix type to "NDArray | CSRMatrix" if necessary
     @classmethod
     def from_matrix(cls, basis: StandardBasis, static_operator: Matrix, oscillation_rate: float,
-            current_dofs: list[DegreeOfFreedom] | None = None, modulation_function: list[Callable] | None = None):
+            current_dofs: list[DegreeOfFreedom] | None = None, modulation_function: list[Callable] | None = None,
+            stochastic_info: dict | None = None):
         """Build a coupling operator from the matrix representation of an operator acting on some DoFs in the basis."""
         operator, rate = cls._create_sparse_static_matrix_and_rate_matrix(static_operator, oscillation_rate)
         if current_dofs is not None:
@@ -61,7 +63,7 @@ class CouplingOperator:
                 included_indices.append((row, column))
             elif column == row:
                 raise IonSimError('Diagonal elements of oscillating operators are not currently allowed.')
-        return cls(basis, couplings, modulation_function)
+        return cls(basis, couplings, modulation_function, stochastic_info)
 
     @staticmethod
     def _create_sparse_static_matrix_and_rate_matrix(static_operator: Matrix, oscillation_rate: float):

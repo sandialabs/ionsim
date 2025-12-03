@@ -21,6 +21,16 @@ class Hamiltonian:
     sparse: bool = False
 
     @property
+    def stochastic(self) -> bool:
+        """
+        Returns True if any coupling operator has non-empty stochastic_param_info.
+        """
+        return any(
+            hasattr(op, 'stochastic_info') and op.stochastic_info not in (None, {})
+            for op in getattr(self, 'coupling_operators', [])
+        )
+
+    @property
     def energies(self):
         return [state.energy + energy for state, energy in zip(self.basis.states, self.rotating_frame_energies)]
 
@@ -204,6 +214,149 @@ class Hamiltonian:
         ic(f'Building Hamiltonian took {end-start} seconds.')
 
         return _hamiltonian_function
+    
+    def stochastic_hamiltonian_function(self, time_evals: Vector, trajectory_noise: Matrix | None = None, **kwargs):
+        """Build a stochastic Hamiltonian callable for a single noise trajectory with multiple noise sources."""
+        # Require a single, trajectory noise matrix; orchestration layer (solver) handles batch formatting.
+
+        # Fast-fail if the Hamiltonian has no stochastic couplings configured
+        if not self.stochastic:
+            raise IonSimError('Hamiltonian is not set up for stochastic evolution (no stochastic coupling operators found).' )
+
+        if trajectory_noise is None:
+            raise IonSimError('trajectory_noise must be provided as a 2D array (n_sources, n_time).')
+        trajectory_noise = np.asarray(trajectory_noise)
+
+        # Expect solver to provide per-trajectory noise as 2D (n_channels, n_time) for the k_th trajectory
+        if trajectory_noise.ndim != 2:
+            raise IonSimError('trajectory_noise must be a 2D array of shape (n_sources, n_time).')
+        trajectory_noise = np.asarray(trajectory_noise, dtype=float)
+
+        # Enforce explicit time_evals; use it directly as the interpolation grid.
+        if time_evals is None:
+            raise IonSimError('time_evals must be provided for stochastic Hamiltonian construction.')
+        time_evals = np.asarray(time_evals, dtype=float)
+
+        if trajectory_noise.shape[1] != time_evals.shape[0]:
+            raise IonSimError('Noise trajectory length does not match the supplied time grid.')
+
+        sparse_H0, sparse_Hints, sparse_Rates = self.H0_Hints_and_Rates
+        H0_dense = np.array(as_dense_matrix(sparse_H0, warn=False), copy=True).astype(complex, copy=False)
+
+        deterministic_components: list[dict[str, object]] = []
+        stochastic_components: list[dict[str, object]] = []
+
+        for operator, hint_matrix, rate_matrix in zip(self.coupling_operators, sparse_Hints, sparse_Rates):
+            comp_hint = np.array(as_dense_matrix(hint_matrix, warn=False), copy=True).astype(complex, copy=False)
+            comp_rate = np.array(as_dense_matrix(rate_matrix, warn=False), copy=True).astype(float, copy=False)
+            has_rate = bool(np.count_nonzero(np.abs(comp_rate) > 0))
+
+            component: dict[str, object] = {
+                'hint': comp_hint,
+                'rate': comp_rate,
+                'has_rate': has_rate,
+            }
+
+            info = getattr(operator, 'stochastic_info', None) or {}
+            if info:
+                strength = info.get('strength', 1.0)
+                if strength is None:
+                    strength = 1.0
+                strength = complex(strength)
+                # Map operator to a noise source index (previously called "channel")
+                default_noise_source = 0 if trajectory_noise.shape[0] == 1 else len(stochastic_components)
+                noise_source_index = int(info.get('noise_source', info.get('noise_channel', default_noise_source)))
+                if noise_source_index < 0 or noise_source_index >= trajectory_noise.shape[0]:
+                    raise IonSimError(
+                        f"Noise source {noise_source_index} not available for stochastic coupling (n_sources: {trajectory_noise.shape[0]})."
+                    )
+                # By default include the deterministic component at full strength
+                deterministic_strength = info.get('deterministic_strength', info.get('mean_strength', 1.0))
+                if deterministic_strength is None:
+                    deterministic_strength = 1.0
+                deterministic_strength = complex(deterministic_strength)
+                offset = info.get('offset', info.get('bias', 0.0))
+                if offset is None:
+                    offset = 0.0
+                offset = float(offset)
+                # Optional: a bare operator to use for additive noise, excluding the deterministic prefactor.
+                bare_op = info.get('bare_operator', None)
+                bare_hint = None
+                if bare_op is not None:
+                    bare_hint = np.array(as_dense_matrix(bare_op, warn=False), copy=True).astype(complex, copy=False)
+                component.update({
+                    'strength': strength,
+                    'noise_source': noise_source_index,
+                    'deterministic_strength': deterministic_strength,
+                    'offset': offset,
+                    'bare_hint': bare_hint,
+                })
+                stochastic_components.append(component)
+            else:
+                deterministic_components.append(component)
+
+        # At this point we already validated self.stochastic and trajectory_noise;
+        # if no stochastic components were constructed, treat it as a misconfiguration.
+        if not stochastic_components:
+            raise IonSimError(
+                'Stochastic evolution requested, but no stochastic components were constructed for this trajectory.\n'
+                'Check coupling operator stochastic_info (channel mapping, strengths, thresholds).')
+
+        def _evaluate_component(comp: dict[str, object], t: float) -> np.ndarray:
+            hint_matrix = np.array(comp['hint'], copy=True)
+            if comp['has_rate']:
+                rate_matrix = comp['rate']
+                hint_matrix *= np.exp(-1j * rate_matrix * t)
+            return hint_matrix + hint_matrix.conj().T
+
+        def _evaluate_with_hint(hint_like: np.ndarray, comp: dict[str, object], t: float) -> np.ndarray:
+            mat = np.array(hint_like, copy=True)
+            if comp['has_rate']:
+                rate_matrix = comp['rate']
+                mat *= np.exp(-1j * rate_matrix * t)
+            return mat + mat.conj().T
+
+        def _deterministic_matrix(t: float) -> np.ndarray:
+            base = np.array(H0_dense, copy=True)
+            for comp in deterministic_components:
+                base += _evaluate_component(comp, t)
+            for comp in stochastic_components:
+                deterministic_strength = comp['deterministic_strength']
+                if deterministic_strength:
+                    base += deterministic_strength * _evaluate_component(comp, t)
+            return base
+
+        def interpolate_noise(noise_source: int, t: float) -> float:
+            """ This helper uses linear interpolation to fetch the noise value for a coupling operator 
+            at any time t, ensuring the value matches the ODE solver’s requested time even if it doesn’t 
+            align with the original noise sample grid.
+
+            Inputs:
+            - noise_source: index of the noise source (0 .. n_sources-1)
+            - t: continuous evaluation time in seconds
+
+            Returns:
+            - float value of the noise process for the selected source at time t.
+            """
+            return float(np.interp(float(t), time_evals, trajectory_noise[noise_source]))
+
+        def _stochastic_hamiltonian(t: float):
+            base_matrix = _deterministic_matrix(t)
+            for comp in stochastic_components:
+                # If a bare operator is provided, use it to build an additive-noise template
+                # so that H_noise(t) = strength * noise(t) * (bare_template + h.c.).
+                # Otherwise, default to scaling the full deterministic template (fractional amplitude noise).
+                if comp.get('bare_hint') is not None:
+                    template = _evaluate_with_hint(comp['bare_hint'], comp, t)
+                else:
+                    template = _evaluate_component(comp, t)
+                noise_value = interpolate_noise(comp['noise_source'], t) + comp['offset']
+                base_matrix += comp['strength'] * noise_value * template
+            if self.sparse:
+                return csr_matrix(base_matrix)
+            return base_matrix
+
+        return _stochastic_hamiltonian
 
     # deprecated
     # @cached_property
@@ -315,6 +468,70 @@ class Hamiltonian:
         end = time.perf_counter()
         ic(f'Evolving wavefunction took {end-start} seconds.')
         return result
+    
+    def evolve_stochastic_wavefunction(self, initial_wavefunction: Vector, time_evals: Vector | None = None,
+        noisy_trajectories: Matrix | None = None, return_density_average: bool = True, **kwargs):
+        assert(self.size == len(initial_wavefunction))
+        import time
+        from icecream import ic
+
+        start = time.perf_counter()
+
+        if not self.stochastic:
+            raise IonSimError('Hamiltonian is not set up for stochastic evolution (no stochastic coupling operators found).')
+        if noisy_trajectories is None:
+            raise IonSimError('No noisy trajectories provided for stochastic evolution.')
+        if not self.stochastic:
+            raise IonSimError(
+                "Hamiltonian is not set up for stochastic evolution: no stochastic coupling operator found (missing or empty stochastic_info). ")
+        
+        # Validate time grid for solver
+        if time_evals is None:
+            raise IonSimError('time_evals must be provided for stochastic evolution.')
+        time_evals = np.asarray(time_evals, dtype=float)
+        if time_evals.ndim != 1:
+            time_evals = time_evals.reshape(-1)
+
+        base_solver = kwargs.pop('base_solver', 'odeintz')
+        base_solver_kwargs = kwargs.pop('base_solver_kwargs', {})
+        if kwargs:
+            base_solver_kwargs = {**base_solver_kwargs, **kwargs}
+        # Provide a duration consistent with the time grid (used only when a solver needs it)
+        duration = float(time_evals[-1] - time_evals[0]) if len(time_evals) > 0 else 0.0
+        times, trajectory_results = solve_time_evolution_equation(
+            self.stochastic_hamiltonian_function,
+            initial_wavefunction,
+            duration,
+            time_evals,
+            ode_solver='stochastic',
+            noisy_trajectories=noisy_trajectories,
+            base_solver=base_solver,
+            base_solver_kwargs=base_solver_kwargs)
+        
+        # trajectory_results: shape (n_traj, n_time, dim)
+        if return_density_average:
+            # Build ensemble-averaged density matrices ρ_avg(t) = E[ |ψ_k(t)><ψ_k(t)| ]
+            traj, n_time, dim = trajectory_results.shape
+            rhos_avg: list[np.ndarray] = []
+            for ti in range(n_time):
+                psi_trajs = trajectory_results[:, ti, :]
+                # Normalize each trajectory defensively to avoid norm drift
+                norms = np.sqrt((psi_trajs.conj() * psi_trajs).sum(axis=1).real)
+                norms[norms == 0] = 1.0
+                psi_norm = psi_trajs / norms[:, None]
+                # Outer products per trajectory, then average
+                # rhos shape: (n_traj, dim, dim)
+                rhos = psi_norm[:, :, None] * psi_norm.conj()[:, None, :]
+                rho_avg = rhos.mean(axis=0)
+                rhos_avg.append(rho_avg)
+            result = rhos_avg
+        else:
+            # Backward-compatible path: average wavefunctions directly (can hide zero-mean noise)
+            ensemble_wavefunctions = trajectory_results.mean(axis=0)
+            result = [ensemble_wavefunctions[i] for i in range(len(ensemble_wavefunctions))]
+        end = time.perf_counter()
+        ic(f'Evolving wavefunction took {end-start} seconds.')
+        return times, result
 
     def evolve_supervector(self, initial_supervector: Vector, duration: float, time_evals: Vector | None = None,
         dissipation_matrix: AnyMatrix | None = None, **kwargs):
