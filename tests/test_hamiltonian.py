@@ -7,6 +7,39 @@ from ionsim.degree_of_freedom import AtomicSpin
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.testing import assert_array_close
 
+
+class TestTimeIndependentHamiltonian(unittest.TestCase):
+    def setUp(self):
+        # Single spin system for time-independent Hamiltonian
+        spin = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.basis = StandardBasis([spin])
+        rabi_rate = 100e3 * 2 * np.pi  # rad/s
+        static_operator = rabi_rate / 2 * Pauli.X
+        operator = CouplingOperator.from_matrix(self.basis, static_operator, 0.0, [spin])
+        interaction_frame_energies = [-1 * state.energy for state in self.basis.states]
+        self.hamiltonian = Hamiltonian(self.basis, [operator], interaction_frame_energies, sparse=False)
+
+    def test_time_independent_hamiltonian_function(self):
+        """Test the time-independent Hamiltonian function at t=0 and t=1."""
+        H0 = self.hamiltonian.hamiltonian_function(0)
+        H1 = self.hamiltonian.hamiltonian_function(1)
+        # Should be identical for time-independent Hamiltonian
+        assert_array_close(H0, H1)
+        self.assertEqual(H0.shape, (self.hamiltonian.size, self.hamiltonian.size))
+        self.assertTrue(np.all(np.isfinite(H0)))
+
+    def test_evolve_wavefunction_time_independent(self):
+        """Test wavefunction evolution under a time-independent Hamiltonian."""
+        duration = np.pi / (100e3 * 2 * np.pi)  # duration for a pi pulse
+        wavefunction = np.array([1, 0])
+        times = np.linspace(0, duration, 11)
+        ts, ys = self.hamiltonian.evolve_wavefunction(wavefunction, duration, times)
+        self.assertEqual(len(ts), len(ys))
+        self.assertEqual(len(ys[0]), len(wavefunction))
+        # For a pi pulse, final state should be close to [0, -1j]
+        expected_final = np.array([0, -1j])
+        assert_array_close(ys[-1], expected_final, atol=1e-6)
+
 class TestHamiltonian(unittest.TestCase):
 
     def setUp(self):
@@ -64,9 +97,8 @@ class TestHamiltonian(unittest.TestCase):
             np.array([ 0.095491554957102+0.j, 0.-0.293892651275968j, 0.-0.293892651275968j, -0.904508445042897+0.j]),
             np.array([ 0.054496787855274+0.j, 0.-0.226995286734186j, 0.-0.226995286734186j, -0.945503212144725+0.j]),
             np.array([ 0.024471780303071+0.j, 0.-0.154508539917327j, 0.-0.154508539917327j, -0.975528219696929+0.j]),
-np.array([ 0.006155855921655+0.j, 0.-0.078217279132654j, 0.-0.078217279132654j, -0.993844144078344+0.j]),
-
-np.array([ 0.000000015710129+0.j, 0.-0.000000050022058j, 0.-0.000000050022058j, -0.999999984289871+0.j]),
+            np.array([ 0.006155855921655+0.j, 0.-0.078217279132654j, 0.-0.078217279132654j, -0.993844144078344+0.j]),
+            np.array([ 0.000000015710129+0.j, 0.-0.000000050022058j, 0.-0.000000050022058j, -0.999999984289871+0.j]),
         ]
 
         for i, (expected, actual) in enumerate(zip(expected_final_states, ys)):
