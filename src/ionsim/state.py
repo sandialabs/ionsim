@@ -97,6 +97,38 @@ class State:
             return State(self.basis, density_matrix, psis[-1])
         rhos = [self.basis.compute_density_matrix_from_wavefunction(psi) for psi in psis]
         return [State(self.basis, rho, psi) for rho, psi in zip(rhos, psis)]
+    
+    def propagate_using_stochastic_schrodinger_equation(self, hamiltonian: 'Hamiltonian', 
+                                                        noisy_trajectories: Matrix | None = None,
+                                                        time_evals: Vector | None = None,
+                                                        return_density_average: bool = True,
+                                                        **kwargs):
+        """
+        Propagate the state by solving the stochastic Schrödinger equation (SSE).
+        This reuses the standard propagation stack but selects the stochastic ODE solver.
+        Raises IonSimError if the Hamiltonian is not set up for stochastic evolution.
+        """
+        if self.wavefunction is None:
+            raise IonSimError('The state must have a well-defined wavefunction.')
+        times, payload = hamiltonian.evolve_stochastic_wavefunction(
+            self.wavefunction,
+            time_evals,
+            noisy_trajectories=noisy_trajectories,
+            return_density_average=return_density_average,
+            **kwargs,
+        )
+        if return_density_average:
+            # payload is a list of averaged density matrices over trajectories
+            if time_evals is None:
+                return State(self.basis, payload[-1])
+            return [State(self.basis, rho) for rho in payload]
+        else:
+            # payload is a list of averaged wavefunctions (legacy behavior)
+            if time_evals is None:
+                density_matrix = self.basis.compute_density_matrix_from_wavefunction(payload[-1])
+                return State(self.basis, density_matrix, payload[-1])
+            rhos = [self.basis.compute_density_matrix_from_wavefunction(psi) for psi in payload]
+            return [State(self.basis, rho, psi) for rho, psi in zip(rhos, payload)]
 
     def propagate_using_master_equation(self, lindbladian: Lindbladian, duration: float,
             time_evals: Vector | None = None, **kwargs):
@@ -111,7 +143,7 @@ class State:
             return State(self.basis, density_matrix)
         rhos = [self.basis.compute_density_matrix_from_supervector(psi) for psi in supervectors]
         return [State(self.basis, rho) for rho in rhos]
-
+    
     def get_wavefunction_in_new_basis(self, new_basis: Basis):
         """Get the wavefunction in a new basis."""
         if new_basis is self.basis or self.wavefunction is None:

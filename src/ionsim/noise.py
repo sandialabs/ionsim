@@ -1,5 +1,6 @@
 from ionsim.custom_math import trapz_for_matrix
 from ionsim.custom_types import Vector
+from ionsim.ionsim_error import IonSimError
 
 import numpy as np
 from dataclasses import dataclass
@@ -63,3 +64,80 @@ class Noise:
             ys = np.array([p*fv for p, fv in zip(probs, function_values)])
             return trapz_for_matrix(ys, self.domain_arguments)
         return wrapper
+    
+
+@dataclass(frozen=True, eq=False)
+class StochasticNoise:
+    """ Generate stochastic noise samples for time-dependent simulations. """
+
+    @staticmethod
+    def white_noise(
+        n_trajectories: int,
+        target_variance: float,
+        rng: np.random.Generator,
+        time_evals: Vector | None = None,
+        same_psd: bool = False,
+        dt_step: float | None = None
+    ) -> np.ndarray:
+        """
+        Generate white noise samples with the correct power spectral density (PSD).
+        Args:
+            n_trajectories: Number of trajectories (noise realizations)
+            N: Number of time steps
+            dt: Time step size
+            target_variance: Desired variance of the noise
+            rng: numpy random number generator
+            same_psd: If True, use the same PSD for all steps (for legacy compatibility)
+            dt_step: Reference time step for the simulation grid (required if same_psd=True)
+        Returns:
+            noise_all: Array of shape (n_trajectories, N) with white noise samples
+        Raises:
+            IonSimError: If same_psd is True and dt_step is not provided or bigger than dt.
+        """
+        N = len(time_evals)
+        dt = time_evals[1] - time_evals[0]
+
+        if same_psd:
+            if dt_step is None:
+                raise IonSimError("dt_step must be provided if same_psd=True in white_noise().")
+            if dt_step >= dt:
+                raise IonSimError(f"dt_step (={dt_step}) is >= dt (={dt}); this may lead to unphysical noise bandwidth.")
+            f_nye = 1 / (2 * dt_step)
+        else:
+            f_nye = 1 / (2 * dt)
+        psd = target_variance / f_nye  # (rad/s)^2/Hz
+        noise_all = rng.normal(0.0, np.sqrt(psd * 1/(2 * dt)), size=(n_trajectories, N))
+        return noise_all
+
+    @staticmethod
+    def ou_noise(n_trajectories: int, 
+                 tau_c: float, 
+                 sigma2: float, 
+                 rng: np.random.Generator,
+                 time_evals: Vector | None = None) -> np.ndarray:
+        """
+        Generate Ornstein-Uhlenbeck (OU, Lorentzian) colored noise samples.
+        Args:
+            n_trajectories: Number of trajectories (noise realizations)
+            N: Number of time steps
+            dt: Time step size
+            tau_c: Correlation time (decay constant)
+            sigma2: Stationary variance of the process
+            rng: numpy random number generator
+        Returns:
+            x: Array of shape (n_trajectories, N) with OU noise samples
+        """
+        import math
+
+        N = len(time_evals)
+        dt = time_evals[1] - time_evals[0]
+        
+        phi = math.exp(-dt / tau_c)
+        sd = math.sqrt(sigma2 * (1.0 - phi * phi))
+        x = np.empty((n_trajectories, N), float)
+        x[:, 0] = rng.normal(0.0, math.sqrt(sigma2), size=n_trajectories)
+        for n in range(1, N):
+            x[:, n] = phi * x[:, n - 1] + sd * rng.standard_normal(size=n_trajectories)
+        return x
+
+

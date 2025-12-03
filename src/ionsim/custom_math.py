@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 from typing import Any, Callable
 from scipy.integrate import trapezoid as trapz
@@ -71,6 +71,8 @@ def solve_time_evolution_equation(interaction_function: Callable, initial_state_
         return SolveIvp(interaction_function, initial_state_vector, duration, time_evals, **kwargs).solve()
     elif ode_solver == 'zvode':
         return ZVODE(interaction_function, initial_state_vector, duration, time_evals, **kwargs).solve()
+    elif ode_solver == 'stochastic':
+        return StochasticOdeSolver(interaction_function, initial_state_vector, duration, time_evals, **kwargs).solve()
     else:
         raise IonSimError(f'ODE solver {ode_solver} is not implemented.')
 
@@ -158,7 +160,81 @@ class ZVODE(OdeSolver):
             intermediate_states += [r.y]
             intermediate_times += [r.t]
         return intermediate_times, intermediate_states
+    
+@dataclass(frozen=True, eq=False)
+class StochasticOdeSolver(OdeSolver):
+    """A numerical routine to solve stochastic differential equations (SDEs) for wavefunction evolution."""
+    noisy_trajectories: np.ndarray | None = None
+    base_solver: str = 'odeintz'
+    base_solver_kwargs: dict[str, Any] = field(default_factory=dict)
+    # stochastic_params removed: all per-operator noise mapping comes from Hamiltonian.stochastic_info and per-trajectory noise inputs
 
+    @staticmethod
+    def _shape_noise_to_trajectories(noisy_trajectories: np.ndarray | None) -> np.ndarray:
+        """
+        Normalize input noise to a strict 3D layout (n_traj, n_sources, n_time).
+
+        Accepted inputs:
+        - 1D: (n_time) -> interpreted as a single trajectory with one noise source -> (1, 1, n_time)
+        - 2D: (n_traj, n_time) -> single noise source per trajectory -> (n_traj, 1, n_time)
+        - 3D: (n_traj, n_sources, n_time) -> used as-is
+
+        This helper only reshapes; it does not validate semantic mapping between channels and operators.
+        """
+        if noisy_trajectories is None:
+            raise IonSimError('No noisy trajectories provided to the stochastic solver.')
+        noise_array = np.asarray(noisy_trajectories)
+        if noise_array.ndim == 1:
+            noise_array = noise_array[np.newaxis, :]
+        if noise_array.ndim == 2:
+            noise_array = noise_array[:, np.newaxis, :]
+        if noise_array.ndim != 3:
+            raise IonSimError('noisy_trajectories must have shape (n_traj, n_time) or (n_traj, n_sources, n_time).')
+        return noise_array
+
+    def solve(self):
+        """Solve the stochastic Schrödinger equation by evolving each trajectory independently."""
+        noise_array = self._shape_noise_to_trajectories(self.noisy_trajectories)
+        n_trajectories, _, n_time = noise_array.shape
+
+        if self.base_solver == 'stochastic':
+            raise IonSimError('base_solver for StochasticOdeSolver cannot be "stochastic".')
+
+        if self.time_evals is None:
+            time_grid = np.linspace(0.0, self.duration, n_time)
+        else:
+            time_grid = np.asarray(self.time_evals, dtype=float)
+            if time_grid.shape[0] != n_time:
+                raise IonSimError('Length of time_evals must match the number of noise samples per trajectory.')
+
+        trajectory_vectors: list[np.ndarray] = []
+
+        for trajectory_index in range(n_trajectories):
+            trajectory_noise = noise_array[trajectory_index]
+            stochastic_builder = self.interaction_function(
+                initial_wavefunction=self.initial_vector,
+                duration=self.duration,
+                time_evals=time_grid,
+                trajectory_noise=trajectory_noise,
+                noise_times=time_grid,
+            )
+            inner_kwargs = dict(self.base_solver_kwargs)
+            times, state_vectors = solve_time_evolution_equation(
+                stochastic_builder,
+                self.initial_vector,
+                self.duration,
+                time_grid,
+                ode_solver=self.base_solver,
+                **inner_kwargs,
+            )
+            # Ensure solver respected the provided common time grid
+            if len(times) != len(time_grid) or not np.allclose(times, time_grid, atol=1e-12, rtol=1e-9):
+                raise IonSimError('All stochastic trajectories must share the same integration time grid.')
+            trajectory_vectors.append(np.stack(state_vectors, axis=0))
+
+        stacked_results = np.stack(trajectory_vectors, axis=0)
+        return list(time_grid), stacked_results
+        
 # working version
 # @dataclass(frozen=True, eq=False)
 # class ZVODE(OdeSolver):
