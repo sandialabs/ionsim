@@ -85,17 +85,12 @@ class Hamiltonian:
                     for column, column_state in enumerate(self.basis.states):
                         if (row_state, column_state) == (coupling.upper_state, coupling.lower_state):
                             op_Hints.append(csr_matrix(([coupling.strength], ([row], [column])), shape=(self.size, self.size)))
-                            # Only add rotating_frame_energies to rate if oscillation_rate is non-zero
-                            # For time-independent H (oscillation_rate=0), rate should be zero
-                            if abs(coupling.oscillation_rate) > SMALLEST_ENERGY_SCALE:
-                                total_rate = (
-                                    + coupling.oscillation_rate
-                                    + self.rotating_frame_energies[row]
-                                    - self.rotating_frame_energies[column]
-                                )
-                                total_rate = total_rate if abs(total_rate) > SMALLEST_ENERGY_SCALE else 0
-                            else:
-                                total_rate = 0
+                            total_rate = (
+                                + coupling.oscillation_rate
+                                + self.rotating_frame_energies[row]
+                                - self.rotating_frame_energies[column]
+                            )
+                            total_rate = total_rate if abs(total_rate) > SMALLEST_ENERGY_SCALE else 0
                             op_Rates.append(csr_matrix(([total_rate], ([row], [column])), shape=(self.size, self.size)))
                             ### [row, column] corresponds to phase factor next to raising operator: sigma^dagger exp[-i rate t]
             Hints.append(np.sum(op_Hints, axis=0))
