@@ -77,7 +77,8 @@ class StochasticNoise:
         rng: np.random.Generator,
         time_evals: Vector | None = None,
         same_psd: bool = False,
-        dt_step: float | None = None
+        dt_step: float | None = None,
+        remove_mean: bool = False
     ) -> np.ndarray:
         """
         Generate white noise samples with the correct power spectral density (PSD).
@@ -107,14 +108,17 @@ class StochasticNoise:
             f_nye = 1 / (2 * dt)
         psd = target_variance / f_nye  # (rad/s)^2/Hz
         noise_all = rng.normal(0.0, np.sqrt(psd * 1/(2 * dt)), size=(n_trajectories, N))
+        if remove_mean:
+            noise_all = noise_all - np.mean(noise_all, axis=1, keepdims=True)
         return noise_all
 
     @staticmethod
     def ou_noise(n_trajectories: int, 
                  tau_c: float, 
-                 sigma2: float, 
+                 target_variance: float, 
                  rng: np.random.Generator,
-                 time_evals: Vector | None = None) -> np.ndarray:
+                 time_evals: Vector | None = None,
+                 remove_mean: bool = False) -> np.ndarray:
         """
         Generate Ornstein-Uhlenbeck (OU, Lorentzian) colored noise samples.
         Args:
@@ -133,11 +137,13 @@ class StochasticNoise:
         dt = time_evals[1] - time_evals[0]
         
         phi = math.exp(-dt / tau_c)
-        sd = math.sqrt(sigma2 * (1.0 - phi * phi))
+        sd = math.sqrt(target_variance * (1.0 - phi * phi))
         x = np.empty((n_trajectories, N), float)
-        x[:, 0] = rng.normal(0.0, math.sqrt(sigma2), size=n_trajectories)
+        x[:, 0] = rng.normal(0.0, math.sqrt(target_variance), size=n_trajectories)
         for n in range(1, N):
             x[:, n] = phi * x[:, n - 1] + sd * rng.standard_normal(size=n_trajectories)
+        if remove_mean:
+            x = x - np.mean(x, axis=1, keepdims=True)
         return x
 
 
