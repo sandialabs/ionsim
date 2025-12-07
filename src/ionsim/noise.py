@@ -77,7 +77,8 @@ class StochasticNoise:
         rng: np.random.Generator,
         time_evals: Vector | None = None,
         same_psd: bool = False,
-        dt_step: float | None = None
+        dt_step: float | None = None,
+        remove_mean: bool = False
     ) -> np.ndarray:
         """
         Generate white noise samples with the correct power spectral density (PSD).
@@ -107,37 +108,51 @@ class StochasticNoise:
             f_nye = 1 / (2 * dt)
         psd = target_variance / f_nye  # (rad/s)^2/Hz
         noise_all = rng.normal(0.0, np.sqrt(psd * 1/(2 * dt)), size=(n_trajectories, N))
+        if remove_mean:
+            noise_all = noise_all - np.mean(noise_all, axis=1, keepdims=True)
         return noise_all
 
     @staticmethod
     def ou_noise(n_trajectories: int, 
                  tau_c: float, 
-                 sigma2: float, 
+                 target_variance: float, 
                  rng: np.random.Generator,
-                 time_evals: Vector | None = None) -> np.ndarray:
+                 first_time_step_all_trajectories: np.ndarray | None = None,
+                 time_evals: Vector | None = None,
+                 remove_mean: bool = False,
+                 mean: float = 0.0) -> np.ndarray:
         """
         Generate Ornstein-Uhlenbeck (OU, Lorentzian) colored noise samples.
         Args:
             n_trajectories: Number of trajectories (noise realizations)
-            N: Number of time steps
-            dt: Time step size
             tau_c: Correlation time (decay constant)
-            sigma2: Stationary variance of the process
+            target_variance: Stationary variance of the process
             rng: numpy random number generator
+            first_time_step_all_trajectories: Initial values for each trajectory (optional)
+            time_evals: Time evaluation points
+            remove_mean: If True, remove the mean from each trajectory
+            mean: Constant mean to add to the noise (default 0.0)
         Returns:
             x: Array of shape (n_trajectories, N) with OU noise samples
         """
-        import math
 
         N = len(time_evals)
         dt = time_evals[1] - time_evals[0]
         
-        phi = math.exp(-dt / tau_c)
-        sd = math.sqrt(sigma2 * (1.0 - phi * phi))
+        phi = np.exp(-dt / tau_c)
+        sd = np.sqrt(target_variance * (1.0 - phi * phi))
         x = np.empty((n_trajectories, N), float)
-        x[:, 0] = rng.normal(0.0, math.sqrt(sigma2), size=n_trajectories)
+        if first_time_step_all_trajectories is not None:
+            x[:, 0] = first_time_step_all_trajectories
+        else:
+            x[:, 0] = rng.normal(0.0, np.sqrt(target_variance), size=n_trajectories)
+
         for n in range(1, N):
             x[:, n] = phi * x[:, n - 1] + sd * rng.standard_normal(size=n_trajectories)
+        if remove_mean:
+            x = x - np.mean(x, axis=1, keepdims=True)
+        if mean != 0.0:
+            x = x + mean
         return x
 
 
