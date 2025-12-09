@@ -139,7 +139,7 @@ class StochasticNoise:
         phi = math.exp(-dt / tau_c)
         sd = math.sqrt(target_variance * (1.0 - phi * phi))
         x = np.empty((n_trajectories, N), float)
-        x[:, 0] = rng.normal(0.0, math.sqrt(target_variance), size=n_trajectories)
+        x[:, 0] = rng.normal(0.0, np.sqrt(target_variance), size=n_trajectories)
         for n in range(1, N):
             x[:, n] = phi * x[:, n - 1] + sd * rng.standard_normal(size=n_trajectories)
         if remove_mean:

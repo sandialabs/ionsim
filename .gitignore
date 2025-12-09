@@ -182,3 +182,4 @@ cython_debug/
 .github/copilot-instructions.md
 examples/example_simulated_R_gate.ipynb
 examples/tutorial_R_gate.ipynb
+examples/example_simulated_R_gate_numba.ipynb
