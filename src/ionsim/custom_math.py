@@ -319,7 +319,6 @@ def _run_stochastic_trajectories_numba(
     stoch_rates = np.ascontiguousarray(component_data.stochastic_rates, dtype=np.float64)
     stoch_has_rate = np.ascontiguousarray(component_data.stochastic_has_rate, dtype=np.uint8)
 
-    det_strengths = np.ascontiguousarray(component_data.deterministic_strengths, dtype=np.complex128)
     noise_strengths = np.ascontiguousarray(component_data.noise_strengths, dtype=np.complex128)
     noise_offsets = np.ascontiguousarray(component_data.noise_offsets, dtype=np.float64)
     noise_sources = np.ascontiguousarray(component_data.noise_source_indices, dtype=np.int64)
@@ -337,7 +336,6 @@ def _run_stochastic_trajectories_numba(
         stoch_hints,
         stoch_rates,
         stoch_has_rate,
-        det_strengths,
         noise_strengths,
         noise_offsets,
         noise_sources,
@@ -348,7 +346,7 @@ def _run_stochastic_trajectories_numba(
 
 if _NUMBA_AVAILABLE:
 
-    @njit
+    @njit(cache=True)
     def _numba_linear_interp(time_grid: np.ndarray, values: np.ndarray, t: float) -> float:
         if t <= time_grid[0]:
             return values[0]
@@ -365,7 +363,7 @@ if _NUMBA_AVAILABLE:
             return v1
         return v0 + (v1 - v0) * (t - t0) / (t1 - t0)
 
-    @njit
+    @njit(cache=True)
     def _numba_evaluate_hermitian(hint: np.ndarray, rate: np.ndarray, has_rate: int, t: float) -> np.ndarray:
         if has_rate != 0:
             mat = hint * np.exp(-1j * rate * t)
@@ -373,7 +371,7 @@ if _NUMBA_AVAILABLE:
             mat = hint
         return mat + mat.conj().T
 
-    @njit
+    @njit(cache=True)
     def _numba_build_hamiltonian(
         t: float,
         traj_idx: int,
@@ -386,7 +384,6 @@ if _NUMBA_AVAILABLE:
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
-        det_strengths: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -399,12 +396,6 @@ if _NUMBA_AVAILABLE:
             H += herm
         for idx in range(stoch_hints.shape[0]):
             herm = _numba_evaluate_hermitian(stoch_hints[idx], stoch_rates[idx], stoch_has_rate[idx], t)
-            if det_strengths.shape[0] > idx:
-                strength = det_strengths[idx]
-            else:
-                strength = 0.0 + 0.0j
-            if strength != 0.0:
-                H += strength * herm
             if bare_present.shape[0] > idx and bare_present[idx] != 0:
                 template = _numba_evaluate_hermitian(bare_hints[idx], stoch_rates[idx], stoch_has_rate[idx], t)
             else:
@@ -415,7 +406,7 @@ if _NUMBA_AVAILABLE:
             H += noise_strengths[idx] * noise_val * template
         return H
 
-    @njit
+    @njit(cache=True)
     def _numba_rhs(
         t: float,
         psi: np.ndarray,
@@ -429,7 +420,6 @@ if _NUMBA_AVAILABLE:
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
-        det_strengths: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -448,7 +438,6 @@ if _NUMBA_AVAILABLE:
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
-            det_strengths,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
@@ -457,7 +446,7 @@ if _NUMBA_AVAILABLE:
         )
         return -1j * H.dot(psi)
 
-    @njit
+    @njit(cache=True)
     def _numba_rk4_step(
         t0: float,
         dt: float,
@@ -472,7 +461,6 @@ if _NUMBA_AVAILABLE:
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
-        det_strengths: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -492,7 +480,6 @@ if _NUMBA_AVAILABLE:
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
-            det_strengths,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
@@ -512,7 +499,6 @@ if _NUMBA_AVAILABLE:
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
-            det_strengths,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
@@ -532,7 +518,6 @@ if _NUMBA_AVAILABLE:
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
-            det_strengths,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
@@ -552,7 +537,6 @@ if _NUMBA_AVAILABLE:
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
-            det_strengths,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
@@ -561,7 +545,7 @@ if _NUMBA_AVAILABLE:
         )
         return psi + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
-    @njit(parallel=True)
+    @njit(parallel=True, cache=True)
     def _run_stochastic_trajectories_numba_impl(
         noise_array: np.ndarray,
         initial_vector: np.ndarray,
@@ -573,7 +557,6 @@ if _NUMBA_AVAILABLE:
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
-        det_strengths: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -605,7 +588,6 @@ if _NUMBA_AVAILABLE:
                     stoch_hints,
                     stoch_rates,
                     stoch_has_rate,
-                    det_strengths,
                     noise_strengths,
                     noise_offsets,
                     noise_source_indices,
