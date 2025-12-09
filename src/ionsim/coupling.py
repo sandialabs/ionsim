@@ -61,8 +61,11 @@ class CouplingOperator:
                 coupling = Coupling(basis, row_state, column_state, operator[row, column], -1*rate[row, column])
                 couplings.append(coupling)
                 included_indices.append((row, column))
-            elif column == row:
-                raise IonSimError('Diagonal elements of oscillating operators are not currently allowed.')
+            elif column == row and (row, column) not in included_indices:
+                # Allow diagonal elements for oscillating operators
+                coupling = Coupling(basis, row_state, column_state, operator[row, column], rate[row, column])
+                couplings.append(coupling)
+                included_indices.append((row, column))
         return cls(basis, couplings, modulation_function, stochastic_info)
 
     @staticmethod
@@ -82,7 +85,7 @@ class CouplingOperator:
             row = self.basis.states.index(coupling.upper_state)
             column = self.basis.states.index(coupling.lower_state)
             matrices.append(csr_matrix(([coupling.strength], ([row], [column])), shape=(size, size)))
-        return np.sum(matrices)
+        return sum(matrices)
 
     @property
     def rate_matrix(self):
@@ -93,4 +96,4 @@ class CouplingOperator:
             row = self.basis.states.index(coupling.upper_state)
             column = self.basis.states.index(coupling.lower_state)
             matrices.append(csr_matrix(([coupling.oscillation_rate], ([row], [column])), shape=(size, size)))
-        return np.sum(matrices)
+        return sum(matrices)

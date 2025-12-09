@@ -142,6 +142,7 @@ class StochasticNoise:
         phi = np.exp(-dt / tau_c)
         sd = np.sqrt(target_variance * (1.0 - phi * phi))
         x = np.empty((n_trajectories, N), float)
+        x[:, 0] = rng.normal(0.0, np.sqrt(target_variance), size=n_trajectories)
         if first_time_step_all_trajectories is not None:
             x[:, 0] = first_time_step_all_trajectories
         else:
