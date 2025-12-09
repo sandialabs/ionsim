@@ -148,6 +148,9 @@ class Hamiltonian(CompositeOperator):
         def is_diagonal_hermitian(mat):
             return np.allclose(mat, mat.conj().T)
 
+        def is_diagonal_hermitian(mat):
+            return np.allclose(mat, mat.conj().T)
+
         if self.all_rates_are_zero:
             if self.sparse:
                 def _hamiltonian_function(t: float):

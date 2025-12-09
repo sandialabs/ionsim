@@ -445,6 +445,14 @@ if _NUMBA_AVAILABLE:
         return v0 + (v1 - v0) * (t - t0) / (t1 - t0)
 
     @njit(cache=True)
+    def _numba_evaluate_hermitian(hint: np.ndarray, rate: np.ndarray, has_rate: int, t: float) -> np.ndarray:
+        if has_rate != 0:
+            mat = hint * np.exp(-1j * rate * t)
+        else:
+            mat = hint
+        return mat + mat.conj().T
+
+    @njit(cache=True)
     def _numba_build_hamiltonian(
         t: float,
         step: int,
