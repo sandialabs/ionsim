@@ -112,7 +112,7 @@ class StochasticNoise:
     @staticmethod
     def ou_noise(n_trajectories: int, 
                  tau_c: float, 
-                 sigma2: float, 
+                 target_variance: float, 
                  rng: np.random.Generator,
                  time_evals: Vector | None = None) -> np.ndarray:
         """
@@ -133,9 +133,11 @@ class StochasticNoise:
         dt = time_evals[1] - time_evals[0]
         
         phi = math.exp(-dt / tau_c)
-        sd = math.sqrt(sigma2 * (1.0 - phi * phi))
+        print(f"[DEBUG] dt/tau_c: {dt/tau_c}, dt: {dt}, tau_c: {tau_c}")
+
+        sd = math.sqrt(target_variance * (1.0 - phi * phi))
         x = np.empty((n_trajectories, N), float)
-        x[:, 0] = rng.normal(0.0, math.sqrt(sigma2), size=n_trajectories)
+        x[:, 0] = rng.normal(0.0, math.sqrt(target_variance), size=n_trajectories)
         for n in range(1, N):
             x[:, n] = phi * x[:, n - 1] + sd * rng.standard_normal(size=n_trajectories)
         return x
