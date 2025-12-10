@@ -39,10 +39,10 @@ class CouplingOperator:
 
     # TODO: change Matrix type to "NDArray | CSRMatrix" if necessary
     @classmethod
-    def from_matrix(cls, basis: StandardBasis, static_operator: Matrix, oscillation_rate: float,
+    def from_matrix(cls, basis: StandardBasis, static_matrix: Matrix, oscillation_rate: float,
             current_dofs: list[DegreeOfFreedom] | None = None, modulation_function: list[Callable] | None = None):
         """Build a coupling operator from the matrix representation of an operator acting on some DoFs in the basis."""
-        operator, rate = cls._create_sparse_static_matrix_and_rate_matrix(static_operator, oscillation_rate)
+        operator, rate = cls._create_sparse_static_matrix_and_rate_matrix(static_matrix, oscillation_rate)
         if current_dofs is not None:
             operator, rate = basis.enlarge_matrix(operator, current_dofs), basis.enlarge_matrix(rate, current_dofs)
         rows, columns = operator.nonzero()
@@ -64,9 +64,9 @@ class CouplingOperator:
         return cls(basis, couplings, modulation_function)
 
     @staticmethod
-    def _create_sparse_static_matrix_and_rate_matrix(static_operator: Matrix, oscillation_rate: float):
+    def _create_sparse_static_matrix_and_rate_matrix(static_matrix: Matrix, oscillation_rate: float):
         """Create sparse matrices for the static operator matrix and the osciallation rate matrix."""
-        operator = csr_matrix(static_operator)
+        operator = csr_matrix(static_matrix)
         nzrs, nzcs = operator.nonzero()
         rate = csr_matrix(([oscillation_rate for _ in nzrs], (nzrs, nzcs)), shape=operator.shape)
         return operator, rate

@@ -13,7 +13,7 @@ class Zeeman_Hyperfine_Solver():
 
     def __init__(self, I: float, J: float, L: int, S: float, A_hf:float, atomic_mass: float | None=None, 
                 nuclear_moment: float | None = None, Z: int | None = None, gI: float | None = None, 
-                suppress_output: bool=True, freq_units: str = 'Hz', magnetic_field_units = 'gauss', mode: str = 'exact'):
+                suppress_output: bool=True, freq_units: str = 'Hz', magnetic_field_units = 'gauss', approximation: str | None=None):
         """ Initialize the solver. 
         Parameters: 
           I : Nuclear spin angular momentum magnitude (float)
@@ -42,13 +42,13 @@ class Zeeman_Hyperfine_Solver():
         if self.Z is None:
             raise ValueError('Input error: Specify atomic number of the atom.')
         
-        # Set up the mode for solving:
+        # Set up the approximation setting for solving:
         # Options: 
-        #  "exact": considers both hyperfine and zeeman hamiltonian
+        #  None <==> Exact: considers both hyperfine and zeeman hamiltonian
         #  "weak field": weak field limit, considers an effective linear Zeeman Hamiltonian 
-        self.mode = mode.lower()
-        if self.mode != 'exact' and self.mode != 'weak field':
-            raise ValueError("Invalid mode specified. Mode variable must be either 'exact' or 'weak field'.")
+        self.approximation = approximation
+        if self.approximation is not None and self.approximation != 'weak field':
+            raise ValueError("Invalid approximation scheme specified. Approximation variable must be either None or 'weak field'.")
 
         # Create set of basis states in terms of Tuples (m_{J}, m_{I})
         self.basis_states = self.create_basis()
@@ -65,10 +65,12 @@ class Zeeman_Hyperfine_Solver():
 
         # Create unit registry from pint for internal unit management 
         self.unit_reg = pint.UnitRegistry()
-        self.internal_freq_units = self.unit_reg(freq_units)
+        self.internal_freq_units = self.unit_reg(freq_units) 
         self.internal_magnetic_units = self.unit_reg(magnetic_field_units)
         
         # --- Unit Conversions ---
+        # TODO: Consider wrappers for re-apply unit(s) after a complicated mathematical operation that may strip the unit
+        # e.g. after eigh()  
         self.atomic_mass *= self.unit_reg("dalton")
 
         # Hyperfine constant 
@@ -95,21 +97,21 @@ class Zeeman_Hyperfine_Solver():
 
 
     def create_basis(self) -> List[Tuple[float, float]]:
-        """ Creates a basis depending on the solver mode. 
-        For exact mode, the uncoupled basis |J, m_{J}, I, m_{I}> is used.
+        """ Creates a basis depending on the solver approximation setting. 
+        For no approximations, the uncoupled basis |J, m_{J}, I, m_{I}> is used.
         The basis is a list of tuples, each containing a pair of m_J, m_I eigenvalues.
         Returns a list of tuples, where each tuple is (m_{J}, m_{I})
 
-        For weak field mode, the coupled basis |F, mF> is used.
+        For weak field approximation, the coupled basis |F, mF> is used.
         The basis is a list of tuples containing F, mF pairs.
         """
         basis = []
         
-        if self.mode == 'exact':
+        if self.approximation is None:
             for m_J in np.arange(-self.J, self.J + 1):
                 for m_I in np.arange(-self.I, self.I + 1):
                     basis.append((m_J, m_I))
-        elif self.mode == 'weak field':
+        elif self.approximation == 'weak field':
             # |F, mF> are good quatnum numbers
             # The |mJ, mI> states are coupled. 
             F_range = np.arange(np.abs(self.I - self.J), self.I + self.J + 1) 
@@ -117,14 +119,14 @@ class Zeeman_Hyperfine_Solver():
                 for mF in np.arange(-f, f+1):
                     basis.append((f, mF))
         else:
-            raise ValueError("Invalid mode specified. Mode variable must be either 'exact' or 'weak field'.")
+            raise ValueError("Invalid approximation setting specified. Mode variable must be either 'exact' or 'weak field'.")
         return basis 
 
     def print_basis_states(self):
         """ Function for printing out basis state information """
-        if self.mode == 'exact':
+        if self.approximation is None:
             state_str = '(mJ, mI)'
-        elif self.mode == 'weak field':
+        elif self.approximation == 'weak field':
             state_str = '(F, mF)'
         print(f"    basis states " + state_str + ": ")
         for state in self.basis_states:
@@ -136,7 +138,7 @@ class Zeeman_Hyperfine_Solver():
         
         I dot J = I_z J_z + 1/2 (I+ J- + J+ I-)
         """
-        assert self.mode == 'exact', "Error: Incorrect mode specified by user."
+        assert self.approximation is None, "Error: Incorrect approximation specified by user."
 
         J, I = self.J, self.I
         # Iz,Jz term: 
@@ -186,14 +188,14 @@ class Zeeman_Hyperfine_Solver():
 
         # Convention where the nuclear Zeeman term has \mu_{B} as its prefactor, with gI factor taking into account the nuclear magneton, e.g.: mu_B x gI x I x Bz / hbar 
         # Zeeman matrix is diagonal: I_{z} |J, m_{J}, I, m_{I} > = m_{I} |J, m_{J}, I, m_{I} >
-        if self.mode == 'exact':       
+        if self.approximation is None:       
             for i, (m_J, m_I) in enumerate(self.basis_states):
                 H[i,i] = (self.Lande_gJ * m_J) + (self.Lande_gI * m_I)
-        elif self.mode.lower() == 'weak field' :
+        elif self.approximation == 'weak field' :
             for i, (f, mF) in enumerate(self.basis_states): 
                 H[i,i] = (self.Lande_gF(f) * mF)
         else:
-            raise ValueError("Invalid mode specified. Mode variable must be either 'exact' or 'weak field'.")
+            raise ValueError("Invalid approximation specified. Mode variable must be either 'exact' or 'weak field'.")
 
         # Apply the units to the entire array simultaneously
         return (H * B_field * self.mu_B * planck_inverse).to(self.internal_freq_units) 
@@ -207,10 +209,12 @@ class Zeeman_Hyperfine_Solver():
             - energy eigenvectors (d x d array), i.e. each eigenvector is a vector of dimension d
         """
         H_total = self.zeeman_hamiltonian(B_z)
-        if self.mode == 'exact':
+        if self.approximation is None:
             H_total += self.hyperfine_hamiltonian() 
         energies, eigenvectors = eigh(H_total.magnitude)
+        # TODO: Add eigh_pint() wrapper around eigh()? python introspection to generalize a wrapper to preserve the units? 
         # Note: These energies are not in the sorted order that matches the basis states
+        # x = preserve_units(np.linalg.eigh)(mat)
         return energies, eigenvectors
 
 
@@ -327,10 +331,10 @@ class Zeeman_Hyperfine_Solver():
                     psi = eigvectors[i, :, j]
 
                 m_F_avg = 0.
-                if self.mode == 'exact' :
+                if self.approximation is None:
                     for k, (m_J, m_I) in enumerate(self.basis_states):
                         m_F_avg += (np.abs(psi[k])**2)*(m_J + m_I)
-                elif self.mode == 'weak field' :
+                elif self.approximation == 'weak field' :
                     for  k, (f, mF) in enumerate(self.basis_states):
                         m_F_avg += (np.abs(psi[k])**2)*(mF)
 
@@ -368,11 +372,11 @@ class Zeeman_Hyperfine_Solver():
         # Compute m_{F} = m_{J} + m_{I} for labeling 
         F_list, m_F_list = self.F_mF_labels(eigenvectors)
         mJ_list, mI_list = self.mJ_mI_labels(eigenvectors)
-        if self.mode == 'exact' :
+        if self.approximation is None:
             return { 'B field' : B_field_vector, 'energies' : energies, 
                 'eigenvectors' : eigenvectors, 'F' : F_list, 'm_F' : m_F_list,
                 'mJ' : mJ_list, 'mI' : mI_list}
-        elif self.mode == 'weak field':
+        elif self.approximation == 'weak field':
             return { 'B field' : B_field_vector, 'energies' : energies, 
                 'eigenvectors' : eigenvectors, 'F' : F_list, 'm_F' : m_F_list}
 
@@ -415,7 +419,7 @@ class Zeeman_Hyperfine_Solver():
         At zero or low field, F is a good quantum number. At high field, (mJ, mI) are good quantum numbers/
         Assumes energies and eigenvectors at one magnetic field condition.
         Returns state energy. """
-        assert self.mode == 'exact', "Error. Request energies from (mJ, mI) pairs only in exact basis."
+        assert self.approximation is None, "Error. Request energies from (mJ, mI) pairs only in exact basis."
         # Get index at mJ, mI pair 
         mJ_states = [state[0] for state in self.basis_states]
         mI_states = [state[1] for state in self.basis_states]
@@ -453,7 +457,7 @@ class Zeeman_Hyperfine_Solver():
 
         if show_labels: 
             # Add label for |F| manifold on the left of the curves near B = 0 
-            if self.mode == 'exact':
+            if self.approximation is None:
                 F_range = np.arange(np.abs(self.I - self.J), self.I + self.J + 1)
                 num_states_per_F = (2*F_range + 1).astype(int)
                 for i, f in enumerate(F_range):
@@ -461,13 +465,13 @@ class Zeeman_Hyperfine_Solver():
                     # Place label above the highest state curve within F manifold at low-field  
                     state_indx = num_states_per_F[i] + np.sum(num_states_per_F[0:i])
                     ax.text(-0.08*np.abs(B_fields[-1] - B_fields[0]), energies[0, state_indx-1], f_label, ha='center', va='center')
-            elif self.mode == 'weak field':
+            elif self.approximation == 'weak field':
                 for i, (f, mf) in enumerate(self.basis_states):
                     f_label = f"$F = {f:.1f}$" if f % 1 != 0 else f"$F = {int(f)}$"
                     ax.text(-0.08*np.abs(B_fields[-1] - B_fields[0]), energies[0, i], f_label, ha='center', va='center')
 
         # Plot each level's Zeeman shift:
-        if self.mode == 'exact' :
+        if self.approximation is None:
             mJ_labels = results['mJ']
             mI_labels = results['mI']
 
@@ -476,9 +480,9 @@ class Zeeman_Hyperfine_Solver():
             line, = ax.plot(B_fields, energies[:, i], linewidth = 1.25, color='k') 
 
             if show_labels:
-                if self.mode == "exact" :
+                if self.approximation is None:
                     label_str = f"({mJ_labels[-1, i]}, {mI_labels[-1, i]})" 
-                elif self.mode == "weak field" :
+                elif self.approximation == "weak field" :
                     label_str = f"({F_values[-1,i]},{m_F[-1,i]})" 
                 ax.text(B_fields[-1]*1.02, energies[-1, i], label_str, va='center', ha='left', color = 'darkblue', fontsize=8)
 
@@ -490,9 +494,9 @@ class Zeeman_Hyperfine_Solver():
             # Option 2 (better), top left corner 
             x_annotate = -0.025*np.abs(B_fields[-1] - B_fields[0])
             y_annotate = np.max(energies)
-            if self.mode == 'exact':
+            if self.approximation is None:
                 ax.text(x_annotate, y_annotate,'High field ($m_{J}$, $m_{I}$)', va = 'center', ha='left')
-            elif self.mode == 'weak field':
+            elif self.approximation == 'weak field':
                 ax.text(x_annotate, y_annotate,'($F$, $m_{F}$)', va = 'center', ha='left')
             ax.set_xlim(-0.15*np.abs(B_fields[-1] - B_fields[0]), B_fields[-1]*1.2)
         ax.set_title(f'Zeeman shifts: L = {self.L}, J = {self.J}, I = {self.I}\n', fontsize = 16)
