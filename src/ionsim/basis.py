@@ -1,5 +1,5 @@
 from ionsim.ionsim_error import IonSimError
-from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicSpin
+from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.custom_types import Vector, Matrix
@@ -189,7 +189,7 @@ class StandardBasis(Basis):
 @dataclass(frozen=True, eq=False)
 class ZPauliBasis(StandardBasis):
     """A basis in which the basis states correspond to the (plus/minus) eigenstates of the z-Pauli spin matrix."""
-    degrees_of_freedom: list[AtomicSpin]
+    degrees_of_freedom: list[AtomicStructure]
 
     def __post_init__(self):
         # self._check_if_pauli_basis() # TODO: should we only allow for one degree of freedom here?
@@ -198,7 +198,7 @@ class ZPauliBasis(StandardBasis):
 @dataclass(frozen=True, eq=False)
 class XPauliBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix."""
-    degrees_of_freedom: list[AtomicSpin]
+    degrees_of_freedom: list[AtomicStructure]
 
     def __post_init__(self):
         # self._check_if_pauli_basis() # TODO: should we only allow for one degree of freedom here?
@@ -217,7 +217,7 @@ class XPauliBasis(Basis):
 @dataclass(frozen=True, eq=False)
 class YPauliBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix."""
-    degrees_of_freedom: list[AtomicSpin]
+    degrees_of_freedom: list[AtomicStructure]
 
     def __post_init__(self):
         # self._check_if_pauli_basis() # TODO: should we only allow for one degree of freedom here?
@@ -236,7 +236,7 @@ class YPauliBasis(Basis):
 @dataclass(frozen=True, eq=False)
 class XPauliAndFockBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix and Fock states."""
-    atomic_spins: list[AtomicSpin]
+    atomic_spins: list[AtomicStructure]
 
     @property
     def motional_modes(self):

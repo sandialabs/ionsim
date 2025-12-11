@@ -1,5 +1,5 @@
 # from basis import StandardBasis, XPauliBasis, XPauliAndFockBasis
-# from degree_of_freedom import AtomicSpin, MotionalMode
+# from degree_of_freedom import AtomicStructure, MotionalMode
 # from hamiltonian import Hamiltonian
 # from coupling import CouplingOperator
 # from state import State
@@ -22,7 +22,7 @@ modulate_amplitude = False
 num_spins = 1
 
 spins = [
-    sm.AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+    sm.AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
     for _ in range(num_spins)
 ]
 basis = sm.StandardBasis([*spins])

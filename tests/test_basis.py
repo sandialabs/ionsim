@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from ionsim.degree_of_freedom import AtomicSpin, MotionalMode
+from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.basis import StandardBasis, ZPauliBasis, XPauliBasis
 from ionsim.testing import assert_array_close
@@ -9,8 +9,8 @@ class TestBasis(unittest.TestCase):
 
     def setUp(self):
         """Set up the necessary objects for testing."""
-        self.spin_a = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        self.spin_b = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.mode_0 = MotionalMode.from_frequency(frequency=3e6*2*np.pi, fock_dimension=3)
         self.mode_1 = MotionalMode.from_frequency(frequency=4e6*2*np.pi, fock_dimension=2)
 

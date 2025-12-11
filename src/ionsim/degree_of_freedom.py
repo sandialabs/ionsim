@@ -21,8 +21,9 @@ class DegreeOfFreedom(ABC):
     name: str | None = None # TODO: will we use these names?
 
 @dataclass(frozen=True, eq=False)
-class AtomicSpin(DegreeOfFreedom):
-    """An atomic spin degree of freedom, i.e. its coupled spin and orbital angular momentum."""
+class AtomicStructure(DegreeOfFreedom):
+    """An atomic structure object, which contains atomic internal energy levels. 
+       Atomic structure accounts for coupled properties, such as spin and orbital angular momentum."""
     energy_levels: list[AtomicInternalEnergyLevel]
 
     @classmethod

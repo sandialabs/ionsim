@@ -1,5 +1,5 @@
 from .basis import StandardBasis, XPauliBasis, XPauliAndFockBasis
-from .degree_of_freedom import AtomicSpin, MotionalMode
+from .degree_of_freedom import AtomicStructure, MotionalMode
 from .hamiltonian import Hamiltonian
 from .coupling import CouplingOperator
 from .state import State

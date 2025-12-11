@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 
 from ionsim.process import Gate, Circuit
-from ionsim.degree_of_freedom import AtomicSpin
+from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis
 from ionsim.named_operators import Unitary
 from ionsim.noise import Noise
@@ -12,8 +12,8 @@ class TestProcess(unittest.TestCase):
 
     def setUp(self):
         """Set up the necessary objects for testing."""
-        self.spin_a = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        self.spin_b = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.basis = StandardBasis([self.spin_a, self.spin_b])
 
         self.Sx = Gate.from_unitary(self.basis, Unitary.sqrtX, [self.spin_a])
