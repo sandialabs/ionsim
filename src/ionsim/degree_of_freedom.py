@@ -29,7 +29,7 @@ class AtomicStructure(DegreeOfFreedom):
     @classmethod
     def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None,
             name: str | None = None):
-        """Build the atomic spin degree of freedom for a particular species of atom."""
+        """Build the atomic structure degree of freedom for a particular species of atom."""
         config_data = cls.get_config_data(species)
         nuclear_spin = config_data['nuclear_spin']
         levels_data = config_data['levels']
