@@ -1,29 +1,30 @@
 """Define the ionsim_api decorator that converts user inputs from one
 of several possible formats to pint Quantity values."""
 
-import sys
 import functools
 import inspect
 import warnings
 import typing
-from typing import NewType, Any, Union, GenericAlias
+import numbers
+from typing import Any, Union
 from collections.abc import Mapping, Set, Sequence
 
-# The type of the result of using the | operator in annotations
-if (3, 10) <= sys.version_info < (3, 14):
+# This changed in Python 3.10
+try:
+    from typing import UnionType
+except ImportError:
     from types import UnionType
-else:
-    UnionType = Union
 
 import pint
 import numpy as np
 
 from ionsim import ureg
 
+
 class Unit:
-    """Annotation class: Unit[D, U] means "take whatever the user
-    passed in (m, km, '5 m', (5,'m'), or a Quantity) and convert it
-    into u."  The D argument is pure documentation, ignored at
+    """Used as an annotation, Unit[D, U] means "take whatever the user
+    passed in ('5 m', (5,'m'), or a Quantity) and convert it
+    into U."  The D argument is pure documentation, ignored at
     runtime."""
     def __init__(self, dtype: Any, target_unit: str):
         self.dtype = dtype
@@ -41,7 +42,6 @@ class Unit:
 
     def __or__(self, other):
         return Union[self, other]
-
 
 
 def ionsim_api(obj):
@@ -72,6 +72,9 @@ def _ionsim_api_class(cls):
 def _ionsim_api_function(func):
     sig = inspect.signature(func)
 
+    if sig.return_annotation == inspect.Signature.empty:
+        raise ValueError(f"Function {func} must have a return annotation")
+
     # If none of the annotations on the function parameters are units,
     # return the original function unchanged. Also check that the Unit
     # annotation is not used incorrectly.
@@ -92,37 +95,40 @@ def _ionsim_api_function(func):
             annotation = sig.parameters[name].annotation
             if annotation is not None:
                 ba.arguments[name], _ = _convert_to_annotation(value, annotation)
-        return func(*ba.args, **ba.kwargs)
+        ret = func(*ba.args, **ba.kwargs)
+        conv, _ = _convert_to_annotation(ret, sig.return_annotation, is_return=True)
+        return conv
 
     return inner
 
 
-def _convert_to_annotation(value, annotation):
+def _convert_to_annotation(value, annotation, is_return=False):
     """Convert a value to properly have units according to an
     annotation."""
 
     if isinstance(annotation, Unit):
-        return _convert_unit(value, annotation)
-    elif isinstance(annotation, (UnionType, typing._UnionGenericAlias)):
-        # TODO: Try this on 3.9 and 3.14 in addition to 3.11
-        return _convert_union(value, annotation)
-    elif isinstance(annotation, GenericAlias):
+        return _convert_unit(value, annotation, is_return=is_return)
 
-        origin = annotation.__origin__
-        if issubclass(origin, (dict, Mapping)):
-            return _convert_mapping(value, annotation)
-        elif issubclass(origin, (set, Set)):
-            return _convert_set(value, annotation)
+    origin = typing.get_origin(annotation)
+
+    if origin is Union or origin is UnionType:
+        return _convert_union(value, annotation, is_return=is_return)
+
+    if isinstance(origin, type):
+        if issubclass(origin, Mapping):
+            return _convert_mapping(value, annotation, is_return=is_return)
+        elif issubclass(origin, Set):
+            return _convert_set(value, annotation, is_return=is_return)
         elif issubclass(origin, tuple):
-            return _convert_tuple(value, annotation)
+            return _convert_tuple(value, annotation, is_return=is_return)
         elif issubclass(origin, Sequence):
-            return _convert_sequence(value, annotation)
+            return _convert_sequence(value, annotation, is_return=is_return)
 
     # Ignore all other annotations
     return value, False
 
 
-def _convert_unit(value, annotation):
+def _convert_unit(value, annotation, is_return=False):
     """Convert a value give by the user to an appropriate pint unit."""
     if isinstance(value, ureg.Quantity):
         ret = value
@@ -136,33 +142,28 @@ def _convert_unit(value, annotation):
         if value.units == annotation.target_unit_as_quantity:
             return value, False
         ret = value
+    elif is_return and isinstance(value, (numbers.Number, np.ndarray)):
+        ret = ureg.Quantity(value, annotation.target_unit_as_quantity)
     else:
         raise ValueError(f"Value not understood or does not have units as required: {value}")
 
-    return _perform_unit_conversion(ret, annotation.target_unit), True
+    conv = ret.to(annotation.target_unit_as_quantity)
+    if is_return:
+        return conv, True
+    return conv.magnitude, True
 
 
-def _perform_unit_conversion(value, units):
-    units = ureg.Unit(units)
-    conv = value.to(units)
-    if value.units == ureg.Unit("hertz") and units == ureg.Unit("radians / second"):
-        return 2*np.pi*conv
-    elif value.units == ureg.Unit("radians / second") and units == ureg.Unit("hertz"):
-        return conv / (2*np.pi)
-    else:
-        return conv
-
-def _convert_mapping(value, annotation):
+def _convert_mapping(value, annotation, is_return=False):
     was_converted = False
 
     def convert(arg, annotation):
         nonlocal was_converted
-        conv, ok = _convert_to_annotation(arg, annotation)
+        conv, ok = _convert_to_annotation(arg, annotation, is_return=is_return)
         was_converted = was_converted or ok
         return conv
 
-    key_annotation = annotation.__args__[0]
-    value_annotation = annotation.__args__[1]
+    key_annotation = typing.get_args(annotation)[0]
+    value_annotation = typing.get_args(annotation)[1]
 
     itr = ((convert(k, key_annotation), convert(v, value_annotation)) for k, v in value.items())
     if hasattr(value, 'default_factory'):
@@ -178,23 +179,23 @@ def _convert_mapping(value, annotation):
     return value, False
 
 
-def _convert_set(value, annotation):
-    return _convert_sequence(value, annotation)
+def _convert_set(value, annotation, is_return=False):
+    return _convert_sequence(value, annotation, is_return=is_return)
 
 
-def _convert_tuple(value, annotation):
-    if len(value) != len(annotation.__args__):
-        raise ValueError(f"Tuple {value} expected to have {len(annotation.__args__)} values")
+def _convert_tuple(value, annotation, is_return=False):
+    if len(value) != len(typing.get_args(annotation)):
+        raise ValueError(f"Tuple {value} expected to have {len(typing.get_args(annotation))} values")
 
     was_converted = False
 
     def convert(arg, annotation):
         nonlocal was_converted
-        conv, ok = _convert_to_annotation(arg, annotation)
+        conv, ok = _convert_to_annotation(arg, annotation, is_return=is_return)
         was_converted = was_converted or ok
         return conv
 
-    new = tuple(convert(arg, annotation) for arg, annotation in zip(value, annotation.__args__))
+    new = tuple(convert(arg, annotation) for arg, annotation in zip(value, typing.get_args(annotation)))
 
     if was_converted:
         return new, True
@@ -202,8 +203,8 @@ def _convert_tuple(value, annotation):
     return value, False
 
 
-def _convert_sequence(value, annotation):
-    inner_annotation = annotation.__args__[0]
+def _convert_sequence(value, annotation, is_return=False):
+    inner_annotation = typing.get_args(annotation)[0]
     if not _has_unit_type(inner_annotation):
         # If no Unit conversions are called for, skip a potentially
         # lengthy process
@@ -213,7 +214,7 @@ def _convert_sequence(value, annotation):
 
     def convert(arg):
         nonlocal was_converted
-        conv, ok = _convert_to_annotation(arg, inner_annotation)
+        conv, ok = _convert_to_annotation(arg, inner_annotation, is_return=is_return)
         was_converted = was_converted or ok
         return conv
 
@@ -224,16 +225,16 @@ def _convert_sequence(value, annotation):
     return value, False
 
 
-def _convert_union(value, annotation):
-    if any(isinstance(sub, Unit) for sub in annotation.__args__):
-        return _convert_union_unit(value, annotation)
+def _convert_union(value, annotation, is_return=False):
+    if any(isinstance(sub, Unit) for sub in typing.get_args(annotation)):
+        return _convert_union_unit(value, annotation, is_return=is_return)
     else:
-        return _convert_union_any(value, annotation)
+        return _convert_union_any(value, annotation, is_return=is_return)
 
     return value, False
 
 
-def _convert_union_unit(value, annotation):
+def _convert_union_unit(value, annotation, is_return=False):
     """Convert based off a Union annotation that contains at least one
     Unit at its top level. We do special handling to try to eliminate
     ambiguity."""
@@ -241,11 +242,11 @@ def _convert_union_unit(value, annotation):
     # First see if we can match more than one Unit, and if so, fail
     converted = None
     was_converted = False
-    for sub in annotation.__args__:
+    for sub in typing.get_args(annotation):
         if isinstance(sub, Unit):
             new = None
             try:
-                new, was_converted = _convert_unit(value, sub)
+                new, was_converted = _convert_unit(value, sub, is_return=is_return)
             except Exception:
                 pass
             if new is not None and converted is not None:
@@ -257,21 +258,21 @@ def _convert_union_unit(value, annotation):
     # We don't do general type checking, but we want to be sure as
     # much as possible that users have to provide units in numeric
     # contexts
-    if isinstance(value, (int, float, np.ndarray)) and not isinstance(value, bool) and not any(sub == Any for sub in annotation.__args__):
+    if not is_return and isinstance(value, (numbers.Number, np.ndarray)) and not isinstance(value, bool) and not any(sub == Any for sub in typing.get_args(annotation)):
         raise ValueError(f"Could not convert {value} under {annotation}")
 
-    return _convert_union_any(value, annotation)
+    return _convert_union_any(value, annotation, is_return=is_return)
 
 
-def _convert_union_any(value, annotation):
+def _convert_union_any(value, annotation, is_return=False):
     """Convert a union of arbitrary types. The first matching choice
     is used, even if ambiguity might exist between it and a later
     choice. This avoids a potentially costly search at the cost of
     less type checking."""
 
-    for sub in annotation.__args__:
+    for sub in typing.get_args(annotation):
         try:
-            return _convert_to_annotation(value, sub)
+            return _convert_to_annotation(value, sub, is_return=is_return)
         except Exception:
             pass
 
@@ -283,6 +284,4 @@ def _has_unit_type(annotation):
         warnings.warn(f"Annotation {annotation} is a slice. This almost always happens when you use a colon when defining a dict type instead of a comma.")
     if isinstance(annotation, Unit):
         return True
-    if hasattr(annotation, '__args__'):
-        return any(_has_unit_type(arg) for arg in annotation.__args__)
-    return False
+    return any(_has_unit_type(arg) for arg in typing.get_args(annotation))
