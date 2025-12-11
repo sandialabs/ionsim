@@ -5,6 +5,7 @@ import functools
 import inspect
 import warnings
 import typing
+import types
 import numbers
 from typing import Any, Union
 from collections.abc import Mapping, Set, Sequence
@@ -21,24 +22,32 @@ import numpy as np
 from ionsim import ureg
 
 
+class UnitMeta(type):
+    def __repr__(cls):
+        return f"Unit[{cls.dtype!r}, '{cls.target_unit}']"
+
+
 class Unit:
     """Used as an annotation, Unit[D, U] means "take whatever the user
     passed in ('5 m', (5,'m'), or a Quantity) and convert it
     into U."  The D argument is pure documentation, ignored at
     runtime."""
-    def __init__(self, dtype: Any, target_unit: str):
-        self.dtype = dtype
-        self.target_unit = target_unit
-        self.target_unit_as_quantity = ureg.Unit(target_unit)
 
     def __class_getitem__(cls, params):
         if not (isinstance(params, tuple) and len(params) == 2):
             raise TypeError("Unit[...] must be subscripted as Unit[<type>, <units>]")
         dtype, units = params
-        return cls(dtype, units)
 
-    def __repr__(self):
-        return f"Unit[{self.dtype!r}, '{self.target_unit}']"
+        # Python 3.10 requires the members of a Union annotation to be
+        # classes.
+
+        def exec_body(ns):
+            ns['dtype'] = dtype
+            ns['target_unit'] = units
+            ns['target_unit_as_quantity'] = ureg.Unit(units)
+
+        return types.new_class('Unit', bases=(Unit,), kwds={'metaclass': UnitMeta},
+                               exec_body=exec_body)
 
     def __or__(self, other):
         return Union[self, other]
@@ -106,7 +115,7 @@ def _convert_to_annotation(value, annotation, is_return=False):
     """Convert a value to properly have units according to an
     annotation."""
 
-    if isinstance(annotation, Unit):
+    if isinstance(annotation, type) and issubclass(annotation, Unit):
         return _convert_unit(value, annotation, is_return=is_return)
 
     origin = typing.get_origin(annotation)
@@ -226,11 +235,10 @@ def _convert_sequence(value, annotation, is_return=False):
 
 
 def _convert_union(value, annotation, is_return=False):
-    if any(isinstance(sub, Unit) for sub in typing.get_args(annotation)):
+    if any(isinstance(sub, type) and issubclass(sub, Unit) for sub in typing.get_args(annotation)):
         return _convert_union_unit(value, annotation, is_return=is_return)
     else:
         return _convert_union_any(value, annotation, is_return=is_return)
-
     return value, False
 
 
@@ -243,7 +251,7 @@ def _convert_union_unit(value, annotation, is_return=False):
     converted = None
     was_converted = False
     for sub in typing.get_args(annotation):
-        if isinstance(sub, Unit):
+        if isinstance(sub, type) and issubclass(sub, Unit):
             new = None
             try:
                 new, was_converted = _convert_unit(value, sub, is_return=is_return)
@@ -282,6 +290,6 @@ def _convert_union_any(value, annotation, is_return=False):
 def _has_unit_type(annotation):
     if isinstance(annotation, slice):
         warnings.warn(f"Annotation {annotation} is a slice. This almost always happens when you use a colon when defining a dict type instead of a comma.")
-    if isinstance(annotation, Unit):
+    if isinstance(annotation, type) and issubclass(annotation, Unit):
         return True
     return any(_has_unit_type(arg) for arg in typing.get_args(annotation))
