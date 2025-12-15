@@ -1,7 +1,8 @@
 ---
 species: '171Yb+'
-mass: 170.936323 # units!
-nuclear_spin: 0.5
+mass: 170.936323 # Daltons 
+Z: 70  # number of protons, must be integral 
+nuclear_spin: 0.5 
 charge: 1.0 # Coulomb
 magnetic_moment: 0.4919 # units!
 levels:
@@ -68,7 +69,9 @@ levels:
     l2: 2.0
     s2: 1.0
 
-# TODO: ADD REFERENCES FOR ALL NUMBERS!
 
+# TODO: ADD REFERENCES FOR ALL NUMBERS!
+# PhysRevA.76.052314, 
+# "Engineering the Quantum Scientific Computing Open User Testbed", IEEE. 10.1109/TQE.2021.3096480
 
   

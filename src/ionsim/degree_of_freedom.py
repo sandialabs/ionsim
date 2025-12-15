@@ -2,6 +2,7 @@ from ionsim.energy_level import EnergyLevel
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.atomic_internal_energy_level import LSFineLevel, LSHyperfineLevel, J1L2FineLevel, J1L2HyperfineLevel
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel
+from ionsim.zeeman_solver import ZeemanHyperfineSolver
 
 import importlib.resources
 from pathlib import Path
@@ -27,12 +28,15 @@ class AtomicSpin(DegreeOfFreedom):
 
     @classmethod
     def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None,
-            name: str | None = None):
+            name: str | None = None, magnetic_field: float=0.):
         """Build the atomic spin degree of freedom for a particular species of atom."""
         config_data = cls.get_config_data(species)
         nuclear_spin = config_data['nuclear_spin']
         levels_data = config_data['levels']
-        structure = 'fine' if nuclear_spin == 0 else 'hyperfine'
+        mass = config_data['mass'] # Daltons
+        Z = config_data['Z'] # Atomic number, number of protons 
+        magnetic_moment = config_data['magnetic_moment'] # units of \mu_{N}
+        structure = 'fine' if nuclear_spin == 0 else 'hyperfine' 
 
         if term_symbols is not None:
             levels_data = cls.select_some_data(term_symbols, levels_data)
@@ -48,19 +52,40 @@ class AtomicSpin(DegreeOfFreedom):
             get_fine_data, FineLevel, HyperfineLevel = cls.get_level_factory(level_data['coupling_scheme'])
             fine_data = get_fine_data(level_data)
             j = fine_data['j']
+            l = fine_data['l']
+            s = fine_data['s']
 
             # ic(FineLevel.__annotations__, FineLevel(**fine_data, mj={'key': 1}))
             # TODO: why is mypy not catching this??
 
+            # Use Zeeman Solver based on level manifold to compute Zeeman shifts 
+            if magnetic_field != 0. :
+                #print('Applying Zeeman shift to level manifold ' + level_data['unique_term_symbol'])
+                Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, Z)
+                zeeman_energy_shifts, zeeman_eigenvecs = Zeeman_solver.solve_at_field(magnetic_field)
+                zeeman_energy_shifts *= np.pi*2. # convert to rad/s 
+
+            # Construct levels based on coupling structure 
             if structure == 'fine':
                 for mj in np.arange(-j, j + 1):
-                    level = FineLevel(**fine_data, mj=mj)
+                    # Extract any Zeeman shifts for this state 
+                    zeeman_shift_energy = 0.
+                    if magnetic_field != 0. :
+                        zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, F = j, m_F = mj)
+                    # Create the level 
+                    level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy)
                     if level_names is None or level.name in level_names: 
                         levels.append(level)
             else:
-                for f in np.arange(-(j + nuclear_spin), j + nuclear_spin + 1):
+                for f in np.arange(np.abs(j - nuclear_spin), j + nuclear_spin + 1):
                     for mf in np.arange(-f, f + 1):
-                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf)
+                        # Extract any Zeeman shifts for this mF state 
+                        zeeman_shift_energy = 0.
+                        if magnetic_field != 0. :
+                            zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, F = f, m_F = mf)
+
+                        # Create the level 
+                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy)
                         if level_names is None or level.name in level_names:
                             levels.append(level)
         return cls(levels, name)
