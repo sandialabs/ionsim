@@ -31,3 +31,16 @@ class EnergyEigenstate(EnergyLevel): #TODO: consider renaming this something lik
         """A unique name for the state."""
         return ' : '.join([component.name for component in self.components])
 
+@dataclass(frozen=True, eq=False)
+class InternalEnergyLevel(EnergyLevel):
+    """ A simple energy level that is agnostic to physical qubit (e.g. atom or ion) details. """
+    energy: float # rad/s
+    name: str | None = None 
+
+    def energy(self):
+        """The energy of the level."""
+        return self.energy
+    
+    def name(self):
+        """ The name of the level"""
+        return self.name

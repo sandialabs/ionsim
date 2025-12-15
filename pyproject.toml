@@ -15,7 +15,8 @@ dependencies = [
     "matplotlib",
     "csaps",
     "icecream",
-    "pyyaml"
+    "pyyaml",
+    "pint"
 ]
 classifiers = [
     "Development Status :: 2 - Beta",
