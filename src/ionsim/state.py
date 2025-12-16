@@ -9,6 +9,7 @@ import numpy as np
 # from typing import Any
 from dataclasses import dataclass
 from numpy.linalg import multi_dot
+from typing import Any
 
 from icecream import ic
  
@@ -99,7 +100,7 @@ class State:
         return [State(self.basis, rho, psi) for rho, psi in zip(rhos, psis)]
     
     def propagate_using_stochastic_schrodinger_equation(self, hamiltonian: 'Hamiltonian', 
-                                                        noisy_trajectories: Matrix | None = None,
+                                                        noisy_trajectories: Any = None,
                                                         time_evals: Vector | None = None,
                                                         return_density_average: bool = True,
                                                         **kwargs):

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import numpy as np
 from scipy.sparse import csr_matrix
-from typing import Callable
+from typing import Callable, Any
 from functools import cached_property
 from icecream import ic
 
@@ -384,8 +384,16 @@ class Hamiltonian(CompositeOperator):
             if info:
                 if n_noise_sources <= 0:
                     raise IonSimError('Stochastic evolution requested but no noise sources were provided.')
+                has_explicit_source = ('noise_source' in info) or ('noise_channel' in info)
                 default_noise_source = 0 if n_noise_sources == 1 else len(stoch_hints)
                 noise_source = int(info.get('noise_source', info.get('noise_channel', default_noise_source)))
+                if (not has_explicit_source) and n_noise_sources > 1 and default_noise_source >= n_noise_sources:
+                    raise IonSimError(
+                        'Not enough noise sources were provided for the number of stochastic coupling operators. '
+                        f'Expected at least {default_noise_source + 1} noise sources but got {n_noise_sources}. '
+                        'Either provide more noise sources (one per stochastic operator by default) '
+                        'or set stochastic_info["noise_source"] explicitly on each stochastic operator.'
+                    )
                 if noise_source < 0 or noise_source >= n_noise_sources:
                     raise IonSimError(
                         f"Noise source {noise_source} not available for stochastic coupling (n_sources: {n_noise_sources})."
@@ -559,7 +567,7 @@ class Hamiltonian(CompositeOperator):
         return result
 
     def evolve_stochastic_wavefunction(self, initial_wavefunction: Vector, time_evals: Vector | None = None,
-        noisy_trajectories: Matrix | None = None, return_density_average: bool = True, **kwargs):
+        noisy_trajectories: Any = None, return_density_average: bool = True, **kwargs):
         assert(self.size == len(initial_wavefunction))
         import time
         from icecream import ic
