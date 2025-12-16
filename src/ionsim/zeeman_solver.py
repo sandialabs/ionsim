@@ -1,10 +1,11 @@
+from ionsim import constants
+
 import numpy as np
 from scipy.linalg import eigh 
 from scipy.special import comb 
 from numpy.typing import NDArray
 import pint 
 import math
-import constants
 
 
 class ZeemanHyperfineSolver():
@@ -58,8 +59,9 @@ class ZeemanHyperfineSolver():
         self.basis_states = self.create_basis()
         self.dim = len(self.basis_states) # d, Hamiltonian will be a d x d matrix
 
-        constants.NUCLEAR_MAGNETON = 5.050783739316E-27 # J/T , Nuclear magneton
-        constants.BOHR_MAGNETON = 9.274010065729E-24 # J/T , Bohr magneton 
+        # Retrieve constants and manipulate units internally with pint 
+        self.mu_N = constants.NUCLEAR_MAGNETON # J/T , Nuclear magneton
+        self.mu_B = constants.BOHR_MAGNETON # J/T , Bohr magneton 
 
         # Parse the desired unit handling
         # The solver works in rad/s internally. Unit conversions may be specified by the user 
