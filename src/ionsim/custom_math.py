@@ -450,6 +450,11 @@ if _NUMBA_AVAILABLE:
             mat = hint * np.exp(-1j * rate * t)
         else:
             mat = hint
+        
+        # Check for hermiticity
+        if np.allclose(mat, mat.conj().T, atol=1e-10):
+            return mat
+            
         return mat + mat.conj().T
 
     @njit(cache=True)
