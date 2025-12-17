@@ -5,6 +5,8 @@ from typing import Any, Callable
 from scipy.integrate import trapezoid as trapz
 import itertools as it
 from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
+import os
 from scipy.integrate import odeint, solve_ivp, ode
 from scipy import sparse
 from scipy.sparse import csr_matrix
@@ -190,7 +192,7 @@ class StochasticOdeSolver(OdeSolver):
         This helper only reshapes; it does not validate semantic mapping between channels and operators.
         """
         if noisy_trajectories is None:
-            raise IonSimError('No noisy trajectories provided to the stochastic solver.')
+            raise IonSimError('No noise trajectories provided to the stochastic solver.')
         noise_array = np.asarray(noisy_trajectories)
         if noise_array.ndim == 1:
             noise_array = noise_array[np.newaxis, :]
@@ -243,24 +245,107 @@ class StochasticOdeSolver(OdeSolver):
                 component_data,
             )
         else:
-            trajectory_vectors: list[np.ndarray] = []
-            for trajectory_index in range(n_trajectories):
-                trajectory_noise = noise_array[trajectory_index]
-                times, state_vectors = _solve_single_stochastic_trajectory(
-                    trajectory_noise,
-                    self.interaction_function,
-                    self.initial_vector,
-                    self.duration,
-                    time_grid,
-                    self.base_solver,
-                    solver_kwargs,
-                )
-                if len(times) != len(time_grid) or not np.allclose(times, time_grid, atol=1e-12, rtol=1e-9):
-                    raise IonSimError('All stochastic trajectories must share the same integration time grid.')
-                trajectory_vectors.append(state_vectors)
-            stacked_results = np.stack(trajectory_vectors, axis=0)
+            stacked_results = parallel_trajectory_ode_solver(
+                n_trajectories,
+                solver_kwargs,
+                time_grid,
+                noise_array,
+                interaction_function=self.interaction_function,
+                initial_vector=self.initial_vector,
+                duration=self.duration,
+                base_solver=self.base_solver,
+            )
 
         return list(time_grid), stacked_results
+
+def parallel_trajectory_ode_solver(
+        n_trajectories: int,
+        solver_kwargs: dict[str, Any],
+        time_grid: np.ndarray,
+        noise_array: np.ndarray,
+        interaction_function: Callable,
+        initial_vector: Vector,
+        duration: float,
+        base_solver: str,
+    ) -> np.ndarray:
+    """Solve each trajectory independently, optionally in parallel.
+
+    Notes (Windows / notebooks): multiprocessing uses spawn, which requires the
+    passed callables to be picklable. If pickling fails, we fall back to a
+    serial loop to keep behavior correct.
+    """
+    if n_trajectories <= 0:
+        raise IonSimError('n_trajectories must be a positive integer.')
+
+    processes = os.cpu_count() or 1
+
+    # Prepare per-trajectory work items.
+    work_items = [
+        (
+            noise_array[trajectory_index],
+            interaction_function,
+            initial_vector,
+            duration,
+            time_grid,
+            base_solver,
+            solver_kwargs,
+        )
+        for trajectory_index in range(n_trajectories)
+    ]
+
+    try:
+        with mp.Pool(processes=processes) as pool:
+            results = pool.starmap(_solve_single_stochastic_trajectory, work_items)
+        print("Using multiprocessing with", processes, "processes for stochastic trajectories.")
+    except Exception as exc:
+        # Most common cause: interaction_function (or one of its captured objects)
+        # is not picklable under spawn. Keep correctness by falling back to serial.
+        print(f"Multiprocessing failed ({type(exc).__name__}: {exc}); falling back to serial.")
+        return _serial_trajectory_ode_solver(
+            n_trajectories,
+            solver_kwargs,
+            time_grid,
+            noise_array,
+            interaction_function,
+            initial_vector,
+            duration,
+            base_solver,
+        )
+
+    trajectory_vectors: list[np.ndarray] = []
+    for times, state_vectors in results:
+        if len(times) != len(time_grid) or not np.allclose(times, time_grid, atol=1e-12, rtol=1e-9):
+            raise IonSimError('All stochastic trajectories must share the same integration time grid.')
+        trajectory_vectors.append(state_vectors)
+    return np.stack(trajectory_vectors, axis=0)
+
+
+def _serial_trajectory_ode_solver(
+    n_trajectories: int,
+    solver_kwargs: dict[str, Any],
+    time_grid: np.ndarray,
+    noise_array: np.ndarray,
+    interaction_function: Callable,
+    initial_vector: Vector,
+    duration: float,
+    base_solver: str,
+) -> np.ndarray:
+    trajectory_vectors: list[np.ndarray] = []
+    for trajectory_index in range(n_trajectories):
+        trajectory_noise = noise_array[trajectory_index]
+        times, state_vectors = _solve_single_stochastic_trajectory(
+            trajectory_noise,
+            interaction_function,
+            initial_vector,
+            duration,
+            time_grid,
+            base_solver,
+            solver_kwargs,
+        )
+        if len(times) != len(time_grid) or not np.allclose(times, time_grid, atol=1e-12, rtol=1e-9):
+            raise IonSimError('All stochastic trajectories must share the same integration time grid.')
+        trajectory_vectors.append(state_vectors)
+    return np.stack(trajectory_vectors, axis=0)
 
 
 def _solve_single_stochastic_trajectory(
@@ -369,6 +454,11 @@ if _NUMBA_AVAILABLE:
             mat = hint * np.exp(-1j * rate * t)
         else:
             mat = hint
+        
+        # Check for hermiticity
+        if np.allclose(mat, mat.conj().T, atol=1e-10):
+            return mat
+            
         return mat + mat.conj().T
 
     @njit(cache=True)
