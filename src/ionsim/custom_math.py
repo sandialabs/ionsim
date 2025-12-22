@@ -19,6 +19,44 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     _NUMBA_AVAILABLE = False
 
+try:
+    from numba import cuda
+    _CUDA_AVAILABLE = True
+except Exception:  # pragma: no cover - optional dependency
+    cuda = None  # type: ignore[assignment]
+    _CUDA_AVAILABLE = False
+
+
+def _cuda_is_usable() -> bool:
+    """Return True iff Numba CUDA can create a context."""
+    if not _CUDA_AVAILABLE or cuda is None:
+        return False
+    try:
+        cuda.select_device(0)
+        _ = cuda.current_context()
+        # Creating a context is not sufficient: Numba must also be able to
+        # compile kernels, which requires libNVVM (nvvm.dll on Windows).
+        try:
+            from numba.cuda.cudadrv import nvvm as _nvvm  # type: ignore
+        except Exception:
+            return False
+        if not _nvvm.is_available():
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def _precompute_is_hermitian_flags(hints: np.ndarray) -> np.ndarray:
+    """Precompute whether each hint matrix is Hermitian (uint8 flags)."""
+    if hints.shape[0] == 0:
+        return np.zeros((0,), dtype=np.uint8)
+    flags = np.zeros((hints.shape[0],), dtype=np.uint8)
+    for i in range(hints.shape[0]):
+        mat = np.asarray(hints[i])
+        flags[i] = 1 if np.allclose(mat, mat.conj().T, atol=1e-12, rtol=1e-12) else 0
+    return flags
+
 from icecream import ic
 
 def solve_time_evolution_equation(interaction_function: Callable, initial_state_vector: Vector, duration: float,
@@ -171,14 +209,34 @@ class StochasticOdeSolver(OdeSolver):
                 raise IonSimError('Length of time_evals must match the number of noise samples per trajectory.')
 
         backend = self.trajectory_backend.lower()
-        if backend not in {'python', 'numba'}:
+        if backend not in {'python', 'numba', 'cuda'}:
             raise IonSimError(
-                f'Unknown trajectory_backend "{self.trajectory_backend}". Expected "python" or "numba".'
+                f'Unknown trajectory_backend "{self.trajectory_backend}". Expected "python", "numba", or "cuda".'
             )
 
         solver_kwargs = dict(self.base_solver_kwargs)
 
-        if backend == 'numba':
+        if backend == 'cuda':
+            if not _cuda_is_usable():
+                raise IonSimError(
+                    'trajectory_backend="cuda" requested but Numba CUDA is not usable in this environment. '
+                    'Verify CUDA with: from numba import cuda; cuda.select_device(0); cuda.current_context()'
+                )
+            component_data = self.interaction_function(
+                initial_wavefunction=self.initial_vector,
+                duration=self.duration,
+                time_evals=time_grid,
+                trajectory_noise=noise_array[0],
+                noise_times=time_grid,
+                return_component_data=True,
+            )
+            stacked_results = _run_stochastic_trajectories_cuda(
+                noise_array,
+                np.asarray(self.initial_vector, dtype=np.complex128, order='C'),
+                time_grid,
+                component_data,
+            )
+        elif backend == 'numba':
             if not _NUMBA_AVAILABLE:
                 raise IonSimError('trajectory_backend="numba" requested but numba is not installed.')
             component_data = self.interaction_function(
@@ -378,6 +436,358 @@ def _run_stochastic_trajectories_numba(
         bare_hints,
         bare_present,
     )
+
+
+# -----------------------------
+# Numba CUDA backend (GPU)
+# -----------------------------
+
+_CUDA_MAX_STATE_DIM = 256
+
+
+def _run_stochastic_trajectories_cuda(
+    noise_array: np.ndarray,
+    initial_vector: np.ndarray,
+    time_grid: np.ndarray,
+    component_data: Any,
+) -> np.ndarray:
+    """Execute stochastic trajectories on a CUDA GPU using Numba.
+
+    Notes:
+    - Assumes `noise_array` is sampled on `time_grid`.
+    - Uses linear interpolation for the RK4 midpoint by averaging adjacent samples.
+    - Current kernel supports state dimension up to `_CUDA_MAX_STATE_DIM`.
+    """
+    if not _cuda_is_usable():
+        raise IonSimError('trajectory_backend="cuda" requested but Numba CUDA is not usable.')
+
+    noise_array_f64 = np.ascontiguousarray(noise_array, dtype=np.float64)
+    time_grid_f64 = np.ascontiguousarray(np.asarray(time_grid, dtype=np.float64))
+    initial_vec_c = np.ascontiguousarray(initial_vector, dtype=np.complex128)
+
+    n_traj, n_sources, n_time = noise_array_f64.shape
+    n_state = int(initial_vec_c.shape[0])
+    if n_state > _CUDA_MAX_STATE_DIM:
+        raise IonSimError(
+            f'CUDA backend currently supports state dimension <= {_CUDA_MAX_STATE_DIM}, got {n_state}. '
+            'Reduce system size or increase _CUDA_MAX_STATE_DIM.'
+        )
+
+    H0 = np.ascontiguousarray(component_data.H0, dtype=np.complex128)
+    det_hints = np.ascontiguousarray(component_data.deterministic_hints, dtype=np.complex128)
+    # Flatten rates from (n_terms, dim, dim) to (n_terms,) by summing (assuming single non-zero per term)
+    det_rates_3d = np.ascontiguousarray(component_data.deterministic_rates, dtype=np.float64)
+    if det_rates_3d.ndim == 3:
+        det_rates = np.sum(det_rates_3d, axis=(1, 2))
+    else:
+        det_rates = det_rates_3d
+    det_has_rate = np.ascontiguousarray(component_data.deterministic_has_rate, dtype=np.uint8)
+
+    stoch_hints = np.ascontiguousarray(component_data.stochastic_hints, dtype=np.complex128)
+    # Flatten rates from (n_terms, dim, dim) to (n_terms,)
+    stoch_rates_3d = np.ascontiguousarray(component_data.stochastic_rates, dtype=np.float64)
+    if stoch_rates_3d.ndim == 3:
+        stoch_rates = np.sum(stoch_rates_3d, axis=(1, 2))
+    else:
+        stoch_rates = stoch_rates_3d
+    stoch_has_rate = np.ascontiguousarray(component_data.stochastic_has_rate, dtype=np.uint8)
+
+    noise_strengths = np.ascontiguousarray(component_data.noise_strengths, dtype=np.complex128)
+    noise_offsets = np.ascontiguousarray(component_data.noise_offsets, dtype=np.float64)
+    noise_sources = np.ascontiguousarray(component_data.noise_source_indices, dtype=np.int64)
+    bare_hints = np.ascontiguousarray(component_data.bare_hints, dtype=np.complex128)
+    bare_present = np.ascontiguousarray(component_data.bare_hint_present, dtype=np.uint8)
+
+    det_is_herm = _precompute_is_hermitian_flags(det_hints)
+    stoch_is_herm = _precompute_is_hermitian_flags(stoch_hints)
+
+    # Transfer to device
+    d_noise = cuda.to_device(noise_array_f64)
+    d_time = cuda.to_device(time_grid_f64)
+    d_initial = cuda.to_device(initial_vec_c)
+
+    d_H0 = cuda.to_device(H0)
+    d_det_hints = cuda.to_device(det_hints)
+    d_det_rates = cuda.to_device(det_rates)
+    d_det_has_rate = cuda.to_device(det_has_rate)
+    d_det_is_herm = cuda.to_device(det_is_herm)
+
+    d_stoch_hints = cuda.to_device(stoch_hints)
+    d_stoch_rates = cuda.to_device(stoch_rates)
+    d_stoch_has_rate = cuda.to_device(stoch_has_rate)
+    d_stoch_is_herm = cuda.to_device(stoch_is_herm)
+
+    d_noise_strengths = cuda.to_device(noise_strengths)
+    d_noise_offsets = cuda.to_device(noise_offsets)
+    d_noise_sources = cuda.to_device(noise_sources)
+    d_bare_hints = cuda.to_device(bare_hints)
+    d_bare_present = cuda.to_device(bare_present)
+
+    d_out = cuda.device_array((n_traj, n_time, n_state), dtype=np.complex128)
+
+    threads_per_block = _CUDA_MAX_STATE_DIM
+    blocks = n_traj
+    _rk4_trajectories_cuda[blocks, threads_per_block](
+        d_noise,
+        d_time,
+        d_initial,
+        d_H0,
+        d_det_hints,
+        d_det_rates,
+        d_det_has_rate,
+        d_det_is_herm,
+        d_stoch_hints,
+        d_stoch_rates,
+        d_stoch_has_rate,
+        d_stoch_is_herm,
+        d_noise_strengths,
+        d_noise_offsets,
+        d_noise_sources,
+        d_bare_hints,
+        d_bare_present,
+        n_state,
+        d_out,
+    )
+    cuda.synchronize()
+    return d_out.copy_to_host()
+
+
+if _CUDA_AVAILABLE and cuda is not None:
+    from numba import complex128
+    import math
+
+    @cuda.jit(device=True, inline=True)
+    def _cuda_exp_neg_i(rate: float, t: float):
+        """Compute exp(-1j * rate * t) as a complex128."""
+        theta = rate * t
+        return complex(math.cos(theta), -math.sin(theta))
+
+    @cuda.jit(device=True, inline=True)
+    def _cuda_exp_pos_i(rate: float, t: float):
+        """Compute exp(+1j * rate * t) as a complex128."""
+        theta = rate * t
+        return complex(math.cos(theta), math.sin(theta))
+
+    @cuda.jit(device=True, inline=True)
+    def _cuda_term_matvec(
+        hint_3d,
+        rates_1d,
+        has_rate_1d,
+        is_herm_1d,
+        term_idx: int,
+        t: float,
+        vec,
+        i: int,
+        n_state: int,
+    ):
+        """Compute (term_matrix(t) @ vec)[i] for a single term."""
+        s = 0.0 + 0.0j
+        has_rate = has_rate_1d[term_idx] != 0
+        is_herm = is_herm_1d[term_idx] != 0
+        if has_rate:
+            rate = rates_1d[term_idx]
+            phase = _cuda_exp_neg_i(rate, t)
+            phase_conj = _cuda_exp_pos_i(rate, t)
+        else:
+            phase = 1.0 + 0.0j
+            phase_conj = 1.0 + 0.0j
+
+        for j in range(n_state):
+            a = hint_3d[term_idx, i, j] * phase
+            if not is_herm:
+                b = hint_3d[term_idx, j, i]
+                a = a + (b.conjugate() * phase_conj)
+            s = s + a * vec[j]
+        return s
+
+    @cuda.jit(device=True, inline=True)
+    def _cuda_term_matvec_always_hermitianize(
+        hint_3d,
+        rates_1d,
+        has_rate_1d,
+        term_idx: int,
+        t: float,
+        vec,
+        i: int,
+        n_state: int,
+    ):
+        """Compute ((mat + mat^H) @ vec)[i] for a single term."""
+        s = 0.0 + 0.0j
+        has_rate = has_rate_1d[term_idx] != 0
+        if has_rate:
+            rate = rates_1d[term_idx]
+            phase = _cuda_exp_neg_i(rate, t)
+            phase_conj = _cuda_exp_pos_i(rate, t)
+        else:
+            phase = 1.0 + 0.0j
+            phase_conj = 1.0 + 0.0j
+
+        for j in range(n_state):
+            a = hint_3d[term_idx, i, j] * phase
+            b = hint_3d[term_idx, j, i]
+            a = a + (b.conjugate() * phase_conj)
+            s = s + a * vec[j]
+        return s
+
+    @cuda.jit(device=True, inline=True)
+    def _cuda_matrix_matvec(H0, vec, i: int, n_state: int):
+        s = 0.0 + 0.0j
+        for j in range(n_state):
+            s = s + H0[i, j] * vec[j]
+        return s
+
+    @cuda.jit
+    def _rk4_trajectories_cuda(
+        noise_array,
+        time_grid,
+        initial_vec,
+        H0,
+        det_hints,
+        det_rates,
+        det_has_rate,
+        det_is_herm,
+        stoch_hints,
+        stoch_rates,
+        stoch_has_rate,
+        stoch_is_herm,
+        noise_strengths,
+        noise_offsets,
+        noise_source_indices,
+        bare_hints,
+        bare_present,
+        n_state: int,
+        out,
+    ):
+        traj = cuda.blockIdx.x
+        i = cuda.threadIdx.x
+        if i >= _CUDA_MAX_STATE_DIM:
+            return
+        # Note: Do NOT return early if i >= n_state, because all threads in the block
+        # must reach __syncthreads(). Instead, guard operations with `if i < n_state`.
+
+        # Shared vectors
+        psi = cuda.shared.array(shape=(_CUDA_MAX_STATE_DIM,), dtype=complex128)
+        k1 = cuda.shared.array(shape=(_CUDA_MAX_STATE_DIM,), dtype=complex128)
+        k2 = cuda.shared.array(shape=(_CUDA_MAX_STATE_DIM,), dtype=complex128)
+        k3 = cuda.shared.array(shape=(_CUDA_MAX_STATE_DIM,), dtype=complex128)
+        k4 = cuda.shared.array(shape=(_CUDA_MAX_STATE_DIM,), dtype=complex128)
+        tmp = cuda.shared.array(shape=(_CUDA_MAX_STATE_DIM,), dtype=complex128)
+
+        if i < n_state:
+            psi[i] = initial_vec[i]
+        cuda.syncthreads()
+
+        n_time = time_grid.shape[0]
+        n_det = det_hints.shape[0]
+        n_stoch = stoch_hints.shape[0]
+
+        # Store initial state
+        if i < n_state:
+            out[traj, 0, i] = psi[i]
+        cuda.syncthreads()
+
+        for step in range(n_time - 1):
+            t0 = time_grid[step]
+            t1 = time_grid[step + 1]
+            dt = t1 - t0
+            tmid = t0 + 0.5 * dt
+
+            # Helper: compute RHS component for a given time and noise weight
+            # weight w in [0,1]: noise(t) = (1-w)*noise0 + w*noise1
+            #
+            # k = -1j * H(t) @ vec
+
+            # --- k1 at t0, w=0
+            if i < n_state:
+                s = _cuda_matrix_matvec(H0, psi, i, n_state)
+                for term in range(n_det):
+                    s = s + _cuda_term_matvec(det_hints, det_rates, det_has_rate, det_is_herm, term, t0, psi, i, n_state)
+                for term in range(n_stoch):
+                    src = int(noise_source_indices[term])
+                    n0 = noise_array[traj, src, step]
+                    noise_val = n0 + noise_offsets[term]
+                    scale = noise_strengths[term] * noise_val
+                    if bare_present.shape[0] > term and bare_present[term] != 0:
+                        # bare template: always hermitianize
+                        term_vec = _cuda_term_matvec_always_hermitianize(bare_hints, stoch_rates, stoch_has_rate, term, t0, psi, i, n_state)
+                    else:
+                        term_vec = _cuda_term_matvec(stoch_hints, stoch_rates, stoch_has_rate, stoch_is_herm, term, t0, psi, i, n_state)
+                    s = s + scale * term_vec
+                k1[i] = (0.0 - 1.0j) * s
+            cuda.syncthreads()
+
+            if i < n_state:
+                tmp[i] = psi[i] + 0.5 * dt * k1[i]
+            cuda.syncthreads()
+
+            # --- k2 at tmid, w=0.5
+            if i < n_state:
+                s = _cuda_matrix_matvec(H0, tmp, i, n_state)
+                for term in range(n_det):
+                    s = s + _cuda_term_matvec(det_hints, det_rates, det_has_rate, det_is_herm, term, tmid, tmp, i, n_state)
+                for term in range(n_stoch):
+                    src = int(noise_source_indices[term])
+                    n0 = noise_array[traj, src, step]
+                    n1 = noise_array[traj, src, step + 1]
+                    noise_val = 0.5 * (n0 + n1) + noise_offsets[term]
+                    scale = noise_strengths[term] * noise_val
+                    if bare_present.shape[0] > term and bare_present[term] != 0:
+                        term_vec = _cuda_term_matvec_always_hermitianize(bare_hints, stoch_rates, stoch_has_rate, term, tmid, tmp, i, n_state)
+                    else:
+                        term_vec = _cuda_term_matvec(stoch_hints, stoch_rates, stoch_has_rate, stoch_is_herm, term, tmid, tmp, i, n_state)
+                    s = s + scale * term_vec
+                k2[i] = (0.0 - 1.0j) * s
+            cuda.syncthreads()
+
+            if i < n_state:
+                tmp[i] = psi[i] + 0.5 * dt * k2[i]
+            cuda.syncthreads()
+
+            # --- k3 at tmid, w=0.5
+            if i < n_state:
+                s = _cuda_matrix_matvec(H0, tmp, i, n_state)
+                for term in range(n_det):
+                    s = s + _cuda_term_matvec(det_hints, det_rates, det_has_rate, det_is_herm, term, tmid, tmp, i, n_state)
+                for term in range(n_stoch):
+                    src = int(noise_source_indices[term])
+                    n0 = noise_array[traj, src, step]
+                    n1 = noise_array[traj, src, step + 1]
+                    noise_val = 0.5 * (n0 + n1) + noise_offsets[term]
+                    scale = noise_strengths[term] * noise_val
+                    if bare_present.shape[0] > term and bare_present[term] != 0:
+                        term_vec = _cuda_term_matvec_always_hermitianize(bare_hints, stoch_rates, stoch_has_rate, term, tmid, tmp, i, n_state)
+                    else:
+                        term_vec = _cuda_term_matvec(stoch_hints, stoch_rates, stoch_has_rate, stoch_is_herm, term, tmid, tmp, i, n_state)
+                    s = s + scale * term_vec
+                k3[i] = (0.0 - 1.0j) * s
+            cuda.syncthreads()
+
+            if i < n_state:
+                tmp[i] = psi[i] + dt * k3[i]
+            cuda.syncthreads()
+
+            # --- k4 at t1, w=1
+            if i < n_state:
+                s = _cuda_matrix_matvec(H0, tmp, i, n_state)
+                for term in range(n_det):
+                    s = s + _cuda_term_matvec(det_hints, det_rates, det_has_rate, det_is_herm, term, t1, tmp, i, n_state)
+                for term in range(n_stoch):
+                    src = int(noise_source_indices[term])
+                    n1 = noise_array[traj, src, step + 1]
+                    noise_val = n1 + noise_offsets[term]
+                    scale = noise_strengths[term] * noise_val
+                    if bare_present.shape[0] > term and bare_present[term] != 0:
+                        term_vec = _cuda_term_matvec_always_hermitianize(bare_hints, stoch_rates, stoch_has_rate, term, t1, tmp, i, n_state)
+                    else:
+                        term_vec = _cuda_term_matvec(stoch_hints, stoch_rates, stoch_has_rate, stoch_is_herm, term, t1, tmp, i, n_state)
+                    s = s + scale * term_vec
+                k4[i] = (0.0 - 1.0j) * s
+            cuda.syncthreads()
+
+            if i < n_state:
+                psi[i] = psi[i] + (dt / 6.0) * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i])
+                out[traj, step + 1, i] = psi[i]
+            cuda.syncthreads()
 
 
 if _NUMBA_AVAILABLE:
