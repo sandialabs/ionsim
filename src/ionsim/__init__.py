@@ -7,4 +7,3 @@ from .named_operators import Pauli, Fock, Unitary
 from .process import Gate, Circuit
 from .noise import Noise
 from .zeeman_solver import ZeemanHyperfineSolver
-from . import constants as constants

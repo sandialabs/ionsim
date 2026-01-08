@@ -1,4 +1,4 @@
-from ionsim import constants
+from scipy import constants
 
 import numpy as np
 from scipy.linalg import eigh 
@@ -60,8 +60,8 @@ class ZeemanHyperfineSolver():
         self.dim = len(self.basis_states) # d, Hamiltonian will be a d x d matrix
 
         # Retrieve constants and manipulate units internally with pint 
-        self.mu_N = constants.NUCLEAR_MAGNETON # J/T , Nuclear magneton
-        self.mu_B = constants.BOHR_MAGNETON # J/T , Bohr magneton 
+        self.mu_N = constants.physical_constants['nuclear magneton'][0] # J/T , Nuclear magneton
+        self.mu_B = constants.physical_constants['Bohr magneton'][0] # J/T , Bohr magneton 
 
         # Parse the desired unit handling
         # The solver works in rad/s internally. Unit conversions may be specified by the user 
@@ -435,7 +435,7 @@ class ZeemanHyperfineSolver():
     def Lande_gL(self):
         """ Compute Lande g factor for orbital angular momentum: """
         """ gL = 1. - (m_e / nuclear_mass) """
-        m_e = constants.ELECTRON_MASS * self.unit_reg("kg") # mass of electron in kg 
+        m_e = constants.electron_mass * self.unit_reg("kg") # mass of electron in kg 
         m_e = m_e.to("dalton") # Daltons   
         # TODO: implement a unit test to see if yaml file has the Z argument. This would keep future developers consistent. 
         if self.Z is None:
@@ -456,7 +456,7 @@ class ZeemanHyperfineSolver():
     @property
     def Lande_gJ(self) -> None | float:
         ''' Computes Lande factor for total electron angular momentum J '''
-        gS = constants.SPIN_G_FACTOR # electron spin g factor
+        gS = np.abs(constants.physical_constants['electron g factor'][0])  # electron spin g factor
         JJp1 = self.J*(self.J+1)
         if JJp1 == 0:
             return 0.
