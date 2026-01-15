@@ -1,16 +1,36 @@
 IonSim
 =======
 
+## Quickstart
+
+If you already have a gitlab-ex account and a virtual environment
+capable of installing packages from pypi.org, follow these
+instructions in a bash terminal. If not, the full instructions are
+below.
+
+```bash
+# Clone the repo (the below URL is also available from the "Code" button on the project page in gitlab).
+git clone git@gitlab-ex.sandia.gov:bruzic/ionsim.git
+
+# Install the project and its dependencies in editable mode. This means any changes to
+# the code in this directory will be reflected when running programs in this virtual
+# environment without reinstalling ionsim.
+pip install -e ionsim
+```
+
 ## Installation on SRN
 
 Installation on the SRN is largely a matter of dealing with the proxy server and properly setting up your gitlab-ex account.
 
 ### Create an ssh key
 
-In a bash terminal (download git bash on Windows), run ssh-keygen and
-accept all the default options by pressing enter. This will create a
-private/public key pair (by default in `~/.ssh/rsa_id` and
-`~/.ssh/rsa_id.pub`), and we will copy the public key into gitlab.
+**These instructions require a bash shell. On Windows we recomment
+using git bash, which comes with a download of git.**
+
+In a bash terminal, run ssh-keygen and accept all the default options
+by pressing enter. This will create a private/public key pair (by
+default in `~/.ssh/rsa_id` and `~/.ssh/rsa_id.pub`), and we will copy
+the public key into gitlab.
 
 ### Create a virtual environment (optional)
 
@@ -19,7 +39,7 @@ python.org, homebrew, apt, yum, etc. depending on your system. IonSim
 is intended to work with all current versions of Python, but support
 for newer releases may lag by a few months.
 
-#### Windows
+#### Windows virtual environments
 
 Assuming the binary downloaded to
 `~/AppData/Local/Programs/Python/Python313/python.exe`, run the
@@ -34,7 +54,7 @@ virtual environment):
 source myvenv/Scripts/activate
 ```
 
-#### Linux/Mac
+#### Linux/Mac virtual environments
 
 Exact instructions may vary by system.
 
@@ -54,21 +74,19 @@ source myvenv/bin/activate
 
 ### Set up Nexus (Optional)
 
-In the past, Sandia's network proxy made it difficult to use pypi.org,
-the general source of all Python packages. As a workaround, Sandia
-maintains a mirror inside the SRN, `nexus.web.sandia.gov`. Use the
-below bash commands to configure pip to use Nexus. Make sure you have
-activated the virtual environment created above.
-
-Before performing these commands, try the following `pip` command. If
-no errors occur, you do not need to set up Nexus.
+**Before performing these commands, try the following `pip` command. If
+no errors occur, you do not need to set up Nexus.**
 
 ```bash
 # Test connectivity to pypi.org
 pip install --dry-run requests
 ```
 
-If the above command failed, proceed with the following:
+In the past, Sandia's network proxy made it difficult to use pypi.org,
+the general source of all Python packages. As a workaround, Sandia
+maintains a mirror inside the SRN, `nexus.web.sandia.gov`. Use the
+below bash commands to configure pip to use Nexus. Make sure you have
+activated the virtual environment created above.
 
 ```bash
 # Unset any bash environment variables for the proxy
