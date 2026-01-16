@@ -5,8 +5,8 @@ IonSim
 
 If you already have a gitlab-ex account and a virtual environment
 capable of installing packages from pypi.org, follow these
-instructions in a bash terminal. If not, the full instructions are
-below.
+instructions in a bash terminal with the appropriate virtual
+environment active. If not, the full instructions are below.
 
 ```bash
 # Clone the repo (the below URL is also available from the "Code" button on the project page in gitlab).
@@ -24,13 +24,19 @@ Installation on the SRN is largely a matter of dealing with the proxy server and
 
 ### Create an ssh key
 
-**These instructions require a bash shell. On Windows we recomment
+**These instructions require a bash shell. On Windows we recommend
 using git bash, which comes with a download of git.**
 
-In a bash terminal, run ssh-keygen and accept all the default options
+See [gitlab-ex's ssh
+instructions](https://gitlab-ex.sandia.gov/help/user/ssh.md) for a
+thorough and up-to-date explanation of ssh keys. The following
+instructions have been known to work but may not apply to all systems
+or for all time.
+
+In a bash terminal, run `ssh-keygen -t rsa` and accept all the default options
 by pressing enter. This will create a private/public key pair (by
-default in `~/.ssh/rsa_id` and `~/.ssh/rsa_id.pub`), and we will copy
-the public key into gitlab.
+default in `~/.ssh/id_rsa` and `~/.ssh/id_rsa.pub`), and we will copy
+the public key into gitlab in a later step.
 
 ### Create a virtual environment (optional)
 
