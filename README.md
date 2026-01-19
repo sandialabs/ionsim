@@ -113,7 +113,7 @@ pip config set global.trusted-host "pypi.org files.pythonhosted.org nexus.web.sa
 ### Upload ssh key to gitlab
 
 Make sure you have a gitlab-ex account and have been added to the
-ionsim project. Also, make sure you type
+ionsim project. In Firefox, make sure you type
 `https://gitlab-ex.sandia.gov` rather than simply
 `gitlab-ex.sandia.gov` to avoid a server timeout.
 
