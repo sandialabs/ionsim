@@ -117,17 +117,21 @@ class StochasticNoise:
                  tau_c: float, 
                  target_variance: float, 
                  rng: np.random.Generator,
+                 first_time_step_all_trajectories: np.ndarray | None = None,
                  time_evals: Vector | None = None,
-                 remove_mean: bool = False) -> np.ndarray:
+                 remove_mean: bool = False,
+                 mean: float = 0.0) -> np.ndarray:
         """
         Generate Ornstein-Uhlenbeck (OU, Lorentzian) colored noise samples.
         Args:
             n_trajectories: Number of trajectories (noise realizations)
-            N: Number of time steps
-            dt: Time step size
             tau_c: Correlation time (decay constant)
-            sigma2: Stationary variance of the process
+            target_variance: Stationary variance of the process
             rng: numpy random number generator
+            first_time_step_all_trajectories: Initial values for each trajectory (optional)
+            time_evals: Time evaluation points
+            remove_mean: If True, remove the mean from each trajectory
+            mean: Constant mean to add to the noise (default 0.0)
         Returns:
             x: Array of shape (n_trajectories, N) with OU noise samples
         """
@@ -139,11 +143,17 @@ class StochasticNoise:
         phi = math.exp(-dt / tau_c)
         sd = math.sqrt(target_variance * (1.0 - phi * phi))
         x = np.empty((n_trajectories, N), float)
-        x[:, 0] = rng.normal(0.0, np.sqrt(target_variance), size=n_trajectories)
+        if first_time_step_all_trajectories is not None:
+            x[:, 0] = first_time_step_all_trajectories
+        else:
+            x[:, 0] = rng.normal(0.0, np.sqrt(target_variance), size=n_trajectories)
+
         for n in range(1, N):
             x[:, n] = phi * x[:, n - 1] + sd * rng.standard_normal(size=n_trajectories)
         if remove_mean:
             x = x - np.mean(x, axis=1, keepdims=True)
+        if mean != 0.0:
+            x = x + mean
         return x
 
 
