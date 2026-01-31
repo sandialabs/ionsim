@@ -2,7 +2,7 @@ from ionsim.custom_types import Vector
 from ionsim.ionsim_error import IonSimError
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 from typing import Any, Callable
 from scipy.integrate import trapezoid as trapz
@@ -15,14 +15,18 @@ from icecream import ic
 
 def solve_time_evolution_equation(interaction_function: Callable, initial_state_vector: Vector, duration: float,
     time_evals: Vector | None = None, ode_solver: str = 'odeintz', **kwargs):
-    """Solve the time-dependent Schrodinger equation or the vectorized Lindblad master equation."""
+    """Solve the time-dependent Schrodinger equation or the vectorized Lindblad master equation.
+
+    Extra keyword arguments are forwarded to the underlying solver via solver_kwargs, e.g.
+    method='DOP853', rtol=1e-11, atol=1e-13, max_step=..., vectorized=... .
+    """
     print(f'Solving ODE with {ode_solver}.')
     if ode_solver == 'odeintz':
-        return OdeIntz(interaction_function, initial_state_vector, duration, time_evals, **kwargs).solve()
+        return OdeIntz(interaction_function, initial_state_vector, duration, time_evals, solver_kwargs=kwargs).solve()
     elif ode_solver == 'solve_ivp':
-        return SolveIvp(interaction_function, initial_state_vector, duration, time_evals, **kwargs).solve()
+        return SolveIvp(interaction_function, initial_state_vector, duration, time_evals, solver_kwargs=kwargs).solve()
     elif ode_solver == 'zvode':
-        return ZVODE(interaction_function, initial_state_vector, duration, time_evals, **kwargs).solve()
+        return ZVODE(interaction_function, initial_state_vector, duration, time_evals, solver_kwargs=kwargs).solve()
     else:
         raise IonSimError(f'ODE solver {ode_solver} is not implemented.')
 
@@ -34,6 +38,7 @@ class OdeSolver(ABC):
     initial_vector: Vector
     duration: float
     time_evals: Vector | None
+    solver_kwargs: dict[str, Any] = field(default_factory=dict)
 
     @abstractmethod
     def solve(self):
@@ -53,7 +58,7 @@ class OdeIntz(OdeSolver):
         else:
             times = self.time_evals
         y0 = np.array(self.initial_vector, dtype='complex')
-        result = odeintz(right_hand_side_flip_args, y0, times)
+        result = odeintz(right_hand_side_flip_args, y0, times, **self.solver_kwargs)
         return list(times), [y for y in result]
 
 @dataclass(frozen=True, eq=False)
@@ -64,7 +69,8 @@ class SolveIvp(OdeSolver):
         def right_hand_side(t, y):
             return self.interaction_function(t).dot(-1j * y)
         y0 = np.array(self.initial_vector, dtype='complex')
-        result = solve_ivp(right_hand_side, (0, self.duration), y0, t_eval=self.time_evals)
+        # Let solver adapt freely if time_evals is None
+        result = solve_ivp(right_hand_side, (0, self.duration), y0, t_eval=t_eval, **self.solver_kwargs)
         return list(result['t']), [result['y'][:, i] for i in range(len(result['t']))]
 
 @dataclass(frozen=True, eq=False)
@@ -77,8 +83,8 @@ class ZVODE(OdeSolver):
         if self.time_evals is None:
             num_steps = 3
         else:
-            num_steps = len(time_evals)
-            assert(time_evals[-1] == duration)
+            num_steps = len(self.time_evals)
+            assert(self.time_evals[-1] == self.duration)
 
         ic(self.nsteps)
 
@@ -88,7 +94,7 @@ class ZVODE(OdeSolver):
         initial_state = self.initial_vector
 
         if initial_state is None:
-            initial_state = _np.zeros(n_states)
+            initial_state = np.zeros(n_states)
             initial_state[0] = 1.
 
         intermediate_states = [initial_state]
@@ -102,7 +108,14 @@ class ZVODE(OdeSolver):
             else:
                 return -1.0j * tempham
         r = ode(schrodinger, jacobian)
-        r.set_integrator('zvode', method='adams', with_jacobian=True, atol=1e-16, rtol=1e-14, nsteps=self.nsteps) # use method='bdf' for stiff ode
+
+        r.set_integrator('zvode', 
+            method=self.solver_kwargs.get('method', 'adams'), 
+            with_jacobian=self.solver_kwargs.get('with_jacobian', True), 
+            atol=self.solver_kwargs.get('atol', 1e-16), 
+            rtol=self.solver_kwargs.get('rtol', 1e-14), 
+            nsteps=self.solver_kwargs.get('nsteps', self.nsteps)
+        )
         r.set_initial_value(initial_state, 0)
         dt = t_final/float(num_steps)
         while r.successful() and r.t < t_final:
