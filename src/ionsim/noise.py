@@ -115,7 +115,7 @@ class StochasticNoise:
     @staticmethod
     def ou_noise(n_trajectories: int, 
                  tau_c: float, 
-                 target_variance: float, 
+                 target_variance: float,
                  rng: np.random.Generator,
                  first_time_step_all_trajectories: np.ndarray | None = None,
                  time_evals: Vector | None = None,
