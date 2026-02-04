@@ -34,7 +34,7 @@ class AtomicSpin(DegreeOfFreedom):
         nuclear_spin = config_data['nuclear_spin']
         levels_data = config_data['levels']
         mass = config_data['mass'] # Daltons
-        Z = config_data['Z'] # Atomic number, number of protons 
+        z = config_data['Z'] # Atomic number, number of protons 
         magnetic_moment = config_data['magnetic_moment'] # units of \mu_{N}
         structure = 'fine' if nuclear_spin == 0 else 'hyperfine' 
 
@@ -52,16 +52,16 @@ class AtomicSpin(DegreeOfFreedom):
             get_fine_data, FineLevel, HyperfineLevel = cls.get_level_factory(level_data['coupling_scheme'])
             fine_data = get_fine_data(level_data)
             j = fine_data['j']
-            l = fine_data['l']
-            s = fine_data['s']
 
             # ic(FineLevel.__annotations__, FineLevel(**fine_data, mj={'key': 1}))
             # TODO: why is mypy not catching this??
 
             # Use Zeeman Solver based on level manifold to compute Zeeman shifts 
             if magnetic_field != 0. :
+                s = fine_data['s']
+                l = fine_data['l']
                 #print('Applying Zeeman shift to level manifold ' + level_data['unique_term_symbol'])
-                Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, Z)
+                Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z)
                 zeeman_energy_shifts, zeeman_eigenvecs = Zeeman_solver.solve_at_field(magnetic_field)
                 zeeman_energy_shifts *= np.pi*2. # convert to rad/s 
 
@@ -71,7 +71,7 @@ class AtomicSpin(DegreeOfFreedom):
                     # Extract any Zeeman shifts for this state 
                     zeeman_shift_energy = 0.
                     if magnetic_field != 0. :
-                        zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, F = j, m_F = mj)
+                        zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = j, mf = mj)
                     # Create the level 
                     level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy)
                     if level_names is None or level.name in level_names: 
@@ -82,7 +82,7 @@ class AtomicSpin(DegreeOfFreedom):
                         # Extract any Zeeman shifts for this mF state 
                         zeeman_shift_energy = 0.
                         if magnetic_field != 0. :
-                            zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, F = f, m_F = mf)
+                            zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = f, mf = mf)
 
                         # Create the level 
                         level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy)

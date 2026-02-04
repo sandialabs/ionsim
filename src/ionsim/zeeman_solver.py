@@ -1,6 +1,5 @@
-from scipy import constants
-
 import numpy as np
+from scipy import constants
 from scipy.linalg import eigh 
 from scipy.special import comb 
 from numpy.typing import NDArray
@@ -13,34 +12,34 @@ class ZeemanHyperfineSolver():
     Uses the uncoupled basis |J, m_{J}, I, m_{I} > to construct a matrix, which is numerically diagonalized.
     """ 
 
-    def __init__(self, I: float, J: float, L: int, S: float, A_hf:float, atomic_mass: float | None=None, 
-                nuclear_moment: float | None = None, Z: int | None = None, gI: float | None = None, 
+    def __init__(self, i: float, j: float, l: int, s: float, hyperfine_a:float, atomic_mass: float | None=None, 
+                nuclear_moment: float | None = None, z: int | None = None, gi: float | None = None, 
                 freq_units: str = 'Hz', magnetic_field_units = 'gauss', approximation: str | None=None):
         """ Initialize the solver. 
         Parameters: 
-          I : Nuclear spin angular momentum magnitude (float)
-          L : Orbital angular momentum magnitude (int)
-          S : Electron spin magnitude (float)
+          i : Nuclear spin angular momentum magnitude (float)
+          l : Orbital angular momentum magnitude (int)
+          s : Electron spin magnitude (float)
 
         Optional Parameters:
           Z : Atomic number (# of protons of an element)
           Nuclear moment
-          gI: Lande "g factor" for nuclear angular momentum. 
+          gi: Lande "g factor" for nuclear angular momentum. 
           freq_units: A string denoting the frequency units for returning energies 
           magnetic_field_units: A string denoting the magnetic field units to use 
         """
-        self.L = L
-        self.I = I
-        self.S = S
-        self.J = J
-        self.A_hf = A_hf # input units should match freq_units specification; default expected in Hz 
+        self.l = l
+        self.i = i
+        self.s = s
+        self.j = j
+        self.hyperfine_a = hyperfine_a # input units should match freq_units specification; default expected in Hz 
         self.atomic_mass = atomic_mass # in Daltons 
         self.nuclear_moment = nuclear_moment # in mu_{N} units
-        self.gI = gI
-        if nuclear_moment is None and gI is None:
-            raise ValueError('Input error: Either nuclear moment or gJ must be non-zero.')
-        self.Z = Z
-        if self.Z is None:
+        self.gi = gi
+        if nuclear_moment is None and gi is None:
+            raise ValueError('Input error: Either nuclear moment or gj must be non-zero.')
+        self.z = z
+        if self.z is None:
             raise ValueError('Input error: Specify atomic number of the atom.')
         
         # Set up the approximation for solving:
@@ -60,8 +59,8 @@ class ZeemanHyperfineSolver():
         self.dim = len(self.basis_states) # d, Hamiltonian will be a d x d matrix
 
         # Retrieve constants and manipulate units internally with pint 
-        self.mu_N = constants.physical_constants['nuclear magneton'][0] # J/T , Nuclear magneton
-        self.mu_B = constants.physical_constants['Bohr magneton'][0] # J/T , Bohr magneton 
+        self.mu_n = constants.physical_constants['nuclear magneton'][0] # J/T , Nuclear magneton
+        self.mu_b = constants.physical_constants['Bohr magneton'][0] # J/T , Bohr magneton 
 
         # Parse the desired unit handling
         # The solver works in rad/s internally. Unit conversions may be specified by the user 
@@ -77,19 +76,19 @@ class ZeemanHyperfineSolver():
         self.atomic_mass *= self.unit_reg("dalton")
 
         # Hyperfine constant 
-        self.A_hf *= self.internal_freq_units 
+        self.hyperfine_a *= self.internal_freq_units 
 
-        # mu_N and mu_B. Convert to desired magnetic field units 
-        self.mu_N *= self.unit_reg.joule / self.unit_reg.tesla
-        self.mu_B *= self.unit_reg.joule / self.unit_reg.tesla
+        # mu_n and mu_b. Convert to desired magnetic field units 
+        self.mu_n *= self.unit_reg.joule / self.unit_reg.tesla
+        self.mu_b *= self.unit_reg.joule / self.unit_reg.tesla
         try: 
-            self.mu_N = self.mu_N.to("joule/" + self.magnetic_units_str)
-            self.mu_B = self.mu_B.to("joule/" + self.magnetic_units_str)
+            self.mu_n = self.mu_n.to("joule/" + self.magnetic_units_str)
+            self.mu_b = self.mu_b.to("joule/" + self.magnetic_units_str)
         except:
             # For Tesla to Gauss conversion, pint fails without specifying Gaussian context 
             if self.magnetic_units_str.lower() == 'gauss' or self.magnetic_units_str.lower() == "g" :
-                self.mu_N = self.mu_N.to("joule/gauss", "Gau")
-                self.mu_B = self.mu_B.to("joule/gauss", "Gau")
+                self.mu_n = self.mu_n.to("joule/gauss", "Gau")
+                self.mu_b = self.mu_b.to("joule/gauss", "Gau")
 
 
     def create_basis(self) -> list[tuple[float, float]]:
@@ -104,90 +103,90 @@ class ZeemanHyperfineSolver():
         basis = []
         
         if self.approximation is None:
-            for m_J in np.arange(-self.J, self.J + 1):
-                for m_I in np.arange(-self.I, self.I + 1):
-                    basis.append((m_J, m_I))
+            for mj in np.arange(-self.j, self.j + 1):
+                for mi in np.arange(-self.i, self.i + 1):
+                    basis.append((mj, mi))
         elif self.approximation == 'weak field':
             # |F, mF> are good quantum numbers
-            # The |mJ, mI> states are coupled. 
-            F_range = np.arange(np.abs(self.I - self.J), self.I + self.J + 1) 
-            for f in F_range:
-                for mF in np.arange(-f, f+1):
-                    basis.append((f, mF))
+            # The |mj, mi> states are coupled. 
+            f_range = np.arange(np.abs(self.i - self.j), self.i + self.j + 1) 
+            for f in f_range:
+                for mf in np.arange(-f, f+1):
+                    basis.append((f, mf))
         else:
             raise ValueError("Invalid approximation specified. `approximation` constructor argument must be either None or 'weak field'.")
         return basis 
 
 
-    def hyperfine_matrix_element(self, m_J1: float, m_I1: float, m_J2: float, m_I2: float) -> float :
+    def hyperfine_matrix_element(self, mj1: float, mi1: float, mj2: float, mi2: float) -> float :
         """ Comptues the matrix element of hyperfine operator (I dot J) in the basis: 
-        <J, m_J1; I, m_I1 | X | J, m_J2; I, m_I2 >
+        <J, mj1; I, mi1 | X | J, mj2; I, mi2 >
         
         I dot J = I_z J_z + 1/2 (I+ J- + J+ I-)
         """
-        J, I = self.J, self.I
+        j, i = self.j, self.i
         # Iz,Jz term: 
-        if m_J1 == m_J2 and m_I1 == m_I2:
-            return m_J1 * m_I1 
+        if mj1 == mj2 and mi1 == mi2:
+            return mj1 * mi1 
         
         # Raising/lowering terms: 
-        # I+ |m_I> = sqrt[I(I+1) - mI*(mI + 1)] |m_I + 1>
-        # J- |m_J> = sqrt[J(J+1) - mJ*(mJ - 1)] |m_J - 1>
-        if m_J1 == m_J2 - 1 and m_I1 == m_I2 + 1: # check for non-zero overlap
-            I_pl = np.sqrt(I*(I+1) - m_I2*(m_I2 + 1))
-            J_minus = np.sqrt(J*(J+1) - m_J2*(m_J2 - 1))
-            return 0.5 * (I_pl * J_minus)
+        # I+ |m_I> = sqrt[I(I+1) - mi*(mi + 1)] |m_I + 1>
+        # J- |m_J> = sqrt[J(J+1) - mj*(mj - 1)] |m_J - 1>
+        if mj1 == mj2 - 1 and mi1 == mi2 + 1: # check for non-zero overlap
+            i_plus = np.sqrt(i*(i+1) - mi2*(mi2 + 1))
+            j_minus = np.sqrt(j*(j+1) - mj2*(mj2 - 1))
+            return 0.5 * (i_plus * j_minus)
 
         # I- and J+ contributions 
-        if m_J1 == m_J2 + 1 and m_I1 == m_I2 - 1: # check for non-zero overlap
-            I_minus = np.sqrt(I*(I+1) - m_I2*(m_I2 - 1))
-            J_pl = np.sqrt(J*(J+1) - m_J2*(m_J2 + 1))
-            return 0.5 * (I_minus * J_pl)
+        if mj1 == mj2 + 1 and mi1 == mi2 - 1: # check for non-zero overlap
+            i_minus = np.sqrt(i*(i+1) - mi2*(mi2 - 1))
+            j_plus = np.sqrt(j*(j+1) - mj2*(mj2 + 1))
+            return 0.5 * (i_minus * j_plus)
 
         return 0. 
 
     def hyperfine_hamiltonian(self) -> NDArray: 
         """ Constructs Hyperfine Hamiltonian: 
-        H = (1/2) A_{hf} I dot J
+        H = (1/2) hyperfineA I dot J
         
         Returns a d x d array representing a d-dimensional Hamiltonian for d basis states. 
         """ 
         H = np.zeros((self.dim, self.dim))
 
-        for i, (m_J1, m_I1) in enumerate(self.basis_states):
-            for j, (m_J2, m_I2) in enumerate(self.basis_states):
-                H[i,j] = self.hyperfine_matrix_element(m_J1, m_I1, m_J2, m_I2)
-        return H * self.A_hf 
+        for i, (mj1, mi1) in enumerate(self.basis_states):
+            for j, (mj2, mi2) in enumerate(self.basis_states):
+                H[i,j] = self.hyperfine_matrix_element(mj1, mi1, mj2, mi2)
+        return H * self.hyperfine_a 
 
-    def zeeman_hamiltonian(self, B_field: float) -> NDArray:
+    def zeeman_hamiltonian(self, magnetic_field: float) -> NDArray:
         """ Constructs the Zeeman Hamiltonian: 
         H = µ . B 
         
         returns a d x d array representing the d-dimensional Hamiltonian for d basis states.
         """
         H = np.zeros((self.dim, self.dim))
-        B_field *= self.internal_magnetic_units
+        magnetic_field *= self.internal_magnetic_units
 
         h = self.unit_reg.planck_constant # 6.62607015E-34 # Planck's constant, J s 
         planck_inverse = (1. / h) # Convert from Joule to Hz via Plancks constant  
 
-        # Convention where the nuclear Zeeman term has \mu_{B} as its prefactor, with gI factor taking into account the nuclear magneton, e.g.: mu_B x gI x I x Bz / hbar 
+        # Convention where the nuclear Zeeman term has \mu_{B} as its prefactor, with gi factor taking into account the nuclear magneton, e.g.: mu_b x gi x I x Bz / hbar 
         # Zeeman matrix is diagonal: I_{z} |J, m_{J}, I, m_{I} > = m_{I} |J, m_{J}, I, m_{I} >
         if self.approximation is None:       
-            for i, (m_J, m_I) in enumerate(self.basis_states):
-                H[i,i] = (self.Lande_gJ * m_J) + (self.Lande_gI * m_I)
+            for i, (mj, mi) in enumerate(self.basis_states):
+                H[i,i] = (self.lande_gj * mj) + (self.lande_gi * mi)
         elif self.approximation == 'weak field' :
-            for i, (f, mF) in enumerate(self.basis_states): 
-                H[i,i] = (self.Lande_gF(f) * mF)
+            for i, (f, mf) in enumerate(self.basis_states): 
+                H[i,i] = (self.lande_gf(f) * mf)
         else:
             raise ValueError("Invalid approximation specified. `approximation` constructor argument must be either None or 'weak field'.")
 
         # Apply the units to the entire array simultaneously
-        return (H * B_field * self.mu_B * planck_inverse).to(self.internal_freq_units) 
+        return (H * magnetic_field * self.mu_b * planck_inverse).to(self.internal_freq_units) 
 
-    def solve_at_field(self, B_z: float) -> tuple[NDArray, NDArray]:
+    def solve_at_field(self, magnetic_field: float) -> tuple[NDArray, NDArray]:
         """
-        Diagonalize the Hamiltonian for eigen-energies at a specific magnetic field strength B_z.
+        Diagonalize the Hamiltonian for eigen-energies at a specific magnetic field strength magnetic_field.
 
         Returns: 
             - energy eigenvalues (NDArray)
@@ -196,37 +195,35 @@ class ZeemanHyperfineSolver():
         Note: These energies are not in the sorted order that matches the basis states. 
         eigh() returns energies, eigenvectors in ascending order (lowest energy first) 
         """
-        H_total = self.zeeman_hamiltonian(B_z)
+        H_total = self.zeeman_hamiltonian(magnetic_field)
         if self.approximation is None:
             H_total += self.hyperfine_hamiltonian() 
         energies, eigenvectors = eigh(H_total.magnitude)
         return energies, eigenvectors
 
-
-    def F_character(self, psi: NDArray, F: float) -> float:
+    def f_character(self, eigenvector: NDArray, f: float) -> float:
         """ Compute how much of |F, mF> character an eigenstate has. 
         Requires Clebsch-Gordan decomposition to project onto |F,mF>
 
         Returns the probability of finding state in F manifold (p in [0,1])"""
 
-        J, I = self.J, self.I
-        if F < abs(J - I) or F > J + I :
+        j, i = self.j, self.i
+        if f < abs(j - i) or f > j + i :
             return 0.
 
         tol = 1e-8
         probability = 0.
-        for mF in np.arange(-F, F + 1, 1):
+        for mf in np.arange(-f, f + 1, 1):
             amplitude = 0.
-            for k, (mJ, mI) in enumerate(self.basis_states):
-                if abs(mJ + mI - mF) < tol:
+            for k, (mj, mi) in enumerate(self.basis_states):
+                if abs(mj + mi - mf) < tol:
                     # C-G coeff:
-                    cg = self.Clebsch_Gordan(J, I, F, mJ, mI, mF)
-                    amplitude += cg * psi[k]
+                    cg = self.Clebsch_Gordan(j, i, f, mj, mi, mf)
+                    amplitude += cg * eigenvector[k]
 
             probability += np.abs(amplitude)**2 
 
         return probability
-
 
     def Clebsch_Gordan(self, j1: float, j2: float, j: float, m1: float, m2: float, m: float) -> float : 
         """ Compute Clebsch-Gordan coefficient using standard formulae from quantum mechanics texts """
@@ -259,19 +256,19 @@ class ZeemanHyperfineSolver():
         
         return prefactor*S
 
-    def mJ_mI_labels(self, eigvectors: NDArray) -> tuple[NDArray, NDArray]:
-        """ Function to compute the estimated mJ, mI labels for the eigenvectors.
+    def mj_mi_labels(self, eigvectors: NDArray) -> tuple[NDArray, NDArray]:
+        """ Function to compute the estimated mj, mi labels for the eigenvectors.
             - assuming the eigenvectors are for a single magnetic field value """
 
         if len(eigvectors.shape) == 2:
-            num_Bfields = 1
+            num_magnetic_fields = 1
         else:
-            num_Bfields = eigvectors.shape[0]
+            num_magnetic_fields = eigvectors.shape[0]
 
-        mJ_labels = np.zeros((num_Bfields, self.dim))
-        mI_labels = np.zeros_like(mJ_labels)
+        mj_labels = np.zeros((num_magnetic_fields, self.dim))
+        mi_labels = np.zeros_like(mj_labels)
 
-        for i in range(num_Bfields):
+        for i in range(num_magnetic_fields):
             for j in range(self.dim):
                 psi = eigvectors[i, :, j]
 
@@ -279,16 +276,15 @@ class ZeemanHyperfineSolver():
                 probs = np.abs(psi)**2
                 dominant_indx = np.argmax(probs)
 
-                # (mJ, mI) for this basis state 
-                mJ, mI = self.basis_states[dominant_indx]
+                # (mj, mi) for this basis state 
+                mj, mi = self.basis_states[dominant_indx]
 
-                mJ_labels[i, j] = mJ
-                mI_labels[i, j] = mI
+                mj_labels[i, j] = mj
+                mi_labels[i, j] = mi
 
-        return mJ_labels, mI_labels
+        return mj_labels, mi_labels
 
-
-    def F_mF_labels(self, eigvectors: NDArray) -> tuple[NDArray, NDArray]:
+    def f_mf_labels(self, eigvectors: NDArray) -> tuple[NDArray, NDArray]:
         """ Computes state labels |F, mF> for an energy eigenstates.
         
         Compute expectation of m_{F} in each eigenstate |psi> : 
@@ -297,131 +293,130 @@ class ZeemanHyperfineSolver():
         Returns a 2D array of dimension N_Bfields x d 
         """
         if len(eigvectors.shape) == 2:
-            num_Bfields = 1
+            num_magnetic_fields = 1
         else:
-            num_Bfields = eigvectors.shape[0]
+            num_magnetic_fields = eigvectors.shape[0]
 
-        m_F = np.zeros((num_Bfields, self.dim))
-        dominant_F = np.zeros_like(m_F)
-        F_range = np.arange(np.abs(self.I - self.J), self.I + self.J + 1)
+        mf_array = np.zeros((num_magnetic_fields, self.dim))
+        dominant_f = np.zeros_like(mf_array)
+        f_range = np.arange(np.abs(self.i - self.j), self.i + self.j + 1)
 
         # Compute expectation for each B-field value via a sum over eigenstates
-        for i in range(num_Bfields):
+        for i in range(num_magnetic_fields):
             for j in range(self.dim):
                 # j'th eigenvector:
-                if num_Bfields == 1:
+                if num_magnetic_fields == 1:
                     psi = eigvectors[:, j]
                 else:
                     psi = eigvectors[i, :, j]
 
-                m_F_avg = 0.
+                mf_avg = 0.
                 if self.approximation is None :
-                    for k, (m_J, m_I) in enumerate(self.basis_states):
-                        m_F_avg += (np.abs(psi[k])**2)*(m_J + m_I)
+                    for k, (mj, mi) in enumerate(self.basis_states):
+                        mf_avg += (np.abs(psi[k])**2)*(mj + mi)
                 elif self.approximation == 'weak field' :
-                    for  k, (f, mF) in enumerate(self.basis_states):
-                        m_F_avg += (np.abs(psi[k])**2)*(mF)
+                    for  k, (f, mf) in enumerate(self.basis_states):
+                        mf_avg += (np.abs(psi[k])**2)*(mf)
 
-                m_F[i, j] = m_F_avg
+                mf_array[i, j] = mf_avg
                 # Compute F character 
-                F_chars = {}
-                for F in F_range:
-                    F_char = self.F_character(psi, F)
-                    F_chars[F] = F_char
+                f_chars = {}
+                for f in f_range:
+                    f_char = self.f_character(psi, f)
+                    f_chars[f] = f_char
                 # Dominant F value: 
-                dominant_F[i,j] = max(F_chars.items(), key = lambda x: x[1])[0]
+                dominant_f[i,j] = max(f_chars.items(), key = lambda x: x[1])[0]
 
-        return dominant_F, m_F
+        return dominant_f, mf_array
 
-
-    def compute_zeeman_splitting(self, B_field_vector: NDArray) -> dict:
+    def compute_zeeman_splitting(self, magnetic_fields: NDArray) -> dict:
         """ 
         Computes the energy as a function of magnetic field for the basis states of interest.
 
         Inputs:
-          - B_field_vector is a 1D array containing magnetic field values 
+          - magnetic_fields is a 1D array containing magnetic field values 
         
-        Outputs: a dictionary of the form { 'B field', energies, eigenvectors}.
-        The energies are a 2D array of dimension len(B_field_vector) x len(basis_states).
-        The eigenvectors are a 3D array of dimension len(B_field_vector) x len(basis_states) x len(basis_states)
+        Outputs: a dictionary of the form { 'magnetic field', energies, eigenvectors}.
+        The energies are a 2D array of dimension len(magnetic_fields) x len(basis_states).
+        The eigenvectors are a 3D array of dimension len(magnetic_fields) x len(basis_states) x len(basis_states)
         """
-        energies = np.zeros((len(B_field_vector), self.dim))
-        eigenvectors = np.zeros((len(B_field_vector), self.dim, self.dim))
+        energies = np.zeros((len(magnetic_fields), self.dim))
+        eigenvectors = np.zeros((len(magnetic_fields), self.dim, self.dim))
 
-        for i, B in enumerate(B_field_vector):
-            E, V = self.solve_at_field(B)
-            energies[i, :] = E
-            eigenvectors[i, :, :] = V
+        for i, magnetic_field in enumerate(magnetic_fields):
+            energy, eigenvector = self.solve_at_field(magnetic_field)
+            energies[i, :] = energy
+            eigenvectors[i, :, :] = eigenvector 
         
         # Compute m_{F} = m_{J} + m_{I} for labeling 
-        F_list, m_F_list = self.F_mF_labels(eigenvectors)
-        mJ_list, mI_list = self.mJ_mI_labels(eigenvectors)
+        f_list, mf_list = self.f_mf_labels(eigenvectors)
+        mj_list, mi_list = self.mj_mi_labels(eigenvectors)
         if self.approximation is None :
-            return { 'B field' : B_field_vector, 'energies' : energies, 
-                'eigenvectors' : eigenvectors, 'F' : F_list, 'm_F' : m_F_list,
-                'mJ' : mJ_list, 'mI' : mI_list}
+            return { 'magnetic field' : magnetic_fields, 'energies' : energies, 
+                'eigenvectors' : eigenvectors, 'f' : f_list, 'mf' : mf_list,
+                'mj' : mj_list, 'mi' : mi_list}
         elif self.approximation == 'weak field':
-            return { 'B field' : B_field_vector, 'energies' : energies, 
-                'eigenvectors' : eigenvectors, 'F' : F_list, 'm_F' : m_F_list}
+            return { 'magnetic field' : magnetic_fields, 'energies' : energies, 
+                'eigenvectors' : eigenvectors, 'f' : f_list, 'mf' : mf_list}
 
     
-    def get_state_energy(self, energies: NDArray, eigenvectors: NDArray, F: float, 
-                            m_F: float, tolerance: float = 1e-6) -> float:
+    def get_state_energy(self, energies: NDArray, eigenvectors: NDArray, f: float, 
+                            mf: float, tolerance: float = 1e-6) -> float:
         """ Returns the energy for an angular momentum state of interest |F, mF> 
-        At zero or low field, F is a good quantum number. At finite field, m_F is conserved but F is not. 
+        At zero or low field, F is a good quantum number. At finite field, mf is conserved but F is not. 
         Assumes energies and eigenvectors at one magnetic field condition.
         Returns the state energy. """
-        F_vals, m_F_values = self.F_mF_labels(eigenvectors)
+        f_values, mf_values = self.f_mf_labels(eigenvectors)
 
-        F_vals = F_vals[0]
-        m_F_values = m_F_values[0]
+        f_values = f_values[0]
+        mf_values = mf_values[0]
 
         matching_states = []
-        requested_state = (F, m_F)
+        requested_state = (f, mf)
         
         # From list of F values and mF values, map input to index for corresponding state (F,mF)
-        F_range = np.arange(np.abs(self.I - self.J), self.I + self.J + 1)
-        num_states_per_F = (2*F_range + 1).astype(int)
+        f_range = np.arange(np.abs(self.i - self.j), self.i + self.j + 1)
+        num_states_per_f = (2*f_range + 1).astype(int)
         try:
-            F_indx = list(F_range).index(F)
+            f_indx = list(f_range).index(f)
         except Exception as exc:
-            raise ValueError(f"Invalid F value {F}. Please choose in the range {F_range}") from exc
+            raise ValueError(f"Invalid F value {F}. Please choose in the range {f_range}") from exc
          
-        approximate_states = list(zip(F_vals, m_F_values)) 
+        approximate_states = list(zip(f_values, mf_values)) 
         state_indx = -1
-        # m_F_values lists all mF indices (for all F states considered); 
+        # mf_values lists all mF indices (for all F states considered); 
         # When looping over mF values, make sure the mF value corresponds to the requested F state 
-        for i, value in enumerate(m_F_values):
-            if (np.abs(value - m_F) < tolerance) and (np.abs(F_vals[i] - F) < tolerance ):
+        for i, value in enumerate(mf_values):
+            if (np.abs(value - mf) < tolerance) and (np.abs(f_values[i] - f) < tolerance ):
                 assert state_indx == -1 # Enforces that there is only 1 correct match 
                 state_indx = i
         
         if state_indx == -1:
-            raise ValueError(f"Basis state mF = {m_F} not found in list of basis states: {m_F_values}.")
+            raise ValueError(f"Basis state mF = {mf} not found in list of basis states: {mf_values}.")
         return energies[state_indx]
 
 
-    def get_state_energy_from_mJmI_pair(self, energies: NDArray, eigenvectors: NDArray, mJ: float, mI: float) -> float:
-        """ Returns the energy for a basis angular momentum state of interest: |mJ, mI> 
-        At zero or low field, F is a good quantum number. At high field, (mJ, mI) are good quantum numbers/
+    def get_state_energy_from_mjmi_pair(self, energies: NDArray, eigenvectors: NDArray, mj: float, mi: float) -> float:
+        """ Returns the energy for a basis angular momentum state of interest: |mj, mi> 
+        At zero or low field, F is a good quantum number. At high field, (mj, mi) are good quantum numbers/
         Assumes energies and eigenvectors at one magnetic field condition.
         Returns state energy. """
-        assert self.approximation is None, "Error. Request energies from (mJ, mI) pairs only in exact basis."
-        # Get index at mJ, mI pair 
-        mJ_states = [state[0] for state in self.basis_states]
-        mI_states = [state[1] for state in self.basis_states]
-        if mI not in mI_states or mJ not in mJ_states:
-            raise ValueError(f"Requested (mJ, mI) ({mJ}, {mI}) state not found. Please request a valid state.")
+        assert self.approximation is None, "Error. Request energies from (mj, mi) pairs only in exact basis."
+        # Get index at mj, mi pair 
+        mj_states = [state[0] for state in self.basis_states]
+        mi_states = [state[1] for state in self.basis_states]
+        if mi not in mi_states or mj not in mj_states:
+            raise ValueError(f"Requested (mj, mi) ({mj}, {mi}) state not found. Please request a valid state.")
 
-        requested_state = (mJ, mI)
+        requested_state = (mj, mi)
 
-        # Find eigenstate with dominant mJ, mI character
+        # Find eigenstate with dominant mj, mi character
         best_match = -1
         best_overlap = 0
-        # Index of mJ,mI pair in the basis 
-        basis_indx = self.basis_states.index((mJ, mI))
+        # Index of mj,mi pair in the basis 
+        basis_indx = self.basis_states.index((mj, mi))
 
-        # Compute probability of being in (mJ, mI) state 
+        # Compute probability of being in (mj, mi) state 
         for i in range(self.dim):
             overlap = np.abs(eigenvectors[basis_indx, i])**2
             if overlap > best_overlap:
@@ -432,45 +427,45 @@ class ZeemanHyperfineSolver():
 
 
     @property
-    def Lande_gL(self):
+    def lande_gl(self):
         """ Compute Lande g factor for orbital angular momentum: """
         """ gL = 1. - (m_e / nuclear_mass) """
         m_e = constants.electron_mass * self.unit_reg("kg") # mass of electron in kg 
         m_e = m_e.to("dalton") # Daltons   
         # TODO: implement a unit test to see if yaml file has the Z argument. This would keep future developers consistent. 
-        if self.Z is None:
+        if self.z is None:
             return 1.
         else:
-            nuclear_mass = self.atomic_mass - (self.Z)*m_e # Daltons
+            nuclear_mass = self.atomic_mass - (self.z)*m_e # Daltons
             return 1. - (m_e / nuclear_mass)
 
     @property
-    def Lande_gI(self):
+    def lande_gi(self):
         """ Compute Lande g factor for nuclear angular momentum: """
-        if self.gI is None:
-            assert self.nuclear_moment != None, "Please specify nuclear magnetic moment or Lande gI factor."
-            ratio_mu_N_to_mu_B = self.mu_N/self.mu_B 
-            self.gI = -(self.nuclear_moment/self.I)*ratio_mu_N_to_mu_B 
-        return self.gI
+        if self.gi is None:
+            assert self.nuclear_moment != None, "Please specify nuclear magnetic moment or Lande gi factor."
+            ratio_mu_n_to_mu_b = self.mu_n/self.mu_b 
+            self.gi = -(self.nuclear_moment/self.i)*ratio_mu_n_to_mu_b 
+        return self.gi
 
     @property
-    def Lande_gJ(self) -> None | float:
+    def lande_gj(self) -> None | float:
         ''' Computes Lande factor for total electron angular momentum J '''
-        gS = np.abs(constants.physical_constants['electron g factor'][0])  # electron spin g factor
-        JJp1 = self.J*(self.J+1)
-        if JJp1 == 0:
+        gs = np.abs(constants.physical_constants['electron g factor'][0])  # electron spin g factor. 
+        jjp1 = self.j*(self.j+1)
+        if jjp1 == 0:
             return 0.
         else:
-            LLp1 = self.L*(self.L+1)
-            SSp1 = self.S*(self.S+1)
-            return (self.Lande_gL*(JJp1 - SSp1 + LLp1) + gS*(JJp1 + SSp1 - LLp1) )*0.5/JJp1
+            llp1 = self.l*(self.l+1)
+            ssp1 = self.s*(self.s+1)
+            return (self.lande_gl*(jjp1 - ssp1 + llp1) + gs*(jjp1 + ssp1 - llp1) )*0.5/jjp1
 
-    def Lande_gF(self, f: float) -> float:
+    def lande_gf(self, f: float) -> float:
         """ Lande g factor for total hyperfine angular momentum. 
         - takes in "F" the total angular momentum magnitude as an input """
         ffp1 = f*(f+1)
         if ffp1 == 0:
             raise ValueError('Division by zero error. Do not use this function if F = 0.')
-        IIp1 = self.I*(self.I+1)
-        JJp1 = self.J*(self.J+1)
-        return ((self.Lande_gJ*0.5*(ffp1 - IIp1 + JJp1)) + self.Lande_gI*0.5*(ffp1 + IIp1 - JJp1))/ffp1
+        iip1 = self.i*(self.i+1)
+        jjp1 = self.j*(self.j+1)
+        return ((self.lande_gj*0.5*(ffp1 - iip1 + jjp1)) + self.lande_gi*0.5*(ffp1 + iip1 - jjp1))/ffp1
