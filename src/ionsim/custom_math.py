@@ -358,8 +358,6 @@ def _run_stochastic_trajectories_numba(
     noise_strengths = np.ascontiguousarray(component_data.noise_strengths, dtype=np.complex128)
     noise_offsets = np.ascontiguousarray(component_data.noise_offsets, dtype=np.float64)
     noise_sources = np.ascontiguousarray(component_data.noise_source_indices, dtype=np.int64)
-    bare_hints = np.ascontiguousarray(component_data.bare_hints, dtype=np.complex128)
-    bare_present = np.ascontiguousarray(component_data.bare_hint_present, dtype=np.uint8)
 
     return _run_stochastic_trajectories_numba_impl(
         noise_array_f64,
@@ -375,8 +373,6 @@ def _run_stochastic_trajectories_numba(
         noise_strengths,
         noise_offsets,
         noise_sources,
-        bare_hints,
-        bare_present,
     )
 
 
@@ -400,21 +396,9 @@ if _NUMBA_AVAILABLE:
         return v0 + (v1 - v0) * (t - t0) / (t1 - t0)
 
     @njit(cache=True)
-    def _numba_evaluate_hermitian(hint: np.ndarray, rate: np.ndarray, has_rate: int, t: float) -> np.ndarray:
-        if has_rate != 0:
-            mat = hint * np.exp(-1j * rate * t)
-        else:
-            mat = hint
-        
-        # Check for hermiticity
-        if np.allclose(mat, mat.conj().T, atol=1e-10):
-            return mat
-            
-        return mat + mat.conj().T
-
-    @njit(cache=True)
     def _numba_build_hamiltonian(
         t: float,
+        step: int,
         traj_idx: int,
         noise_array: np.ndarray,
         time_grid: np.ndarray,
@@ -428,22 +412,26 @@ if _NUMBA_AVAILABLE:
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
-        bare_hints: np.ndarray,
-        bare_present: np.ndarray,
+        interpolate: bool = True,
     ) -> np.ndarray:
         H = H0.copy()
         for idx in range(det_hints.shape[0]):
-            herm = _numba_evaluate_hermitian(det_hints[idx], det_rates[idx], det_has_rate[idx], t)
+            if det_has_rate[idx] != 0:
+                herm = det_hints[idx] * np.exp(-1j * det_rates[idx] * t)
+            else:
+                herm = det_hints[idx]
             H += herm
         for idx in range(stoch_hints.shape[0]):
-            herm = _numba_evaluate_hermitian(stoch_hints[idx], stoch_rates[idx], stoch_has_rate[idx], t)
-            if bare_present.shape[0] > idx and bare_present[idx] != 0:
-                template = _numba_evaluate_hermitian(bare_hints[idx], stoch_rates[idx], stoch_has_rate[idx], t)
+            if stoch_has_rate[idx] != 0:
+                template = stoch_hints[idx] * np.exp(-1j * stoch_rates[idx] * t)
             else:
-                template = herm
+                template = stoch_hints[idx]
             source_index = int(noise_source_indices[idx])
-            noise_values = noise_array[traj_idx, source_index]
-            noise_val = _numba_linear_interp(time_grid, noise_values, t) + noise_offsets[idx]
+            if interpolate:
+                noise_values = noise_array[traj_idx, source_index]
+                noise_val = _numba_linear_interp(time_grid, noise_values, t) + noise_offsets[idx]
+            else:
+                noise_val = noise_array[traj_idx, source_index, step] + noise_offsets[idx]
             H += noise_strengths[idx] * noise_val * template
         return H
 
@@ -451,6 +439,7 @@ if _NUMBA_AVAILABLE:
     def _numba_rhs(
         t: float,
         psi: np.ndarray,
+        step: int,
         traj_idx: int,
         noise_array: np.ndarray,
         time_grid: np.ndarray,
@@ -464,11 +453,11 @@ if _NUMBA_AVAILABLE:
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
-        bare_hints: np.ndarray,
-        bare_present: np.ndarray,
+        interpolate: bool = True,
     ) -> np.ndarray:
         H = _numba_build_hamiltonian(
             t,
+            step,
             traj_idx,
             noise_array,
             time_grid,
@@ -482,8 +471,7 @@ if _NUMBA_AVAILABLE:
             noise_strengths,
             noise_offsets,
             noise_source_indices,
-            bare_hints,
-            bare_present,
+            interpolate,
         )
         return -1j * H.dot(psi)
 
@@ -491,6 +479,7 @@ if _NUMBA_AVAILABLE:
     def _numba_rk4_step(
         t0: float,
         dt: float,
+        step: int,
         psi: np.ndarray,
         traj_idx: int,
         noise_array: np.ndarray,
@@ -505,12 +494,11 @@ if _NUMBA_AVAILABLE:
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
-        bare_hints: np.ndarray,
-        bare_present: np.ndarray,
     ) -> np.ndarray:
         k1 = _numba_rhs(
             t0,
             psi,
+            step,
             traj_idx,
             noise_array,
             time_grid,
@@ -524,12 +512,12 @@ if _NUMBA_AVAILABLE:
             noise_strengths,
             noise_offsets,
             noise_source_indices,
-            bare_hints,
-            bare_present,
+            interpolate=False,
         )
         k2 = _numba_rhs(
             t0 + 0.5 * dt,
             psi + 0.5 * dt * k1,
+            step,
             traj_idx,
             noise_array,
             time_grid,
@@ -543,12 +531,11 @@ if _NUMBA_AVAILABLE:
             noise_strengths,
             noise_offsets,
             noise_source_indices,
-            bare_hints,
-            bare_present,
         )
         k3 = _numba_rhs(
             t0 + 0.5 * dt,
             psi + 0.5 * dt * k2,
+            step,
             traj_idx,
             noise_array,
             time_grid,
@@ -562,12 +549,11 @@ if _NUMBA_AVAILABLE:
             noise_strengths,
             noise_offsets,
             noise_source_indices,
-            bare_hints,
-            bare_present,
         )
         k4 = _numba_rhs(
             t0 + dt,
             psi + dt * k3,
+            step,
             traj_idx,
             noise_array,
             time_grid,
@@ -581,8 +567,7 @@ if _NUMBA_AVAILABLE:
             noise_strengths,
             noise_offsets,
             noise_source_indices,
-            bare_hints,
-            bare_present,
+            interpolate=False,
         )
         return psi + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
@@ -601,13 +586,12 @@ if _NUMBA_AVAILABLE:
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
-        bare_hints: np.ndarray,
-        bare_present: np.ndarray,
     ) -> np.ndarray:
         n_traj = noise_array.shape[0]
         n_time = time_grid.shape[0]
         n_state = initial_vector.shape[0]
         result = np.empty((n_traj, n_time, n_state), dtype=np.complex128)
+
         for traj_idx in prange(n_traj):
             psi = initial_vector.copy()
             result[traj_idx, 0, :] = psi
@@ -618,6 +602,7 @@ if _NUMBA_AVAILABLE:
                 psi = _numba_rk4_step(
                     t0,
                     dt,
+                    step,
                     psi,
                     traj_idx,
                     noise_array,
@@ -632,8 +617,6 @@ if _NUMBA_AVAILABLE:
                     noise_strengths,
                     noise_offsets,
                     noise_source_indices,
-                    bare_hints,
-                    bare_present,
                 )
                 result[traj_idx, step + 1, :] = psi
         return result

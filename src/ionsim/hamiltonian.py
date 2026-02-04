@@ -28,8 +28,6 @@ class StochasticHamiltonianComponentData:
     noise_strengths: np.ndarray
     noise_offsets: np.ndarray
     noise_source_indices: np.ndarray
-    bare_hints: np.ndarray
-    bare_hint_present: np.ndarray
 
 @dataclass(frozen=True, eq=False)
 class Hamiltonian:
@@ -266,21 +264,22 @@ class Hamiltonian:
         noise_strengths: list[complex] = []
         noise_offsets: list[float] = []
         noise_source_indices: list[int] = []
-        bare_hints: list[np.ndarray] = []
-        bare_hint_present: list[bool] = []
 
         for operator, hint_matrix, rate_matrix in zip(self.coupling_operators, sparse_Hints, sparse_Rates):
             comp_hint = np.array(as_dense_matrix(hint_matrix, warn=False), copy=True).astype(np.complex128, copy=False)
+            # Ensure hermiticity once, here
+            if not np.allclose(comp_hint, comp_hint.conj().T, atol=1e-10):
+                comp_hint = (comp_hint + comp_hint.conj().T) / 2
             comp_rate = np.array(as_dense_matrix(rate_matrix, warn=False), copy=True).astype(float, copy=False)
             has_rate = bool(np.any(np.abs(comp_rate) > 0))
 
-            info = getattr(operator, 'stochastic_info', None) or {}
-            if info:
+            stochastic_info = getattr(operator, 'stochastic_info', None) or {}
+            if stochastic_info:
                 if n_noise_sources <= 0:
                     raise IonSimError('Stochastic evolution requested but no noise sources were provided.')
-                has_explicit_source = ('noise_source' in info) or ('noise_channel' in info)
+                has_explicit_source = ('noise_source' in stochastic_info) or ('noise_channel' in stochastic_info)
                 default_noise_source = 0 if n_noise_sources == 1 else len(stoch_hints)
-                noise_source = int(info.get('noise_source', info.get('noise_channel', default_noise_source)))
+                noise_source = int(stochastic_info.get('noise_source', stochastic_info.get('noise_channel', default_noise_source)))
                 if (not has_explicit_source) and n_noise_sources > 1 and default_noise_source >= n_noise_sources:
                     raise IonSimError(
                         'Not enough noise sources were provided for the number of stochastic coupling operators. '
@@ -292,19 +291,12 @@ class Hamiltonian:
                     raise IonSimError(
                         f"Noise source {noise_source} not available for stochastic coupling (n_sources: {n_noise_sources})."
                     )
-                strength = info.get('strength', 1.0)
+                strength = stochastic_info.get('strength', 1.0)
                 if strength is None:
                     strength = 1.0
-                offset = info.get('offset', info.get('bias', 0.0))
+                offset = stochastic_info.get('offset', stochastic_info.get('bias', 0.0))
                 if offset is None:
                     offset = 0.0
-                bare_op = info.get('bare_operator', None)
-                if bare_op is not None:
-                    bare_hint = np.array(as_dense_matrix(bare_op, warn=False), copy=True).astype(np.complex128, copy=False)
-                    bare_present = True
-                else:
-                    bare_hint = np.zeros_like(comp_hint)
-                    bare_present = False
 
                 stoch_hints.append(comp_hint)
                 stoch_rates.append(comp_rate)
@@ -312,8 +304,6 @@ class Hamiltonian:
                 noise_strengths.append(complex(strength))
                 noise_offsets.append(float(offset))
                 noise_source_indices.append(noise_source)
-                bare_hints.append(bare_hint)
-                bare_hint_present.append(bare_present)
             else:
                 det_hints.append(comp_hint)
                 det_rates.append(comp_rate)
@@ -334,11 +324,6 @@ class Hamiltonian:
         stochastic_rate_array = _stack_or_empty(stoch_rates, float)
         stochastic_has_rate_array = np.array(stoch_has_rate, dtype=np.uint8)
 
-        if not bare_hints:
-            bare_hint_array = np.zeros((0, dim, dim), dtype=np.complex128)
-        else:
-            bare_hint_array = np.stack([np.array(item, copy=False) for item in bare_hints]).astype(np.complex128, copy=False)
-
         return StochasticHamiltonianComponentData(
             H0=H0_dense,
             deterministic_hints=deterministic_hint_array,
@@ -350,8 +335,6 @@ class Hamiltonian:
             noise_strengths=np.array(noise_strengths, dtype=np.complex128),
             noise_offsets=np.array(noise_offsets, dtype=float),
             noise_source_indices=np.array(noise_source_indices, dtype=np.int64),
-            bare_hints=bare_hint_array,
-            bare_hint_present=np.array(bare_hint_present, dtype=np.uint8),
         )
 
     def stochastic_hamiltonian_function(self, time_evals: Vector, trajectory_noise: Matrix | None = None, **kwargs):
@@ -402,22 +385,16 @@ class Hamiltonian:
         noise_strengths = component_data.noise_strengths
         noise_offsets = component_data.noise_offsets
         noise_sources = component_data.noise_source_indices
-        bare_hints = component_data.bare_hints
-        bare_present = component_data.bare_hint_present
 
-        def _evaluate_hermitian(hint: np.ndarray, rate: np.ndarray, has_rate: int, t: float) -> np.ndarray:
-            mat = np.array(hint, copy=True)
+        def _apply_phase(hint: np.ndarray, rate: np.ndarray, has_rate: int, t: float) -> np.ndarray:
             if has_rate:
-                mat *= np.exp(-1j * rate * t)
-            # Only symmetrize if not already Hermitian
-            if not np.allclose(mat, mat.conj().T):
-                return mat + mat.conj().T
-            return mat
+                return hint * np.exp(-1j * rate * t)
+            return hint
 
         def _deterministic_matrix(t: float) -> np.ndarray:
             base = np.array(component_data.H0, copy=True)
             for idx in range(det_hints.shape[0]):
-                base += _evaluate_hermitian(det_hints[idx], det_rates[idx], det_has_rate[idx], t)
+                base += _apply_phase(det_hints[idx], det_rates[idx], det_has_rate[idx], t)
             return base
 
         def interpolate_noise(noise_source: int, t: float) -> float:
@@ -437,10 +414,7 @@ class Hamiltonian:
         def _stochastic_hamiltonian(t: float):
             base_matrix = _deterministic_matrix(t)
             for idx in range(stoch_hints.shape[0]):
-                if bare_present.shape[0] > 0 and bare_present[idx]:
-                    template = _evaluate_hermitian(bare_hints[idx], stoch_rates[idx], stoch_has_rate[idx], t)
-                else:
-                    template = _evaluate_hermitian(stoch_hints[idx], stoch_rates[idx], stoch_has_rate[idx], t)
+                template = _apply_phase(stoch_hints[idx], stoch_rates[idx], stoch_has_rate[idx], t)
                 noise_value = interpolate_noise(int(noise_sources[idx]), t) + noise_offsets[idx]
                 base_matrix += noise_strengths[idx] * noise_value * template
             if self.sparse:
