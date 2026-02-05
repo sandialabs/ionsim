@@ -1,4 +1,4 @@
-from ionsim.custom_types import Vector
+﻿from ionsim.custom_types import Vector
 from ionsim.ionsim_error import IonSimError
 
 from abc import ABC, abstractmethod
@@ -120,7 +120,7 @@ class ZVODE(OdeSolver):
             intermediate_states += [r.y]
             intermediate_times += [r.t]
         return intermediate_times, intermediate_states
-    
+
 @dataclass(frozen=True, eq=False)
 class StochasticOdeSolver(OdeSolver):
     """A numerical routine to solve stochastic differential equations (SDEs) for wavefunction evolution."""
@@ -154,7 +154,7 @@ class StochasticOdeSolver(OdeSolver):
         return noise_array
 
     def solve(self):
-        """Solve the stochastic Schrödinger equation by evolving each trajectory independently."""
+        """Solve the stochastic Schr├╢dinger equation by evolving each trajectory independently."""
         noise_array = self._shape_noise_to_trajectories(self.noisy_trajectories)
         n_trajectories, _, n_time = noise_array.shape
         if n_trajectories == 0:
@@ -171,17 +171,14 @@ class StochasticOdeSolver(OdeSolver):
                 raise IonSimError('Length of time_evals must match the number of noise samples per trajectory.')
 
         backend = self.trajectory_backend.lower()
-        if backend not in {'python', 'numba'}:
+        if backend not in {"python", "numba_rk4", "numba_single_qubit", "numba_general_propagator"}:
             raise IonSimError(
-                f'Unknown trajectory_backend "{self.trajectory_backend}". Expected "python" or "numba".'
+                f'Unknown trajectory_backend "{self.trajectory_backend}"'
             )
 
         solver_kwargs = dict(self.base_solver_kwargs)
 
-        if backend == 'numba':
-            if not _NUMBA_AVAILABLE:
-                raise IonSimError('trajectory_backend="numba" requested but numba is not installed.')
-            component_data = self.interaction_function(
+        component_data = self.interaction_function(
                 initial_wavefunction=self.initial_vector,
                 duration=self.duration,
                 time_evals=time_grid,
@@ -189,13 +186,28 @@ class StochasticOdeSolver(OdeSolver):
                 noise_times=time_grid,
                 return_component_data=True,
             )
+
+        if backend == "numba_rk4":
+            
             stacked_results = _run_stochastic_trajectories_numba(
                 noise_array,
                 np.asarray(self.initial_vector, dtype=np.complex128, order='C'),
                 time_grid,
                 component_data,
+                method='RK4',
             )
-        else:
+        elif backend == "numba_general_propagator":
+            
+            stacked_results = _run_stochastic_trajectories_numba(
+                noise_array,
+                np.asarray(self.initial_vector, dtype=np.complex128, order='C'),
+                time_grid,
+                component_data,
+                method='general_propagator',
+            )
+
+
+        elif backend == 'python':
             stacked_results = parallel_trajectory_ode_solver(
                 n_trajectories,
                 solver_kwargs,
@@ -206,6 +218,8 @@ class StochasticOdeSolver(OdeSolver):
                 duration=self.duration,
                 base_solver=self.base_solver,
             )
+        else:
+            raise IonSimError(f'Unknown trajectory_backend "{self.trajectory_backend}".')
 
         return list(time_grid), stacked_results
 
@@ -337,6 +351,7 @@ def _run_stochastic_trajectories_numba(
     initial_vector: np.ndarray,
     time_grid: np.ndarray,
     component_data: Any,
+    method: str = 'RK4',
 ) -> np.ndarray:
     """Execute stochastic trajectories using a fully nopython Runge-Kutta integrator."""
     if not _NUMBA_AVAILABLE:
@@ -359,21 +374,40 @@ def _run_stochastic_trajectories_numba(
     noise_offsets = np.ascontiguousarray(component_data.noise_offsets, dtype=np.float64)
     noise_sources = np.ascontiguousarray(component_data.noise_source_indices, dtype=np.int64)
 
-    return _run_stochastic_trajectories_numba_impl(
-        noise_array_f64,
-        initial_vec_c,
-        time_grid_f64,
-        H0,
-        det_hints,
-        det_rates,
-        det_has_rate,
-        stoch_hints,
-        stoch_rates,
-        stoch_has_rate,
-        noise_strengths,
-        noise_offsets,
-        noise_sources,
-    )
+    if method == 'RK4':
+        return _run_stochastic_trajectories_numba_RK4(
+            noise_array_f64,
+            initial_vec_c,
+            time_grid_f64,
+            H0,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_sources,
+        )
+    elif method == 'general_propagator':
+        return _run_stochastic_trajectories_numba_general_propagator(
+            noise_array_f64,
+            initial_vec_c,
+            time_grid_f64,
+            H0,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_sources,
+        )
+    else:
+        raise IonSimError(f'Unknown numba integration method "{method}".')
 
 
 if _NUMBA_AVAILABLE:
@@ -572,7 +606,7 @@ if _NUMBA_AVAILABLE:
         return psi + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
     @njit(parallel=True, cache=True)
-    def _run_stochastic_trajectories_numba_impl(
+    def _run_stochastic_trajectories_numba_RK4(
         noise_array: np.ndarray,
         initial_vector: np.ndarray,
         time_grid: np.ndarray,
@@ -620,11 +654,200 @@ if _NUMBA_AVAILABLE:
                 )
                 result[traj_idx, step + 1, :] = psi
         return result
-else:  # pragma: no cover - fallback when numba is missing
+    # ============ End RK4 numba implementation ============
+    
+    # ============ Single-qubit specialized evolution ============
+    @njit(parallel=True, fastmath=True, cache=True)
+    def evolve_batch_numba_general_single_qubit(noise_all, dt, base_pauli_coeffs, noise_pauli_coeffs, base_c, noise_c, psi_init, meas_obs):
+        """
+        Evolve a single qubit state under a stochastic Hamiltonian H = c I + (1/2) (c_x X + c_y Y + c_z Z),
+        where c = base_c + noise * noise_c, and c_x = base_pauli_coeffs[0] + noise * noise_pauli_coeffs[0], etc.,
+        and cos(1/2 Ω), i sin(1/2 Ω) are absorbed into the above coefficients.
+        noise_all: (trajs, N) array of noise values
+        dt: time step
+        base_pauli_coeffs: (3,) array [c_x_base, c_y_base, c_z_base]
+        noise_pauli_coeffs: (3,) array [c_x_noise, c_y_noise, c_z_noise]
+        base_c: float, base coefficient for identity
+        noise_c: float, noise coefficient for identity
+        psi_init: (2,) complex array initial state
+        meas_obs: (2,2) complex array observable to measure
+        Returns: obs (trajs, N) expectation values
 
-    def _run_stochastic_trajectories_numba_impl(*_args, **_kwargs):
-        raise IonSimError('trajectory_backend="numba" requested but numba is not installed.')
-        
+        Example usage:
+        Ω = 2 * np.pi * 1e6
+        φ = 0.0
+        cφ, sφ = np.cos(φ), np.sin(φ)
+        base_cx, base_cy, base_cz = (Ω/2) * cφ, (Ω/2) * sφ, 0.0
+        noise_cx, noise_cy, noise_cz = (1/2) * cφ, (1/2) * sφ, 0.0
+        base_c, noise_c = 0.0, 0.0
+        base_pauli_coeffs = np.array([ base_cx, base_cy, base_cz ], dtype=np.float64)
+        noise_pauli_coeffs = np.array([ noise_cx, noise_cy, noise_cz ], dtype=np.float64)
+        meas_obs = np.array([[1.0, 0.0], [0.0, -1.0]], dtype=np.complex128)  # Z observable
+        psi0_init = 1.0 + 0.0j
+        psi1_init = 0.0 + 0.0j
+        psi_init = np.array([psi0_init, psi1_init], dtype=np.complex128)
+        obs = evolve_batch_numba_general_single_qubit(noise_all, dt, base_pauli_coeffs, noise_pauli_coeffs, base_c, noise_c, psi_init, meas_obs)
+        """
+
+        trajs, N = noise_all.shape
+        obs = np.empty((trajs, N), dtype=np.float64)
+
+        for t_idx in prange(trajs):
+            # initialize state |psi>
+            psi0, psi1 = psi_init  # complex
+
+            for n in range(N):
+                dω = noise_all[t_idx, n]
+
+                # Compute effective c_x, c_y, c_z and c
+                cx = base_pauli_coeffs[0] + dω * noise_pauli_coeffs[0]
+                cy = base_pauli_coeffs[1] + dω * noise_pauli_coeffs[1]
+                cz = base_pauli_coeffs[2] + dω * noise_pauli_coeffs[2]
+                c = base_c + dω * noise_c
+
+                # Half-angles for the rotation
+                ax = 0.5 * cx
+                ay = 0.5 * cy
+                az = 0.5 * cz
+                a2 = ax*ax + ay*ay + az*az
+
+                if a2 == 0.0:
+                    U00 = 1.0 + 0.0j
+                    U01 = 0.0 + 0.0j
+                    U10 = 0.0 + 0.0j
+                    U11 = 1.0 + 0.0j
+                else:
+                    a = np.sqrt(a2)
+                    c_rot = np.cos(a * dt)
+                    s_over_a = np.sin(a * dt) / a
+                    A00 = az
+                    A01 = ax - 1j*ay
+                    A10 = ax + 1j*ay
+                    A11 = -az
+
+                    U00 = c_rot - 1j * s_over_a * A00
+                    U01 = -1j * s_over_a * A01
+                    U10 = -1j * s_over_a * A10
+                    U11 = c_rot - 1j * s_over_a * A11
+
+                # Apply the rotation
+                new0 = U00 * psi0 + U01 * psi1
+                new1 = U10 * psi0 + U11 * psi1
+
+                # Apply the global phase from identity term
+                phase = np.cos(c * dt) - 1j * np.sin(c * dt)  # exp(-1j * c * dt)
+                psi0 = phase * new0
+                psi1 = phase * new1
+
+                # ⟨M⟩ = Re(ψ† M ψ)
+                obs[t_idx, n] = (
+                    np.conjugate(psi0) * (meas_obs[0,0]*psi0 + meas_obs[0,1]*psi1)
+                    + np.conjugate(psi1) * (meas_obs[1,0]*psi0 + meas_obs[1,1]*psi1)
+                ).real
+
+        return obs
+
+    # General propagator-based evolution for any Hilbert space dimension
+    # @njit(parallel=True, fastmath=True, cache=True)
+    # def evolve_numba_general_propagator(hamiltonian_func, dt, psi_init, N_steps, meas_obs=None):
+    #     """
+    #     Evolve a quantum state under a time-dependent Hamiltonian H(t) using step-by-step unitary evolution exp(-i H(t) dt).
+    #     Assumes H(t) is Hermitian.
+    #     hamiltonian_func: Numba-compiled function taking t (float) and returning H (n x n complex array)
+    #     dt: time step
+    #     n: dimension of Hilbert space
+    #     psi_init: (n,) complex array initial state
+    #     meas_obs: (n, n) complex array observable
+    #     N_steps: number of time steps
+    #     Returns: obs (N_steps,) expectation values <psi|meas_obs|psi>
+    #     """
+    #     obs_all = np.empty(N_steps, dtype=np.float128)
+    #     psi_all = np.empty((N_steps, psi_init.shape[0]), dtype=np.complex128)
+
+    #     psi = psi_init.copy()
+
+    #     for step in range(N_steps):
+    #         current_time = step * dt
+    #         H = hamiltonian_func(current_time)
+    #         e, V = np.linalg.eigh(H)
+    #         exp_e = np.exp(-1j * e * dt)
+    #         U = V @ np.diag(exp_e) @ V.conj().T
+    #         psi = U @ psi
+    #         # if meas_obs is not None:
+    #         #     obs_all[step] = np.real(np.conj(psi).T @ meas_obs @ psi)
+    #         psi_all[step, :] = psi
+
+    #     return psi_all
+    
+    @njit(parallel=True, cache=True)
+    def _run_stochastic_trajectories_numba_general_propagator(
+        noise_array: np.ndarray,
+        initial_vector: np.ndarray,
+        time_grid: np.ndarray,
+        H0: np.ndarray,
+        det_hints: np.ndarray,
+        det_rates: np.ndarray,
+        det_has_rate: np.ndarray,
+        stoch_hints: np.ndarray,
+        stoch_rates: np.ndarray,
+        stoch_has_rate: np.ndarray,
+        noise_strengths: np.ndarray,
+        noise_offsets: np.ndarray,
+        noise_source_indices: np.ndarray,
+    ) -> np.ndarray:
+        n_traj = noise_array.shape[0]
+        n_time = time_grid.shape[0]
+        n_state = initial_vector.shape[0]
+        result = np.empty((n_traj, n_time, n_state), dtype=np.complex128)
+
+        dt = time_grid[1] - time_grid[0]
+        for traj_idx in prange(n_traj):
+            psi = initial_vector.copy()
+            result[traj_idx, 0, :] = psi
+
+            for step in range(n_time - 1):
+                t = time_grid[step]
+                dt_step = time_grid[step + 1] - time_grid[step]
+                
+                H = _numba_build_hamiltonian(
+                    t,
+                    step,
+                    traj_idx,
+                    noise_array,
+                    time_grid,
+                    H0,
+                    det_hints,
+                    det_rates,
+                    det_has_rate,
+                    stoch_hints,
+                    stoch_rates,
+                    stoch_has_rate,
+                    noise_strengths,
+                    noise_offsets,
+                    noise_source_indices,
+                    interpolate=False,
+                )
+
+                # Diagonalize Hamiltonian
+                e, V = np.linalg.eigh(H)
+                
+                # Apply evolution: psi_new = V @ exp(-i e dt) @ V† @ psi
+                # Compute V† @ psi first
+                V_dag_psi = V.conj().T @ psi
+                
+                # Multiply by exp(-i e dt) element-wise
+                exp_e = np.exp(-1j * e * dt_step)
+                scaled = V_dag_psi * exp_e
+                
+                # Apply V
+                psi = V @ scaled
+                
+                result[traj_idx, step + 1, :] = psi
+        return result
+
+else:  # pragma: no cover - fallback when numba is missing
+    raise IonSimError(f'trajectory_backend with numba requested but Numba is not installed.')
+
 # working version
 # @dataclass(frozen=True, eq=False)
 # class ZVODE(OdeSolver):
