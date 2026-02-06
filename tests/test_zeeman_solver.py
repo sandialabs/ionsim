@@ -17,7 +17,7 @@ class TestZeemanSolver(unittest.TestCase):
                 'I' : 1.5, 
                 'L' : 0,
                 'S' : 0.5,
-                'A_hf' : 3417.34 * 1E-3, # GHz
+                'hyperfine_A' : 3417.34 * 1E-3, # GHz
                 'mass' : 86.909, #daltons 
                 'gI' : -0.0009951414,
                 'Z' : 37, 
@@ -31,7 +31,7 @@ class TestZeemanSolver(unittest.TestCase):
                 'I' : 0.5, 
                 'L' : 0,
                 'S' : 0.0,
-                'A_hf' : 0., # 
+                'hyperfine_A' : 0., # 
                 'mass' : 170.936323, #daltons 
                 'gI' : None,
                 'Z' : 70, 
@@ -42,8 +42,8 @@ class TestZeemanSolver(unittest.TestCase):
         ]
         self.solvers = {
             case['test_name'] : ZeemanHyperfineSolver(
-                case['I'], case['J'], case['L'], case['S'], case['A_hf'], case['mass'], Z = case['Z'], nuclear_moment = case['magnetic moment'],
-                gI = case['gI'], freq_units = case['frequency units'], approximation = case['approximation'])
+                case['I'], case['J'], case['L'], case['S'], case['hyperfine_A'], case['mass'], z = case['Z'], nuclear_moment = case['magnetic moment'],
+                gi = case['gI'], freq_units = case['frequency units'], approximation = case['approximation'])
                 for case in self.test_cases
             }
 
@@ -87,10 +87,10 @@ class TestZeemanSolver(unittest.TestCase):
                 shifts, eigenvecs = solver.solve_at_field(test['Magnetic field'])
                 if test['state type'] == 'hyperfine':
                     f, mF = test['F,mF']
-                    calculated_value = solver.get_state_energy(shifts, eigenvecs, F = f, m_F = mF)
+                    calculated_value = solver.get_state_energy(shifts, eigenvecs, f = f, mf = mF)
                 else:
-                    m_J, m_I = test['mJ,mI']
-                    calculated_value = solver.get_state_energy_from_mJmI_pair(shifts, eigenvecs, mJ = m_J, mI = m_I)
+                    mj, mi = test['mJ,mI']
+                    calculated_value = solver.get_state_energy_from_mjmi_pair(shifts, eigenvecs, mj = mj, mi = mi)
 
                 self.assertAlmostEqual(calculated_value, test['Zeeman shift'], places=6) 
 

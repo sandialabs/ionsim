@@ -20,6 +20,8 @@ class Pauli:
         [[1, 0],
          [0, 1]],
     )
+
+    ''' Raising/lowering operators assume |g> corresponds to row/column 1 and |e> corresponds to row/column 2 '''
     plus = np.array(
         [[0, 0],
          [1, 0]],
