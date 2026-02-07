@@ -374,6 +374,9 @@ def _run_stochastic_trajectories_numba(
     noise_offsets = np.ascontiguousarray(component_data.noise_offsets, dtype=np.float64)
     noise_sources = np.ascontiguousarray(component_data.noise_source_indices, dtype=np.int64)
 
+    noise_transformation_types = np.ascontiguousarray(component_data.noise_transformation_types, dtype=np.int32)
+    noise_transformation_params = np.ascontiguousarray(component_data.noise_transformation_params, dtype=np.float64)
+
     if method == 'RK4':
         return _run_stochastic_trajectories_numba_RK4(
             noise_array_f64,
@@ -389,6 +392,8 @@ def _run_stochastic_trajectories_numba(
             noise_strengths,
             noise_offsets,
             noise_sources,
+            noise_transformation_types,
+            noise_transformation_params,
         )
     elif method == 'general_propagator':
         return _run_stochastic_trajectories_numba_general_propagator(
@@ -405,6 +410,8 @@ def _run_stochastic_trajectories_numba(
             noise_strengths,
             noise_offsets,
             noise_sources,
+            noise_transformation_types,
+            noise_transformation_params,
         )
     else:
         raise IonSimError(f'Unknown numba integration method "{method}".')
@@ -446,6 +453,8 @@ if _NUMBA_AVAILABLE:
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
+        noise_transformation_types: np.ndarray,
+        noise_transformation_params: np.ndarray,
         interpolate: bool = True,
     ) -> np.ndarray:
         H = H0.copy()
@@ -466,7 +475,17 @@ if _NUMBA_AVAILABLE:
                 noise_val = _numba_linear_interp(time_grid, noise_values, t) + noise_offsets[idx]
             else:
                 noise_val = noise_array[traj_idx, source_index, step] + noise_offsets[idx]
-            H += noise_strengths[idx] * noise_val * template
+            
+            # Apply noise transformation
+            trans_type = noise_transformation_types[idx]
+            if trans_type == 0:  # linear
+                noise_factor = noise_val
+            elif trans_type == 1:  # exponential
+                noise_factor = np.exp(1j * noise_val * noise_transformation_params[idx])
+            else:
+                noise_factor = noise_val  # default to linear
+            
+            H += noise_strengths[idx] * noise_factor * template
         return H
 
     @njit(cache=True)
@@ -487,6 +506,8 @@ if _NUMBA_AVAILABLE:
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
+        noise_transformation_types: np.ndarray,
+        noise_transformation_params: np.ndarray,
         interpolate: bool = True,
     ) -> np.ndarray:
         H = _numba_build_hamiltonian(
@@ -505,6 +526,8 @@ if _NUMBA_AVAILABLE:
             noise_strengths,
             noise_offsets,
             noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
             interpolate,
         )
         return -1j * H.dot(psi)
@@ -528,6 +551,8 @@ if _NUMBA_AVAILABLE:
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
+        noise_transformation_types: np.ndarray,
+        noise_transformation_params: np.ndarray,
     ) -> np.ndarray:
         k1 = _numba_rhs(
             t0,
@@ -546,6 +571,8 @@ if _NUMBA_AVAILABLE:
             noise_strengths,
             noise_offsets,
             noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
             interpolate=False,
         )
         k2 = _numba_rhs(
@@ -565,6 +592,8 @@ if _NUMBA_AVAILABLE:
             noise_strengths,
             noise_offsets,
             noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
         )
         k3 = _numba_rhs(
             t0 + 0.5 * dt,
@@ -583,6 +612,8 @@ if _NUMBA_AVAILABLE:
             noise_strengths,
             noise_offsets,
             noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
         )
         k4 = _numba_rhs(
             t0 + dt,
@@ -601,6 +632,8 @@ if _NUMBA_AVAILABLE:
             noise_strengths,
             noise_offsets,
             noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
             interpolate=False,
         )
         return psi + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
@@ -620,6 +653,8 @@ if _NUMBA_AVAILABLE:
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
+        noise_transformation_types: np.ndarray,
+        noise_transformation_params: np.ndarray,
     ) -> np.ndarray:
         n_traj = noise_array.shape[0]
         n_time = time_grid.shape[0]
@@ -651,6 +686,8 @@ if _NUMBA_AVAILABLE:
                     noise_strengths,
                     noise_offsets,
                     noise_source_indices,
+                    noise_transformation_types,
+                    noise_transformation_params,
                 )
                 result[traj_idx, step + 1, :] = psi
         return result
@@ -794,6 +831,8 @@ if _NUMBA_AVAILABLE:
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
+        noise_transformation_types: np.ndarray,
+        noise_transformation_params: np.ndarray,
     ) -> np.ndarray:
         n_traj = noise_array.shape[0]
         n_time = time_grid.shape[0]
@@ -825,6 +864,8 @@ if _NUMBA_AVAILABLE:
                     noise_strengths,
                     noise_offsets,
                     noise_source_indices,
+                    noise_transformation_types,
+                    noise_transformation_params,
                     interpolate=False,
                 )
 
