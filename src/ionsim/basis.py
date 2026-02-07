@@ -64,13 +64,15 @@ class Basis(ABC):
         assert(np.abs(np.abs(np.linalg.norm(coefficients)) - 1) < NUMERICAL_EQUIVALENCE_THRESHOLD)
         return sum([vector*coef for vector, coef in zip(self.vectors, coefficients)])
     
-    def compute_density_matrix_from_wavefunction(self, wavefunction: Vector):
+    def compute_density_matrix_from_wavefunction(self, wavefunction: Vector, return_error=False):
         """Compute a density matrix from a wavefunction, i.e., a pure state."""
         assert(len(wavefunction) == len(self.vectors)) 
-        error = np.abs(np.abs((wavefunction.conj().T).dot(wavefunction)) - 1)
+        error = np.abs((wavefunction.conj().T).dot(wavefunction) - 1.0)
         if error > NUMERICAL_ERROR_THRESHOLD:
             raise IonSimError(f'Numerical error of {error} is greater than NUMERICAL_ERROR_THRESHOLD.')
         # assert(np.abs(np.abs((wavefunction.conj().T).dot(wavefunction)) - 1) < NUMERICAL_ERROR_THRESHOLD)
+        if return_error:
+            return np.outer(wavefunction, wavefunction.conj().T), error
         return np.outer(wavefunction, wavefunction.conj().T)
     
     def compute_supervector_from_density_matrix(self, density_matrix: Matrix): # TODO: generalize for any basis
