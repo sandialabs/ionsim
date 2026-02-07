@@ -37,6 +37,8 @@ class StochasticHamiltonianComponentData:
     noise_strengths: np.ndarray
     noise_offsets: np.ndarray
     noise_source_indices: np.ndarray
+    noise_transformation_types: list[int] = None
+    noise_transformation_params: list[float] = None
 
 @dataclass(frozen=True, eq=False)
 class Hamiltonian(CompositeOperator):
@@ -373,6 +375,8 @@ class Hamiltonian(CompositeOperator):
         noise_strengths: list[complex] = []
         noise_offsets: list[float] = []
         noise_source_indices: list[int] = []
+        noise_transformation_types: list[int] = []
+        noise_transformation_params: list[float] = []
 
         for operator, hint_matrix, rate_matrix in zip(self.coupling_operators, sparse_Hints, sparse_Rates):
             comp_hint = np.array(as_dense_matrix(hint_matrix, warn=False), copy=True).astype(np.complex128, copy=False)
@@ -413,6 +417,19 @@ class Hamiltonian(CompositeOperator):
                 noise_strengths.append(complex(strength))
                 noise_offsets.append(float(offset))
                 noise_source_indices.append(noise_source)
+                
+                # Handle noise transformation
+                transformation = stochastic_info.get('transformation', 'linear')
+                if transformation == 'linear':
+                    trans_type = 0
+                    trans_param = 0.0
+                elif transformation == 'exponential':
+                    trans_type = 1
+                    trans_param = float(stochastic_info.get('param', 1.0))
+                else:
+                    raise IonSimError(f"Unknown noise transformation '{transformation}'. Supported: 'linear', 'exponential'")
+                noise_transformation_types.append(trans_type)
+                noise_transformation_params.append(trans_param)
             else:
                 det_hints.append(comp_hint)
                 det_rates.append(comp_rate)
@@ -444,6 +461,8 @@ class Hamiltonian(CompositeOperator):
             noise_strengths=np.array(noise_strengths, dtype=np.complex128),
             noise_offsets=np.array(noise_offsets, dtype=float),
             noise_source_indices=np.array(noise_source_indices, dtype=np.int64),
+            noise_transformation_types=noise_transformation_types,
+            noise_transformation_params=noise_transformation_params,
         )
 
     def stochastic_hamiltonian_function(self, time_evals: Vector, trajectory_noise: Matrix | None = None, **kwargs):
@@ -525,7 +544,17 @@ class Hamiltonian(CompositeOperator):
             for idx in range(stoch_hints.shape[0]):
                 template = _apply_phase(stoch_hints[idx], stoch_rates[idx], stoch_has_rate[idx], t)
                 noise_value = interpolate_noise(int(noise_sources[idx]), t) + noise_offsets[idx]
-                base_matrix += noise_strengths[idx] * noise_value * template
+                
+                # Apply noise transformation
+                trans_type = component_data.noise_transformation_types[idx]
+                if trans_type == 0:  # linear
+                    noise_factor = noise_value
+                elif trans_type == 1:  # exponential
+                    noise_factor = np.exp(1j * noise_value * component_data.noise_transformation_params[idx])
+                else:
+                    noise_factor = noise_value  # default to linear
+                
+                base_matrix += noise_strengths[idx] * noise_factor * template
             if self.sparse:
                 return csr_matrix(base_matrix)
             return base_matrix
