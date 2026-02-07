@@ -486,6 +486,11 @@ if _NUMBA_AVAILABLE:
                 noise_factor = noise_val  # default to linear
             
             H += noise_strengths[idx] * noise_factor * template
+        
+        # Enforce hermiticity after adding all stochastic terms
+        # Complex noise factors can break hermiticity, so symmetrize
+        H = (H + H.conj().T) / 2.0
+        
         return H
 
     @njit(cache=True)

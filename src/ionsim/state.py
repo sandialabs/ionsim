@@ -117,18 +117,11 @@ class State:
             return_density_average=return_density_average,
             **kwargs,
         )
-        if return_density_average:
-            # payload is a list of averaged density matrices over trajectories
-            if time_evals is None:
-                return State(self.basis, payload[-1])
-            return [State(self.basis, rho) for rho in payload]
-        else:
-            # payload is a list of averaged wavefunctions (legacy behavior)
-            if time_evals is None:
-                density_matrix = self.basis.compute_density_matrix_from_wavefunction(payload[-1])
-                return State(self.basis, density_matrix, payload[-1])
-            rhos = [self.basis.compute_density_matrix_from_wavefunction(psi) for psi in payload]
-            return [State(self.basis, rho, psi) for rho, psi in zip(rhos, payload)]
+        # payload is a list of averaged density matrices over trajectories
+        if time_evals is None:
+            return State(self.basis, payload[-1])
+        return [State(self.basis, rho) for rho in payload]
+        
 
     def propagate_using_master_equation(self, hamiltonian: Hamiltonian, duration: float,
             time_evals: Vector | None = None, dissipation_matrix: Matrix | None = None, **kwargs):
