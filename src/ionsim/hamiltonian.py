@@ -648,7 +648,8 @@ class Hamiltonian(CompositeOperator):
             result = [ensemble_wavefunctions[i] for i in range(len(ensemble_wavefunctions))]
         end = time.perf_counter()
         ic(f'Evolving wavefunction took {end-start} seconds.')
-        return times, result
+
+        return times, trajectory_results
 
     def evolve_supervector(self, initial_supervector: Vector, duration: float, time_evals: Vector | None = None,
         dissipation_matrix: AnyMatrix | None = None, **kwargs):

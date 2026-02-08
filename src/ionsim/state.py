@@ -111,17 +111,44 @@ class State:
         """
         if self.wavefunction is None:
             raise IonSimError('The state must have a well-defined wavefunction.')
-        times, payload = hamiltonian.evolve_stochastic_wavefunction(
+        times, trajectory_results = hamiltonian.evolve_stochastic_wavefunction(
             self.wavefunction,
             time_evals,
             noisy_trajectories=noisy_trajectories,
             return_density_average=return_density_average,
             **kwargs,
         )
-        # payload is a list of averaged density matrices over trajectories
+
+        print(f"[INFO] Stochastic evolution completed. Processing results...")
+
         if time_evals is None:
-            return State(self.basis, payload[-1])
-        return [State(self.basis, rho) for rho in payload]
+            return State(self.basis, trajectory_results[-1])
+
+        # trajectory_results: shape (n_traj, n_time, dim)
+        if return_density_average:
+            # Fast build of ensemble-averaged density matrices ρ_avg(t) = E[ |ψ_k(t)><ψ_k(t)| ]
+            trajs, n_time, dim = trajectory_results.shape
+            rhos_avg: list[np.ndarray] = []
+          
+            for ti in range(n_time):
+                psi_trajs = trajectory_results[:, ti, :]
+                
+                # Fast vectorized path
+                rhos = psi_trajs[:, :, None] * psi_trajs.conj()[:, None, :]
+                
+                rho_avg = np.mean(rhos, axis=0)
+                rhos_avg.append(rho_avg)
+            
+            # Only check norm error at the last time step for all trajectories, to avoid the overhead of repeated checks.
+            _, error = zip(*[self.basis.compute_density_matrix_from_wavefunction(psi_trajs[k], return_error=True) 
+                            for k in range(trajs)])
+            result = rhos_avg
+            print(f"[DEBUG] Max norm error: {np.max(error):.3e}")
+
+            return [State(self.basis, rho) for rho in rhos_avg]
+        else:
+            
+            return [State(self.basis, psi) for traj in trajectory_results for psi in traj]
         
 
     def propagate_using_master_equation(self, lindbladian: Lindbladian, duration: float,
