@@ -569,7 +569,7 @@ class Hamiltonian:
         return result
     
     def evolve_stochastic_wavefunction(self, initial_wavefunction: Vector, time_evals: Vector | None = None,
-        noisy_trajectories: Any = None, return_density_average: bool = True, **kwargs):
+        noisy_trajectories: Any = None, **kwargs):
         assert(self.size == len(initial_wavefunction))
         import time
         from icecream import ic
@@ -608,36 +608,11 @@ class Hamiltonian:
             base_solver=base_solver,
             base_solver_kwargs=base_solver_kwargs,
             trajectory_backend=trajectory_backend)
-        
-        print(f"[INFO] Stochastic evolution with {trajectory_backend} backend completed. Processing results...")
 
-        # trajectory_results: shape (n_traj, n_time, dim)
-        if return_density_average:
-            # Build ensemble-averaged density matrices ρ_avg(t) = E[ |ψ_k(t)><ψ_k(t)| ]
-            trajs, n_time, dim = trajectory_results.shape
-            rhos_avg: list[np.ndarray] = []
-          
-            for ti in range(n_time):
-                psi_trajs = trajectory_results[:, ti, :]
-                
-                # Fast vectorized path (assumes norms are good)
-                rhos = psi_trajs[:, :, None] * psi_trajs.conj()[:, None, :]
-                
-                rho_avg = np.mean(rhos, axis=0)
-                rhos_avg.append(rho_avg)
-            
-            # Only check norm error at the last time step for all trajectories, to avoid the overhead of repeated checks.
-            _, error = zip(*[self.basis.compute_density_matrix_from_wavefunction(psi_trajs[k], return_error=True) 
-                            for k in range(trajs)])
-            result = rhos_avg
-            print(f"[DEBUG] Max error: {np.max(error):.3e}")
-        else:
-            # Backward-compatible path: average wavefunctions directly (can hide zero-mean noise)
-            ensemble_wavefunctions = trajectory_results.mean(axis=0)
-            result = [ensemble_wavefunctions[i] for i in range(len(ensemble_wavefunctions))]
         end = time.perf_counter()
         ic(f'Evolving wavefunction took {end-start} seconds.')
-        return times, result
+        
+        return times, trajectory_results
 
     def evolve_supervector(self, initial_supervector: Vector, duration: float, time_evals: Vector | None = None,
         dissipation_matrix: AnyMatrix | None = None, **kwargs):
