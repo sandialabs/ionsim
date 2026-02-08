@@ -171,7 +171,7 @@ class StochasticOdeSolver(OdeSolver):
                 raise IonSimError('Length of time_evals must match the number of noise samples per trajectory.')
 
         backend = self.trajectory_backend.lower()
-        if backend not in {"python", "numba_rk4", "numba_single_qubit", "numba_general_propagator"}:
+        if backend not in {"python", "numba_rk4", "numba_rk5", "numba_general_propagator"}:
             raise IonSimError(
                 f'Unknown trajectory_backend "{self.trajectory_backend}"'
             )
@@ -195,6 +195,15 @@ class StochasticOdeSolver(OdeSolver):
                 time_grid,
                 component_data,
                 method='RK4',
+            )
+        elif backend == "numba_rk5":
+            
+            stacked_results = _run_stochastic_trajectories_numba(
+                noise_array,
+                np.asarray(self.initial_vector, dtype=np.complex128, order='C'),
+                time_grid,
+                component_data,
+                method='RK5',
             )
         elif backend == "numba_general_propagator":
             
@@ -395,6 +404,24 @@ def _run_stochastic_trajectories_numba(
             noise_transformation_types,
             noise_transformation_params,
         )
+    elif method == 'RK5':
+        return _run_stochastic_trajectories_numba_RK5(
+            noise_array_f64,
+            initial_vec_c,
+            time_grid_f64,
+            H0,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_sources,
+            noise_transformation_types,
+            noise_transformation_params,
+        )
     elif method == 'general_propagator':
         return _run_stochastic_trajectories_numba_general_propagator(
             noise_array_f64,
@@ -578,7 +605,7 @@ if _NUMBA_AVAILABLE:
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=False,
+            interpolate=True,
         )
         k2 = _numba_rhs(
             t0 + 0.5 * dt,
@@ -599,6 +626,7 @@ if _NUMBA_AVAILABLE:
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
+            interpolate=True,
         )
         k3 = _numba_rhs(
             t0 + 0.5 * dt,
@@ -619,6 +647,7 @@ if _NUMBA_AVAILABLE:
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
+            interpolate=True,
         )
         k4 = _numba_rhs(
             t0 + dt,
@@ -639,7 +668,7 @@ if _NUMBA_AVAILABLE:
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=False,
+            interpolate=True,
         )
         return psi + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
@@ -697,6 +726,213 @@ if _NUMBA_AVAILABLE:
                 result[traj_idx, step + 1, :] = psi
         return result
     # ============ End RK4 numba implementation ============
+    
+    # ============ RK5 numba implementation ============
+    @njit(cache=True)
+    def _numba_rk5_step(
+        t0: float,
+        dt: float,
+        step: int,
+        psi: np.ndarray,
+        traj_idx: int,
+        noise_array: np.ndarray,
+        time_grid: np.ndarray,
+        H0: np.ndarray,
+        det_hints: np.ndarray,
+        det_rates: np.ndarray,
+        det_has_rate: np.ndarray,
+        stoch_hints: np.ndarray,
+        stoch_rates: np.ndarray,
+        stoch_has_rate: np.ndarray,
+        noise_strengths: np.ndarray,
+        noise_offsets: np.ndarray,
+        noise_source_indices: np.ndarray,
+        noise_transformation_types: np.ndarray,
+        noise_transformation_params: np.ndarray,
+    ) -> np.ndarray:
+        k1 = _numba_rhs(
+            t0,
+            psi,
+            step,
+            traj_idx,
+            noise_array,
+            time_grid,
+            H0,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
+            interpolate=True,
+        )
+        k2 = _numba_rhs(
+            t0 + dt / 5.0,
+            psi + dt * (1.0/5.0) * k1,
+            step,
+            traj_idx,
+            noise_array,
+            time_grid,
+            H0,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
+            interpolate=True,
+        )
+        k3 = _numba_rhs(
+            t0 + 3.0 * dt / 10.0,
+            psi + dt * (3.0/40.0 * k1 + 9.0/40.0 * k2),
+            step,
+            traj_idx,
+            noise_array,
+            time_grid,
+            H0,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
+            interpolate=True,
+        )
+        k4 = _numba_rhs(
+            t0 + 3.0 * dt / 5.0,
+            psi + dt * (3.0/10.0 * k1 - 9.0/10.0 * k2 + 6.0/5.0 * k3),
+            step,
+            traj_idx,
+            noise_array,
+            time_grid,
+            H0,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
+            interpolate=True,
+        )
+        k5 = _numba_rhs(
+            t0 + dt,
+            psi + dt * (-11.0/54.0 * k1 + 5.0/2.0 * k2 - 70.0/27.0 * k3 + 35.0/27.0 * k4),
+            step,
+            traj_idx,
+            noise_array,
+            time_grid,
+            H0,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
+            interpolate=True,
+        )
+        k6 = _numba_rhs(
+            t0 + 7.0 * dt / 8.0,
+            psi + dt * (1631.0/55296.0 * k1 + 175.0/512.0 * k2 + 575.0/13824.0 * k3 + 44275.0/110592.0 * k4 + 253.0/4096.0 * k5),
+            step,
+            traj_idx,
+            noise_array,
+            time_grid,
+            H0,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
+            interpolate=True,
+        )
+        # Cash-Karp 5th order weights
+        return psi + dt * (37.0/378.0 * k1 + 250.0/621.0 * k3 + 125.0/594.0 * k4 + 512.0/1771.0 * k6)
+
+    @njit(parallel=True, cache=True)
+    def _run_stochastic_trajectories_numba_RK5(
+        noise_array: np.ndarray,
+        initial_vector: np.ndarray,
+        time_grid: np.ndarray,
+        H0: np.ndarray,
+        det_hints: np.ndarray,
+        det_rates: np.ndarray,
+        det_has_rate: np.ndarray,
+        stoch_hints: np.ndarray,
+        stoch_rates: np.ndarray,
+        stoch_has_rate: np.ndarray,
+        noise_strengths: np.ndarray,
+        noise_offsets: np.ndarray,
+        noise_source_indices: np.ndarray,
+        noise_transformation_types: np.ndarray,
+        noise_transformation_params: np.ndarray,
+    ) -> np.ndarray:
+        n_traj = noise_array.shape[0]
+        n_time = time_grid.shape[0]
+        n_state = initial_vector.shape[0]
+        result = np.empty((n_traj, n_time, n_state), dtype=np.complex128)
+
+        for traj_idx in prange(n_traj):
+            psi = initial_vector.copy()
+            result[traj_idx, 0, :] = psi
+            for step in range(n_time - 1):
+                t0 = time_grid[step]
+                t1 = time_grid[step + 1]
+                dt = t1 - t0
+                psi = _numba_rk5_step(
+                    t0,
+                    dt,
+                    step,
+                    psi,
+                    traj_idx,
+                    noise_array,
+                    time_grid,
+                    H0,
+                    det_hints,
+                    det_rates,
+                    det_has_rate,
+                    stoch_hints,
+                    stoch_rates,
+                    stoch_has_rate,
+                    noise_strengths,
+                    noise_offsets,
+                    noise_source_indices,
+                    noise_transformation_types,
+                    noise_transformation_params,
+                )
+                result[traj_idx, step + 1, :] = psi
+        return result
+    # ============ End RK5 numba implementation ============
     
     # ============ Single-qubit specialized evolution ============
     @njit(parallel=True, fastmath=True, cache=True)
