@@ -10,6 +10,7 @@ from ionsim.operator import Operator, Coupling, EnergyShift, GeneralOperator, En
 from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix, as_dense_matrix
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, SMALLEST_ENERGY_SCALE
 from ionsim.custom_math import solve_time_evolution_equation
+from ionsim.composite_operator import CompositeOperator
 from ionsim.ionsim_error import IonSimError
 
 def all_none(mod_functions: list):
@@ -22,43 +23,14 @@ def all_same(mod_functions: list):
 
 
 @dataclass(frozen=True, eq=False)
-class Hamiltonian:
-    basis: StandardBasis
-    operators: list[Operator]
-    rotating_frame_energies: list[float]
-    sparse: bool = False
+class Hamiltonian(CompositeOperator):
+
+    def __post_init__(self):
+        super().__post_init__()
 
     @property
     def energies(self):
         return [state.energy + energy for state, energy in zip(self.basis.states, self.rotating_frame_energies)]
-
-    @property
-    def size(self):
-        return len(self.basis.states)
-
-    @cached_property
-    def coupling_operators(self):
-        """ Returns a list of all CouplingOperators in the hamiltonian's operator list """
-        coupling_ops = []
-        for operator in self.operators:
-            if isinstance(operator, GeneralOperator):
-                if operator.couplings: 
-                    coupling_ops.append(operator.coupling_operator_contribution) 
-            elif isinstance(operator, CouplingOperator):
-                coupling_ops.append(operator)
-        return coupling_ops            
-
-    @cached_property
-    def energy_shift_operators(self):
-        """ Returns a list of all EnergyShiftOperators in the hamiltonian's operator list """
-        energy_shift_ops = []
-        for operator in self.operators:
-            if isinstance(operator, GeneralOperator):
-                if operator.energy_shifts:
-                    energy_shift_ops.append(operator.energy_shift_operator_contribution) 
-            elif isinstance(operator, EnergyShiftOperator):
-                energy_shift_ops.append(operator)
-        return energy_shift_ops
 
     @property
     def coupling_modulation_functions(self):
@@ -115,7 +87,7 @@ class Hamiltonian:
         # Coupling operators:  
         for operator in self.coupling_operators:
             # Extract offdiagonal elements --> Hint and Oscillation rate 
-            Hint, Rate = self._extract_Hint_and_rate_from_operator(operator)
+            Hint, Rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(operator)
             Hints.append(Hint)
             Rates.append(Rate)
 
@@ -124,31 +96,6 @@ class Hamiltonian:
             H0_shifts.append(operator.static_matrix) 
 
         return H0, H0_shifts, Hints, Rates
-
-    def _extract_Hint_and_rate_from_operator(self, operator: Operator):
-        ''' Extracts the offdiagonal hamiltonian matrix (Hint) and oscillation rate matrix (Rate) from operator '''
-        if isinstance(operator, EnergyShiftOperator):
-            IonSimError('Error: Operator input should not be an EnergyShift (purely diagonal) operator.')
-
-        op_Hints = [csr_matrix(([0], ([0], [0])), shape=(self.size, self.size))]
-        op_Rates = [csr_matrix(([0], ([0], [0])), shape=(self.size, self.size))]
-        for coupling in operator.couplings: # Ensures loop only reaches off-diagonal elements  
-            assert np.abs(coupling.strength) > SMALLEST_ENERGY_SCALE
-            for row, row_state in enumerate(self.basis.states):
-                for column, column_state in enumerate(self.basis.states):
-                    if (row_state, column_state) == (coupling.row_state, coupling.column_state):
-                        op_Hints.append(csr_matrix(([coupling.strength], ([row], [column])), shape=(self.size, self.size)))
-                        total_rate = (
-                            + coupling.oscillation_rate
-                            + self.rotating_frame_energies[row]
-                            - self.rotating_frame_energies[column]
-                            )
-                        total_rate = total_rate if abs(total_rate) > SMALLEST_ENERGY_SCALE else 0
-                        op_Rates.append(csr_matrix(([total_rate], ([row], [column])), shape=(self.size, self.size)))
-                        ### [row, column] corresponds to phase factor next to raising operator: sigma^dagger exp[-i rate t]
-        Hint = np.sum(op_Hints, axis=0)
-        Rate = np.sum(op_Rates, axis=0)
-        return Hint, Rate  
 
     @cached_property
     def hamiltonian_function(self) -> Callable: # TODO: perhaps deprecate in favor of "build_hamiltonian_function"
@@ -325,19 +272,3 @@ class Hamiltonian:
         end = time.perf_counter()
         ic(f'Evolving wavefunction took {end-start} seconds.')
         return result
-
-    def evolve_supervector(self, initial_supervector: Vector, duration: float, time_evals: Vector | None = None,
-        dissipation_matrix: AnyMatrix | None = None, **kwargs):
-        """Evolve a supervector by solving the time-dependent Lindblad master equation."""
-        # TODO: add suport for sparse matrices
-        assert(self.size == np.sqrt(len(initial_supervector)))
-        dissipation_matrix = as_dense_matrix(dissipation_matrix)
-        super_ham = lambda t: (
-            np.kron(np.eye(self.size), self.hamiltonian_function(t))
-            - np.kron(self.hamiltonian_function(t).T, np.eye(self.size))
-            )
-        if dissipation_matrix is None:
-            lindbladian_function = super_ham
-        else:
-            lindbladian_function = lambda t: super_ham(t) + 1j*dissipation_matrix 
-        return solve_time_evolution_equation(lindbladian_function, initial_supervector, duration, time_evals, **kwargs)

@@ -1,6 +1,3 @@
-from ionsim.custom_types import Vector
-from ionsim.ionsim_error import IonSimError
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import numpy as np
@@ -10,8 +7,59 @@ import itertools as it
 from concurrent.futures import ProcessPoolExecutor
 from scipy.integrate import odeint, solve_ivp, ode
 from scipy import sparse
-
+from scipy.sparse import csr_matrix
+from scipy.sparse import kron as skron 
 from icecream import ic
+
+from ionsim.custom_types import Vector, AnyMatrix 
+from ionsim.ionsim_error import IonSimError
+
+def matrix_AYB_multiply_to_superoperator(A: AnyMatrix | None, B: AnyMatrix | None=None) -> AnyMatrix:
+    """Helper function to convert matrix multiplication to a superoperator form. 
+        Matrix Y can be flattened column-wise, mapping to a vector "y".  
+
+        Consider three-matrix product: A Y B ==> Oy
+
+        A is a matrix multiplying a matrix of interest on the left.
+        B is a matrix multiplying a matrix of interest on the right.
+
+        A, Y, B are each N x N matrices, 
+            O is a N^2 x N^2 matrix,
+            y is a column vector with N^2 entries.  
+
+        This function takes in A and B matrices and returns O. 
+        To compute O, the general formula is: 
+            A Y B --> (B^{T} kron A) y 
+
+    """ 
+    #Note: np.kron silently fails for sparse matrix inputs; instead use kron from scipy.sparse 
+    if A is None and B is None:
+        raise IonSimError('Input error: Specify either a left or right matrix A or B.')
+
+    if A is not None:
+        N = A.shape[0]
+    
+    if B is not None:
+        N = B.shape[0]
+
+    if A is not None and B is not None:
+        assert N == A.shape[0]
+
+    # Default behavior: If one matrix input is none, assume it is the identity. 
+    if A is None and B is not None:
+        result = skron(B.T, np.eye(N))
+    elif B is None and A is not None:
+        result = skron(np.eye(N), A) 
+    elif A is not None and B is not None:
+        result = skron(B.T, A)
+    else:
+        assert False, "A and B should not be None here"
+
+    # If one or both matrices are sparse, return a sparse matrix 
+    if sparse.issparse(A) or sparse.issparse(B):
+        return result
+    else:
+        return result.toarray()
 
 def solve_time_evolution_equation(interaction_function: Callable, initial_state_vector: Vector, duration: float,
     time_evals: Vector | None = None, ode_solver: str = 'odeintz', **kwargs):
