@@ -3,6 +3,7 @@ from ionsim.degree_of_freedom import DegreeOfFreedom
 from ionsim.custom_types import Vector, Matrix
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
+from ionsim.dissipator import Dissipator, Lindbladian
 
 import numpy as np
 # from typing import Any
@@ -97,17 +98,18 @@ class State:
         rhos = [self.basis.compute_density_matrix_from_wavefunction(psi) for psi in psis]
         return [State(self.basis, rho, psi) for rho, psi in zip(rhos, psis)]
 
-    def propagate_using_master_equation(self, hamiltonian: Hamiltonian, duration: float,
-            time_evals: Vector | None = None, dissipation_matrix: Matrix | None = None, **kwargs):
+    def propagate_using_master_equation(self, lindbladian: Lindbladian, duration: float,
+            time_evals: Vector | None = None, **kwargs):
         """
             Propagate the state by solving the time-dependent Lindblad master equation.
             This builds and returns a new state in the same basis as the initial state.
         """
-        times, psis = hamiltonian.evolve_supervector(self.supervector, duration, time_evals, dissipation_matrix, **kwargs)
+
+        times, supervectors = lindbladian.evolve_supervector(self.supervector, duration, time_evals, **kwargs)
         if time_evals is None:
-            density_matrix = self.basis.compute_density_matrix_from_supervector(psis[-1])
+            density_matrix = self.basis.compute_density_matrix_from_supervector(supervectors[-1])
             return State(self.basis, density_matrix)
-        rhos = [self.basis.compute_density_matrix_from_supervector(psi) for psi in psis]
+        rhos = [self.basis.compute_density_matrix_from_supervector(psi) for psi in supervectors]
         return [State(self.basis, rho) for rho in rhos]
 
     def get_wavefunction_in_new_basis(self, new_basis: Basis):

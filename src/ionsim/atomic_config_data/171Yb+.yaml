@@ -70,8 +70,12 @@ levels:
     s2: 1.0
 
 
+
 # TODO: ADD REFERENCES FOR ALL NUMBERS!
 # PhysRevA.76.052314, 
 # "Engineering the Quantum Scientific Computing Open User Testbed", IEEE. 10.1109/TQE.2021.3096480
-
+# " W. C. Martin, R. Zalubas, and L. Hagan, Atomic Energy Levels -- The Rare-Earth Elements, Nat.
+#   Stand. Ref. Data Ser., Nat. Bur. Stand. (United States Government Printing Office, Washington,
+#   1978), No. 60
   
+# arxiv.org/pdf/2509.04416 for general Yb171 properties, mostly neutral. 

@@ -1,11 +1,12 @@
-from ionsim.ionsim_error import IonSimError
-from ionsim.energy_level import EnergyLevel
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from fractions import Fraction
-
+from sympy.physics.wigner import wigner_3j, wigner_6j 
+import sympy 
 from icecream import ic
+
+from ionsim.ionsim_error import IonSimError
+from ionsim.energy_level import EnergyLevel
 
 @dataclass(frozen=True, eq=False)
 class AtomicInternalEnergyLevel(EnergyLevel):
@@ -15,8 +16,6 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     term_symbol: str
     fine_energy: float 
     hyperfine_A: float
-    lifetime: float
-    branching_ratios: dict[str, float] # TODO: Shouldn't this need " | None "? Why doesn't this cause a mypy error?
 
     @property
     @abstractmethod
@@ -52,6 +51,8 @@ class LSFineLevel(AtomicInternalEnergyLevel):
     s: float
     mj: float
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
+    lifetime: float | str='null'
+    branching_ratios: dict[str, float] | None=None 
 
 
     @property
@@ -81,6 +82,8 @@ class LSHyperfineLevel(AtomicInternalEnergyLevel):
     f: float
     mf: float
     external_energy_shift: float = 0.
+    lifetime: float | str='null'
+    branching_ratios: dict[str, float] | None=None 
 
     @property
     def coupling_scheme(self):
@@ -101,6 +104,8 @@ class J1L2FineLevel(AtomicInternalEnergyLevel):
     s2: float
     mj: float
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
+    lifetime: float | str='null'
+    branching_ratios: dict[str, float] | None=None 
 
 
     @property
@@ -119,7 +124,8 @@ class J1L2FineLevel(AtomicInternalEnergyLevel):
     
 @dataclass(frozen=True, eq=False)
 class J1L2HyperfineLevel(AtomicInternalEnergyLevel): 
-    """A hyperfine-structure energy level of an atom."""
+    """A hyperfine-structure energy level of an atom: k = j1 + l2 ; J = k + s2 
+        Corresponding term symbol: (2S_2 + 1)[K] """ 
     j1: float
     l2: float
     k: float
@@ -127,7 +133,10 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
     i: float
     f: float
     mf: float
+    gj: float
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
+    lifetime: float | str = 'null'
+    branching_ratios: dict[str, float] | None = None 
 
 
     @property
@@ -144,3 +153,41 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
 # def _check_uniqueness_of_term_symbols(term_symbols: list[str], levels_data: list[dict]):
 #     """Check whether the term symbol corresponds to a single energy level in the configuration data."""
 #     return all([_check_uniqueness_of_term_symbol(term_symbol, levels_data) for term_symbol in term_symbols])
+
+def compute_dipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, q: int) -> float:
+    ''' Method to compute E1 dipole transition operator between two states using the Clebsch-Gordan
+        or Wigner-3,6j coefficients. 
+
+        Based on Steck conventions (https://steck.us/alkalidata/rubidium87numbers.pdf):
+            - 3j part (Eq. 35 style): (-1)^(Fp-1+mf) sqrt(2F+1) (Fp 1 F; mp q -mf)
+            - 6j part (Eq. 36 style): (-1)^(Fp+J+1+I) sqrt((2Fp+1)(2J+1)) {J Jp 1; Fp F I}
+    '''
+    # Extract angular momentum quantum numbers for each state: 
+    i = ground_level.i
+    assert i == excited_level.i, 'Error: Nuclear angular momentum should be the same in both excited and ground levels.'
+
+    if isinstance(ground_level, (LSFineLevel, J1L2FineLevel)): 
+        f, mf = ground_level.j, ground_level.mj
+        assert ground_level.i == 0.
+    else:
+        f, mf = ground_level.f, ground_level.mf 
+
+    if isinstance(excited_level, LSFineLevel) or isinstance(excited_level, J1L2FineLevel): 
+        fp, mp = excited_level.j, excited_level.mj
+        assert excited_level.i == 0.
+    else:
+        fp, mp = excited_level.f, excited_level.mf 
+
+    if isinstance(ground_level, J1L2HyperfineLevel): 
+        j = ground_level.k + ground_level.s2 
+    else:
+        j = ground_level.j 
+
+    if isinstance(excited_level, J1L2HyperfineLevel): 
+        jp = excited_level.k + excited_level.s2 
+    else:
+        jp = excited_level.j 
+
+    wigner_3j_term = (-1)**(fp - 1 + mf) * sympy.sqrt(2*f + 1) * wigner_3j(fp, 1, f, mp, sympy.Integer(q), -mf)
+    wigner_6j_term = (-1)**(fp + j + 1 + i) * sympy.sqrt((2*f + 1) * (2*j + 1)) * wigner_6j(j, jp, 1, fp, f, i)
+    return float(sympy.simplify(wigner_3j_term * wigner_6j_term))

@@ -38,14 +38,6 @@ levels:
     n: 6
     s: 1.0  
 
-  - term_symbol: 'P1' # 6s6p 1P_1: l = 1; j = 1
-    coupling_scheme: 'ls'
-    fine_energy: 751.3595438596491e+12 # Hz
-    hyperfine_A: -0.2140617e+9 # Hz
-    lifetime: 5.464e-9 # s  
-    n: 6
-    s: 0.0  
-
   - term_symbol: 'D1' # 3D_1: l = 2; j = 1 
     coupling_scheme: 'ls'
     fine_energy: 734.1659811608636e+12 # 1S0->3P0->3D1: 215.87014457 + 518.29583659086363 

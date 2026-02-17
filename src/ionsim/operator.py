@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from scipy.sparse import csr_matrix, diags
 import numpy as np
 from typing import Callable
-from functools import cached_property
 
 from ionsim.ionsim_error import IonSimError
 from ionsim.basis import StandardBasis
@@ -11,6 +10,9 @@ from ionsim.energy_level import EnergyEigenstate
 from ionsim.degree_of_freedom import DegreeOfFreedom
 from ionsim.custom_types import Matrix, Vector
 from ionsim.config import SMALLEST_ENERGY_SCALE
+
+
+# ------- Contains classes for Operators and Operator Elements -------- 
 
 # ---- Classes for operator elements ----  
 @dataclass(frozen=True, eq=False)

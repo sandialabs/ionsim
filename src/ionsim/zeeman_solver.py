@@ -13,7 +13,7 @@ class ZeemanHyperfineSolver():
     """ 
 
     def __init__(self, i: float, j: float, l: int, s: float, hyperfine_a:float, atomic_mass: float | None=None, 
-                nuclear_moment: float | None = None, z: int | None = None, gi: float | None = None, 
+                nuclear_moment: float | None = None, z: int | None = None, gi: float | None = None, gj: float | None=None, 
                 freq_units: str = 'Hz', magnetic_field_units = 'gauss', approximation: str | None=None):
         """ Initialize the solver. 
         Parameters: 
@@ -36,6 +36,7 @@ class ZeemanHyperfineSolver():
         self.atomic_mass = atomic_mass # in Daltons 
         self.nuclear_moment = nuclear_moment # in mu_{N} units
         self.gi = gi
+        self.gj = gj
         if nuclear_moment is None and gi is None:
             raise ValueError('Input error: Either nuclear moment or gj must be non-zero.')
         self.z = z
@@ -452,13 +453,18 @@ class ZeemanHyperfineSolver():
     def lande_gj(self) -> None | float:
         ''' Computes Lande factor for total electron angular momentum J '''
         gs = np.abs(constants.physical_constants['electron g factor'][0])  # electron spin g factor. 
-        jjp1 = self.j*(self.j+1)
-        if jjp1 == 0:
-            return 0.
+        if self.gj is None:
+            if self.gj is None and self.l is None:
+                raise IonSimError('Error: Specify gJ or specify l. If l is not a good quantum number, specify gJ.')
+            jjp1 = self.j*(self.j+1)
+            if jjp1 == 0:
+                return 0.
+            else:
+                llp1 = self.l*(self.l+1)
+                ssp1 = self.s*(self.s+1)
+                return (self.lande_gl*(jjp1 - ssp1 + llp1) + gs*(jjp1 + ssp1 - llp1) )*0.5/jjp1
         else:
-            llp1 = self.l*(self.l+1)
-            ssp1 = self.s*(self.s+1)
-            return (self.lande_gl*(jjp1 - ssp1 + llp1) + gs*(jjp1 + ssp1 - llp1) )*0.5/jjp1
+            return self.gj
 
     def lande_gf(self, f: float) -> float:
         """ Lande g factor for total hyperfine angular momentum. 

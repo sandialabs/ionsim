@@ -44,7 +44,6 @@ class AtomicSpin(DegreeOfFreedom):
         levels = []
         for level_data in levels_data:
 
-            # TODO: add a unique term_symbol and corresponding branching ratios!
             level_data['unique_term_symbol'] = level_data['term_symbol']
             level_data['unique_branching_ratios'] = level_data.get('branching_ratios', None)
             # level_data['unique_term_symbol'] = _get_unique_term_symbol(level_data, levels_data)
@@ -58,10 +57,24 @@ class AtomicSpin(DegreeOfFreedom):
 
             # Use Zeeman Solver based on level manifold to compute Zeeman shifts 
             if magnetic_field != 0. :
-                s = fine_data['s']
-                l = fine_data['l']
-                #print('Applying Zeeman shift to level manifold ' + level_data['unique_term_symbol'])
-                Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z)
+                if level_data['coupling_scheme'] == 'j1l2': 
+                    s2 = fine_data['s2']
+                    if fine_data['gj'] is None:
+                        k = fine_data['k']
+                        j1 = fine_data['j1']
+                        l2 = fine_data['l2']
+                        s2 = fine_data['s2']
+                        # See p. 100 of B. G. Wybourne, Spectroscopic Properties of Rare Earths (Interscience, New York, 1965). 
+                        # and p. 6 and 7 of https://nvlpubs.nist.gov/nistpubs/Legacy/NSRDS/nbsnsrds60.pdf
+                        gj1 = 1. + (j1*(j1+1) + s2*(s2+1) - l2*(l2+1))/(2. * j1*(j1+1)) # from LS formula 
+                        gj = 2. * (gj1 - 1.) * (k*(k+1) + j1*(j1+1) - l2*(l2 + 1))/((2*j + 1)*(2*k + 1))
+                        gj += (3*j*(j+1) - k*(k+1) + s2*(s2+1))/(2.*j*(j+1)) 
+                        fine_data['gj'] = gj
+                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, None, s2, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z, gj = gj)
+                else:
+                    s = fine_data['s']
+                    l = fine_data['l']
+                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z)
                 zeeman_energy_shifts, zeeman_eigenvecs = Zeeman_solver.solve_at_field(magnetic_field)
                 zeeman_energy_shifts *= np.pi*2. # convert to rad/s 
 
@@ -71,6 +84,7 @@ class AtomicSpin(DegreeOfFreedom):
                     # Extract any Zeeman shifts for this state 
                     zeeman_shift_energy = 0.
                     if magnetic_field != 0. :
+                        # For fine couplings, F = J since I = 0, so F <==> J and mf <==> mj labels are interchangable. 
                         zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = j, mf = mj)
                     # Create the level 
                     level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy)
@@ -122,6 +136,7 @@ class AtomicSpin(DegreeOfFreedom):
         fine_data['hyperfine_A'] = 2 * np.pi * fine_data['hyperfine_A'] # convert from Hz to rad./s
         fine_data['k'] = cls.compute_k(level_data['term_symbol'])
         fine_data['j'] = cls.compute_j(level_data['term_symbol'])
+        fine_data['gj'] = fine_data.get('gj', None)
         fine_data['term_symbol'] = level_data['unique_term_symbol']
         fine_data['branching_ratios'] = level_data['unique_branching_ratios']
         [fine_data.pop(key) for key in ['coupling_scheme', 'unique_term_symbol', 'unique_branching_ratios']]
