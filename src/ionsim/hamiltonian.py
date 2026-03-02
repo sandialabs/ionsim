@@ -27,7 +27,7 @@ def all_same(mod_functions: list):
 class StochasticHamiltonianComponentData:
     """Dense data needed to evaluate stochastic Hamiltonians without Python callbacks."""
 
-    H0: np.ndarray
+    H_det: np.ndarray
     deterministic_hints: np.ndarray
     deterministic_rates: np.ndarray
     deterministic_has_rate: np.ndarray
@@ -451,7 +451,7 @@ class Hamiltonian(CompositeOperator):
         stochastic_has_rate_array = np.array(stoch_has_rate, dtype=np.uint8)
 
         return StochasticHamiltonianComponentData(
-            H0=H0_dense,
+            H_det=H0_dense,
             deterministic_hints=deterministic_hint_array,
             deterministic_rates=deterministic_rate_array,
             deterministic_has_rate=deterministic_has_rate_array,

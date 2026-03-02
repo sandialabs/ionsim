@@ -419,7 +419,7 @@ def _run_stochastic_trajectories_numba(
     time_grid_f64 = np.ascontiguousarray(np.asarray(time_grid, dtype=np.float64))
     initial_vec_c = np.ascontiguousarray(initial_vector, dtype=np.complex128)
 
-    H0 = np.ascontiguousarray(component_data.H0, dtype=np.complex128)
+    H_det = np.ascontiguousarray(component_data.H_det, dtype=np.complex128)
     det_hints = np.ascontiguousarray(component_data.deterministic_hints, dtype=np.complex128)
     det_rates = np.ascontiguousarray(component_data.deterministic_rates, dtype=np.float64)
     det_has_rate = np.ascontiguousarray(component_data.deterministic_has_rate, dtype=np.uint8)
@@ -440,7 +440,7 @@ def _run_stochastic_trajectories_numba(
             noise_array_f64,
             initial_vec_c,
             time_grid_f64,
-            H0,
+            H_det,
             det_hints,
             det_rates,
             det_has_rate,
@@ -458,7 +458,7 @@ def _run_stochastic_trajectories_numba(
             noise_array_f64,
             initial_vec_c,
             time_grid_f64,
-            H0,
+            H_det,
             det_hints,
             det_rates,
             det_has_rate,
@@ -476,7 +476,7 @@ def _run_stochastic_trajectories_numba(
             noise_array_f64,
             initial_vec_c,
             time_grid_f64,
-            H0,
+            H_det,
             det_hints,
             det_rates,
             det_has_rate,
@@ -511,6 +511,14 @@ if _NUMBA_AVAILABLE:
         if t1 == t0:
             return v1
         return v0 + (v1 - v0) * (t - t0) / (t1 - t0)
+    
+    @njit(cache=True)
+    def _get_diag_matrix(H):
+        n = H.shape[0]
+        D = np.zeros_like(H)
+        for i in range(n):
+            D[i, i] = H[i, i]
+        return D
 
     @njit(cache=True)
     def _numba_evaluate_hermitian(hint: np.ndarray, rate: np.ndarray, has_rate: int, t: float) -> np.ndarray:
@@ -532,7 +540,7 @@ if _NUMBA_AVAILABLE:
         traj_idx: int,
         noise_array: np.ndarray,
         time_grid: np.ndarray,
-        H0: np.ndarray,
+        H_det: np.ndarray, #TODO name it H_det
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
@@ -546,7 +554,7 @@ if _NUMBA_AVAILABLE:
         noise_transformation_params: np.ndarray,
         interpolate: bool = True,
     ) -> np.ndarray:
-        H = H0.copy()
+        H = H_det.copy()
         for idx in range(det_hints.shape[0]):
             if det_has_rate[idx] != 0:
                 herm = det_hints[idx] * np.exp(-1j * det_rates[idx] * t)
@@ -576,9 +584,15 @@ if _NUMBA_AVAILABLE:
             
             H += noise_strengths[idx] * noise_factor * template
         
-        # Enforce hermiticity after adding all stochastic terms
-        # Complex noise factors can break hermiticity, so symmetrize
-        H = (H + H.conj().T) / 2.0
+        # TODO mixed Hermitian: ensure the Hamiltonian is Hermitian by adding its conjugate transpose and removing double-counted diagonal
+        # if hermicity == 1: # non-Hermitian
+        #     H = H + H.conj().T
+        # elif hermicity == 2: # mixed Hermitian
+        #     H = H + H.conj().T - _get_diag_matrix(H)
+        # else:
+        #     pass # hermicity == 0, assume H is already Hermitian and do nothing
+
+        H = H + np.conj(H).T - _get_diag_matrix(H)
         
         return H
 
@@ -590,7 +604,7 @@ if _NUMBA_AVAILABLE:
         traj_idx: int,
         noise_array: np.ndarray,
         time_grid: np.ndarray,
-        H0: np.ndarray,
+        H_det: np.ndarray,
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
@@ -610,7 +624,7 @@ if _NUMBA_AVAILABLE:
             traj_idx,
             noise_array,
             time_grid,
-            H0,
+            H_det,
             det_hints,
             det_rates,
             det_has_rate,
@@ -635,7 +649,7 @@ if _NUMBA_AVAILABLE:
         traj_idx: int,
         noise_array: np.ndarray,
         time_grid: np.ndarray,
-        H0: np.ndarray,
+        H_det: np.ndarray,
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
@@ -655,7 +669,7 @@ if _NUMBA_AVAILABLE:
             traj_idx,
             noise_array,
             time_grid,
-            H0,
+            H_det,
             det_hints,
             det_rates,
             det_has_rate,
@@ -676,7 +690,7 @@ if _NUMBA_AVAILABLE:
             traj_idx,
             noise_array,
             time_grid,
-            H0,
+            H_det,
             det_hints,
             det_rates,
             det_has_rate,
@@ -697,7 +711,7 @@ if _NUMBA_AVAILABLE:
             traj_idx,
             noise_array,
             time_grid,
-            H0,
+            H_det,
             det_hints,
             det_rates,
             det_has_rate,
@@ -718,7 +732,7 @@ if _NUMBA_AVAILABLE:
             traj_idx,
             noise_array,
             time_grid,
-            H0,
+            H_det,
             det_hints,
             det_rates,
             det_has_rate,
@@ -739,7 +753,7 @@ if _NUMBA_AVAILABLE:
         noise_array: np.ndarray,
         initial_vector: np.ndarray,
         time_grid: np.ndarray,
-        H0: np.ndarray,
+        H_det: np.ndarray,
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
@@ -772,7 +786,7 @@ if _NUMBA_AVAILABLE:
                     traj_idx,
                     noise_array,
                     time_grid,
-                    H0,
+                    H_det,
                     det_hints,
                     det_rates,
                     det_has_rate,
@@ -799,7 +813,7 @@ if _NUMBA_AVAILABLE:
         traj_idx: int,
         noise_array: np.ndarray,
         time_grid: np.ndarray,
-        H0: np.ndarray,
+        H_det: np.ndarray,
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
@@ -819,7 +833,7 @@ if _NUMBA_AVAILABLE:
             traj_idx,
             noise_array,
             time_grid,
-            H0,
+            H_det,
             det_hints,
             det_rates,
             det_has_rate,
@@ -840,7 +854,7 @@ if _NUMBA_AVAILABLE:
             traj_idx,
             noise_array,
             time_grid,
-            H0,
+            H_det,
             det_hints,
             det_rates,
             det_has_rate,
@@ -861,7 +875,7 @@ if _NUMBA_AVAILABLE:
             traj_idx,
             noise_array,
             time_grid,
-            H0,
+            H_det,
             det_hints,
             det_rates,
             det_has_rate,
@@ -882,7 +896,7 @@ if _NUMBA_AVAILABLE:
             traj_idx,
             noise_array,
             time_grid,
-            H0,
+            H_det,
             det_hints,
             det_rates,
             det_has_rate,
@@ -903,7 +917,7 @@ if _NUMBA_AVAILABLE:
             traj_idx,
             noise_array,
             time_grid,
-            H0,
+            H_det,
             det_hints,
             det_rates,
             det_has_rate,
@@ -924,7 +938,7 @@ if _NUMBA_AVAILABLE:
             traj_idx,
             noise_array,
             time_grid,
-            H0,
+            H_det,
             det_hints,
             det_rates,
             det_has_rate,
@@ -946,7 +960,7 @@ if _NUMBA_AVAILABLE:
         noise_array: np.ndarray,
         initial_vector: np.ndarray,
         time_grid: np.ndarray,
-        H0: np.ndarray,
+        H_det: np.ndarray,
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
@@ -979,7 +993,7 @@ if _NUMBA_AVAILABLE:
                     traj_idx,
                     noise_array,
                     time_grid,
-                    H0,
+                    H_det,
                     det_hints,
                     det_rates,
                     det_has_rate,
@@ -1124,7 +1138,7 @@ if _NUMBA_AVAILABLE:
         noise_array: np.ndarray,
         initial_vector: np.ndarray,
         time_grid: np.ndarray,
-        H0: np.ndarray,
+        H_det: np.ndarray,
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
@@ -1157,7 +1171,7 @@ if _NUMBA_AVAILABLE:
                     traj_idx,
                     noise_array,
                     time_grid,
-                    H0,
+                    H_det,
                     det_hints,
                     det_rates,
                     det_has_rate,
