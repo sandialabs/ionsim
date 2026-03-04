@@ -21,7 +21,7 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
 
 
     """ 
-    # TODO: Questions: 
+    # Questions: 
         # Should we allow more than 1 initial native state and 1 native measurement? 
             # GST manual suggests that ususally only 1 is available. 
     
@@ -30,7 +30,7 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
     # Initial Thoughts: 
     # - user constructs the class. 
     # - user either specifies models for gates upon construction or uses something like an "add_gate_model()" function 
-    # - user "solves" for parameters post-construction 
+    # - user solves for parameters post-construction 
 
 
     # member variables: 
@@ -38,19 +38,24 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
     # -  
     basis: Basis
     initial_state: State
-    native_measurement: State # specified as a density operator
+    native_measurement: Gate # TODO: what object should this be? 
 
     # Either specify fiducial prep/measure circuits, or user must include in gate set/list. 
+    fiducial_circuit_list: list[str] #e.g. ['g1', 'f1,g1,g2']
+    gate_set: list[Gate]
 
+    # I think we need a set of experimental data per circuit listed. 
+    # - allow for variable number of shots per experiment. 
 
     parametrized_gates: bool = False 
-    gate_parameters: 
+    gate_parameters: list[NDArray] 
+    system_size: int 
 
 
     @classmethod
     def solve_for_all_gate_parameters(cls, solver: str)
         gate_parameters = [] 
-        for gate in gates:
+        for gate in self.gate_set:
             gate_parameters.append(cls.solve_for_gate_parameters(gate, solver))
 
         return gate_parameters
