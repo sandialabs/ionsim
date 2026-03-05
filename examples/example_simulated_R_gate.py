@@ -331,7 +331,7 @@ def main():
         plt.show()
 
 
-def save_matrix(datafile, matrix, pathname, attributes=None):
+def save_matrix(datafile: h5py.File, matrix, pathname, attributes=None):
     """Save a matrix in as a dataset in an HDF5 file."""
     dataset = datafile.require_dataset(pathname, shape=matrix.shape, dtype=matrix.dtype, data=matrix)
     if attributes:
@@ -340,7 +340,7 @@ def save_matrix(datafile, matrix, pathname, attributes=None):
     return dataset
 
 
-def load_matrix(datafile, pathname):
+def load_matrix(datafile: h5py.File, pathname):
     """Load a matrix into a numpy array and return the attributes
     associated with the HDF5 dataset."""
     dataset = datafile[pathname]
