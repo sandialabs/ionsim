@@ -36,7 +36,7 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
     # -  
     basis: Basis
     initial_state: State
-    native_measurement: Gate # TODO: what object should this be? Do we need a "measurement" class?  
+    native_measurement: Operator # TODO: what object should this be? Do we need a "measurement" class?  
 
     # Either specify fiducial prep/measure circuits, or user must include in gate set/list. 
     gate_set: list[Gate]
