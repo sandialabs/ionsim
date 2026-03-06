@@ -71,6 +71,7 @@ def main():
     # phi_noise = sm.Noise.from_named_pdf('dphi', 'gaussian', {'standard_deviation': np.pi/10}, dphis)
 
     def simulated_R(phi, theta, domega):
+        """ Builds R(phi, theta) Hamiltonian for a frequency change omega + domega """ 
         tau = abs(theta)/rabi_rate
         hamiltonian = R_hamiltonian(basis, phi, rabi_rate, omega + domega, sparse=sparse, mod=amp_mod)
         start = time.perf_counter()
@@ -80,8 +81,9 @@ def main():
         return sm.Gate.from_hamiltonian(basis, hamiltonian, tau)
 
     def R(phi, theta, domega, half_box_width):
+        """ Builds a process matrix function, then a gate by adding optional noise to it """ 
         def process_matrix_function(domega):
-            gate = simulated_R(phi, theta, domega)
+            gate = simulated_R(phi, theta, domega) # builds Hamiltonian and returns gate 
             return gate.process_matrix
         if half_box_width == 0:
             omega_noise = None
@@ -176,6 +178,11 @@ def main():
         # dphis = np.linspace(-np.pi/10, np.pi/10, 5)
         # half_box_widths = np.linspace(0, np.pi/10, 3)
 
+
+        # Computing gate on a grid where x is a frequency offset from resonance 
+        #  and y is a noise width. 
+        #  Ex] So y = 0 corresponds to no noise. 
+        #  Ex] x = 0 corresponds to being on resonance with some noise (unless y=0). 
         domegas = np.linspace(-50 * 2*np.pi*1e3, 50 * 2*np.pi*1e3, 5) 
         half_box_widths = np.linspace(0, 50 * 2*np.pi*1e3, 3) 
 
@@ -190,7 +197,7 @@ def main():
 
         chi_inv = np.linalg.inv(ideal_R(phi, theta).process_matrix)
         def build_gate_data(val):
-            gate = R(phi, theta, *val)
+            gate = R(phi, theta, *val) # Builds R gate (from Hamiltonian) at the requiested values  
             return gate.process_matrix.dot(chi_inv) - np.eye(size)
 
         grids =[dxs, dys]
