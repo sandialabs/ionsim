@@ -141,7 +141,11 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         experimental_frequencies = gst_data.get_frequencies() # 2D array of shape circuit x outcomes -> frequency values 
 
         assert experimental_frequencies.shape[0] == len(gst_circuits) 
+
         # TODO: Need to get extract parameters from the gate set somehow  
+        # TODO: Need to figure out how to get gate parameters and use them here, from IonSim's Gate objects. 
+        # - Compute expected probability of an outcome given a circuit's parametrization. 
+
 
         if solver == 'MLE':
             # Maximum likelihood estimation.
