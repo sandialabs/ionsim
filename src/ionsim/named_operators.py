@@ -45,6 +45,10 @@ class Fock:
         """The raising operator for a harmonic oscillator."""
         return cls.lowering(fock_dimension).conj().T
 
+    @classmethod
+    def number(cls, fock_dimension: int):
+        return np.diag(np.arange(fock_dimension))
+
     @staticmethod
     def debye_waller_lowering(fock_dimension: int, lamb_dicke_parameter: float):
         """The lowering operator for a harmonic oscillator."""

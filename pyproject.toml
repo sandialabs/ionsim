@@ -16,7 +16,8 @@ dependencies = [
     "csaps",
     "icecream",
     "pyyaml",
-    "pint"
+    "pint",
+    "sympy"
 ]
 classifiers = [
     "Development Status :: 2 - Beta",

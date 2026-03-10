@@ -186,6 +186,13 @@ class StandardBasis(Basis):
         """Basis-state vectors corresponding to the energy eigenstates."""
         return list(np.eye(len(self.states)))
 
+    @property
+    def spin_DOFs(self):
+        """ Returns list of spin degrees of freedom or empty list if none. """
+        spins = [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicSpin)]
+        return spins
+
+
 @dataclass(frozen=True, eq=False)
 class ZPauliBasis(StandardBasis):
     """A basis in which the basis states correspond to the (plus/minus) eigenstates of the z-Pauli spin matrix."""
