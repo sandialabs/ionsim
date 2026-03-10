@@ -23,8 +23,7 @@ class DegreeOfFreedom(ABC):
 
 @dataclass(frozen=True, eq=False)
 class AtomicStructure(DegreeOfFreedom):
-    """An atomic structure object, which contains atomic internal energy levels. 
-       Atomic structure accounts for coupled properties, such as spin and orbital angular momentum."""
+    """An atomic structure object, containing atomic internal energy levels corresponding to angular momentum eigenstates.""" 
     energy_levels: list[AtomicInternalEnergyLevel]
 
     @classmethod

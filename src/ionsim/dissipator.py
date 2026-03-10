@@ -137,7 +137,7 @@ class DissipatorSpontaneousEmission(Dissipator):
 
         lindblad_operators = []
 
-        # Loop over each (spin) DOF and create a lindblad operator in that DOF's Hilbert space.
+        # Loop over each Atomic Structure DOF and create a lindblad operator in that DOF's Hilbert space.
             # Then, enlarge that lindblad operator to the system basis which contains the whole Hilbert space.  
         for DOF in DOF_list: 
             if isinstance(DOF, AtomicStructure):
