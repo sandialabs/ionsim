@@ -89,6 +89,15 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         if not compare_operator(gst_experiments_data.measurement, self.native_measurement):
             raise IonSimError("GST Data Class and GST Class should use the same measurement operator.")
 
+
+    @classmethod
+    def from_GST_Data(cls, gst_data: GST_Data)
+
+
+
+        return cls( )
+
+
     def compute_circuit_outcome_probability(circuit: Circuit, outcome: int):
         """ Returns the probability of outcome "mu" for native measurement "M". """
         # e.g. outcome = +1 or -1 for single qubit Z measurement 
@@ -216,12 +225,16 @@ class GST_Data():
 
     # TODO: Set up a data structure (e.g. tensor or pandas data frame) to maintain data: 
     def __post_init__(self):
-        """ Check whether the gate set is parametrized """
+        """ Check whether the gate set is parametrized & operator and state bases match. """
         assert self.N_possible_outcomes == (2**self.N_qubits) # d = 2^N outcomes 
 
-
+        # TODO need to check that basis equality checking works  
+        if prep_state.basis != measurement_operator.basis:
+            raise IonSimError("State and Measurement bases must be the same.")
+    
+        
     @classmethod
-    def import_gst_data(cls, file_string: str, prep_state: State, measurement_operator: Operator):
+    def import_gst_data(cls, file_string: str, N_qubits: int, prep_state: State, measurement_operator: Operator, shot_averaged: bool):
         """ Helper method for importing gst data from a file.
 
             file_string denotes the file name and location, e.g. "./my_datafile.xlsx" 
@@ -238,42 +251,60 @@ class GST_Data():
         file_type = Path(file_string).suffix
         file_type = file_type[1:]
 
-        # TODO: Decide / finalize some example 
-        if file_type in ['xlsx', 'xls', 'xlsm']:
-            data_frame = pd.read_excel(file_string) 
-        if file_type == 'hdf5': 
-            gst_data = pd.read_hdf5(file_string) 
+        outcome_col_label = "Outcome"
 
-        N_qubits = len(measurement_columns)//2
-        qubit_measurements = [] # list of size number of qubits 
-        for j in range(N_qubits): 
-            qubit_measurements.append(gst_data[''])
+        # TODO: Generalize to N qubits 
+        if N_qubits == 1:
+            possible_outcomes = ['0', '1']
+        elif N_qubits == 2:
+            possible_outcomes = ['00', '01', '10', '11']
+
+        # Import the data: 
+        if file_type in ['xlsx', 'xls', 'xlsm']:
+            data_sheet_name = '1Q GST'
+            data_frame = pd.read_excel(file_string, sheet_name = data_sheet_name) 
+        if file_type == 'hdf5': 
+            data_frame = pd.read_hdf5(file_string) 
+
+        # Process and organize data into measurement frequency information: 
+        if shot_averaged:
+            data_frame['Total shots'] = data_frame.filter(like = outcome_col_label).sum(axis=1) 
+            for outcome in possible_outcomes:
+                data_frame['Frequency ' + outcome] = data_frame[outcome_col_label + ' ' + outcome] / data_frame['Total shots'] 
+
+        else:
+            # Handle case where the circuits are reported with each shot. 
+            
+        #N_qubits = len(measurement_columns)//2
+ #        qubit_measurements = [] # list of size number of qubits 
+ #        for j in range(N_qubits): 
+ #            qubit_measurements.append(gst_data[''])
         #circuit_names = gst_data['circuit_names']
             
         return cls(gst_data_frame = data_frame, prep_state = prep_state, measurement = measurement_operator)  
 
+    @cachedproperty
     def get_frequencies() -> NDArray: 
         """ Returns 2D array of shape N_circuits x N_outcomes with each value 
              corresponding to a frequency of that outcome for that circuit. """  
-        # TODO: make sure we've separated out array building and value look-up
-        frequency_array = np.zeros((N_circuits, N_distinct_outcomes))
-
-
-        return frequency_array
-
+        # Calling .values builds a 2D array; therefore, we cache the result to save on cost.  
+        return self.gst_data_frame.filter(like = 'Frequency').values 
 
     def get_experimental_outcome_frequency(measurement_outcome: 'str', circuit_name: str): 
         """ Returns probability (shot-averaged outcomes -> frequency) of outcome "m" in circuit C 
 
             - measurement_outcome is a string denoting the computational state observed.  
                 e.g. outcome = '0' for a single qubit, outcome = '10' for 2-qubits.  
-                # for N qubits, there are 2**N possible outcomes. 
+
+            - There are 2**N possible outcomes for N qubits. 
 
         """
         assert len(measurement_outcome) == self.N_qubits, 'Measurement outcome does not correspond with number of qubits.'
 
-        shot_averaged_data = True 
+        #return self.gst_data_frame['Frequency ' + measurement_outcome]
+        #shot_averaged_data = True 
         if shot_averaged_data:
+            frequency = self.gst_data_frame[outcome_index, circuit_name]
             frequency = self.gst_data_frame[outcome_index, circuit_name]
         else:
             # Sum over all measurement outcomes to get the number of total counts for the circuit 
@@ -333,3 +364,9 @@ gate_parameters = single_qubit_GST.solve_for_all_gate_parameters(solver='MLE')
 
     # - GST could make calls to other parts of IonSim to run needed simulations. For constructing the required process matrices to do GST. 
         # - if you gave it a gate set, the class could then do those simulations to generate the process matrices needed for GST.   
+
+
+
+
+# Other ideas: 
+# - helper functionality for choosing IC fiducial prep/measurement circuits. See Section D.1.1. of PyGST paper. 
