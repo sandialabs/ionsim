@@ -31,6 +31,12 @@ class EnergyEigenstate(EnergyLevel): #TODO: consider renaming this something lik
         """A unique name for the state."""
         return ' : '.join([component.name for component in self.components])
 
+    @property
+    def alias(self):
+        """An alias for the state."""
+        return ''.join([component.alias for component in self.components])
+        #return ' : '.join([component.alias for component in self.components])
+
 @dataclass(frozen=True, eq=False)
 class InternalEnergyLevel(EnergyLevel):
     """ A simple energy level that is agnostic to physical qubit (e.g. atom or ion) details. """

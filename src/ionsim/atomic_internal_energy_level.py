@@ -53,6 +53,7 @@ class LSFineLevel(AtomicInternalEnergyLevel):
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
     lifetime: float | str='null'
     branching_ratios: dict[str, float] | None=None 
+    alias: str | None=None
 
 
     @property
@@ -84,6 +85,7 @@ class LSHyperfineLevel(AtomicInternalEnergyLevel):
     external_energy_shift: float = 0.
     lifetime: float | str='null'
     branching_ratios: dict[str, float] | None=None 
+    alias: str | None=None
 
     @property
     def coupling_scheme(self):
@@ -106,6 +108,7 @@ class J1L2FineLevel(AtomicInternalEnergyLevel):
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
     lifetime: float | str='null'
     branching_ratios: dict[str, float] | None=None 
+    alias: str | None=None
 
 
     @property
@@ -137,6 +140,7 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
     lifetime: float | str = 'null'
     branching_ratios: dict[str, float] | None = None 
+    alias: str | None=None
 
 
     @property

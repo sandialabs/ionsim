@@ -6,7 +6,7 @@ from ionsim.zeeman_solver import ZeemanHyperfineSolver
 
 import importlib.resources
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from abc import ABC
 import yaml
 from fractions import Fraction
@@ -27,8 +27,8 @@ class AtomicSpin(DegreeOfFreedom):
     energy_levels: list[AtomicInternalEnergyLevel]
 
     @classmethod
-    def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None,
-            name: str | None = None, magnetic_field: float=0.):
+    def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None, 
+            level_aliases: list[str] | None=None, name: str | None = None, magnetic_field: float=0.):
         """Build the atomic spin degree of freedom for a particular species of atom."""
         config_data = cls.get_config_data(species)
         nuclear_spin = config_data['nuclear_spin']
@@ -40,6 +40,9 @@ class AtomicSpin(DegreeOfFreedom):
 
         if term_symbols is not None:
             levels_data = cls.select_some_data(term_symbols, levels_data)
+
+        if level_aliases:
+            assert len(level_aliases) == len(level_names), 'Error: User should specify level aliases for each level in the atomic structure.'
 
         levels = []
         for level_data in levels_data:
@@ -88,7 +91,14 @@ class AtomicSpin(DegreeOfFreedom):
                         zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = j, mf = mj)
                     # Create the level 
                     level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy)
+                    # Append level if requested and include any specified aliases 
                     if level_names is None or level.name in level_names: 
+                        level_name_index = level_names.index(level.name)
+                        if level_aliases:
+                            level_alias = level_aliases[level_name_index]
+                            # Overwrite the level to include its alias
+                            #level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy, alias = level_alias) 
+                            level = replace(level, alias = level_alias)
                         levels.append(level)
             else:
                 for f in np.arange(np.abs(j - nuclear_spin), j + nuclear_spin + 1):
@@ -100,7 +110,14 @@ class AtomicSpin(DegreeOfFreedom):
 
                         # Create the level 
                         level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy)
+                        # Append level if requested and include any specified aliases 
                         if level_names is None or level.name in level_names:
+                            level_name_index = level_names.index(level.name)
+                            if level_aliases:
+                                level_alias = level_aliases[level_name_index]
+                                # Overwrite the level to include its alias
+                                #level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy, alias = level_alias) 
+                                level = replace(level, alias = level_alias)
                             levels.append(level)
         return cls(levels, name)
 
@@ -187,7 +204,10 @@ class MotionalMode(DegreeOfFreedom):
     energy_levels: list[CollectiveMotionalEnergyLevel]
 
     @classmethod
-    def from_frequency(cls, frequency: float, fock_dimension: int, name: str | None = None):
+    def from_frequency(cls, frequency: float, fock_dimension: int, name: str | None = None, level_aliases: list[str] | None=None):
         """Build a motional normal-mode degree of freedom for an ion chain."""
-        levels = [CollectiveMotionalEnergyLevel(frequency, fock_number) for fock_number in range(fock_dimension)]
+        if level_aliases:
+            levels = [CollectiveMotionalEnergyLevel(frequency, fock_number, alias = level_aliases[fock_number]) for fock_number in range(fock_dimension)]
+        else:
+            levels = [CollectiveMotionalEnergyLevel(frequency, fock_number) for fock_number in range(fock_dimension)]
         return cls(levels, name)
