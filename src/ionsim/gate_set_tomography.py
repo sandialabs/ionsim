@@ -350,6 +350,10 @@ gate_parameters = single_qubit_GST.solve_for_all_gate_parameters(solver='MLE')
 
 
 
+## TODO: Transpiler between QSCOUT and our naming gate convention 
+
+
+
 # Could build a N-dimensional process matrix by running simulations for each of the N-dimensional parameters, store them. --> hdf5 files
     # - save the raw hdf5 simulation data (process matrix at each error parameter value) 
     # - GST will load the process matrix data, interpolate with it using MLE. cref. one of the examples  
