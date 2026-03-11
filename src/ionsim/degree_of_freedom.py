@@ -93,8 +93,8 @@ class AtomicSpin(DegreeOfFreedom):
                     level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy)
                     # Append level if requested and include any specified aliases 
                     if level_names is None or level.name in level_names: 
-                        level_name_index = level_names.index(level.name)
                         if level_aliases:
+                            level_name_index = level_names.index(level.name)
                             level_alias = level_aliases[level_name_index]
                             # Overwrite the level to include its alias
                             #level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy, alias = level_alias) 
@@ -112,8 +112,8 @@ class AtomicSpin(DegreeOfFreedom):
                         level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy)
                         # Append level if requested and include any specified aliases 
                         if level_names is None or level.name in level_names:
-                            level_name_index = level_names.index(level.name)
                             if level_aliases:
+                                level_name_index = level_names.index(level.name)
                                 level_alias = level_aliases[level_name_index]
                                 # Overwrite the level to include its alias
                                 #level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy, alias = level_alias) 
