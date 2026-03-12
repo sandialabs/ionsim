@@ -171,6 +171,9 @@ class Basis(ABC):
         standard_matrix = self.transform_matrix_to_standard_basis(matrix)
         return new_basis.transform_matrix_from_standard_basis(standard_matrix)
 
+
+
+
 @dataclass(frozen=True, eq=False)
 class StandardBasis(Basis):
     """A basis of energy eigenstates of a non-interacting Hamiltonian."""

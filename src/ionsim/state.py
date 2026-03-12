@@ -149,6 +149,26 @@ class State:
             small_density_matrix += multi_dot([proj_left, self.density_matrix, proj_right])
         return small_density_matrix
 
+    def project_out_states(self, states_to_project_out: list[EnergyEigenstates]):
+        """Return a projected state by projecting out a set of states in the basis."""
+        if not isinstance(self.basis, StandardBasis):
+            raise IonSimError("Projection of density matrix currently assumes a Standard Basis of EnergyEigenstates.")
+            # TODO: Convert basis to StandardBasis for this   
+
+        # Get indices corresponding to these states' locations in the basis
+        projection_indices = [self.basis.states.index(state) for state in states_to_project_out] 
+        computational_indices = [i for i in range(len(self.basis.states) if i not in projection_indices] 
+        computational_states = [state for state in self.basis.states if state not in states_to_project_out]
+        new_basis = StandardBasis(computational_states) # TODO: test and check syntax 
+
+        # Compute projected density matrix
+        projected_density_matrix = self.density_matrix[np.ix_(computational_indices, computational_indices)] 
+        if self.wavefunction is not None:        
+            new_wavefunction = self.wavefunction[computational_indices] 
+            return State(basis = new_basis, density_matrix = new_density_matrix, wavefunction = new_wavefunction) 
+        else:
+            return State.from_density_matrix(new_basis, new_density_matrix) 
+
     def trace_out_degree_of_freedom(self, degree_of_freedom: DegreeOfFreedom):
         """Trace out a degree of freedom in the basis and return a new state in a new basis."""
         density_matrix = self.compute_density_matrix_traced_over_degree_of_freedom(degree_of_freedom)

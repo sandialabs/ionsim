@@ -4,6 +4,7 @@ from ionsim.noise import Noise
 from ionsim.basis import DegreeOfFreedom, Basis, StandardBasis
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
+from ionsim.dissipator import Lindbladian 
 from ionsim.state import State
 
 import numpy as np
@@ -145,6 +146,25 @@ class Gate(Process):
         process_matrix = np.array(supervectors).T
 
         return cls(reduced_basis, process_matrix, unitary=unitary)
+
+
+    @classmethod
+    def from_lindbladian(cls, basis: StandardBasis, lindbladian: Lindbladian, duration: float, 
+            dofs_to_trace_out: list[DegreeOfFreedom] | None = None,
+            initial_density_matrices_for_dofs_to_trace_out: list[State] | None = None,
+            ode_solver: str = 'odeintz',
+            **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
+
+        """Build a gate using either the matrix-exponentiated Lindbladian or 
+            by solving the Lindblad master equation for a complete set of initial states.""" 
+
+        if dofs_to_trace_out is not None:
+            assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
+            assert(len(dofs_to_trace_out) == len(initial_wavefunctions_for_dofs_to_trace_out))
+            assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
+            dof_to_trace_out = dofs_to_trace_out[0]
+            initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
+            # TODO: consider if this function should just accept a reduced basis...?
 
 # @dataclass(frozen=True, eq=False)
 # class PauliGate(Gate):
