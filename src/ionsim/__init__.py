@@ -30,3 +30,4 @@ from .noise import Noise
 from .zeeman_solver import ZeemanHyperfineSolver
 from .composite_operator import CompositeOperator
 from .dissipator import Dissipator, DissipatorSpontaneousEmission, Lindbladian 
+from .units import ureg
