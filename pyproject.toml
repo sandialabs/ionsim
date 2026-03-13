@@ -17,7 +17,7 @@ dependencies = [
     "icecream",
     "pyyaml",
     "pint",
-    "sympy"
+    "sympy",
     "h5py"
 ]
 classifiers = [
