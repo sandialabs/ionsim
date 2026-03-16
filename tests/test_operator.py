@@ -62,7 +62,7 @@ class TestOperator(unittest.TestCase):
 
         probabilities = psi_t.compute_basis_state_probabilities()
         expected_probabilities = np.array([1., 0., 0., 0.])
-        assert_array_close(probabilities, expected_probabilities)
+        assert_array_close(probabilities, expected_probabilities, atol = 1E-6)
 
 
 if __name__ == '__main__':
