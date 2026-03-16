@@ -51,15 +51,13 @@ class TestOperator(unittest.TestCase):
         """ Test Hamiltonian creation and time evolution of a general operator """ 
         state_coeffs = [1., 0., 0., 0.]
         psi_init = State.from_coefficients(self.basis, state_coeffs)
-        big_general_matrix = np.kron(self.static_matrix_input, np.eye(2))
 
         # Create the Hamiltonian from the general operator 
-        test_operator = GeneralOperator.from_matrix(self.basis, big_general_matrix)
         frame_energies = [-state.energy for state in self.basis.states]
         test_hamiltonian = Hamiltonian(self.basis, [self.general_op], frame_energies, sparse = False) 
 
         # Test time propagation of the initial state: 
-        duration = 1E-6
+        duration = 1.0E-5
         psi_t = psi_init.propagate_using_schrodinger_equation(test_hamiltonian, duration)
 
         probabilities = psi_t.compute_basis_state_probabilities()
