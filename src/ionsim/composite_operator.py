@@ -38,7 +38,7 @@ class CompositeOperator(ABC):
         for operator in self.operators:
             if isinstance(operator, GeneralOperator):
                 if operator.couplings:
-                    coupling_ops.append(operator.coupling_operator_contribution()) 
+                    coupling_ops.append(operator.coupling_operator_contribution) 
             elif isinstance(operator, CouplingOperator):
                 coupling_ops.append(operator)
         return coupling_ops            
@@ -50,7 +50,7 @@ class CompositeOperator(ABC):
         for operator in self.operators:
             if isinstance(operator, GeneralOperator):
                 if operator.energy_shifts:
-                    energy_shift_ops.append(operator.energy_shift_operator_contribution()) 
+                    energy_shift_ops.append(operator.energy_shift_operator_contribution) 
             elif isinstance(operator, EnergyShiftOperator):
                 energy_shift_ops.append(operator)
         return energy_shift_ops
