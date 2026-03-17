@@ -16,12 +16,6 @@ class EnergyLevel(ABC):
     def name(self):
         """A unique name for the energy level."""
 
- #    @property
- #    @abstractmethod
- #    def alias(self):
- #        """An optional alias for the energy level."""
-
-
 @dataclass(frozen=True, eq=False)
 class EnergyEigenstate(EnergyLevel): #TODO: consider renaming this something like "BasisState" to avoid confusion with the State class
     """An energy eigenstate with arbitrary degrees of freedom."""
@@ -37,7 +31,7 @@ class EnergyEigenstate(EnergyLevel): #TODO: consider renaming this something lik
         """A unique name for the state."""
         return ' : '.join([component.name for component in self.components])
 
-    def get_alias(self, join_by: str=''):
+    def alias(self, join_by: str=''):
         """An alias for the state, allowing user specification on how to join state aliases."""
         return join_by.join([component.alias for component in self.components]) 
 
@@ -54,3 +48,4 @@ class InternalEnergyLevel(EnergyLevel):
     def name(self):
         """ The name of the level"""
         return self.name
+
