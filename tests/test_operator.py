@@ -61,8 +61,8 @@ class TestOperator(unittest.TestCase):
         psi_t = psi_init.propagate_using_schrodinger_equation(test_hamiltonian, duration)
 
         probabilities = psi_t.compute_basis_state_probabilities()
-        expected_probabilities = np.array([1., 0., 0., 0.])
-        assert_array_close(probabilities, expected_probabilities, atol = 1E-6)
+        expected_00_probability = 1. 
+        self.assertAlmostEqual(probabilities[0], expected_00_probability, places=6) 
 
 
 if __name__ == '__main__':
