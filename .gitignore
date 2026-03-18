@@ -183,3 +183,6 @@ cython_debug/
 examples/example_simulated_R_gate.ipynb
 examples/tutorial_R_gate.ipynb
 examples/example_simulated_R_gate_numba.ipynb
+
+src/ionsim/.vscode/
+*.json
