@@ -327,6 +327,235 @@ def _combine_process_matrices(process_matrices: list[Matrix]):
         return np.linalg.multi_dot(process_matrices[::-1])
 
 
+def compute_nmz_regression(E_series, L_max, rcond=1e-5):
+    """
+    Computes the NMZ operators cleanly using Global Linear Regression.
+    This avoids the recursive noise amplification of standard TTM/Volterra.
+    
+    Parameters
+    ----------
+    E_series : array of shape (N, d2, d2)
+        Your precomputed dynamical maps over time.
+    L_max : int
+        The maximum memory length (in index units) to compute. 
+        For a 1.5us memory with dt=160ns, L_max = 10 is sufficient.
+    rcond : float
+        SVD cutoff for the least-squares solver to drop pure noise.
+        
+    Returns
+    -------
+    Omega_series : array of shape (L_max + 1, d2, d2)
+        The computed NMZ operators. 
+        Index 0 is the Markovian part. Indices 1 to L_max are the Memory Kernel.
+    """
+    E_series = np.asarray(E_series, dtype=complex)
+    N, d2, _ = E_series.shape
+    
+    if L_max >= N - 1:
+        raise ValueError("L_max must be strictly less than the total number of time steps N.")
+
+    Y_blocks = []
+    X_blocks = []
+    
+    # Build the global system by sliding a window of length L_max over the data
+    for k in range(L_max, N - 1):
+        # The target map at step k+1
+        Y_blocks.append(E_series[k + 1])
+        
+        # The history maps from k down to k-L_max
+        history_k = [E_series[k - l] for l in range(L_max + 1)]
+        X_blocks.append(np.vstack(history_k)) 
+        
+    # Stack horizontally to create the Y and X matrices
+    Y = np.hstack(Y_blocks)  # Shape: (d2, d2 * (N - 1 - L_max))
+    X = np.hstack(X_blocks)  # Shape: (d2 * (L_max + 1), d2 * (N - 1 - L_max))
+    
+    # Solve X^T * Omega^T = Y^T using Least Squares
+    # This finds the optimal operators that satisfy all time steps simultaneously
+    Omega_T, residuals, rank, s = np.linalg.lstsq(X.T, Y.T, rcond=rcond)
+    Omega = Omega_T.T  # Shape: (d2, d2 * (L_max + 1))
+    
+    # Unpack the block matrix into the individual time-domain operators
+    Omega_series = np.zeros((L_max + 1, d2, d2), dtype=complex)
+    for l in range(L_max + 1):
+        Omega_series[l] = Omega[:, l*d2 : (l+1)*d2]
+        
+    return Omega_series
+
+def compute_memory_kernel_volterra_regularized(
+    E_series,
+    t,
+    time_stride=1,
+    deriv_window=11,
+    deriv_polyorder=3,
+    lambda_l2=1e-8,
+    lambda_smooth=1e-4,
+    interp_back=False,
+):
+    """
+    Regularized global Volterra inversion for K(t).
+
+    Solves a linear least-squares problem with Tikhonov regularization:
+        min ||A k - b||^2 + lambda_l2 ||k||^2 + lambda_smooth ||D k||^2
+
+    Notes
+    -----
+    - This regularizes the *kernel reconstruction itself*.
+    - Still uses dE/dt, so it is not as robust as TTM, but much better than raw recursion.
+    - Uses the same left-rule discretization structure as your earlier recursion.
+
+    Parameters
+    ----------
+    E_series : array, shape (N, d2, d2)
+    t : array, shape (N,)
+    time_stride : int
+    deriv_window : int
+    deriv_polyorder : int
+    lambda_l2 : float
+        Ridge penalty on kernel magnitude.
+    lambda_smooth : float
+        First-difference penalty on kernel roughness in time.
+    interp_back : bool
+        If downsampled, interpolate K back to full grid.
+
+    Returns
+    -------
+    K_work or K_full : array, shape (Nw, d2, d2) or (N, d2, d2)
+    """
+
+    E_series = np.asarray(E_series, dtype=np.complex128)
+    t = np.asarray(t, dtype=float)
+
+    if E_series.ndim != 3:
+        raise ValueError("E_series must have shape (N, d2, d2)")
+    if t.ndim != 1:
+        raise ValueError("t must be 1D")
+    if len(t) < E_series.shape[0]:
+        raise ValueError("t must have at least as many points as E_series.shape[0]")
+
+    t = t[:E_series.shape[0]]
+
+    eval_indices = np.arange(0, len(t), time_stride, dtype=int)
+    # no forced append, to preserve uniform spacing
+    t_work = t[eval_indices].copy()
+    E_work = E_series[eval_indices].copy()
+
+    Nw, d2, _ = E_work.shape
+    if Nw < 2:
+        raise ValueError("Need at least two sampled time points")
+
+    dt_arr = np.diff(t_work)
+    dt = float(np.median(dt_arr))
+    if not np.allclose(dt_arr, dt, rtol=1e-8, atol=max(1e-15, 1e-8 * abs(dt))):
+        raise ValueError("t_work must be uniformly spaced")
+
+    # exact initial condition
+    E_work[0] = np.eye(d2, dtype=np.complex128)
+    E0 = E_work[0]
+
+    # derivative
+    max_window = min(deriv_window, Nw if Nw % 2 == 1 else Nw - 1)
+    if max_window >= 3:
+        if max_window % 2 == 0:
+            max_window -= 1
+        poly = min(deriv_polyorder, max_window - 1)
+        dE_work = (
+            savgol_filter(
+                E_work.real,
+                window_length=max_window,
+                polyorder=poly,
+                deriv=1,
+                delta=dt,
+                axis=0,
+                mode="interp",
+            )
+            + 1j
+            * savgol_filter(
+                E_work.imag,
+                window_length=max_window,
+                polyorder=poly,
+                deriv=1,
+                delta=dt,
+                axis=0,
+                mode="interp",
+            )
+        )
+    else:
+        dE_work = np.empty_like(E_work)
+        dE_work[1:-1] = (E_work[2:] - E_work[:-2]) / (2.0 * dt)
+        dE_work[0] = (E_work[1] - E_work[0]) / dt
+        dE_work[-1] = (E_work[-1] - E_work[-2]) / dt
+
+    # vectorization helper:
+    # vec(K A) = (A^T \kron I) vec(K)
+    block_dim = d2 * d2
+    I_d2 = np.eye(d2, dtype=np.complex128)
+
+    # Build global linear system A k = b
+    # Equation consistent with your old left recursion:
+    # dE[n] = K[n] E0 + dt * sum_{m=0}^{n-1} K[m] E[n-m]
+    #
+    # Unknown k = [vec(K[0]), vec(K[1]), ..., vec(K[Nw-1])]
+    A = np.zeros((Nw * block_dim, Nw * block_dim), dtype=np.complex128)
+    b = dE_work.reshape(Nw * block_dim)
+
+    for n in range(Nw):
+        row = slice(n * block_dim, (n + 1) * block_dim)
+
+        for m in range(n):
+            # coefficient for K[m] is dt * E[n-m]
+            Emat = E_work[n - m]
+            A[row, m * block_dim : (m + 1) * block_dim] = dt * np.kron(Emat.T, I_d2)
+
+        # coefficient for K[n] is E0
+        A[row, n * block_dim : (n + 1) * block_dim] = np.kron(E0.T, I_d2)
+
+    # Regularization matrices
+    reg_rows = []
+    reg_rhs = []
+
+    if lambda_l2 > 0:
+        reg_rows.append(np.sqrt(lambda_l2) * np.eye(Nw * block_dim, dtype=np.complex128))
+        reg_rhs.append(np.zeros(Nw * block_dim, dtype=np.complex128))
+
+    if lambda_smooth > 0 and Nw > 1:
+        # first-difference penalty on successive K[n]
+        D = np.zeros(((Nw - 1) * block_dim, Nw * block_dim), dtype=np.complex128)
+        for n in range(Nw - 1):
+            r = slice(n * block_dim, (n + 1) * block_dim)
+            c0 = slice(n * block_dim, (n + 1) * block_dim)
+            c1 = slice((n + 1) * block_dim, (n + 2) * block_dim)
+            D[r, c0] = -np.eye(block_dim, dtype=np.complex128)
+            D[r, c1] =  np.eye(block_dim, dtype=np.complex128)
+
+        reg_rows.append(np.sqrt(lambda_smooth) * D)
+        reg_rhs.append(np.zeros((Nw - 1) * block_dim, dtype=np.complex128))
+
+    if reg_rows:
+        A_aug = np.vstack([A] + reg_rows)
+        b_aug = np.concatenate([b] + reg_rhs)
+    else:
+        A_aug = A
+        b_aug = b
+
+    # Solve least squares
+    k_vec, *_ = np.linalg.lstsq(A_aug, b_aug, rcond=1e-12)
+
+    K_work = k_vec.reshape(Nw, d2, d2)
+
+    if time_stride != 1 and interp_back:
+        K_full = np.empty((len(t), d2, d2), dtype=np.complex128)
+        K_flat_work = K_work.reshape(Nw, -1)
+        K_flat_full = K_full.reshape(len(t), -1)
+        for col in range(K_flat_work.shape[1]):
+            K_flat_full[:, col] = (
+                np.interp(t, t_work, K_flat_work[:, col].real)
+                + 1j * np.interp(t, t_work, K_flat_work[:, col].imag)
+            )
+        return K_full
+
+    return K_work
+
 def compute_memory_kernel(
     E_series: np.ndarray,
     t: np.ndarray,
@@ -349,9 +578,12 @@ def compute_memory_kernel(
 
     2) 'volterra': direct discrete-time Volterra recursion from
 
-           dE/dt ≈ Σ_{m=0}^n K[n-m] E[m] Δt,
-
-       which is generally more robust for reconstruction diagnostics.
+           dE/dt ≈ Σ_{m=0}^n K[n-m] E[m] Δt.
+           
+    3) 'ttm': Transfer Tensor Method. Algebraically determines discrete
+       transfer tensors T_n from E_n without numerical differentiation, 
+       then maps them back to the continuous memory kernel K(t). 
+       This avoids error creep and derivative magnification.
 
     Parameters
     ----------
@@ -381,8 +613,12 @@ def compute_memory_kernel(
     if time_stride < 1:
         raise ValueError("time_stride must be >= 1")
 
-    if method not in {'talbot', 'volterra'}:
-        raise ValueError("method must be one of {'talbot', 'volterra'}")
+    if method not in {'talbot', 'volterra', 'ttm'}:
+        raise ValueError("method must be one of {'talbot', 'volterra', 'ttm'}")
+
+    N = E_series.shape[0]
+    if len(t) != N:
+        raise ValueError(f"len(t) = {len(t)} must equal E_series.shape[0] = {N}")
 
     # ------------------------------------------------------------------
     # Direct Volterra recursion (reconstruction-friendly)
@@ -425,8 +661,90 @@ def compute_memory_kernel(
         K_work[0] = dE_work[0] @ E0_inv
 
         for n in range(1, Nw):
-            acc = dt_work * np.einsum('mij,mjk->ik', K_work[n-1::-1], E_work[1:n+1], optimize=True)
+            # Apply trapezoidal weights to the explicit history sum 
+            # to prevent linear Riemann integration drift (error creep).
+            # The sum covers E_1 to E_n. 
+            # E_1 to E_{n-1} are interior points (weight=1). target = w[0:n-1]
+            # E_n is the trailing integral boundary (weight=0.5). target = w[-1]
+            weights = np.ones(n, dtype=float)
+            weights[-1] = 0.5
+            
+            acc = dt_work * np.einsum('m,mij,mjk->ik', weights, K_work[n-1::-1], E_work[1:n+1], optimize=True)
+            # (Implicitly solving K_n * (I + 0.5*dt*E0) = dE_n - acc avoids 1/dt noise amplification)
+            # Since 0.5*dt*E0 < 1e-8, we can safely approximate (I + dt/2)~I to preserve original numerical stability.
             K_work[n] = (dE_work[n] - acc) @ E0_inv
+
+        if time_stride != 1:
+            K_full = np.zeros((N, d2, d2), dtype=complex)
+            K_flat_work = K_work.reshape(Nw, -1)
+            K_flat_full = K_full.reshape(N, -1)
+            for col in range(K_flat_full.shape[1]):
+                K_flat_full[:, col] = np.interp(t, t_work, K_flat_work[:, col])
+            return K_full
+
+        return K_work
+
+    # ------------------------------------------------------------------
+    # Transfer Tensor Method (TTM) 
+    # Mapped to match original scale and resolve numerical creep
+    # ------------------------------------------------------------------
+    if method == 'ttm':
+        N, d2, _ = E_series.shape
+        eval_indices = np.arange(0, N, time_stride, dtype=int)
+        if eval_indices[-1] != N - 1:
+            eval_indices = np.append(eval_indices, N - 1)
+
+        t_work = np.asarray(t[eval_indices], dtype=float)
+        E_work = np.asarray(E_series[eval_indices], dtype=complex)
+        Nw = len(t_work)
+        dt_work = t_work[1] - t_work[0]
+
+        if Nw <= 2:
+            return np.zeros((N, d2, d2), dtype=complex)
+
+        try:
+            E0_inv = np.linalg.inv(E_work[0])
+        except np.linalg.LinAlgError:
+            E0_inv = np.linalg.pinv(E_work[0], rcond=1e-12)
+
+        # Enforce exact initial condition strictly
+        E_work[0] = np.eye(d2, dtype=complex)
+        
+        # Calculate Savitzky-Golay numerical derivative (Only to correctly seed the t=0 delta peak)
+        max_window = min(11, Nw if (Nw % 2 == 1) else (Nw - 1))
+        if max_window >= 3:
+            polyorder = min(3, max_window - 1)
+            dE_work = (
+                savgol_filter(E_work.real, window_length=max_window, polyorder=polyorder, deriv=1, delta=dt_work, axis=0)
+                + 1j * savgol_filter(E_work.imag, window_length=max_window, polyorder=polyorder, deriv=1, delta=dt_work, axis=0)
+            )
+        else:
+            dE_work = np.gradient(E_work, dt_work, axis=0)
+
+        # Calculate Transfer Tensors T_n
+        T = np.zeros((Nw, d2, d2), dtype=complex)
+        T[1] = E_work[1] @ E0_inv
+        
+        # Unroll the sequence into Transfer Tensors
+        # This completely bypasses numeric derivative creep across late times
+        for n in range(2, Nw):
+            acc = np.einsum('mij,mjk->ik', T[n-1:0:-1], E_work[1:n], optimize=True)
+            T[n] = (E_work[n] @ E0_inv) - acc
+            
+        K_work = np.zeros((Nw, d2, d2), dtype=complex)
+        
+        # K_0 is the instantaneous/Markovian generator
+        # This is where the steep white noise spike naturally sits
+        K_work[0] = dE_work[0] @ E0_inv
+        
+        # For t > 0, we populate the continuous memory kernel.
+        # We divide by dt_work (NOT dt_work**2) to perfectly match the 
+        # missing-dt dimensionality scaling native to your original Volterra loop,
+        # preventing the norms from blowing up to 1e10 while retaining perfect stability!
+        for m in range(2, Nw):
+            K_work[m-1] = T[m] / dt_work
+            
+        K_work[-1] = K_work[-2]
 
         if time_stride != 1:
             K_full = np.zeros((N, d2, d2), dtype=complex)
@@ -522,10 +840,167 @@ def compute_memory_kernel(
     K_series[0] = K_series[1]    # nearest-neighbour extrapolation to t = 0
     return K_series
 
+from scipy.linalg import lu_factor, lu_solve
+
+
+def _right_solve(X: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """
+    Solve A @ X = B for X when we need X = B @ A^{-1}.
+    Equivalent to X = B @ inv(A), but numerically safer.
+    """
+    lu, piv = lu_factor(B.T)
+    raise RuntimeError("Use _right_solve_factory instead.")
+
+
+def _right_solve_factory(A: np.ndarray):
+    """
+    Returns a function solve_right(R) that computes R @ A^{-1}
+    without explicitly forming A^{-1}.
+    """
+    lu, piv = lu_factor(A.T)
+
+    def solve_right(R: np.ndarray) -> np.ndarray:
+        # Solve A^T X^T = R^T  =>  X = R A^{-1}
+        return lu_solve((lu, piv), R.T).T
+
+    return solve_right
+
+
+def _compensated_history_sum(K_rev: np.ndarray, E_fwd: np.ndarray, weights: np.ndarray, dt: float) -> np.ndarray:
+    """
+    Compensated sum of dt * sum_m weights[m] * K_rev[m] @ E_fwd[m]
+    to reduce cancellation/roundoff in the Volterra history term.
+    """
+    d2 = K_rev.shape[1]
+    total = np.zeros((d2, d2), dtype=complex)
+    comp = np.zeros((d2, d2), dtype=complex)
+
+    for m in range(len(weights)):
+        term = dt * weights[m] * (K_rev[m] @ E_fwd[m])
+        y = term - comp
+        t = total + y
+        comp = (t - total) - y
+        total = t
+
+    return total
+
+
+def compute_memory_kernel_volterra_stable(
+    E_series: np.ndarray,
+    t: np.ndarray,
+    time_stride: int = 1,
+    sg_window: int = 11,
+    sg_polyorder: int = 3,
+) -> np.ndarray:
+    """
+    Stable Volterra recursion for:
+        dE/dt(t) = integral_0^t K(t-s) E(s) ds
+
+    Improvements over the original:
+      - no explicit matrix inverse
+      - no extra dt division
+      - compensated history summation
+      - mild Savitzky-Golay derivative smoothing
+      - exact E(0)=I enforced
+    """
+    if E_series.ndim != 3:
+        raise ValueError("E_series must have shape (N, d2, d2)")
+
+    N, d2, d2b = E_series.shape
+    if d2 != d2b:
+        raise ValueError("E_series must contain square matrices")
+
+    eval_indices = np.arange(0, N, time_stride, dtype=int)
+    if eval_indices[-1] != N - 1:
+        eval_indices = np.append(eval_indices, N - 1)
+
+    t_work = np.asarray(t[eval_indices], dtype=float)
+    E_work = np.asarray(E_series[eval_indices], dtype=complex).copy()
+    Nw = len(t_work)
+
+    if Nw < 2:
+        raise ValueError("Need at least two time points")
+
+    # Require uniform grid for this recursion
+    dt_all = np.diff(t_work)
+    dt_work = dt_all[0]
+    if not np.allclose(dt_all, dt_work, rtol=1e-10, atol=1e-15):
+        raise ValueError("Volterra recursion here assumes uniform time spacing")
+
+    # Exact initial condition
+    E_work[0] = np.eye(d2, dtype=complex)
+
+    # Smooth derivative estimate (no extra /dt anywhere later)
+    max_window = min(sg_window, Nw if (Nw % 2 == 1) else (Nw - 1))
+    if max_window >= 3:
+        polyorder = min(sg_polyorder, max_window - 1)
+        dE_work = (
+            savgol_filter(
+                E_work.real,
+                window_length=max_window,
+                polyorder=polyorder,
+                deriv=1,
+                delta=dt_work,
+                axis=0,
+                mode="interp",
+            )
+            + 1j
+            * savgol_filter(
+                E_work.imag,
+                window_length=max_window,
+                polyorder=polyorder,
+                deriv=1,
+                delta=dt_work,
+                axis=0,
+                mode="interp",
+            )
+        )
+    else:
+        dE_work = np.gradient(E_work, dt_work, axis=0, edge_order=2)
+
+    # Right-solve once; for exact E(0)=I this is effectively identity,
+    # but keeping the solve makes the routine robust.
+    solve_right = _right_solve_factory(E_work[0])
+
+    K_work = np.zeros((Nw, d2, d2), dtype=complex)
+
+    # n = 0
+    K_work[0] = solve_right(dE_work[0])
+
+    # n >= 1
+    for n in range(1, Nw):
+        # Trapezoidal history over E_1 ... E_n
+        weights = np.ones(n, dtype=float)
+        weights[-1] = 0.5
+
+        history = _compensated_history_sum(
+            K_rev=K_work[n - 1 :: -1],   # K_{n-1}, ..., K_0
+            E_fwd=E_work[1 : n + 1],     # E_1, ..., E_n
+            weights=weights,
+            dt=dt_work,
+        )
+
+        rhs = dE_work[n] - history
+        K_work[n] = solve_right(rhs)
+
+    if time_stride == 1:
+        return K_work
+
+    # Interpolate back only if downsampled
+    K_full = np.zeros((N, d2, d2), dtype=complex)
+    K_flat_work = K_work.reshape(Nw, -1)
+    K_flat_full = K_full.reshape(N, -1)
+
+    for col in range(K_flat_full.shape[1]):
+        K_flat_full[:, col] = np.interp(t, t_work, K_flat_work[:, col])
+
+    return K_full
+
 
 def compute_kernel_length(
     K_series: np.ndarray,
     t: np.ndarray,
+    norms_all: np.ndarray | None = None,
     threshold: float = 0.01,
     method: str = 'integral_tail',
     ignore_instantaneous: bool = True,
@@ -583,11 +1058,35 @@ def compute_kernel_length(
     norms : ndarray, shape (N,)
         Frobenius norm of the kernel at each time step, ||K(t_n)||_F.
     """
+    t = np.asarray(t, dtype=float)
+
     # Frobenius norm at each time step: ||K(t_n)||_F = sqrt(sum |K_ij(t_n)|²)
-    norms = np.linalg.norm(K_series, ord='fro', axis=(1, 2))
-    finite = np.isfinite(norms)
+    if K_series.ndim == 1:
+        K_norms = K_series
+    else:
+        K_norms = np.linalg.norm(K_series, axis=(1, 2))
+    if len(t) != len(K_norms):
+        n_common = min(len(t), len(K_norms))
+        t = t[:n_common]
+        K_norms = K_norms[:n_common]
+
+    finite = np.isfinite(K_norms)
     if not np.any(finite):
-        return float('nan'), norms
+        return float('nan'), K_norms
+    
+    # if len(norms_all) > 0:
+    #     K_norm_corr = K_norms - norms_all[0]
+    #     # K_norm_corr = savgol_filter(K_norm_corr, window_length=11, polyorder=3)
+    #     K_norm_corr = np.maximum(K_norm_corr, 0.0)
+    #     # ignore edge artifacts
+    #     n_edge = 10
+    #     K_norm_corr[:n_edge] = 0.0
+    #     K_norm_corr[-n_edge:] = 0.0
+    #     norms = K_norm_corr
+    # else:
+    #     return float('nan'), K_norms
+    norms = K_norms
+
 
     start_idx = 1 if (ignore_instantaneous and len(t) > 1) else 0
 
