@@ -146,8 +146,9 @@ class State:
 
             return [State(self.basis, rho) for rho in rhos_avg]
         else:
-            
-            return [State(self.basis, psi) for traj in trajectory_results for psi in traj]
+            # Preserve trajectory structure: return raw trajectory results (n_traj, n_time, n_state)
+            # Caller can compute density matrices vectorized if needed
+            return trajectory_results
         
 
     def propagate_using_master_equation(self, hamiltonian: Hamiltonian, duration: float,
