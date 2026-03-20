@@ -227,20 +227,20 @@ class Lindbladian:
             return self.dissipator.size**2
 
     @cached_property
-    def lindbladian_matrix_function(self) -> Callable:
-        # Lindbladian size is N^2, corresponding to an N^2 x N^2 superoperator representation
+    def matrix_function(self) -> Callable:
+        """ Lindbladian matrix function L(t), corresponding to an N^2 x N^2 superoperator. """
         if self.hamiltonian:
-            super_ham = lambda t: (
+            super_ham = lambda t: -1j*(
                   matrix_AYB_multiply_to_superoperator(A = self.hamiltonian.hamiltonian_function(t), B = None) 
                 - matrix_AYB_multiply_to_superoperator(A = None, B = self.hamiltonian.hamiltonian_function(t))
                 )
         else:
             super_ham = lambda t: 0. 
 
-        # solve_time_evolution_equation() assumes a Schrodinger equation form dy/dt = (-i*A)y, where i = sqrt(-1) and A <==> Hamiltonian matrix. 
         # For dissipation, we compensate the input by multiplying the RHS by i to get dy/dt = Ay form. 
         if self.dissipator:
-            super_dissipator = lambda t: 1j*self.dissipator.dissipator_matrix_function(t) 
+            super_dissipator = lambda t: self.dissipator.dissipator_matrix_function(t) 
+            #super_dissipator = lambda t: 1j*self.dissipator.dissipator_matrix_function(t) 
         else:
             super_dissipator = lambda t: 0. 
 
@@ -271,5 +271,8 @@ class Lindbladian:
  #        # Lindbladian superoperator from hamiltonian and dissipation contributions: 
  #        lindbladian_function = lambda t: super_ham(t) + super_dissipator(t)
 
+        # solve_time_evolution_equation() assumes a Schrodinger equation form dy/dt = (-i*A)y, where i = sqrt(-1) and A <==> the function input, e.g. a Hamiltonian matrix. 
+        # Therfore, we must compensate this form by multiplying by the lindbladian by i 
         assert(self.size == len(initial_supervector))
-        return solve_time_evolution_equation(self.lindbladian_matrix_function, initial_supervector, duration, time_evals, **kwargs)
+        dynamical_matrix = lambda t: self.matrix_function(t) * 1j
+        return solve_time_evolution_equation(dynamical_matrix, initial_supervector, duration, time_evals, **kwargs)

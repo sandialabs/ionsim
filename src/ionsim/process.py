@@ -214,10 +214,10 @@ class Gate(Process):
                 raise IonSimError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
 
 
-        lindbladian_time_independent = True
+        lindbladian_time_independent = True 
         # Major simplification for time-independent Lindbladians: Process matrix is just e^{-L t}
         if lindbladian_time_independent:
-            process_matrix = scipy.linalg.expm(lindbladian.static_matrix * duration)
+            process_matrix = scipy.linalg.expm(-lindbladian.matrix_function(0) * duration)
         else:
             # For general lindbladian, time-evolve each basis vector and then reconstruct process matrix from all of them.
             final_states = []
