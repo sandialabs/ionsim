@@ -185,32 +185,36 @@ class Gate(Process):
     def from_lindbladian(cls, basis: StandardBasis, lindbladian: Lindbladian, duration: float, 
             dofs_to_trace_out: list[DegreeOfFreedom] | None = None,
             initial_density_matrices_for_dofs_to_trace_out: list[State] | None = None,
-            states_to_project_out: list[EnergyEigenstates] | None=None,
+            projection_info: dict | None = None, 
             ode_solver: str = 'odeintz',
             **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
 
         """Build a gate using either the matrix-exponentiated Lindbladian or 
             by solving the Lindblad master equation for a complete set of initial states.""" 
-
+        # TODO: reconcile projection &  tracing out and what the final basis is  
         if dofs_to_trace_out is not None:
             assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
             assert(len(dofs_to_trace_out) == len(initial_wavefunctions_for_dofs_to_trace_out))
             assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
             dof_to_trace_out = dofs_to_trace_out[0]
             initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
-            # TODO: consider if this function should just accept a reduced basis...?
+            # TODO: consider if this function should just accept a reduced basis...? ==> ECM 03/2026: Yes I think so. 
 
-        if dofs_to_trace_out is None:
-            reduced_basis = basis
+
+        # TODO: Consolidate tracing out and projection methods for building a process matrix from hamiltonian in an enlarged hilbert space
+        if projection_info is None:
+            if dofs_to_trace_out is None:
+                reduced_basis = basis
+            else:
+                reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
         else:
-            reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
+            if dofs_to_trace_out is None:
+                reduced_basis = projection_info['new basis'] 
+            else:
+                raise IonSimError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
 
-        if dofs_to_trace_out is None:
-            final_wavefunctions = [fs.wavefunction for fs in final_states]
-            unitary = np.array(final_wavefunctions).T
-        else:
-            unitary = None
 
+        lindbladian_time_independent = True
         # Major simplification for time-independent Lindbladians: Process matrix is just e^{-L t}
         if lindbladian_time_independent:
             process_matrix = scipy.linalg.expm(lindbladian.static_matrix * duration)
@@ -240,6 +244,13 @@ class Gate(Process):
                 #  compared to projecting the full process matrix. 
                 if projection_info: 
                     final_states[-1] = final_states[-1].project_out_states(projection_info['new basis'], projection_info['states to project out']) 
+
+            unitary = None
+ #            if dofs_to_trace_out is None:
+ #                final_wavefunctions = [fs.wavefunction for fs in final_states]
+ #                unitary = np.array(final_wavefunctions).T
+ #            else:
+ #                unitary = None
     
             supervectors = []
             for final_state_p in final_states:
