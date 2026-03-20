@@ -151,20 +151,20 @@ class State:
 
 
     #def project_to_computational_space()
-    @classmethod
-    def project_to_qubit_space(cls):
-        N = len(self.basis.spin_DOFs) # number of qubits 
-        N_DOF = len(self.basis.degrees_of_freedom) 
-        N_states = len(self.basis.states) 
-        assert N < N_DOF
-
-        if N == N_DOF: 
-            return self
-        else:  
-            return cls.project_out_states(non_qubit_states)
+ #    @classmethod
+ #    def project_to_qubit_space(cls):
+ #        N = len(self.basis.spin_DOFs) # number of qubits 
+ #        N_DOF = len(self.basis.degrees_of_freedom) 
+ #        N_states = len(self.basis.states) 
+ #        assert N < N_DOF
+ #
+ #        if N == N_DOF: 
+ #            return self
+ #        else:  
+ #            return cls.project_out_states(non_qubit_states)
 
     #def project_out_states(self, levels_to_project_out: list[EnergyLevel]):
-    def project_out_states(self, states_to_project_out: list[EnergyEigenstates], new_basis: StandardBasis):
+    def project_out_states(self, new_basis: StandardBasis, states_to_project_out: list[EnergyEigenstates]):
         """Return a projected state by projecting out a set of states in the basis into a new basis."""
 
         if not isinstance(self.basis, StandardBasis):

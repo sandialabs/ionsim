@@ -74,27 +74,47 @@ class Gate(Process):
     def from_hamiltonian(cls, basis: StandardBasis, hamiltonian: Hamiltonian, duration: float,
             dofs_to_trace_out: list[DegreeOfFreedom] | None = None,
             initial_wavefunctions_for_dofs_to_trace_out: list[Vector] | None = None,
+            projection_info: dict | None = None, 
             ode_solver: str = 'odeintz',
             **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
-        """Build a gate by solving the Schrodinger equation for a complete set of initial states.""" 
+        """ Build a gate by solving the Schrodinger equation for a complete set of initial states.
+
+            - optional argument to trace out DOF or project out states. 
+            - for projecting, specify a dictionary with keys 'basis' : StandardBasis & 'states to project' : list[EnergyEigenstates]
+            - The gate is built in the reduced or projected basis. 
+
+        """ 
+        # TODO: reconcile projection &  tracing out and what the final basis is  
         if dofs_to_trace_out is not None:
             assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
             assert(len(dofs_to_trace_out) == len(initial_wavefunctions_for_dofs_to_trace_out))
             assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
             dof_to_trace_out = dofs_to_trace_out[0]
             initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
-            # TODO: consider if this function should just accept a reduced basis...?
+            # TODO: consider if this function should just accept a reduced basis...? ==> ECM 03/2026: Yes I think so. 
 
-        if dofs_to_trace_out is None:
-            reduced_basis = basis
+
+        # TODO: Consolidate tracing out and projection methods for building a process matrix from hamiltonian in an enlarged hilbert space
+        if projection_info is None:
+            if dofs_to_trace_out is None:
+                reduced_basis = basis
+            else:
+                reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
         else:
-            reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
+            if dofs_to_trace_out is None:
+                reduced_basis = projection_info['new basis'] 
+            else:
+                raise IonSimError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
 
         import time
         final_states = []
         ic(len(reduced_basis.vectors))
         ic(reduced_basis.vectors)
         for vector in reduced_basis.vectors:
+            if projection_info:
+                basis_difference = len(basis.states) - len(reduced_basis.states)
+                vector = np.pad(vector, ((0, basis_difference),)) 
+
             if dofs_to_trace_out is None:
                 initial_state = State.from_wavefunction(basis, vector)
             else:
@@ -109,6 +129,12 @@ class Gate(Process):
                     ode_solver=ode_solver, **ode_solver_kwargs
                 )
             )
+            # At the end of each evolution, project out the unwanted states.  
+            # It is equivalent to do the projection at this stage (before building the process matrix) 
+            #  compared to projecting the full process matrix. 
+            if projection_info: 
+                final_states[-1] = final_states[-1].project_out_states(projection_info['new basis'], projection_info['states to project out']) 
+
             # end = time.perf_counter()
             # ic(f'State propagation took {end-start} seconds.')
 
@@ -127,6 +153,7 @@ class Gate(Process):
         #     results = executor.map(propagate, reduced_basis.vectors)
         # final_states = list(results)
 
+
         if dofs_to_trace_out is None:
             final_wavefunctions = [fs.wavefunction for fs in final_states]
             unitary = np.array(final_wavefunctions).T
@@ -137,12 +164,17 @@ class Gate(Process):
         for final_state_p in final_states:
             for final_state in final_states: # iterate rows with inner loop for column-stacked supervectors
                 density_matrix = np.outer(final_state.wavefunction, final_state_p.wavefunction.conj().T)
-                if dofs_to_trace_out is None:
+                if dofs_to_trace_out is None and projection_info is None:
                     spin_state = State.from_density_matrix(basis, density_matrix)
                 else:
-                    spin_state = State.from_density_matrix(
-                        basis, density_matrix
-                    ).trace_out_degree_of_freedom(dof_to_trace_out)
+                    if dofs_to_trace_out is None:
+                        # Set the reduced basis to the new basis specified by the projection 
+                        reduced_basis = projection_info['new basis']        
+                        spin_state = State.from_density_matrix(reduced_basis, density_matrix)
+                    else:
+                        spin_state = State.from_density_matrix(
+                            basis, density_matrix
+                        ).trace_out_degree_of_freedom(dof_to_trace_out)
                 supervectors.append(spin_state.supervector)
         process_matrix = np.array(supervectors).T
 
@@ -153,6 +185,7 @@ class Gate(Process):
     def from_lindbladian(cls, basis: StandardBasis, lindbladian: Lindbladian, duration: float, 
             dofs_to_trace_out: list[DegreeOfFreedom] | None = None,
             initial_density_matrices_for_dofs_to_trace_out: list[State] | None = None,
+            states_to_project_out: list[EnergyEigenstates] | None=None,
             ode_solver: str = 'odeintz',
             **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
 
