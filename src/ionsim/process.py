@@ -215,8 +215,8 @@ class Gate(Process):
 
 
         lindbladian_time_independent = True 
-        # Major simplification for time-independent Lindbladians: Process matrix is just e^{-L t}
         if lindbladian_time_independent:
+            # Major simplification for time-independent Lindbladians: Process matrix is just e^{-L t}
             process_matrix = scipy.linalg.expm(-lindbladian.matrix_function(0) * duration)
         else:
             # For general lindbladian, time-evolve each basis vector and then reconstruct process matrix from all of them.
