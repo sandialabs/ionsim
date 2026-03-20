@@ -211,9 +211,55 @@ class Gate(Process):
         else:
             unitary = None
 
-        process_matrix = scipy.linalg.expm(lindbladian.static_matrix)
+        # Major simplification for time-independent Lindbladians: Process matrix is just e^{-L t}
+        if lindbladian_time_independent:
+            process_matrix = scipy.linalg.expm(lindbladian.static_matrix * duration)
+        else:
+            # For general lindbladian, time-evolve each basis vector and then reconstruct process matrix from all of them.
+            final_states = []
+            for vector in reduced_basis.vectors:
+                if projection_info:
+                    basis_difference = len(basis.states) - len(reduced_basis.states)
+                    vector = np.pad(vector, ((0, basis_difference),)) 
+    
+                if dofs_to_trace_out is None:
+                    initial_state = State.from_wavefunction(basis, vector)
+                else:
+                    initial_state = State.from_wavefunction_with_new_component(
+                        basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
+                    )
+                ic(len(initial_state.wavefunction))
+                # start = time.perf_counter()
+                final_states.append(initial_state.propagate_using_master_equation(
+                        lindbladian, duration,
+                        ode_solver=ode_solver, **ode_solver_kwargs
+                    )
+                )
+                # At the end of each evolution, project out the unwanted states.  
+                # It is equivalent to do the projection at this stage (before building the process matrix) 
+                #  compared to projecting the full process matrix. 
+                if projection_info: 
+                    final_states[-1] = final_states[-1].project_out_states(projection_info['new basis'], projection_info['states to project out']) 
+    
+            supervectors = []
+            for final_state_p in final_states:
+                for final_state in final_states: # iterate rows with inner loop for column-stacked supervectors
+                    density_matrix = np.outer(final_state.wavefunction, final_state_p.wavefunction.conj().T)
+                    if dofs_to_trace_out is None and projection_info is None:
+                        spin_state = State.from_density_matrix(basis, density_matrix)
+                    else:
+                        if dofs_to_trace_out is None:
+                            # Set the reduced basis to the new basis specified by the projection 
+                            reduced_basis = projection_info['new basis']        
+                            spin_state = State.from_density_matrix(reduced_basis, density_matrix)
+                        else:
+                            spin_state = State.from_density_matrix(
+                                basis, density_matrix
+                            ).trace_out_degree_of_freedom(dof_to_trace_out)
+                    supervectors.append(spin_state.supervector)
+            process_matrix = np.array(supervectors).T
 
-        return cls(basis, process_matrix, unitary=None)
+        return cls(reduced_basis, process_matrix, unitary=None)
 
 # @dataclass(frozen=True, eq=False)
 # class PauliGate(Gate):
