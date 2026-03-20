@@ -190,7 +190,12 @@ class Gate(Process):
             **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
 
         """Build a gate using either the matrix-exponentiated Lindbladian or 
-            by solving the Lindblad master equation for a complete set of initial states.""" 
+            by solving the Lindblad master equation for a complete set of initial states.
+        
+            - optional argument to trace out DOF or project out states. 
+            - for projecting, specify a dictionary with keys 'basis' : StandardBasis & 'states to project' : list[EnergyEigenstates]
+            - The gate is built in the reduced or projected basis. 
+        """
         # TODO: reconcile projection &  tracing out and what the final basis is  
         if dofs_to_trace_out is not None:
             assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
@@ -208,8 +213,11 @@ class Gate(Process):
             else:
                 reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
         else:
+            unwanted_state_indices = [basis.states.index(state) for state in projection_info['states to project out']] 
+            computational_indices = [i for i in range(len(basis.states)) if i not in unwanted_state_indices] 
             if dofs_to_trace_out is None:
-                reduced_basis = projection_info['new basis'] 
+                #reduced_basis = projection_info['new basis'] 
+                reduced_basis = basis 
             else:
                 raise IonSimError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
 
@@ -218,57 +226,49 @@ class Gate(Process):
         if lindbladian_time_independent:
             # Major simplification for time-independent Lindbladians: Process matrix is just e^{-L t}
             process_matrix = scipy.linalg.expm(-lindbladian.matrix_function(0) * duration)
-        else:
-            # For general lindbladian, time-evolve each basis vector and then reconstruct process matrix from all of them.
-            final_states = []
-            for vector in reduced_basis.vectors:
-                if projection_info:
-                    basis_difference = len(basis.states) - len(reduced_basis.states)
-                    vector = np.pad(vector, ((0, basis_difference),)) 
-    
-                if dofs_to_trace_out is None:
-                    initial_state = State.from_wavefunction(basis, vector)
-                else:
-                    initial_state = State.from_wavefunction_with_new_component(
-                        basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
-                    )
-                ic(len(initial_state.wavefunction))
-                # start = time.perf_counter()
-                final_states.append(initial_state.propagate_using_master_equation(
-                        lindbladian, duration,
-                        ode_solver=ode_solver, **ode_solver_kwargs
-                    )
-                )
-                # At the end of each evolution, project out the unwanted states.  
-                # It is equivalent to do the projection at this stage (before building the process matrix) 
-                #  compared to projecting the full process matrix. 
-                if projection_info: 
-                    final_states[-1] = final_states[-1].project_out_states(projection_info['new basis'], projection_info['states to project out']) 
+            if projection_info:
+                # TODO: Build in projection numerics for d^2 x d^2 matrix in HS space based on unwanted indices from d basis vectors from Hilbert space. 
+                computational_indices = [i for i in range(len(basis.states)) if i not in projection_indices] 
+                raise IonSimError("Error: Build functionality to project process matrix.") 
 
-            unitary = None
- #            if dofs_to_trace_out is None:
- #                final_wavefunctions = [fs.wavefunction for fs in final_states]
- #                unitary = np.array(final_wavefunctions).T
- #            else:
- #                unitary = None
-    
-            supervectors = []
-            for final_state_p in final_states:
-                for final_state in final_states: # iterate rows with inner loop for column-stacked supervectors
-                    density_matrix = np.outer(final_state.wavefunction, final_state_p.wavefunction.conj().T)
-                    if dofs_to_trace_out is None and projection_info is None:
-                        spin_state = State.from_density_matrix(basis, density_matrix)
+        else:
+            # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all combinations.
+
+            # 1. Create initial density matrices |i><j| for all i,j 
+                # For d basis vectors, there are d^2 combinations of vectors. 
+            # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. d ~ 2^N for N qubits.  
+            process_matrix_columns = []
+            # Loop over all vectors in the total basis and then skip the ones that will be zero, i.e. set those cols = zero and skip evolution.   
+                # Projection does this redundantly by setting the appropriate parts to zero. But setting columns manually to zero and skipping t-evolution would save on computation.
+            #target_size = len(projection_info['']
+            for i, vector in enumerate(reduced_basis.vectors):
+                for j, vector_p in enumerate(reduced_basis.vectors):
+                    # Get density matrix for the two basis vectors |i><j| and convert --> |ij>> supervector
+                    # Skip pure non-computational basis states, e.g. Rydberg or Raman states  
+                    if projection_info and (i in unwanted_state_indices or j in unwanted_state_indices):
+                        #process_matrix_columns.append(np.zeros(size**2))
+                        pass 
                     else:
-                        if dofs_to_trace_out is None:
-                            # Set the reduced basis to the new basis specified by the projection 
-                            reduced_basis = projection_info['new basis']        
-                            spin_state = State.from_density_matrix(reduced_basis, density_matrix)
-                        else:
-                            spin_state = State.from_density_matrix(
-                                basis, density_matrix
-                            ).trace_out_degree_of_freedom(dof_to_trace_out)
-                    supervectors.append(spin_state.supervector)
-            process_matrix = np.array(supervectors).T
+                        initial_state = State.from_density_matrix(basis,  np.outer(vector, vector_p))
+    
+                        # TODO: Include tracing out DOF functionality 
+                        # Time-evolve with Lindbladian, this yields the ij'th column of the process matrix.
+     #                    if dofs_to_trace_out is None:
+     #                        initial_state = State.from_wavefunction(basis, vector)
+     #                    else:
+     #                        initial_state = State.from_wavefunction_with_new_component(
+     #                            basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
+     #                        )
+                        final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
+    
+                        if projection_info: 
+                            final_state = final_state.project_out_states(projection_info['new basis'], projection_info['states to project out']) 
+                        process_matrix_columns.append(final_state.supervector) 
+    
+                    # At the end of each evolution, project out the unwanted states.  
+                    # TODO projection method for d^2 x d^2 process matrix?? 
+
+            process_matrix = np.array(process_matrix_columns).T # TODO verify whether there should be a transpose 
 
         return cls(reduced_basis, process_matrix, unitary=None)
 
