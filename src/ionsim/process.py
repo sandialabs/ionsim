@@ -189,8 +189,7 @@ class Gate(Process):
             ode_solver: str = 'odeintz',
             **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
 
-        """Build a gate using either the matrix-exponentiated Lindbladian or 
-            by solving the Lindblad master equation for a complete set of initial states.
+        """ Build a gate using either the matrix-exponentiated Lindbladian or by solving the Lindblad master equation for a complete set of initial states.
         
             - optional argument to trace out DOF or project out states. 
             - for projecting, specify a dictionary with keys 'basis' : StandardBasis & 'states to project' : list[EnergyEigenstates]
@@ -222,31 +221,28 @@ class Gate(Process):
                 raise IonSimError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
 
 
-        lindbladian_time_independent = True 
+        lindbladian_time_independent = True  # TODO: Make this a user parameter 
         if lindbladian_time_independent:
-            # Major simplification for time-independent Lindbladians: Process matrix is just e^{-L t}
+            # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
             process_matrix = scipy.linalg.expm(-lindbladian.matrix_function(0) * duration)
             if projection_info:
-                # TODO: Build in projection numerics for d^2 x d^2 matrix in HS space based on unwanted indices from d basis vectors from Hilbert space. 
-                computational_indices = [i for i in range(len(basis.states)) if i not in projection_indices] 
-                raise IonSimError("Error: Build functionality to project process matrix.") 
-
+                superoperator_indices = [i + j*len(basis.states)  # column-wise superoperator convention
+                    for j in computational_indices 
+                    for i in computational_indices] 
+                process_matrix = process_matrix[np.ix_(superoperator_indices, superoperator_indices)]
         else:
-            # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all combinations.
+            # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
+            # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
+            # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 
 
-            # 1. Create initial density matrices |i><j| for all i,j 
-                # For d basis vectors, there are d^2 combinations of vectors. 
-            # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. d ~ 2^N for N qubits.  
             process_matrix_columns = []
-            # Loop over all vectors in the total basis and then skip the ones that will be zero, i.e. set those cols = zero and skip evolution.   
-                # Projection does this redundantly by setting the appropriate parts to zero. But setting columns manually to zero and skipping t-evolution would save on computation.
-            #target_size = len(projection_info['']
+            # When projecting, loop over all vectors in the total basis and then skip the ones that will be zero, i.e. set those cols = zero and skip evolution.   
+                # Projection does this redundantly by setting the appropriate parts to zero. But skipping t-evolution saves substantially on computation.
+
             for i, vector in enumerate(reduced_basis.vectors):
                 for j, vector_p in enumerate(reduced_basis.vectors):
-                    # Get density matrix for the two basis vectors |i><j| and convert --> |ij>> supervector
-                    # Skip pure non-computational basis states, e.g. Rydberg or Raman states  
                     if projection_info and (i in unwanted_state_indices or j in unwanted_state_indices):
-                        #process_matrix_columns.append(np.zeros(size**2))
+                        # Skip pure non-computational basis states, e.g. Rydberg or Raman states  
                         pass 
                     else:
                         initial_state = State.from_density_matrix(basis,  np.outer(vector, vector_p))
