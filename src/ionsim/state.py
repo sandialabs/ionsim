@@ -1,4 +1,5 @@
 from ionsim.basis import Basis, StandardBasis
+from ionsim.energy_level import EnergyEigenstate
 from ionsim.degree_of_freedom import DegreeOfFreedom
 from ionsim.custom_types import Vector, Matrix
 from ionsim.ionsim_error import IonSimError
