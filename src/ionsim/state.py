@@ -164,7 +164,7 @@ class State:
  #            return cls.project_out_states(non_qubit_states)
 
     #def project_out_states(self, levels_to_project_out: list[EnergyLevel]):
-    def project_out_states(self, new_basis: StandardBasis, states_to_project_out: list[EnergyEigenstates]):
+    def project_out_states(self, new_basis: StandardBasis, states_to_project_out: list[EnergyEigenstate]):
         """Return a projected state by projecting out a set of states in the basis into a new basis."""
 
         if not isinstance(self.basis, StandardBasis):

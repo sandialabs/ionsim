@@ -80,7 +80,7 @@ class Gate(Process):
         """ Build a gate by solving the Schrodinger equation for a complete set of initial states.
 
             - optional argument to trace out DOF or project out states. 
-            - for projecting, specify a dictionary with keys 'basis' : StandardBasis & 'states to project' : list[EnergyEigenstates]
+            - for projecting, specify a dictionary with keys 'basis' : StandardBasis & 'states to project' : list[EnergyEigenstate]
             - The gate is built in the reduced or projected basis. 
 
         """ 
@@ -192,7 +192,7 @@ class Gate(Process):
         """ Build a gate using either the matrix-exponentiated Lindbladian or by solving the Lindblad master equation for a complete set of initial states.
         
             - optional argument to trace out DOF or project out states. 
-            - for projecting, specify a dictionary with keys 'basis' : StandardBasis & 'states to project' : list[EnergyEigenstates]
+            - for projecting, specify a dictionary with keys 'basis' : StandardBasis & 'states to project' : list[EnergyEigenstate]
             - The gate is built in the reduced or projected basis. 
         """
         # TODO: reconcile projection &  tracing out and what the final basis is  
