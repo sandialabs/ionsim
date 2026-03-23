@@ -31,7 +31,7 @@ class GateInterpolant():
     #parameter_grids: list[Vector]
     grid_axes: dict[str, list[Vector]] 
     grid: list[tuple] #| NDArray 
-    simulated_gates: list[Gate] # can we think of a better name? 
+    computed_gates: list[Gate] # Representing non-interpolated gates, computed on the parameter grid  
 
     noisy_parameter: str | None=None # extend to a list[str] or None if we support 2+ noisy parameters  
 
@@ -207,6 +207,19 @@ class GateInterpolant():
  #        """ Build gate interpolant from a gate """ 
 
 
+    def compute_functional_of_gates(self, gate_property_functional: Callable):
+        """ Computes a functional of the gate at every gate in the grid. """ 
+        # TODO: Decide whether to loop over ALL gates or just the computed / interpolated gates 
+        functional_output = []
+        for gate in self.computed_gates: 
+            functional_output.append(gate_property_functional(gate))
+        return functional_output
+
+        #results_dictionary = {'dx' : dxs, 'dy': dys, 'relative_error': F_data}
+        #R_gate_interpolant.write_to_file(data_filename, results_dictionary, attributes)
+
+    #def write_to_file()
+
 
     #### Interpolation methods #### 
 
@@ -230,7 +243,6 @@ class GateInterpolant():
 
         return gate_property_functional(parameter_coordinate) 
 
-    
 
     #def build_gates_on_grid():
 

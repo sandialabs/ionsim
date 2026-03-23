@@ -206,40 +206,38 @@ def main():
  #            return omega_noise
         #    omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
 
+        # Define a gate function to build the gate interpolant. 
         def R_function(domega, half_box_width):
             """ Gate function of the interpolation parameters; returns a Gate object """ 
             return R(phi, theta, domega, half_box_width)
 
-        def relative_err_gate_functional(gate):
-            return gate.process_matrix.dot(chi_inv) - np.eye(size)
-            
-
         print("Building gate interoplant using process matrix function")
         R_gate_interpolant = sm.GateInterpolant.from_gate_function(R_function, grid_axes) 
-
-        # Set up comparisons of the parametrized gate to an ideal R gate 
-        size = len(basis.states)**2
-
-        # Compute gate residuals 
-        chi_inv = np.linalg.inv(ideal_R(phi, theta).process_matrix)
-        gate_residual_data = []
-        for gate in R_gate_interpolant.simulated_gates:
-            gate_residual_data.append(gate.process_matrix.dot(chi_inv) - np.eye(size))    #np.array([compute_gate_residuals(val) for val in vals])
-
-        # Test getters from the GateInterpolant class 
         grids = R_gate_interpolant.grids 
         grid = R_gate_interpolant.grid
         lens = R_gate_interpolant.grid_lengths 
 
-        gate_data = list(gate_residual_data) 
+        # Set up comparisons of the parametrized gate to an ideal R gate 
+        size = len(basis.states)**2
 
-        ic(gate_data)
+        # Compute gate residuals using inverse of ideal R gate  
+        chi_inv = np.linalg.inv(ideal_R(phi, theta).process_matrix)
+
+        # Define a functional of the gate to return the desired property  
+        def relative_err_gate_functional(gate):
+            return gate.process_matrix.dot(chi_inv) - np.eye(size)
+
+        gate_residual_data = R_gate_interpolant.compute_functional_of_gates(relative_err_gate_functional) # need to specify whether this is done on all gates or computed vs. interpolated 
+
+        #gate_data = list(gate_residual_data) 
+
+        ic(gate_residual_data)
 
         # Set up matrix-valued residuals as a function of the parameter grid  
         F_data = np.empty((size, size, *lens), dtype='complex')
         for i in range(size):
             for j in range(size):
-                F_data[i,j] = np.array([gd[i,j] for gd in gate_data]).reshape(*lens)
+                F_data[i,j] = np.array([gd[i,j] for gd in gate_residual_data]).reshape(*lens)
 
         attributes = {
             'gate_name': gate_name,
@@ -247,19 +245,10 @@ def main():
             'dy_name': dy_name,
         }
 
-        # Opening the file with 'w' allows reading and writing and
-        # truncates existing data. See
-        # https://docs.h5py.org/en/stable/high/file.html
-
-        # TODO: Decide how we want to write info with gate interpolant class  
-        # Should we have different options --> can write each gates process matrix or derived matrices like F_data  
-        #R_gate_interpolant.write_to_file(data_filename, attributes)
+        # Set up a dictionary of results and write to an hdf5 file  
+        results_dictionary = {'dx' : dxs, 'dy': dys, 'relative_error': F_data}
+        sm.io.write_results_to_file(data_filename, results_dictionary, attributes)
                 
-        with h5py.File(data_filename, 'w') as datafile:
-            save_matrix(datafile, dxs, 'dx', attributes)
-            save_matrix(datafile, dys, 'dy', attributes)
-            save_matrix(datafile, F_data, 'relative_error', attributes)
-
     # Step 2: Use the grid of gates to interpolate. 
     if compute_interpolated_gate:
         from csaps import NdGridCubicSmoothingSpline
@@ -269,15 +258,15 @@ def main():
 
         gate_name = 'sqrtX'
         dx_name = 'domega'
-        dy_name = 'half-box-width'
+        dy_name = 'half_box_width'
 
         size = len(basis.states)**2
 
         # This time open the data file read-only
         with h5py.File(data_filename, 'r') as datafile:
-            dxs, _ = load_matrix(datafile, 'dx')
-            dys, _ = load_matrix(datafile, 'dy')
-            F_data, _ = load_matrix(datafile, 'relative_error')
+            dxs, _ = sm.io.read_matrix(datafile, 'dx')
+            dys, _ = sm.io.read_matrix(datafile, 'dy')
+            F_data, _ = sm.io.read_matrix(datafile, 'relative_error')
 
         # ic(dphi0s, half_box_widths)
         # ic(F_data)
@@ -371,13 +360,13 @@ def main():
         plt.show()
 
 
-def save_matrix(datafile: h5py.File, matrix, pathname, attributes=None):
-    """Save a matrix in as a dataset in an HDF5 file."""
-    dataset = datafile.require_dataset(pathname, shape=matrix.shape, dtype=matrix.dtype, data=matrix)
-    if attributes:
-        for name, value in attributes.items():
-            dataset.attrs[name] = value
-    return dataset
+ #def save_matrix(datafile: h5py.File, matrix, pathname, attributes=None):
+ #    """Save a matrix in as a dataset in an HDF5 file."""
+ #    dataset = datafile.require_dataset(pathname, shape=matrix.shape, dtype=matrix.dtype, data=matrix)
+ #    if attributes:
+ #        for name, value in attributes.items():
+ #            dataset.attrs[name] = value
+ #    return dataset
 
 
 def load_matrix(datafile: h5py.File, pathname):
