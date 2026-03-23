@@ -56,17 +56,46 @@ class Gate(Process):
             process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
         return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
 
+
+    # TODO: Should we extend this to take more than 1 noise parameter? 
     @classmethod
     def from_process_matrix_function(cls, basis: Basis, process_matrix_function: Callable,
-            parameters: dict[str, float], target_dofs: list[DegreeOfFreedom], noise: Noise | None = None):
+            parameters: dict[str, float], noise: Noise | None = None):
         """Build a gate from a process-matrix function and its arguments."""
-        # TODO: It looks like this function doesn't use the target_dofs input parameter. Should it?
         parameter_names, arguments = list(parameters.keys()), list(parameters.values())
         if noise is None or noise.parameter_name not in parameter_names:
             return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
         noisy_parameter_index = parameter_names.index(noise.parameter_name)
         process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
         return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+
+
+    #### New method from ECM 03/2026: ### 
+    @classmethod
+    def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, duration: float,  
+            parameters: dict[str, float], target_dofs: list[DegreeOfFreedom], noise: Noise | None = None):
+        """ Build a gate from a hamiltonian function and its arguments."""
+
+        parameter_names, arguments = list(parameters.keys()), list(parameters.values())
+            # Extract hamiltonian at the argument values, then build the gate and process matrix. 
+ #            def process_matrix_function(parameters):
+ #                hamiltonian = hamiltonian_function(*arguments)
+ #                gate = cls.from_hamiltonian(basis, hamiltonian, duration) 
+ #                return gate.process_matrix 
+ #            return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+       # return process_matrix_function
+
+        @wraps(hamiltonian_function)
+        def process_matrix_function(*args, **kwargs):
+            gate = cls.from_hamiltonian(basis, hamiltonian_function(*args, **kwargs))
+            return gate.process_matrix
+
+        if noise is None or noise.parameter_name not in parameter_names:
+            noisy_parameter_index = parameter_names.index(noise.parameter_name)
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
+
+        return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+
 
     @classmethod
     def from_hamiltonian(cls, basis: StandardBasis, hamiltonian: Hamiltonian, duration: float,

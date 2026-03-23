@@ -1,10 +1,3 @@
-# from basis import StandardBasis, XPauliBasis, XPauliAndFockBasis
-# from degree_of_freedom import AtomicSpin, MotionalMode
-# from hamiltonian import Hamiltonian
-# from coupling import CouplingOperator
-# from state import State
-# from named_operators import Pauli, Fock
-
 from pathlib import Path
 
 import ionsim as sm
@@ -71,7 +64,7 @@ def main():
     # phi_noise = sm.Noise.from_named_pdf('dphi', 'gaussian', {'standard_deviation': np.pi/10}, dphis)
 
     def simulated_R(phi, theta, domega):
-        """ Builds R(phi, theta) Hamiltonian for a frequency change omega + domega """ 
+        """ Builds R(phi, theta) Hamiltonian for a frequency change omega + domega, returns gate """ 
         tau = abs(theta)/rabi_rate
         hamiltonian = R_hamiltonian(basis, phi, rabi_rate, omega + domega, sparse=sparse, mod=amp_mod)
         start = time.perf_counter()
@@ -91,8 +84,9 @@ def main():
             domegas = np.linspace(-half_box_width, half_box_width, 21)
             omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
         return sm.Gate.from_process_matrix_function(
-                basis, process_matrix_function, {'domega': domega}, spins, omega_noise,
+                basis, process_matrix_function, {'domega': domega}, omega_noise,
             )
+                #basis, process_matrix_function, {'domega': domega}, spins, omega_noise,
 
     def ideal_R(phi, theta):
         return sm.Gate.from_unitary(basis, sm.Unitary.R(phi, theta), target_spins)
@@ -168,6 +162,7 @@ def main():
         end = time.perf_counter()
         ic(f'Simulating process fidelity took {end - start} s.')
 
+    # Step 1: Set up a grid where you actually build the gates. 
     if compute_gate_on_grid:
 
         from itertools import product
@@ -191,7 +186,45 @@ def main():
 
         gate_name = 'sqrtX'
         dx_name = 'domega'
-        dy_name = 'half-box-width'
+        dy_name = 'half_box_width'
+
+        grid_axes = {dx_name : domegas, dy_name : half_box_widths} 
+
+        # Build gate interpolant  
+        
+        #def R(phi, theta, domega, half_box_width):
+        #def R(domega, half_box_width):
+ #        def R(domega, half_box_width):
+ #            def R_process_matrix_function(domega):
+ #                gate = simulated_R(phi, theta, domega)
+ #                return gate.process_matrix
+ #            return R_process_matrix_function
+ #
+ #        def noise_function(half_box_width: float):
+ #            """ Noise builder, returns Noise as a function of the half box width """ 
+ #            domegas = np.linspace(-half_box_width, half_box_width, 21)
+ #            omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
+ #            return omega_noise
+        def R_function(domega, half_box_width):
+            """ Gate function of 2 parameters, returns a Gate object """ 
+            def process_matrix_function(domega):
+                gate = simulated_R(phi, theta, domega) # builds Hamiltonian and returns gate 
+                return gate.process_matrix
+            if half_box_width == 0:
+                omega_noise = None
+            else:
+                domegas = np.linspace(-half_box_width, half_box_width, 21)
+                omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
+            return sm.Gate.from_process_matrix_function(
+                    basis, process_matrix_function, {'domega': domega}, omega_noise,
+                )
+                #basis, process_matrix_function, {'domega': domega}, spins, omega_noise,
+
+
+        print("Building gate interoplant using process matrix function")
+        #    omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
+        #R_gate_interpolant = sm.GateInterpolant.from_process_matrix_function(R, grid_axes, basis, {'half_box_width' : noise_function})
+        R_gate_interpolant = sm.GateInterpolant.from_gate_function(R_function, grid_axes) 
 
         size = len(basis.states)**2
 
@@ -231,6 +264,7 @@ def main():
             save_matrix(datafile, dys, 'dy', attributes)
             save_matrix(datafile, F_data, 'relative_error', attributes)
 
+    # Step 2: Use the grid of gates to interpolate. 
     if compute_interpolated_gate:
         from csaps import NdGridCubicSmoothingSpline
 
@@ -253,6 +287,9 @@ def main():
         # ic(F_data)
 
         grids =[dxs, dys]
+        print('printing grid information')
+        print(type(dxs))
+        print(dxs)
 
         F_spline_reals = {}
         F_spline_imags = {}
