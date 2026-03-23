@@ -188,10 +188,9 @@ def main():
         dx_name = 'domega'
         dy_name = 'half_box_width'
 
-        grid_axes = {dx_name : domegas, dy_name : half_box_widths} 
+        grid_axes = {dx_name : dxs, dy_name : dys} 
 
         # Build gate interpolant  
-        
         #def R(phi, theta, domega, half_box_width):
         #def R(domega, half_box_width):
  #        def R(domega, half_box_width):
@@ -205,50 +204,42 @@ def main():
  #            domegas = np.linspace(-half_box_width, half_box_width, 21)
  #            omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
  #            return omega_noise
-        def R_function(domega, half_box_width):
-            """ Gate function of 2 parameters, returns a Gate object """ 
-            def process_matrix_function(domega):
-                gate = simulated_R(phi, theta, domega) # builds Hamiltonian and returns gate 
-                return gate.process_matrix
-            if half_box_width == 0:
-                omega_noise = None
-            else:
-                domegas = np.linspace(-half_box_width, half_box_width, 21)
-                omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
-            return sm.Gate.from_process_matrix_function(
-                    basis, process_matrix_function, {'domega': domega}, omega_noise,
-                )
-                #basis, process_matrix_function, {'domega': domega}, spins, omega_noise,
+        #    omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
 
+        def R_function(domega, half_box_width):
+            """ Gate function of the interpolation parameters; returns a Gate object """ 
+            return R(phi, theta, domega, half_box_width)
+
+        def relative_err_gate_functional(gate):
+            return gate.process_matrix.dot(chi_inv) - np.eye(size)
+            
 
         print("Building gate interoplant using process matrix function")
-        #    omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
-        #R_gate_interpolant = sm.GateInterpolant.from_process_matrix_function(R, grid_axes, basis, {'half_box_width' : noise_function})
         R_gate_interpolant = sm.GateInterpolant.from_gate_function(R_function, grid_axes) 
 
+        # Set up comparisons of the parametrized gate to an ideal R gate 
         size = len(basis.states)**2
 
+        # Compute gate residuals 
         chi_inv = np.linalg.inv(ideal_R(phi, theta).process_matrix)
-        def build_gate_data(val):
-            gate = R(phi, theta, *val) # Builds R gate (from Hamiltonian) at the requiested values  
-            return gate.process_matrix.dot(chi_inv) - np.eye(size)
+        gate_residual_data = []
+        for gate in R_gate_interpolant.simulated_gates:
+            gate_residual_data.append(gate.process_matrix.dot(chi_inv) - np.eye(size))    #np.array([compute_gate_residuals(val) for val in vals])
 
-        grids =[dxs, dys]
-        vals = list(product(*grids))
-        lens = [len(grid) for grid in grids]
+        # Test getters from the GateInterpolant class 
+        grids = R_gate_interpolant.grids 
+        grid = R_gate_interpolant.grid
+        lens = R_gate_interpolant.grid_lengths 
 
-        start = time.perf_counter()
-        gate_data = np.array([build_gate_data(val) for val in vals])
-        end = time.perf_counter()
-        ic(f'Simulation took {end-start} s.')
+        gate_data = list(gate_residual_data) 
 
         ic(gate_data)
 
+        # Set up matrix-valued residuals as a function of the parameter grid  
         F_data = np.empty((size, size, *lens), dtype='complex')
         for i in range(size):
             for j in range(size):
                 F_data[i,j] = np.array([gd[i,j] for gd in gate_data]).reshape(*lens)
-        # ic(F_data)
 
         attributes = {
             'gate_name': gate_name,
@@ -259,6 +250,11 @@ def main():
         # Opening the file with 'w' allows reading and writing and
         # truncates existing data. See
         # https://docs.h5py.org/en/stable/high/file.html
+
+        # TODO: Decide how we want to write info with gate interpolant class  
+        # Should we have different options --> can write each gates process matrix or derived matrices like F_data  
+        #R_gate_interpolant.write_to_file(data_filename, attributes)
+                
         with h5py.File(data_filename, 'w') as datafile:
             save_matrix(datafile, dxs, 'dx', attributes)
             save_matrix(datafile, dys, 'dy', attributes)

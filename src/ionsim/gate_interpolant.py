@@ -53,7 +53,7 @@ class GateInterpolant():
  #                raise IonSimError("Invalid grid parameter name. Gate does not contain that parameter in its parameter set.")
 
     # Build mapping function for the grid index  
-    # TODO: Option to convert grid output to numpy array. Should grid() be a list of coordiantes or a np matrix-type object?  
+    # TODO: Option to convert grid output to numpy array. Should grid() be a list of coordinates or a np matrix-type object?  
  #    @cachedproperty
  #    def grid(self): 
  #        """ Returns the N-dimensional parameter grid as a list of parameter value coordinates. """
@@ -65,6 +65,14 @@ class GateInterpolant():
  #    @property
  #    def size_of_grid_for_parameter(self, parameter_name: str):
  #        return len(parameter_grids[parameter_name])
+
+    @property
+    def grids(self): 
+        return list(self.grid_axes.values()) 
+
+    @property
+    def grid_lengths(self): 
+        return [len(grid) for grid in self.grids]
 
     @staticmethod
     def build_grid(grid_axes: dict[str, list[Vector]]):
@@ -87,11 +95,11 @@ class GateInterpolant():
         
     #def from_hamiltonian(cls, hamiltonian: Hamiltonian, gate_duration: float, parameters: dict[str, NDArray]):
 
-
-
     @classmethod
     def from_gate_function(cls, gate_function: Callable, grid_axes: dict[str, NDArray]):
         """ Build gate interpolant from a gate function. """ 
+        # NB: This is the cleanest way to handle noise. Noise is embedded in the gate function input. 
+        # Used in the R gate example 
         grid = cls.build_grid(grid_axes)
 
         gates_on_grid = []
@@ -107,7 +115,7 @@ class GateInterpolant():
     def from_process_matrix_function(cls, process_matrix_function: Callable, grid_axes: dict[str, NDArray], basis: StandardBasis, noise_functions: dict[str,Callable] | None): 
         """ Build gate interpolant from a process matrix function. """ 
         # Build a grid and loop over every parameter value and build the gate from the process matrix function  
-        # TODO: Handle case where there is noise. A Gate is built for some fixed realization of the noise  
+        # TODO: Handle case where there is noise. A Gate is built for some fixed realization of the noise.  
         grid = cls.build_grid(grid_axes)
 
         gates_on_grid = []
@@ -199,7 +207,10 @@ class GateInterpolant():
  #        """ Build gate interpolant from a gate """ 
 
 
-    def return_gate_at_grid_point(self, parameter_coordinate: list[float]):
+
+    #### Interpolation methods #### 
+
+    def compute_interpolated_gate_at_coordinate(self, parameter_coordinate: dict[str, float]):
         """ Returns the gate evaluated at the grid point """ 
 
         # May be redundant--> interpolant should just return the known gate.
@@ -209,6 +220,15 @@ class GateInterpolant():
         #else:
             
 
+
+    def interpolate_gate_functional(self, gate_property_functional: Callable, parameter_coordinate: dict[str, float]):
+        """ Interpolates a gate property, defined as a functional of the gate for a requested parameter coordiante value """  
+        # e.g. process fidelity is a functional of the gate  
+        coordinate_values = tuple(parameter_coordinate.values())
+
+
+
+        return gate_property_functional(parameter_coordinate) 
 
     
 
