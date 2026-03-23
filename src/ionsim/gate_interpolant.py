@@ -39,13 +39,6 @@ class GateInterpolant():
     # Currently, there is a maximum of 1 noisy parameter. For more, IonSim needs an extension to multiple noisy parameter handling in Gate / Process module  
     # - this class tracks which parameter is noisy 
 
-
-    # maybe this will just be a grid class? 
-    #parameters # already included in Gate parent class  
-
-    # Represent a grid point as an N-dimensional array for N parameters. 
-
-
     # TODO: build mapping between grid index and parameter human readable values,
         # e.g. grid[0, 2, 3, .. ,1] <==> what parameter values? 
 
@@ -77,7 +70,6 @@ class GateInterpolant():
     def build_grid(grid_axes: dict[str, list[Vector]]):
         """ Returns the N-dimensional parameter grid as a list of coordinates in the grid. """
         return list(product(*list(grid_axes.values()))) 
-        #return np.meshgrid(*list(1D_parameter_grids.values()), indexing = 'ij')
 
 
  #    def map_grid_coordinates_to_parameter_vector(grid_coordinates: list[int]):
@@ -105,45 +97,7 @@ class GateInterpolant():
         gates_on_grid = []
         parameter_list = list(grid_axes.keys())
         for values in grid:
-            #coordinate = dict(zip(grid_axes.keys(), values))
             gates_on_grid.append(gate_function(*values))
-            #if noise_function is not None:
- #            if noise_functions:
- #                # Read the noise function for the noisy parameter 
- #                #sig = inspect.signature(noise_function)
- #                #noise_function_parameters = list(sig.parameters.keys())
- # #                noisy_parameters = []
- # #                for noisy_parameter in noise_function_parameters:
- # #                    if noisy_parameter in parameter_list:
- # #                        noisy_parameters.append(noisy_parameter) 
- #                noisy_parameters = list(noise_functions.keys())
- #                #print(noise_function_parameters)
- #                #print(parameter_list)
- #                if not noisy_parameters:
- #                    raise IonSimError("Noise info dictionary does not contain any parameters.")
- #                    #raise IonSimError("Noise function does not share any parameters with the gate interpolant.")
- #                elif len(noisy_parameters) > 1:
- #                    raise IonSimError("More than 1 noisy parameter is currently not supported in IonSim.")
- #
- #                # TODO: To extend to multiple noisy parameters, loop through noisy parameters 
- #                noisy_parameter = noisy_parameters[0]
- #                #noisy_parameter_index_in_grid = parameter_list.index(noisy_parameter)
- #
- #                noise_function = noise_functions[noisy_parameter]
- #                
- #                #noise = noise_function(coordinate[noisy_parameter_index_in_grid]) # returns an IonSim Noise object 
- #                print(coordinate)
- #                if coordinate[noisy_parameter] == 0.:
- #                    gates_on_grid.append(Gate.from_process_matrix_function(basis, process_matrix_function, coordinate)) 
- #                else:                    
- #                    noise = noise_function(coordinate[noisy_parameter]) # returns an IonSim Noise object 
- # #                    print(noise)
- # #                    print(noise.parameter_name)
- # #                    print(noise.domain_arguments)
- #                    process_matrix_function_for_noise = process_matrix_function
- #                    gates_on_grid.append(Gate.from_process_matrix_function(basis, process_matrix_function, coordinate, noise)) 
- #            else:
-              #  gates_on_grid.append(Gate.from_process_matrix_function(basis, process_matrix_function, coordinate)) 
 
         return cls(grid_axes, grid, gates_on_grid)
 
