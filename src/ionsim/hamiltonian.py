@@ -7,7 +7,7 @@ from icecream import ic
 
 from ionsim.basis import StandardBasis
 from ionsim.operator import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
-from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix, as_dense_matrix
+from ionsim.custom_types import Vector, Matrix, SparseMatrix, as_dense_matrix
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, SMALLEST_ENERGY_SCALE
 from ionsim.custom_math import solve_time_evolution_equation
 from ionsim.composite_operator import CompositeOperator

@@ -222,6 +222,42 @@ class GateInterpolant():
 
 
     #### Interpolation methods #### 
+    #def construct_spline_for_gate_derived_property(gate_derived_property: dict[str, float] | dict[str, AnyMatrix] ):
+    def construct_spline_for_gate_derived_property(self, gate_derived_property: AnyMatrix, dtype: 'float' | None=None):
+        """ Constructs interpolant spline for derived property that lives on the domain of the parameter grid.""" 
+        # Gate derived property input is a grid-dependent property, e.g. Fidelity[x, y] -> Number  
+        # Gate derived property input could be matrix-valued, e.g. Residuals[x,y] -> d^2 x d^2 Process Matrix of residuals  
+
+        if isinstance(type(gate_derived_property), AnyMatrix):
+            # Case where the gate-derived proeprty is matrix-valued, e.g. the property at some grid point yields a matrix
+            num_dtype = gate_derived_property.dtype
+            row, cols = gate_derived_property.shape
+            size = gate_derived_property.size 
+            for i in range(rows):
+                for j in range(cols):
+                    spline_reals[i,j] = NdGridCubicSmoothingSpline(self.grids, gate_derived_property[i,j].real, smooth=1) 
+        else:
+            spline = NdGridCubicSmoothingSpline(self.grids, gate_derived_property, smooth=1) 
+
+
+
+        dtype = type(gate_derived_property.values()[0])
+        #property_name = gate_derived_property.key
+
+ #        if dtype == complex:
+ #
+ #        else:
+
+ #        F_spline_reals, F_spline_imags = R_gate_interpolant.construct_spline_for_gate_derived_property({'F_data':F_data})
+ #
+ #        #R_gate_interpolant.interpolate_gate_property
+ #
+ #        F_spline_reals = {}
+ #        F_spline_imags = {}
+ #        for i in range(size):
+ #            for j in range(size):
+ #                F_spline_reals[i,j] = NdGridCubicSmoothingSpline(grids, F_data[i,j].real, smooth=1)
+ #                F_spline_imags[i,j] = NdGridCubicSmoothingSpline(grids, F_data[i,j].imag, smooth=1)
 
     def compute_interpolated_gate_at_coordinate(self, parameter_coordinate: dict[str, float]):
         """ Returns the gate evaluated at the grid point """ 

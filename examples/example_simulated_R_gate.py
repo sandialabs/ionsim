@@ -238,7 +238,6 @@ def main():
         for i in range(size):
             for j in range(size):
                 F_data[i,j] = np.array([gd[i,j] for gd in gate_residual_data]).reshape(*lens)
-
         attributes = {
             'gate_name': gate_name,
             'dx_name': dx_name,
@@ -268,13 +267,21 @@ def main():
             dys, _ = sm.io.read_matrix(datafile, 'dy')
             F_data, _ = sm.io.read_matrix(datafile, 'relative_error')
 
+
+        # Store the residuals in the interpolator  
+            # TODO: May need to make the interpolant mutable 
+        #R_gate_interpolant.add_gate_derived_property({'F_data': F_data})
+        # or could just go 
+        #R_gate_interpolant.interpolate_from_gate_drived_property({'F_data':F_data})
+        #F_spline_reals, F_spline_imags = R_gate_interpolant.construct_spline_for_gate_derived_property({'F_data':F_data})
+
         # ic(dphi0s, half_box_widths)
         # ic(F_data)
 
-        grids =[dxs, dys]
-        print('printing grid information')
-        print(type(dxs))
-        print(dxs)
+        #grids =[dxs, dys]
+        grids = R_gate_interpolant.grids 
+
+        #R_gate_interpolant.interpolate_gate_property
 
         F_spline_reals = {}
         F_spline_imags = {}
@@ -358,6 +365,10 @@ def main():
         plt.legend()
         plt.savefig(data_directory / f'infidelity_vs_{dy_name}.pdf', bbox_inches='tight')
         plt.show()
+
+        #print(list(F_spline_reals.keys())[1])
+        #print(type(F_spline_reals[0,0]))
+        #print(type(F_spline_reals))
 
 
  #def save_matrix(datafile: h5py.File, matrix, pathname, attributes=None):

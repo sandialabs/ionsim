@@ -1,8 +1,6 @@
-
+import numpy as np
 from pathlib import Path
 import h5py
-#import File 
-import numpy as np
 
 from ionsim.custom_types import AnyMatrix 
 
