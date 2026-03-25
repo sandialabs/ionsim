@@ -154,13 +154,6 @@ class GateInterpolant():
  #            gates_on_grid.append(Gate.from_process_matrix_function(basis, process_matrix_function, coordinate, noise)) 
  #        return cls(grid_axes, grid, gates_on_grid)
 
-
- #    def from_process_matrix_function(cls, basis: Basis, process_matrix_function: Callable,
- #            parameters: dict[str, float], noise: Noise | None = None):
- #
- #        return cls(grid_axes, grid, gates_on_grid)
-
-
     @classmethod
     def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, gate_duration: float, grid_axes: dict[str, NDArray], gate_name: str | None=None):
         """ Build gate interpolant from Schrodinger evolution of a Hamiltonian. 
@@ -181,11 +174,7 @@ class GateInterpolant():
         return cls(grid_axes, gate_name, grid, gates_on_grid)
     
 
- #    @classmethod
- #    def from_gate():
- #        """ Build gate interpolant from a gate """ 
-
-
+    # Helper methods for computing (process matrix) - valued properties.  
     def compute_functional_of_gates(self, gate_property_functional: Callable) -> list:
         """ Computes a functional of the gate at every gate in the grid. """ 
         # Ex] Gate_residuals = Gate - Gate_ideal or Gate/Gate_ideal - np.eye(gate_size) 
@@ -209,7 +198,6 @@ class GateInterpolant():
                 and parameter1_grid, parameter2_grid represent the one-dimensional parameter grids from the class's grid axes. 
 
         """ 
-
         # Gate derived property input could be matrix-valued, e.g. Residuals[x,y] -> d^2 x d^2 Process Matrix of residuals  
         spline_reals = {}
         if complex_data:
@@ -326,11 +314,6 @@ class GateInterpolant():
         coordinate_values = tuple(parameter_coordinate.values())
 
         return gate_property_functional(parameter_coordinate) 
-
-
-    #def build_gates_on_grid():
-
-
 
 
  #class InterpolatedGate(Gate):
