@@ -7,6 +7,7 @@ from scipy.sparse import kron as skron
 import h5py
 
 from icecream import ic
+import sys
 
 sparse = False
 
@@ -191,14 +192,6 @@ def main():
         grid_axes = {dx_name : dxs, dy_name : dys} 
 
         # Build gate interpolant  
-        #def R(phi, theta, domega, half_box_width):
-        #def R(domega, half_box_width):
- #        def R(domega, half_box_width):
- #            def R_process_matrix_function(domega):
- #                gate = simulated_R(phi, theta, domega)
- #                return gate.process_matrix
- #            return R_process_matrix_function
- #
  #        def noise_function(half_box_width: float):
  #            """ Noise builder, returns Noise as a function of the half box width """ 
  #            domegas = np.linspace(-half_box_width, half_box_width, 21)
@@ -228,8 +221,6 @@ def main():
             return gate.process_matrix.dot(chi_inv) - np.eye(size)
 
         gate_residual_data = R_gate_interpolant.compute_functional_of_gates(relative_err_gate_functional) # need to specify whether this is done on all gates or computed vs. interpolated 
-
-        #gate_data = list(gate_residual_data) 
 
         ic(gate_residual_data)
 
@@ -267,48 +258,16 @@ def main():
             dys, _ = sm.io.read_matrix(datafile, 'dy')
             F_data, _ = sm.io.read_matrix(datafile, 'relative_error')
 
+        # TODO: Make a constructor for constructing from data like this. Maybe just direct construction from class arguments? 
 
-        # Store the residuals in the interpolator  
-            # TODO: May need to make the interpolant mutable 
-        #R_gate_interpolant.add_gate_derived_property({'F_data': F_data})
-        # or could just go 
-        #R_gate_interpolant.interpolate_from_gate_drived_property({'F_data':F_data})
-        #F_spline_reals, F_spline_imags = R_gate_interpolant.construct_spline_for_gate_derived_property({'F_data':F_data})
+        # F_data <==> Gate-valued (process matrix) residuals. For every x,y gate parameter, there's a d^2 x d^2 process matrix .
+        F_spline_reals, F_spline_imags = R_gate_interpolant.construct_spline_for_gate_derived_matrix_property(F_data, complex_data=True)
 
-        # ic(dphi0s, half_box_widths)
-        # ic(F_data)
-
-        #grids =[dxs, dys]
-        grids = R_gate_interpolant.grids 
-
-        #R_gate_interpolant.interpolate_gate_property
-
-        F_spline_reals = {}
-        F_spline_imags = {}
-        for i in range(size):
-            for j in range(size):
-                F_spline_reals[i,j] = NdGridCubicSmoothingSpline(grids, F_data[i,j].real, smooth=1)
-                F_spline_imags[i,j] = NdGridCubicSmoothingSpline(grids, F_data[i,j].imag, smooth=1)
-
-        # ic(
-        #     F_spline_reals[0,0]([0, np.pi/10]).item(),
-        #     F_spline_imags[0,0]([0, np.pi/10]).item()
-        # )
-
-        def F(dx, dy):
-            return np.array([
-                [
-                    F_spline_reals[i,j]([dx, dy]).item()
-                    + 1j * F_spline_imags[i,j]([dx, dy]).item()
-                    for j in range(size)
-                ]
-                for i in range(size)
-            ])
-
-        # ic(F(np.pi/10, np.pi/10))
+        # Using the interpolants, build a function to return F(x,y) for arbitary x,y pairs
+        F_function = R_gate_interpolant.return_interpolant_function([F_spline_reals, F_spline_imags], 'relative_error')
 
         def interpolated_R(phi, theta, dx, dy):
-            return sm.Gate(basis, (F(dx, dy) + np.eye(size)).dot(ideal_R(phi, theta).process_matrix))
+            return sm.Gate(basis, (F_function(dx, dy) + np.eye(size)).dot(ideal_R(phi, theta).process_matrix))
 
         dxs2 = np.linspace(dxs[0], dxs[-1], (len(dxs)-1)*2 + 1)
         dy = dys[-1]
@@ -365,30 +324,6 @@ def main():
         plt.legend()
         plt.savefig(data_directory / f'infidelity_vs_{dy_name}.pdf', bbox_inches='tight')
         plt.show()
-
-        #print(list(F_spline_reals.keys())[1])
-        #print(type(F_spline_reals[0,0]))
-        #print(type(F_spline_reals))
-
-
- #def save_matrix(datafile: h5py.File, matrix, pathname, attributes=None):
- #    """Save a matrix in as a dataset in an HDF5 file."""
- #    dataset = datafile.require_dataset(pathname, shape=matrix.shape, dtype=matrix.dtype, data=matrix)
- #    if attributes:
- #        for name, value in attributes.items():
- #            dataset.attrs[name] = value
- #    return dataset
-
-
-def load_matrix(datafile: h5py.File, pathname):
-    """Load a matrix into a numpy array and return the attributes
-    associated with the HDF5 dataset."""
-    dataset = datafile[pathname]
-    arr = np.empty(dataset.shape, dtype=dataset.dtype)
-    dataset.read_direct(arr)
-    attributes = {name: value for name, value in dataset.attrs.items()}
-    return arr, attributes
-
 
 if __name__ == '__main__':
     main()
