@@ -174,7 +174,6 @@ def main():
         # dphis = np.linspace(-np.pi/10, np.pi/10, 5)
         # half_box_widths = np.linspace(0, np.pi/10, 3)
 
-
         # Computing gate on a grid where x is a frequency offset from resonance 
         #  and y is a noise width. 
         #  Ex] So y = 0 corresponds to no noise. 
@@ -191,21 +190,13 @@ def main():
 
         grid_axes = {dx_name : dxs, dy_name : dys} 
 
-        # Build gate interpolant  
- #        def noise_function(half_box_width: float):
- #            """ Noise builder, returns Noise as a function of the half box width """ 
- #            domegas = np.linspace(-half_box_width, half_box_width, 21)
- #            omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
- #            return omega_noise
-        #    omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
-
         # Define a gate function to build the gate interpolant. 
         def R_function(domega, half_box_width):
             """ Gate function of the interpolation parameters; returns a Gate object """ 
             return R(phi, theta, domega, half_box_width)
 
         print("Building gate interoplant using process matrix function")
-        R_gate_interpolant = sm.GateInterpolant.from_gate_function(R_function, grid_axes) 
+        R_gate_interpolant = sm.GateInterpolant.from_gate_function(R_function, grid_axes, gate_name) 
         grids = R_gate_interpolant.grids 
         grid = R_gate_interpolant.grid
         lens = R_gate_interpolant.grid_lengths 
@@ -220,11 +211,13 @@ def main():
         def relative_err_gate_functional(gate):
             return gate.process_matrix.dot(chi_inv) - np.eye(size)
 
-        gate_residual_data = R_gate_interpolant.compute_functional_of_gates(relative_err_gate_functional) # need to specify whether this is done on all gates or computed vs. interpolated 
+        gate_residual_data = R_gate_interpolant.compute_functional_of_gates(relative_err_gate_functional) 
+        #print(gate_residual_data.shape)
 
         ic(gate_residual_data)
 
         # Set up matrix-valued residuals as a function of the parameter grid  
+        # TODO: write a reshaping method (as shown below) in the interpolant class 
         F_data = np.empty((size, size, *lens), dtype='complex')
         for i in range(size):
             for j in range(size):
@@ -259,8 +252,9 @@ def main():
             F_data, _ = sm.io.read_matrix(datafile, 'relative_error')
 
         # TODO: Make a constructor for constructing from data like this. Maybe just direct construction from class arguments? 
-
         # F_data <==> Gate-valued (process matrix) residuals. For every x,y gate parameter, there's a d^2 x d^2 process matrix .
+        # TODO: combine the following 2 steps into 1 step? 
+        # TODO: include opportunities for spline arguments  
         F_spline_reals, F_spline_imags = R_gate_interpolant.construct_spline_for_gate_derived_matrix_property(F_data, complex_data=True)
 
         # Using the interpolants, build a function to return F(x,y) for arbitary x,y pairs
