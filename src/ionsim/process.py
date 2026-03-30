@@ -201,17 +201,17 @@ class Gate(Process):
                 initial_state = State.from_wavefunction_with_new_component(
                     basis, wavefunction, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
                 )
-            final_states = initial_state.propagate_using_stochastic_schrodinger_equation(
+            rho_t = initial_state.propagate_using_stochastic_schrodinger_equation(
                 hamiltonian,
                 noisy_trajectories=noisy_trajectories,
                 time_evals=_time_evals,
-                return_density_average=True,
+                return_density_average='raw',
                 **sse_kwargs,
-            )
+            )  # shape (n_t, d, d)
             if dofs_to_trace_out is None:
-                return np.array([state.density_matrix for state in final_states], dtype='complex')
+                return rho_t
             return np.array(
-                [state.trace_out_degree_of_freedom(dof_to_trace_out).density_matrix for state in final_states],
+                [State(basis, rho).trace_out_degree_of_freedom(dof_to_trace_out).density_matrix for rho in rho_t],
                 dtype='complex',
             )
 
@@ -222,6 +222,7 @@ class Gate(Process):
         # For each pair (i, j) with i < j, propagate:
         #   |+_ij> = (|i> + |j>) / √2   →  rho_plus[(i, j)] = E(|+_ij><+_ij|)
         #   |y_ij> = (|i> + i|j>) / √2  →  rho_y[(i, j)]    = E(|y_ij><y_ij|)
+        offdiag_keys = [(i, j) for i in range(d) for j in range(i + 1, d)]
         rho_plus: dict[tuple[int, int], np.ndarray] = {}
         rho_y:    dict[tuple[int, int], np.ndarray] = {}
         for i in range(d):
@@ -231,6 +232,15 @@ class Gate(Process):
                 rho_y[(i, j)]    = _propagate((vi + 1j * vj) / np.sqrt(2.0))
 
         # ── Step 3: assemble process matrix/matrices ───────────────────────────
+        # Precompute A and B for every off-diagonal pair across all n_t time points
+        # once.  The assembler then only needs a cheap single-index slice per call,
+        # saving O(n_t × d²) redundant array subtractions when return_time_series=True.
+        A_cache: dict[tuple[int, int], np.ndarray] = {}
+        B_cache: dict[tuple[int, int], np.ndarray] = {}
+        for i, j in offdiag_keys:
+            A_cache[(i, j)] = 2.0 * rho_plus[(i, j)] - rho_diag[i] - rho_diag[j]
+            B_cache[(i, j)] = 2.0 * rho_y[(i, j)]    - rho_diag[i] - rho_diag[j]
+
         # Column (q + p·d) = svec(E(|q><p|))  [outer loop: p = bra, inner: q = ket]
         # For off-diagonal (p ≠ q), let i = min(p, q), j = max(p, q):
         #   A = 2·rho_plus[(i,j)] − rho_diag[i] − rho_diag[j]
@@ -245,8 +255,8 @@ class Gate(Process):
                         dm = rho_diag[p][t_idx]
                     else:
                         i, j = min(p, q), max(p, q)
-                        A = 2.0 * rho_plus[(i, j)][t_idx] - rho_diag[i][t_idx] - rho_diag[j][t_idx]
-                        B = 2.0 * rho_y[(i, j)][t_idx]    - rho_diag[i][t_idx] - rho_diag[j][t_idx]
+                        A = A_cache[(i, j)][t_idx]
+                        B = B_cache[(i, j)][t_idx]
                         dm = 0.5 * (A + 1j * B) if q < p else 0.5 * (A - 1j * B)
                     supervectors.append(reduced_basis.compute_supervector_from_density_matrix(dm))
             return np.array(supervectors).T
