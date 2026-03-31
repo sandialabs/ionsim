@@ -74,7 +74,7 @@ class Gate(Process):
     def from_hamiltonian(cls, basis: StandardBasis, hamiltonian: Hamiltonian, duration: float,
             dofs_to_trace_out: list[DegreeOfFreedom] | None = None,
             initial_wavefunctions_for_dofs_to_trace_out: list[Vector] | None = None,
-            projection_info: dict[StandardBasis, list[EnergyEigenStates]] | None = None, 
+            projection_info: dict[StandardBasis, list[EnergyEigenState]] | None = None, 
             ode_solver: str = 'odeintz',
             **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
         """ Build a gate by solving the Schrodinger equation for a complete set of initial states.
