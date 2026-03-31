@@ -74,17 +74,17 @@ class Gate(Process):
     def from_hamiltonian(cls, basis: StandardBasis, hamiltonian: Hamiltonian, duration: float,
             dofs_to_trace_out: list[DegreeOfFreedom] | None = None,
             initial_wavefunctions_for_dofs_to_trace_out: list[Vector] | None = None,
-            projection_info: dict | None = None, 
+            projection_info: dict[StandardBasis, list[EnergyEigenStates]] | None = None, 
             ode_solver: str = 'odeintz',
             **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
         """ Build a gate by solving the Schrodinger equation for a complete set of initial states.
 
             - optional argument to trace out DOF or project out states. 
-            - for projecting, specify a dictionary with keys 'basis' : StandardBasis & 'states to project' : list[EnergyEigenstate]
+            - for projection info, specify a dictionary with keys 'basis' : StandardBasis & 'states to project' : list[EnergyEigenstate]
             - The gate is built in the reduced or projected basis. 
 
         """ 
-        # TODO: reconcile projection &  tracing out and what the final basis is  
+        # TODO: reconcile projection & tracing out and what the final basis is  
         if dofs_to_trace_out is not None:
             assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
             assert(len(dofs_to_trace_out) == len(initial_wavefunctions_for_dofs_to_trace_out))
@@ -101,42 +101,39 @@ class Gate(Process):
             else:
                 reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
         else:
+            unwanted_state_indices = [basis.states.index(state) for state in projection_info['states to project out']] 
+            computational_indices = [i for i in range(len(basis.states)) if i not in unwanted_state_indices] 
+            print("Comp indices" )
+            print(computational_indices)
             if dofs_to_trace_out is None:
                 reduced_basis = projection_info['new basis'] 
             else:
                 raise IonSimError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
 
-        import time
         final_states = []
-        ic(len(reduced_basis.vectors))
-        ic(reduced_basis.vectors)
-        for vector in reduced_basis.vectors:
-            if projection_info:
-                basis_difference = len(basis.states) - len(reduced_basis.states)
-                vector = np.pad(vector, ((0, basis_difference),)) 
-
-            if dofs_to_trace_out is None:
-                initial_state = State.from_wavefunction(basis, vector)
+        for i, vector in enumerate(basis.vectors):
+            if projection_info and (i in unwanted_state_indices):
+                # Skip basis states that we will ultimately project out. 
+                pass 
             else:
-                initial_state = State.from_wavefunction_with_new_component(
-                    basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
+                if dofs_to_trace_out is None:
+                    initial_state = State.from_wavefunction(basis, vector)
+                else:
+                    initial_state = State.from_wavefunction_with_new_component(
+                        basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
+                    )
+                ic(len(initial_state.wavefunction))
+                final_states.append(
+                    initial_state.propagate_using_schrodinger_equation(
+                        hamiltonian, duration,
+                        ode_solver=ode_solver, **ode_solver_kwargs
+                    )
                 )
-            ic(len(initial_state.wavefunction))
-            # start = time.perf_counter()
-            final_states.append(
-                initial_state.propagate_using_schrodinger_equation(
-                    hamiltonian, duration,
-                    ode_solver=ode_solver, **ode_solver_kwargs
-                )
-            )
-            # At the end of each evolution, project out the unwanted states.  
-            # It is equivalent to do the projection at this stage (before building the process matrix) 
-            #  compared to projecting the full process matrix. 
-            if projection_info: 
-                final_states[-1] = final_states[-1].project_out_states(projection_info['new basis'], projection_info['states to project out']) 
-
-            # end = time.perf_counter()
-            # ic(f'State propagation took {end-start} seconds.')
+                # At the end of each evolution, project out the unwanted states.  
+                # It is equivalent to do the projection at this stage (before building the process matrix) 
+                #  compared to projecting the full process matrix. 
+                if projection_info: 
+                    final_states[-1] = final_states[-1].project_out_states(projection_info['new basis'], projection_info['states to project out']) 
 
         # TODO: how can we do multiprocessing outside of main?
         # from concurrent.futures import ProcessPoolExecutor
@@ -214,18 +211,23 @@ class Gate(Process):
         else:
             unwanted_state_indices = [basis.states.index(state) for state in projection_info['states to project out']] 
             computational_indices = [i for i in range(len(basis.states)) if i not in unwanted_state_indices] 
+            print("Comp indices" )
+            print(computational_indices)
             if dofs_to_trace_out is None:
-                #reduced_basis = projection_info['new basis'] 
-                reduced_basis = basis 
+                reduced_basis = projection_info['new basis'] 
+                #reduced_basis = basis 
             else:
                 raise IonSimError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
 
 
-        lindbladian_time_independent = False   # TODO: Make this a user parameter 
+        lindbladian_time_independent = False     # TODO: Make this a user parameter 
         if lindbladian_time_independent:
+            # TODO: If the Lindbladian commutes with itself at later/other times, we can also just do this. 
             # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
             process_matrix = scipy.linalg.expm(-lindbladian.matrix_function(0) * duration)
             if projection_info:
+                # TODO: Verify that this is correct and we don't need to transpose anything 
+                # We know the computational indices for d x d matrix, but what about d^2 x d^2 ?
                 superoperator_indices = [i + j*len(basis.states)  # column-wise superoperator convention
                     for j in computational_indices 
                     for i in computational_indices] 
@@ -238,10 +240,9 @@ class Gate(Process):
             process_matrix_columns = []
             # When projecting, loop over all vectors in the total basis and then skip the ones that will be zero, i.e. set those cols = zero and skip evolution.   
                 # Projection does this redundantly by setting the appropriate parts to zero. But skipping t-evolution saves substantially on computation.
-
-            for i, vector in enumerate(reduced_basis.vectors):
-                for j, vector_p in enumerate(reduced_basis.vectors):
-                    if projection_info and (i in unwanted_state_indices or j in unwanted_state_indices):
+            for i, vector in enumerate(basis.vectors):
+                for j, vector_p in enumerate(basis.vectors):
+                    if projection_info and ((i in unwanted_state_indices) or (j in unwanted_state_indices)):
                         # Skip pure non-computational basis states, e.g. Rydberg or Raman states  
                         pass 
                     else:
@@ -256,17 +257,27 @@ class Gate(Process):
      #                            basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
      #                        )
                         final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
-    
+ #                        print("\nDensity matrix: ")
+ #                        print(final_state.density_matrix)
+ #                        print("\nSupervector: ")
+ #                        print(final_state.supervector)
+ #    
                         if projection_info: 
                             final_state = final_state.project_out_states(projection_info['new basis'], projection_info['states to project out']) 
+ #                        print("\nDensity matrix: ")
+ #                        print(final_state.density_matrix)
+ #                        print("\nSupervector: ")
+ #                        print(final_state.supervector)
+                        # Supervector of final state gives you 1 column of the process matrix  
                         process_matrix_columns.append(final_state.supervector) 
     
                     # At the end of each evolution, project out the unwanted states.  
                     # TODO projection method for d^2 x d^2 process matrix?? 
 
-            process_matrix = np.array(process_matrix_columns).T # TODO verify whether there should be a transpose 
+            process_matrix = np.array(process_matrix_columns).T # tranpose ensures column behavior  
 
         return cls(reduced_basis, process_matrix, unitary=None)
+        #return cls(reduced_basis, process_matrix, unitary=None)
 
 # @dataclass(frozen=True, eq=False)
 # class PauliGate(Gate):

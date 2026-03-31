@@ -164,9 +164,8 @@ class State:
  #        else:  
  #            return cls.project_out_states(non_qubit_states)
 
-    #def project_out_states(self, levels_to_project_out: list[EnergyLevel]):
     def project_out_states(self, new_basis: StandardBasis, states_to_project_out: list[EnergyEigenstate]):
-        """Return a projected state by projecting out a set of states in the basis into a new basis."""
+        """Return a projected state by projecting out a set of levels in the enlarged basis into a new basis."""
 
         if not isinstance(self.basis, StandardBasis):
             raise IonSimError("Projection of density matrix currently assumes a Standard Basis of EnergyEigenstates.")
@@ -175,18 +174,33 @@ class State:
         if len(new_basis.states) != len(self.basis.states) - len(states_to_project_out):
             raise IonSimError("The specified new basis dimensionality should match the current basis without the projected states.")
 
-        # Get indices corresponding to these states' locations in the basis
+        # Get indices corresponding to these states' locations in the enlarged basis
         projection_indices = [self.basis.states.index(state) for state in states_to_project_out] 
         computational_indices = [i for i in range(len(self.basis.states)) if i not in projection_indices] 
-        computational_states = [state for state in self.basis.states if state not in states_to_project_out]
+        #computational_states = [state for state in self.basis.states if state not in states_to_project_out] # this will be out of order? This is unused  
 
         # Compute projected density matrix
         projected_density_matrix = self.density_matrix[np.ix_(computational_indices, computational_indices)] 
+
+        # Check if we need to re-order the basis to match the sorted order in new_basis  
+        permutation = np.argsort(computational_indices)
+        projected_density_matrix = projected_density_matrix[np.ix_(permutation, permutation)] 
+
+        # This requires a map between the new basis and the corresponding states in the enlarged basis. 
+ #        large_basis_map = {value: index for index, value in enumerate(self.basis.states)}
+ #        new_basis_map = {value: index for index, value in enumerate(new_basis.states)}
+ #        if new_basis_map != large_basis_map:
+ #            # Re-order the density matrix 
+ #            for 
+        #comp_indices_subspace = 
+
+
         if self.wavefunction is not None:        
             projected_wavefunction = self.wavefunction[computational_indices] 
             return State(basis = new_basis, density_matrix = projected_density_matrix, wavefunction = projected_wavefunction) 
         else:
             return State.from_density_matrix(new_basis, projected_density_matrix) 
+        # TODO: Include a method for renormalizing the density matrix? 
 
     def trace_out_degree_of_freedom(self, degree_of_freedom: DegreeOfFreedom):
         """Trace out a degree of freedom in the basis and return a new state in a new basis."""
@@ -205,6 +219,8 @@ class State:
             displacement = np.trace(np.kron(spin_proj, lowering).dot(self.density_matrix))
             diplacements.append(displacement)
         return diplacements
+
+    # TODO: maybe add a method for checking if the state is normalized 
 
     # def transform_to_spin_eigenbasis(self):
 
