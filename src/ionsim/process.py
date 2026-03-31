@@ -8,6 +8,7 @@ from ionsim.hamiltonian import Hamiltonian
 from ionsim.dissipator import Lindbladian 
 from ionsim.state import State
 
+from scipy.integrate import quad_vec
 import scipy
 import numpy as np
 from dataclasses import dataclass, field
@@ -121,7 +122,6 @@ class Gate(Process):
                     initial_state = State.from_wavefunction_with_new_component(
                         basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
                     )
-                ic(len(initial_state.wavefunction))
                 final_states.append(
                     initial_state.propagate_using_schrodinger_equation(
                         hamiltonian, duration,
@@ -181,7 +181,9 @@ class Gate(Process):
     def from_lindbladian(cls, basis: StandardBasis, lindbladian: Lindbladian, duration: float, 
             dofs_to_trace_out: list[DegreeOfFreedom] | None = None,
             initial_density_matrices_for_dofs_to_trace_out: list[State] | None = None,
-            projection_info: dict | None = None, 
+            projection_info: dict | None = None,
+            lindbladian_time_independent: bool = False, 
+            lindbladian_commutes_at_later_times: bool = False, 
             ode_solver: str = 'odeintz',
             **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
 
@@ -210,8 +212,8 @@ class Gate(Process):
         else:
             unwanted_state_indices = [basis.states.index(state) for state in projection_info['states to project out']] 
             computational_indices = [i for i in range(len(basis.states)) if i not in unwanted_state_indices] 
-            print("Comp indices" )
-            print(computational_indices)
+            #print("Comp indices" )
+            #print(computational_indices)
             if dofs_to_trace_out is None:
                 reduced_basis = projection_info['new basis'] 
                 #reduced_basis = basis 
@@ -219,11 +221,18 @@ class Gate(Process):
                 raise IonSimError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
 
 
-        lindbladian_time_independent = False    # TODO: Make this a user parameter 
+        # Use general t-dependent, non-commutating Lindbladian method unless user specifies otherwise 
         if lindbladian_time_independent:
-            # TODO: If the Lindbladian commutes with itself at later/other times, we can also just do this. 
+            ic(f"Lindbladian is time-independent. Simplifying computation of process matrix via direct matrix exponentiation.")
+
+            # TODO: If the Lindbladian commutes with itself at later/other times, we can do a simple time integral of the Lindbladian. 
+            #   Can do this t-integration with trapz or cumtrapz method. 
+
             # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
-            process_matrix = scipy.linalg.expm(-lindbladian.matrix_function(0) * duration)
+            # If Hamiltonian or Dissipator is time-dependent and doesn't commute at different times, this will not be accurate.  
+            #process_matrix = scipy.linalg.expm(-lindbladian.matrix_function(0) * duration)
+            process_matrix = scipy.linalg.expm(lindbladian.matrix_function(0) * duration)
+            # TODO: Convert this into a basis method: basis.project_superoperator(desired_state_indices) --> projected superoperator  
             if projection_info:
                 # TODO: Verify that this is correct and we don't need to transpose anything 
                 # We know the computational indices for d x d matrix, but what about d^2 x d^2 ?
@@ -231,7 +240,24 @@ class Gate(Process):
                     for j in computational_indices 
                     for i in computational_indices] 
                 process_matrix = process_matrix[np.ix_(superoperator_indices, superoperator_indices)]
+        elif lindbladian_commutes_at_later_times:
+            ic(f"Lindbladian commutes at different times. Integrating Lindbladian directly in time.") 
+            t_integration = np.linspace(0., duration, 3200)  
+
+            # Integrate each element of the lindbladian matrix forward in time from t = 0 to t = duration            
+            L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
+
+            process_matrix = scipy.linalg.expm(L_integral)
+            if projection_info:
+                # TODO: Verify that this is correct and we don't need to transpose anything 
+                # We know the computational indices for d x d matrix, but what about d^2 x d^2 ?
+                superoperator_indices = [i + j*len(basis.states)  # column-wise superoperator convention
+                    for j in computational_indices 
+                    for i in computational_indices] 
+                process_matrix = process_matrix[np.ix_(superoperator_indices, superoperator_indices)]
+
         else:
+            ic(f"Default method for generating process matrix from generic time-dependenet, non-commutating Lindbladian.")
             # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
             # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
             # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 
@@ -267,7 +293,6 @@ class Gate(Process):
             process_matrix = np.array(process_matrix_columns).T # tranpose ensures column behavior  
 
         return cls(reduced_basis, process_matrix, unitary=None)
-        #return cls(reduced_basis, process_matrix, unitary=None)
 
 # @dataclass(frozen=True, eq=False)
 # class PauliGate(Gate):

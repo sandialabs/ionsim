@@ -228,7 +228,7 @@ class Lindbladian:
 
     @cached_property
     def matrix_function(self) -> Callable:
-        """ Lindbladian matrix function L(t), corresponding to an N^2 x N^2 superoperator. """
+        """ Lindbladian matrix function L(t), corresponding to an N^2 x N^2 superoperator at time t. """
         if self.hamiltonian:
             super_ham = lambda t: -1j*(
                   matrix_AYB_multiply_to_superoperator(A = self.hamiltonian.hamiltonian_function(t), B = None) 
@@ -237,10 +237,8 @@ class Lindbladian:
         else:
             super_ham = lambda t: 0. 
 
-        # For dissipation, we compensate the input by multiplying the RHS by i to get dy/dt = Ay form. 
         if self.dissipator:
             super_dissipator = lambda t: self.dissipator.dissipator_matrix_function(t) 
-            #super_dissipator = lambda t: 1j*self.dissipator.dissipator_matrix_function(t) 
         else:
             super_dissipator = lambda t: 0. 
 
@@ -249,28 +247,9 @@ class Lindbladian:
         return lindbladian_function
 
     def evolve_supervector(self, initial_supervector: Vector, duration: float, time_evals: Vector | None = None, **kwargs):
-        """ Evolve a supervector by solving the time-dependent Lindblad master equation with pure dissipation (no Hamiltonian).
-            e.g. evolves supervector "y" using dy/dt = Dy, where D is the N^2 x N^2 dissipator matrix. 
+        """ Evolve a supervector by solving the time-dependent Lindblad master equation.
+            e.g. evolves supervector "y" using dy/dt = Ly, where L is the N^2 x N^2 dissipator matrix. 
         """
- #        assert(self.size == len(initial_supervector))
- #        if self.hamiltonian:
- #            super_ham = lambda t: (
- #                  matrix_AYB_multiply_to_superoperator(A = self.hamiltonian.hamiltonian_function(t), B = None) 
- #                - matrix_AYB_multiply_to_superoperator(A = None, B = self.hamiltonian.hamiltonian_function(t))
- #                )
- #        else:
- #            super_ham = lambda t: 0. 
- #
- #        # solve_time_evolution_equation() assumes a Schrodinger equation form dy/dt = (-i*A)y, where i = sqrt(-1) and A <==> Hamiltonian matrix. 
- #        # For dissipation, we compensate the input by multiplying the RHS by i to get dy/dt = Ay form. 
- #        if self.dissipator:
- #            super_dissipator = lambda t: 1j*self.dissipator.dissipator_matrix_function(t) 
- #        else:
- #            super_dissipator = lambda t: 0. 
- #
- #        # Lindbladian superoperator from hamiltonian and dissipation contributions: 
- #        lindbladian_function = lambda t: super_ham(t) + super_dissipator(t)
-
         # solve_time_evolution_equation() assumes a Schrodinger equation form dy/dt = (-i*A)y, where i = sqrt(-1) and A <==> the function input, e.g. a Hamiltonian matrix. 
         # Therfore, we must compensate this form by multiplying by the lindbladian by i 
         assert(self.size == len(initial_supervector))
