@@ -88,7 +88,6 @@ class Gate(Process):
 
         return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
 
-
     @classmethod
     def from_hamiltonian(cls, basis: StandardBasis, hamiltonian: Hamiltonian, duration: float,
             dofs_to_trace_out: list[DegreeOfFreedom] | None = None,

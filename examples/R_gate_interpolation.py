@@ -97,7 +97,6 @@ def main():
 
     compute_state_fidelity = False
     compute_process_fidelity = False
-    compute_gate_on_grid = True
     compute_interpolated_gate = True
 
     data_directory = Path.home() / "tmp" / "ionsim_examples_data"
@@ -164,9 +163,7 @@ def main():
         ic(f'Simulating process fidelity took {end - start} s.')
 
     # Step 1: Set up a grid where you actually build the gates. 
-    if compute_gate_on_grid:
-
-        from itertools import product
+    if compute_interpolated_gate:
 
         phi = 0
         theta = np.pi/2
@@ -192,78 +189,14 @@ def main():
             """ Gate function of the interpolation parameters; returns a Gate object """ 
             return R(phi, theta, domega, half_box_width)
 
-        print("Building gate interoplant using process matrix function")
+        # 1. Construct the gate interpolant class instance 
+        print("Building gate interpolant using gate function")
         R_gate_interpolant = sm.GateInterpolant.from_gate_function(R_function, grid_axes, gate_name) 
-        grids = R_gate_interpolant.grids 
-        grid = R_gate_interpolant.grid
-        lens = R_gate_interpolant.grid_lengths 
 
-        # Set up comparisons of the parametrized gate to an ideal R gate 
-        size = len(basis.states)**2
+        # 2 Build a gate interpolating function (this uses cubic splines): returns Gate evaluated at grid / off-grid parameter values  
+        """ Ex] interpolated_R(x = 0.5, y = 2.) returns an R Gate object at domega = 0.5, half_box_width 2. """ 
+        interpolated_R = R_gate_interpolant.interpolated_gate_function # returns a Gate object at a grid point 
 
-        # Compute gate residuals using inverse of ideal R gate  
-        chi_inv = np.linalg.inv(ideal_R(phi, theta).process_matrix)
-
-        # Define a functional of the gate to return the desired property  
-        def relative_err_gate_functional(gate):
-            return gate.process_matrix.dot(chi_inv) - np.eye(size)
-
-        gate_residual_data = R_gate_interpolant.compute_functional_of_gates(relative_err_gate_functional) 
-        #print(gate_residual_data.shape)
-
-        ic(gate_residual_data)
-
-        # Set up matrix-valued residuals as a function of the parameter grid  
-        # TODO: write a reshaping method (as shown below) in the interpolant class 
-        F_data = np.empty((size, size, *lens), dtype='complex')
-        for i in range(size):
-            for j in range(size):
-                F_data[i,j] = np.array([gd[i,j] for gd in gate_residual_data]).reshape(*lens)
-        attributes = {
-            'gate_name': gate_name,
-            'dx_name': dx_name,
-            'dy_name': dy_name,
-        }
-
-        # Set up a dictionary of results and write to an hdf5 file  
-        results_dictionary = {'dx' : dxs, 'dy': dys, 'relative_error': F_data}
-        sm.io.write_results_to_file(data_filename, results_dictionary, attributes)
-                
-    # Step 2: Use the grid of gates to interpolate. 
-    if compute_interpolated_gate:
-        from csaps import NdGridCubicSmoothingSpline
-
-        phi = 0
-        theta = np.pi/2
-
-        gate_name = 'sqrtX'
-        dx_name = 'domega'
-        dy_name = 'half_box_width'
-
-        size = len(basis.states)**2
-
-        # This time open the data file read-only
-        with h5py.File(data_filename, 'r') as datafile:
-            dxs, _ = sm.io.read_matrix(datafile, 'dx')
-            dys, _ = sm.io.read_matrix(datafile, 'dy')
-            F_data, _ = sm.io.read_matrix(datafile, 'relative_error')
-
-        # TODO: Make a constructor for constructing from data like this. Maybe just direct construction from class arguments? 
-        # F_data <==> Gate-valued (process matrix) residuals. For every x,y gate parameter, there's a d^2 x d^2 process matrix .
-        # TODO: combine the following 2 steps into 1 step? 
-        # TODO: include opportunities for spline arguments  
-        F_spline_reals, F_spline_imags = R_gate_interpolant.construct_spline_for_gate_derived_matrix_property(F_data, complex_data=True)
-
-        # Using the interpolants, build a function to return F(x,y) for arbitary x,y pairs
-        F_function = R_gate_interpolant.interpolant_function_from_splines([F_spline_reals, F_spline_imags], 'relative_error')
-
-        def interpolated_R(phi, theta, dx, dy):
-            return sm.Gate(basis, (F_function(dx, dy) + np.eye(size)).dot(ideal_R(phi, theta).process_matrix))
-
- #        def interpolated_R(phi, theta, dx, dy):
- #            def R_process_matrix_from_error_functional(dx, dy): 
- #                return (F_function(dx, dy) + np.eye(size)).dot(ideal_R(phi, theta).process_matrix) 
- #            return R_gate_interpolant.interpolated_gate_from_process_matrix_interpolant(basis, R_process_matrix_from_error_functional)  
 
         dxs2 = np.linspace(dxs[0], dxs[-1], (len(dxs)-1)*2 + 1)
         dy = dys[-1]
@@ -276,7 +209,7 @@ def main():
         fidelities = [gate.compute_process_fidelity(ideal_R(phi, theta).process_matrix) for gate in ms_gates]
         fidelities2 = [gate.compute_process_fidelity(ideal_R(phi, theta).process_matrix) for gate in ms_gates2]
         approx_fids = [
-            interpolated_R(phi, theta, dx, dy).compute_process_fidelity(
+            interpolated_R(dx, dy).compute_process_fidelity(
                 ideal_R(phi, theta).process_matrix
             ) for dx in dxs2
         ]
@@ -305,7 +238,7 @@ def main():
         fidelities = [gate.compute_process_fidelity(ideal_R(phi, theta).process_matrix) for gate in ms_gates]
         fidelities2 = [gate.compute_process_fidelity(ideal_R(phi, theta).process_matrix) for gate in ms_gates2]
         approx_fids = [
-            interpolated_R(phi, theta, dx, dy).compute_process_fidelity(
+            interpolated_R(dx, dy).compute_process_fidelity(
                 ideal_R(phi, theta).process_matrix
             ) for dy in dys2
         ]
