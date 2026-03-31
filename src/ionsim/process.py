@@ -104,8 +104,6 @@ class Gate(Process):
         else:
             unwanted_state_indices = [basis.states.index(state) for state in projection_info['states to project out']] 
             computational_indices = [i for i in range(len(basis.states)) if i not in unwanted_state_indices] 
-            print("Comp indices" )
-            print(computational_indices)
             if dofs_to_trace_out is None:
                 reduced_basis = projection_info['new basis'] 
             else:
@@ -221,7 +219,7 @@ class Gate(Process):
                 raise IonSimError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
 
 
-        lindbladian_time_independent = False     # TODO: Make this a user parameter 
+        lindbladian_time_independent = False    # TODO: Make this a user parameter 
         if lindbladian_time_independent:
             # TODO: If the Lindbladian commutes with itself at later/other times, we can also just do this. 
             # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
@@ -247,7 +245,8 @@ class Gate(Process):
                         # Skip pure non-computational basis states, e.g. Rydberg or Raman states  
                         pass 
                     else:
-                        initial_state = State.from_density_matrix(basis,  np.outer(vector, vector_p))
+                        # Necessary to do |vector_p > <vector| to get correct basis ordering after projection  
+                        initial_state = State.from_density_matrix(basis,  np.outer(vector_p, vector))
     
                         # TODO: Include tracing out DOF functionality 
                         # Time-evolve with Lindbladian, this yields the ij'th column of the process matrix.
@@ -258,23 +257,13 @@ class Gate(Process):
      #                            basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
      #                        )
                         final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
- #                        print("\nDensity matrix: ")
- #                        print(final_state.density_matrix)
- #                        print("\nSupervector: ")
- #                        print(final_state.supervector)
- #    
+
                         if projection_info: 
                             final_state = final_state.project_out_states(projection_info['new basis'], projection_info['states to project out']) 
- #                        print("\nDensity matrix: ")
- #                        print(final_state.density_matrix)
- #                        print("\nSupervector: ")
- #                        print(final_state.supervector)
+
                         # Supervector of final state gives you 1 column of the process matrix  
                         process_matrix_columns.append(final_state.supervector) 
     
-                    # At the end of each evolution, project out the unwanted states.  
-                    # TODO projection method for d^2 x d^2 process matrix?? 
-
             process_matrix = np.array(process_matrix_columns).T # tranpose ensures column behavior  
 
         return cls(reduced_basis, process_matrix, unitary=None)
