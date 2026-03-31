@@ -147,12 +147,6 @@ class Hamiltonian(CompositeOperator):
                 Hints.append(Hint.toarray())
                 Rates.append(Rate.toarray())
 
-        def is_diagonal_hermitian(mat):
-            return np.allclose(mat, mat.conj().T)
-
-        def is_diagonal_hermitian(mat):
-            return np.allclose(mat, mat.conj().T)
-
         if self.all_rates_are_zero:
             if self.sparse:
                 def _hamiltonian_function(t: float):
@@ -169,13 +163,13 @@ class Hamiltonian(CompositeOperator):
                     else:
                         Hint = np.sum(Hints, axis=0)
                     Hint += Hint.conj().transpose()
-
+                        
                     if not all_none(self.energy_shift_modulation_functions):
                         H0_shift = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex')
                         if all_same(self.energy_shift_modulation_functions) and self.energy_shift_modulation_functions[0] is not None:
                             H0_shift += np.sum(H0_shifts, axis=0).multiply(self.energy_shift_modulation_functions[0](t))
                         else:
-                            for ham, mod in zip(H0_shifts, self.energy_shift_modulation_functions):
+                            for ham, mod in zip(H0_shifts, self.energy_shift_modulation_functions):    
                                 if mod is None:
                                     H0_shift += ham
                                 else:
@@ -187,45 +181,19 @@ class Hamiltonian(CompositeOperator):
             else:
                 def _hamiltonian_function(t: float):
                     if not all_none(self.coupling_modulation_functions):
-                if self.all_mods_are_none:
-                    Hint = np.sum(Hints, axis=0)
-                    # Only hermitianize if not diagonal hermitian
-                    if not is_diagonal_hermitian(Hint.toarray()):
-                        Hint += Hint.conj().transpose()
-                    def _hamiltonian_function(t: float):
-                        return H0 + Hint
-                else:
-                    def _hamiltonian_function(t: float):
-                        Hint = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex')
-                        for ham, mod in zip(Hints, self.modulation_functions):
-                            Hint += ham.multiply(mod(t))
-                        # Only hermitianize if not diagonal hermitian
-                        if not is_diagonal_hermitian(Hint.toarray()):
-                            Hint += Hint.conj().transpose()
-                        return H0 + Hint
-            else:
-                if self.all_mods_are_none:
-                    Hint = np.sum(Hints, axis=0)
-                    # Only hermitianize if not diagonal hermitian
-                    if not is_diagonal_hermitian(Hint):
-                        Hint += Hint.conj().T
-                    def _hamiltonian_function(t: float):
-                        return H0 + Hint
-                else:
-                    def _hamiltonian_function(t: float):
                         Hint = np.zeros((self.size, self.size), dtype='complex')
                         if all_same(self.coupling_modulation_functions) and self.coupling_modulation_functions[0] is not None:
                             Hint += np.sum(Hints, axis=0) * self.coupling_modulation_functions[0](t)
                         else:
                             for Ham, mod in zip(Hints, self.coupling_modulation_functions):
                                 if mod is None:
-                                    Hint += Ham
+                                    Hint += Ham 
                                 else:
                                     Hint += Ham * mod(t)
                     else:
-                        Hint = np.sum(Hints, axis=0);
-                    Hint += Hint.conj().T
-
+                        Hint = np.sum(Hints, axis=0); 
+                    Hint += Hint.conj().T 
+                            
                     if not all_none(self.energy_shift_modulation_functions):
                         H0_shift = np.zeros((self.size, self.size), dtype='complex')
                         if all_same(self.energy_shift_modulation_functions) and self.energy_shift_modulation_functions[0] is not None:
@@ -240,17 +208,11 @@ class Hamiltonian(CompositeOperator):
                         H0_shift = np.sum(H0_shifts, axis=0)
 
                     return H0 + H0_shift + Hint
-                        for Ham, mod in zip(Hints, self.modulation_functions):
-                            Hint += Ham * mod(t)
-                        # Only hermitianize if not diagonal hermitian
-                        if not is_diagonal_hermitian(Hint):
-                            Hint += Hint.conj().T
-                        return H0 + Hint
         else:
             if self.sparse:
                 def _hamiltonian_function(t: float):
-                    H0_shift = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex')
-                    Hint = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex')
+                    H0_shift = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex') 
+                    Hint = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex') 
                     for Ham, Rate, mod in zip(Hints, Rates, self.coupling_modulation_functions):
                         phase_factor_minus_one = Rate.multiply(-1j*t).expm1() # equivalent to exp(-1j * Rate * t) - 1
                         Htemp = Ham + Ham.multiply(phase_factor_minus_one)
@@ -258,19 +220,6 @@ class Hamiltonian(CompositeOperator):
                             Hint += Htemp.multiply(mod(t))
                         else:
                             Hint += Htemp
-                        if not is_diagonal_hermitian(Hint.toarray()):
-                            Hint += Hint.conj().transpose()
-                        return H0 + Hint
-                else:
-                    def _hamiltonian_function(t: float):
-                        Hint = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex')
-                        for Ham, Rate, mod in zip(Hints, Rates, self.modulation_functions):
-                            phase_factor_minus_one = Rate.multiply(-1j*t).expm1() # equivalent to exp(-1j * Rate * t) - 1
-                            Htemp = Ham + Ham.multiply(phase_factor_minus_one)
-                            Hint += Htemp.multiply(mod(t))
-                        if not is_diagonal_hermitian(Hint.toarray()):
-                            Hint += Hint.conj().transpose()
-                        return H0 + Hint
 
                     Hint += Hint.conj().transpose()
 
@@ -290,9 +239,6 @@ class Hamiltonian(CompositeOperator):
                             Hint = Ham * np.exp(-1j * Rate * t)
                             Hint += Hint.conj().T
                             return H0 + np.sum(H0_shifts, axis=0) + Hint
-                            if not is_diagonal_hermitian(Hint):
-                                Hint += Hint.conj().T
-                            return H0 + Hint
                     else:
                         def _hamiltonian_function(t: float):
                             Hint = np.zeros((self.size, self.size), dtype='complex')
@@ -316,7 +262,7 @@ class Hamiltonian(CompositeOperator):
                             H0_shift = np.zeros_like(Hint)
                             if all_same(self.energy_shift_modulation_functions):
                                 H0_shift = np.sum(H0_shifts, axis=0)
-                                if self.energy_shift_modulation_functions and self.energy_shift_modulation_functions[0] is not None:
+                                if self.energy_shift_modulation_functions and self.energy_shift_modulation_functions[0] is not None: 
                                     H0_shift *= self.energy_shift_modulation_functions[0](t)
                             else:
                                 for Ham, mod in zip(H0_shifts, self.energy_shift_modulation_functions):
@@ -324,28 +270,13 @@ class Hamiltonian(CompositeOperator):
                                         H0_shift += Ham * mod(t)
                                     else:
                                         H0_shift += Ham
-
+                            
                             return H0 + H0_shift + Hint
-                            if not is_diagonal_hermitian(Hint):
-                                Hint += Hint.conj().T
-                            return H0 + Hint
-                else: # TODO: Check if each modulation is the same function, and sum ints outside of H(t).
-                    if self.all_ints_are_isolated and self.all_mods_are_equal:
-                        Ham = np.sum(Hints, axis=0)
-                        Rate = np.sum(Rates, axis=0)
-                        def _hamiltonian_function(t: float):
-                            Hint = Ham * np.exp(-1j * Rate * t) * self.modulation_functions[0](t)
-                            if not is_diagonal_hermitian(Hint):
-                                Hint += Hint.conj().T
-                            return H0 + Hint
                     else:
                         def _hamiltonian_function(t: float):
                             Hint = np.zeros((self.size, self.size), dtype='complex')
                             for Ham, Rate, mod in zip(Hints, Rates, self.coupling_modulation_functions):
                                 Hint += Ham * np.exp(-1j * Rate * t) * mod(t)
-                            if not is_diagonal_hermitian(Hint):
-                                Hint += Hint.conj().T
-                            return H0 + Hint
                             Hint += Hint.conj().T
 
                             H0_shift = np.zeros_like(Hint)
@@ -362,8 +293,10 @@ class Hamiltonian(CompositeOperator):
     def _build_stochastic_component_data(self, n_noise_sources: int) -> StochasticHamiltonianComponentData:
         """Extract dense component arrays describing deterministic and stochastic couplings.
         Enables fast, vectorized evaluation of the Hamiltonian during stochastic propagation"""
-        sparse_H0, sparse_Hints, sparse_Rates = self.H0_Hints_and_Rates
+        sparse_H0, sparse_H0_shifts, sparse_Hints, sparse_Rates = self.H0_H0Shifts_Hints_and_Rates
         H0_dense = np.array(as_dense_matrix(sparse_H0, warn=False), copy=True).astype(np.complex128, copy=False)
+        for sparse_shift in sparse_H0_shifts:
+            H0_dense += np.array(as_dense_matrix(sparse_shift, warn=False), copy=False).astype(np.complex128, copy=False)
 
         det_hints: list[np.ndarray] = []
         det_rates: list[np.ndarray] = []
@@ -615,8 +548,6 @@ class Hamiltonian(CompositeOperator):
             ode_solver='stochastic',
             noisy_trajectories=noisy_trajectories,
             base_solver=base_solver,
-            base_solver_kwargs=base_solver_kwargs)
-
             base_solver_kwargs=base_solver_kwargs,
             trajectory_backend=trajectory_backend)
 

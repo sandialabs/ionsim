@@ -75,7 +75,9 @@ class CompositeOperator(ABC):
 
         op_ints = [csr_matrix(([0], ([0], [0])), shape=(self.size, self.size))]
         op_Rates = [csr_matrix(([0], ([0], [0])), shape=(self.size, self.size))]
-        for coupling in operator.couplings: # Ensures loop only reaches off-diagonal elements  
+        # Loop over all oscillating elements: off-diagonal Couplings and diagonal OscillatingEnergyShifts
+        oscillating = operator.oscillating_elements if hasattr(operator, 'oscillating_elements') else operator.couplings
+        for coupling in oscillating:
             assert(np.abs(coupling.strength) >= 0) 
             if np.abs(coupling.strength) < SMALLEST_ENERGY_SCALE: continue
             for row, row_state in enumerate(self.basis.states):

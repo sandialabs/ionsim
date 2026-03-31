@@ -42,8 +42,8 @@ class Coupling(OperatorElement):
 
     def __post_init__(self):
         super().__post_init__()
-        if self.row_state.name == self.column_state.name: # or check equality between states? not currently allowed 
-          raise IonSimError('Coupling must entail different row and column state to represent an off-diagonal element.')
+        if self.row_state.name == self.column_state.name:
+            raise IonSimError('Coupling must entail different row and column states to represent an off-diagonal element.')
 
     @classmethod
     def from_energy_ordered_states(basis, lower_state: EnergyEigenstate, upper_state: EnergyEigenstate,
@@ -72,6 +72,18 @@ class EnergyShift(OperatorElement):
         # Checks that user is using this functionality for diagonal elements only  
         if self.row_state.name != self.column_state.name: # or check equality between state objects? not currently allowed 
           raise IonSimError('Energy Shift must use same row and column state to represent a diagonal element.')
+
+
+@dataclass(frozen=True, eq=False)
+class OscillatingEnergyShift(OperatorElement):
+    """A diagonal element with a time-dependent oscillation (e.g. an AC Stark shift).
+       Represents a term of the form strength * exp(-i * oscillation_rate * t) acting on a single state."""
+    oscillation_rate: float
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.row_state.name != self.column_state.name:
+            raise IonSimError('OscillatingEnergyShift must use the same row and column state (diagonal element).')
 
 
 # ---- Classes for operators ----  
@@ -133,10 +145,18 @@ class Operator(ABC):
         return couplings
 
     def _check_for_one_oscillation_rate(self):
-        """ A unique off-diagonal operator is defind with one oscillation rate.""" 
-        if all([coupling.oscillation_rate == self.couplings[0].oscillation_rate for coupling in self.couplings]):
+        """All oscillating elements (Coupling and OscillatingEnergyShift) must share one oscillation rate.
+
+        Signs are ignored: upper-triangle Couplings carry −omega by convention (Hermitian conjugate
+        pairs), while diagonal OscillatingEnergyShifts carry +omega.  The physical constraint is
+        that all elements oscillate at the same *magnitude* of frequency.
+        """
+        oscillating = [el for el in self.elements if hasattr(el, 'oscillation_rate')]
+        if not oscillating:
             return
-        raise IonSimError('All couplings in the operator must have the same oscillation rate.')
+        if all(abs(el.oscillation_rate) == abs(oscillating[0].oscillation_rate) for el in oscillating):
+            return
+        raise IonSimError('All elements in the operator must have the same oscillation rate.')
 
     @staticmethod
     def _energy_shifts_from_vector(basis: StandardBasis, diagonal_elements: Vector): 
@@ -213,54 +233,78 @@ class EnergyShiftOperator(Operator):
 @dataclass(frozen=True, eq=False)   
 class CouplingOperator(Operator):
     """An off-diagonal quantum operator in a basis of energy eigenstates."""
+    stochastic_info: dict | None = None
 
     def __post_init__(self):
         super().__post_init__()
         self._check_for_one_oscillation_rate() # should use inherited method 
 
-    def _check_all_elements_are_couplings(self):
-        # Check all elements are couplings
-        if all([isinstance(element, Coupling) for element in self.elements]):  
-            pass 
-        raise IonSimError('All elements of CouplingOperator must be Couplings.')
-
     @property
     def couplings(self):
-        return self.elements 
+        """Off-diagonal Coupling elements only."""
+        return [el for el in self.elements if isinstance(el, Coupling)]
+
+    @property
+    def oscillating_energy_shifts(self):
+        """Diagonal OscillatingEnergyShift elements only."""
+        return [el for el in self.elements if isinstance(el, OscillatingEnergyShift)]
+
+    @property
+    def oscillating_elements(self):
+        """All oscillating elements: both off-diagonal Couplings and diagonal OscillatingEnergyShifts."""
+        return [el for el in self.elements if isinstance(el, (Coupling, OscillatingEnergyShift))]
 
     @classmethod
     def from_matrix(cls, basis: StandardBasis, static_matrix: Matrix, oscillation_rate: float,
-            current_dofs: list[DegreeOfFreedom] | None = None, modulation_function: list[Callable] | None = None):
+            current_dofs: list[DegreeOfFreedom] | None = None, modulation_function: list[Callable] | None = None,
+            stochastic_info: dict | None = None):
         """Build a coupling operator from the matrix representation of an operator acting on some DoFs in the basis."""
-        coupling_matrix, rate = cls._create_sparse_static_coupling_matrix_and_rate_matrix(static_matrix, oscillation_rate)
+        operator = csr_matrix(static_matrix)
+        nzrs, nzcs = operator.nonzero()
+        rate = csr_matrix(([oscillation_rate for _ in nzrs], (nzrs, nzcs)), shape=operator.shape)
         if current_dofs is not None:
-            coupling_matrix, rate = basis.enlarge_matrix(coupling_matrix, current_dofs), basis.enlarge_matrix(rate, current_dofs)
-
-        # Retrieve unique coupling matrix elements
-        couplings = cls._couplings_from_coupling_matrix(basis, coupling_matrix, rate)
-        return cls(basis, couplings, modulation_function)
+            operator, rate = basis.enlarge_matrix(operator, current_dofs), basis.enlarge_matrix(rate, current_dofs)
+        rows, columns = operator.nonzero()
+        indices_list = [(row, column) for row, column in zip(rows, columns)]
+        elements = []
+        included_indices = []
+        for row, column in indices_list:
+            row_state, column_state = basis.states[row], basis.states[column]
+            if row > column and (column, row) not in included_indices:
+                elements.append(Coupling(row_state=row_state, column_state=column_state,
+                                         strength=operator[row, column], oscillation_rate=rate[row, column]))
+                included_indices.append((row, column))
+            elif column > row and (column, row) not in included_indices:
+                elements.append(Coupling(row_state=column_state, column_state=row_state,
+                                         strength=operator[row, column], oscillation_rate=-1*rate[row, column]))
+                included_indices.append((row, column))
+            elif column == row and (row, column) not in included_indices:
+                # Diagonal oscillating element → OscillatingEnergyShift, not Coupling
+                elements.append(OscillatingEnergyShift(row_state=row_state, column_state=column_state,
+                                                        strength=operator[row, column], oscillation_rate=rate[row, column]))
+                included_indices.append((row, column))
+        return cls(basis, elements, modulation_function, stochastic_info)
 
     @property
     def rate_matrix(self):
-        """The sparse-matrix representation of the oscillation rate matrix."""
+        """The sparse-matrix representation of the oscillation rate matrix (all oscillating elements)."""
         size = len(self.basis.vectors)
         matrices = []
-        for coupling in self.couplings:
-            row = self.basis.states.index(coupling.row_state)
-            column = self.basis.states.index(coupling.column_state)
-            matrices.append(csr_matrix(([coupling.oscillation_rate], ([row], [column])), shape=(size, size)))
+        for el in self.elements:
+            row = self.basis.states.index(el.row_state)
+            column = self.basis.states.index(el.column_state)
+            matrices.append(csr_matrix(([el.oscillation_rate], ([row], [column])), shape=(size, size)))
         return np.sum(matrices)
 
     @property
     def static_matrix(self):
-        """The sparse-matrix representation of the coupling operator with its time-dependent phase factor set equal to one."""
+        """The sparse-matrix representation of the operator with time-dependent phase factors set equal to one."""
         size = len(self.basis.vectors)
         matrices = []
-        # This loop works correctly if the coupling matrix is filled with unique coupling elements. 
-        for coupling in self.couplings:
-            row = self.basis.states.index(coupling.row_state)
-            column = self.basis.states.index(coupling.column_state)
-            matrices.append(csr_matrix(([coupling.strength], ([row], [column])), shape=(size, size)))
+        for el in self.elements:
+            row = self.basis.states.index(el.row_state)
+            column = self.basis.states.index(el.column_state)
+            matrices.append(csr_matrix(([el.strength], ([row], [column])), shape=(size, size)))
         return np.sum(matrices)
 
 
