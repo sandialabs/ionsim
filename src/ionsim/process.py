@@ -203,7 +203,6 @@ class Gate(Process):
             # TODO: consider if this function should just accept a reduced basis...? ==> ECM 03/2026: Yes I think so. 
 
 
-        # TODO: Consolidate tracing out and projection methods for building a process matrix from hamiltonian in an enlarged hilbert space
         if projection_info is None:
             if dofs_to_trace_out is None:
                 reduced_basis = basis
@@ -212,52 +211,32 @@ class Gate(Process):
         else:
             unwanted_state_indices = [basis.states.index(state) for state in projection_info['states to project out']] 
             computational_indices = [i for i in range(len(basis.states)) if i not in unwanted_state_indices] 
-            #print("Comp indices" )
-            #print(computational_indices)
             if dofs_to_trace_out is None:
                 reduced_basis = projection_info['new basis'] 
                 #reduced_basis = basis 
             else:
                 raise IonSimError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
 
-
         # Use general t-dependent, non-commutating Lindbladian method unless user specifies otherwise 
         if lindbladian_time_independent:
-            ic(f"Lindbladian is time-independent. Simplifying computation of process matrix via direct matrix exponentiation.")
-
-            # TODO: If the Lindbladian commutes with itself at later/other times, we can do a simple time integral of the Lindbladian. 
-            #   Can do this t-integration with trapz or cumtrapz method. 
-
+            print(f"Lindbladian is time-independent. Simplifying computation of process matrix via direct matrix exponentiation.")
             # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
-            # If Hamiltonian or Dissipator is time-dependent and doesn't commute at different times, this will not be accurate.  
-            #process_matrix = scipy.linalg.expm(-lindbladian.matrix_function(0) * duration)
             process_matrix = scipy.linalg.expm(lindbladian.matrix_function(0) * duration)
-            # TODO: Convert this into a basis method: basis.project_superoperator(desired_state_indices) --> projected superoperator  
-            if projection_info:
-                # TODO: Verify that this is correct and we don't need to transpose anything 
-                # We know the computational indices for d x d matrix, but what about d^2 x d^2 ?
-                superoperator_indices = [i + j*len(basis.states)  # column-wise superoperator convention
-                    for j in computational_indices 
-                    for i in computational_indices] 
-                process_matrix = process_matrix[np.ix_(superoperator_indices, superoperator_indices)]
-        elif lindbladian_commutes_at_later_times:
-            ic(f"Lindbladian commutes at different times. Integrating Lindbladian directly in time.") 
-            t_integration = np.linspace(0., duration, 3200)  
 
+            if projection_info:
+                process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
+
+        elif lindbladian_commutes_at_later_times:
+            print(f"Lindbladian commutes at different times. Integrating Lindbladian directly in time.") 
             # Integrate each element of the lindbladian matrix forward in time from t = 0 to t = duration            
             L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
 
             process_matrix = scipy.linalg.expm(L_integral)
             if projection_info:
-                # TODO: Verify that this is correct and we don't need to transpose anything 
-                # We know the computational indices for d x d matrix, but what about d^2 x d^2 ?
-                superoperator_indices = [i + j*len(basis.states)  # column-wise superoperator convention
-                    for j in computational_indices 
-                    for i in computational_indices] 
-                process_matrix = process_matrix[np.ix_(superoperator_indices, superoperator_indices)]
+                process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
 
         else:
-            ic(f"Default method for generating process matrix from generic time-dependenet, non-commutating Lindbladian.")
+            print(f"Default method for generating process matrix from generic time-dependenet, non-commutating Lindbladian.")
             # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
             # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
             # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 

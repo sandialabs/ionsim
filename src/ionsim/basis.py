@@ -88,6 +88,16 @@ class Basis(ABC):
         """Compute the projector matrix onto a basis vector."""
         return self.compute_density_matrix_from_wavefunction(basis_vector)
 
+    def project_superoperator(self, superoperator: Matrix, indices_to_project_into: list[int]) -> Vector: 
+        """Project a superoperator to a lower-dimensional subspace"""
+        # TODO: Verify that this is correct and we don't need to transpose anything 
+        # We know the computational indices for d x d matrix, but what about d^2 x d^2 ?
+        superoperator_indices = [i + j*len(self.states)  # column-wise superoperator convention
+            for j in indices_to_project_into 
+            for i in indices_to_project_into] 
+        return superoperator[np.ix_(superoperator_indices, superoperator_indices)]
+
+
     def compute_superoperator_from_unitary_operator(self, unitary_operator: Matrix):
         """Compute a superoperator from a unitary operator in the column-stacked representation."""
         #TODO: should this function reflect the choice of basis?
