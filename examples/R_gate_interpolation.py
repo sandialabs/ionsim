@@ -46,23 +46,11 @@ omega = (
     + detuning
 )
 
-# TODO: fix for all theta and tau
-# if modulate_amplitude:
-#     def amp_mod(t):
-#         width = 33.1e-6
-#         gaussian = np.exp(-(t - tau/2)**2 / (2 * width**2))
-#         return np.sqrt(gaussian)
-# else:
-#     amp_mod = None
-
 amp_mod = None
 
 def main():
     import time
     from matplotlib import pyplot as plt
-
-    # dphis = np.linspace(-np.pi, np.pi, 21)
-    # phi_noise = sm.Noise.from_named_pdf('dphi', 'gaussian', {'standard_deviation': np.pi/10}, dphis)
 
     def simulated_R(phi, theta, domega):
         """ Builds R(phi, theta) Hamiltonian for a frequency change omega + domega, returns gate """ 
@@ -87,7 +75,6 @@ def main():
         return sm.Gate.from_process_matrix_function(
                 basis, process_matrix_function, {'domega': domega}, omega_noise,
             )
-                #basis, process_matrix_function, {'domega': domega}, spins, omega_noise,
 
     def ideal_R(phi, theta):
         return sm.Gate.from_unitary(basis, sm.Unitary.R(phi, theta), target_spins)
@@ -148,9 +135,6 @@ def main():
         phi = 0
         theta = np.pi/2
 
-        # dphi = 0
-        # half_box_width = np.pi/10
-
         domega = 0
         half_box_width = 50 * 2*np.pi*1e3
 
@@ -196,6 +180,10 @@ def main():
         # 2 Build a gate interpolating function (this uses cubic splines): returns Gate evaluated at grid / off-grid parameter values  
         """ Ex] interpolated_R(x = 0.5, y = 2.) returns an R Gate object at domega = 0.5, half_box_width 2. """ 
         interpolated_R = R_gate_interpolant.interpolated_gate_function # returns a Gate object at a grid point 
+
+        # Test write to a file using gate interpolant class 
+        filename = 'R_gate_interpolant.hdf5'
+        R_gate_interpolant.write_to_file(filename)
 
 
         dxs2 = np.linspace(dxs[0], dxs[-1], (len(dxs)-1)*2 + 1)

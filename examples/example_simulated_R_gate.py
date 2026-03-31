@@ -209,12 +209,10 @@ def main():
             return gate.process_matrix.dot(chi_inv) - np.eye(size)
 
         gate_residual_data = R_gate_interpolant.compute_functional_of_gates(relative_err_gate_functional) 
-        #print(gate_residual_data.shape)
 
         ic(gate_residual_data)
 
         # Set up matrix-valued residuals as a function of the parameter grid  
-        # TODO: write a reshaping method (as shown below) in the interpolant class 
         F_data = np.empty((size, size, *lens), dtype='complex')
         for i in range(size):
             for j in range(size):
@@ -242,16 +240,13 @@ def main():
 
         size = len(basis.states)**2
 
-        # This time open the data file read-only
-        with h5py.File(data_filename, 'r') as datafile:
-            dxs, _ = sm.io.read_matrix(datafile, 'dx')
-            dys, _ = sm.io.read_matrix(datafile, 'dy')
-            F_data, _ = sm.io.read_matrix(datafile, 'relative_error')
+        # Read results from file  
+        results_dictionary = sm.io.read_results_from_file(data_filename)        
+        dxs = results_dictionary['dx']
+        dxy = results_dictionary['dy']
+        F_data = results_dictionary['relative_error']
 
-        # TODO: Make a constructor for constructing from data like this. Maybe just direct construction from class arguments? 
         # F_data <==> Gate-valued (process matrix) residuals. For every x,y gate parameter, there's a d^2 x d^2 process matrix .
-        # TODO: combine the following 2 steps into 1 step? 
-        # TODO: include opportunities for spline arguments  
         F_spline_reals, F_spline_imags = R_gate_interpolant.construct_spline_for_gate_derived_matrix_property(F_data, complex_data=True)
 
         # Using the interpolants, build a function to return F(x,y) for arbitary x,y pairs

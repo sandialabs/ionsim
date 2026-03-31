@@ -15,6 +15,18 @@ def write_results_to_file(data_filename: str, results: dict, attributes: dict=No
             write_matrix(datafile, results[key], key, attributes)
 
     return 0 # successful write 
+
+
+def read_results_from_file(data_filename: str):
+    """ Read a set of results from a data file """
+    results = {}
+    with h5py.File(data_filename, 'r') as datafile: 
+        # loop over all attributes in the file
+        attributes = list(datafile.keys())
+        for attribute in attributes:
+            results[attribute], _ = read_matrix(datafile, attribute) 
+
+    return results 
                 
 
 def write_matrix(datafile: h5py.File, matrix: AnyMatrix, pathname: str, attributes: dict = None):
@@ -33,4 +45,3 @@ def read_matrix(datafile: h5py.File, pathname: str):
     dataset.read_direct(arr)
     attributes = {name: value for name, value in dataset.attrs.items()}
     return arr, attributes
-

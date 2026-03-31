@@ -78,9 +78,8 @@ class GateInterpolant():
                 gate_data[i,j] = np.array([gd[i,j] for gd in self.computed_gates_process_matrices]).reshape(*self.grid_lengths)
         return gate_data
 
-    # TODO: add from_lindbladian_function class method? 
-    # usage maybe like GateInterpolant.build_interpolant.from_lindbladian( , )
 
+    # TODO: add from_lindbladian_function class method? 
     @classmethod
     def from_gate_function(cls, gate_function: Callable, grid_axes: dict[str, NDArray], gate_name: str | None=None):
         """ Build gate interpolant from a gate function, which returns a gate from grid parameter values. """ 
@@ -98,15 +97,10 @@ class GateInterpolant():
         return cls(grid_axes, gate_name, grid, gate_basis, gates_on_grid)
 
 
-    #def from_process_matrix_function(cls, process_matrix_function: Callable, grid_axes: dict[str, NDArray], basis: StandardBasis, noise_function: Callable | None): 
-    #def from_process_matrix_function(cls, process_matrix_function: Callable, grid_axes: dict[str, NDArray], basis: StandardBasis, noise_functions: dict[str,Callable] | None): 
     @classmethod
     def from_process_matrix_function(cls, process_matrix_function: Callable, grid_axes: dict[str, NDArray], gate_basis: StandardBasis, gate_name: str | None=None): 
         """ Build gate interpolant from a process matrix function. """ 
         # Build a grid and loop over every parameter value and build the gate from the process matrix function  
-        # TODO: Can we nest this with the from_gate_function 
-
-        # TODO: Handle case where there is noise. A Gate is built for some fixed realization of the noise.  
         grid = cls.build_grid(grid_axes)
 
         gates_on_grid = []
@@ -116,19 +110,6 @@ class GateInterpolant():
 
         return cls(grid_axes, gate_name, grid, gate_basis, gates_on_grid)
 
-    #def from_gate(cls, gate: Gate, grid_axes: dict[str, NDArray], basis: StandardBasis, noises: list[Noise]): 
- #    @classmethod
- #    def from_gate(cls, gate: Gate, grid_axes: dict[str, NDArray], basis: StandardBasis, noise: Noise): 
- #        """ Build gate interpolant from a gate class. """ 
- #        # TODO: Currently assumes at most 1 noisy parameter. Extend?  
- #        # Build a grid and loop over every parameter value and build the gate from the process matrix function  
- #        grid = cls.build_grid(grid_axes)
- #        gates_on_grid = []
- #        for values in grid:
- #            coordinate = dict(zip(grid_axes.keys(), values)) 
- #            gates_on_grid.append(Gate.from_process_matrix_function(basis, process_matrix_function, coordinate, noise)) 
- #        return cls(grid_axes, grid, gates_on_grid)
-
     @classmethod
     def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, gate_duration: float, grid_axes: dict[str, NDArray], gate_name: str | None=None):
         """ Build gate interpolant from Schrodinger evolution of a Hamiltonian. 
@@ -136,6 +117,7 @@ class GateInterpolant():
             - requires a fixed duration to set the hamiltonian's time evolution 
             - requires a dictionary of parameters to specify the grid
         """ 
+        # TODO: Test/verify this function. 
         # Build a grid and loop over every parameter value and build the gate from the hamiltonian
         grid = cls.build_grid(grid_axes)
 
@@ -160,10 +142,30 @@ class GateInterpolant():
         # TODO: Should we return a list or a np.array? 
         return functional_output
 
-    # TODO: Write a method to write key data to a file. Be sure to store what is needed to re-instance the class. 
-    #def write_to_file()
-        #results_dictionary = {'dx' : dxs, 'dy': dys, 'relative_error': F_data}
-        #R_gate_interpolant.write_to_file(data_filename, results_dictionary, attributes)
+    def write_to_file(self, filename: str, attributes: dict=None):
+        """ Function to write Gate Interpolant class data to an hd5f file """
+        # TODO: Figure out how to read/write basis information 
+        results_dict = self.grid_axes 
+        if self.gate_name:
+            results_dict[self.gate_name + 'gate_data'] = self.computed_gate_data_as_array
+        else:
+            results_dict['gate_data'] = self.computed_gate_data_as_array
+        io.write_results_to_file(filename, results_dict, attributes)
+        return 0
+
+
+#         # TODO: Method for reading and constructing class from stored gate data  
+#     @classmethod
+#     def read_from_file(self, filename: str, attributes: dict=None):
+#         """ Function to read Gate Interpolant class data from an hd5f file and instance the class """
+#         io.read_matrix(filename
+#         results_dict = self.grid_axes 
+#         if self.gate_name:
+#             results_dict[self.gate_name + 'gate_data'] = self.computed_gate_data_as_array
+#         else:
+#             results_dict['gate_data'] = self.computed_gate_data_as_array
+#         io.write_results_to_file(filename, results_dict, attributes)
+#         return 0
 
 
     def construct_spline_for_gate_derived_matrix_property(self, gate_derived_property: AnyMatrix, complex_data: bool=True):
