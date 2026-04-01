@@ -178,13 +178,11 @@ def main():
         R_gate_interpolant = sm.GateInterpolant.from_gate_function(R_function, grid_axes, gate_name) 
 
         # 2 Build a gate interpolating function (this uses cubic splines): returns Gate evaluated at grid / off-grid parameter values  
-        """ Ex] interpolated_R(x = 0.5, y = 2.) returns an R Gate object at domega = 0.5, half_box_width 2. """ 
+        """ Ex] interpolated_R(x = 0.5 * 2π * 1E3, y = 2.) returns an R Gate object at domega = 0.5 * 2π * 1E3, half_box_width 2. """ 
         interpolated_R = R_gate_interpolant.interpolated_gate_function # returns a Gate object at a grid point 
 
-        # Test write to a file using gate interpolant class 
-        filename = 'R_gate_interpolant.hdf5'
-        R_gate_interpolant.write_to_file(filename)
-
+        # Optional: Write interpolant to a file using gate interpolant class 
+        R_gate_interpolant.write_to_file(data_filename)
 
         dxs2 = np.linspace(dxs[0], dxs[-1], (len(dxs)-1)*2 + 1)
         dy = dys[-1]
@@ -208,7 +206,6 @@ def main():
         plt.plot(dxs * dx_scale, 1-np.array(fidelities), 'o', label='simulation: grid point')
         plt.plot(dxs2 * dx_scale, 1-np.array(approx_fids), '-', label='interpolation')
         plt.plot(dxs2 * dx_scale, 1-np.array(fidelities2), '.', label='simulation: off grid')
-        # plt.xlabel(f'Error Parameter: {dx_name}')
         plt.xlabel(f'Frequency Error (kHz)')
         plt.ylabel('Infidelity')
         plt.legend()
@@ -235,7 +232,6 @@ def main():
         plt.plot(dys * dy_scale, 1-np.array(fidelities), 'o', label='simulation: grid point')
         plt.plot(dys2 * dy_scale, 1-np.array(approx_fids), '-', label='interpolation')
         plt.plot(dys2 * dy_scale, 1-np.array(fidelities2), '.', label='simulation: off grid')
-        # plt.xlabel(f'Error Parameter: {dy_name}')
         plt.xlabel(f'Half-Width of Boxed White Noise (kHz)')
         plt.ylabel('Infidelity')
         plt.legend()

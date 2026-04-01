@@ -1,5 +1,4 @@
 import numpy as np
-#from dataclasses import dataclass, field
 from typing import Callable
 from dataclasses import dataclass
 from csaps import NdGridCubicSmoothingSpline
@@ -7,19 +6,14 @@ from itertools import product
 import inspect 
 from functools import cached_property
 
-from ionsim.custom_math import trapz_for_matrix
 from ionsim.custom_types import Vector, Matrix
 from ionsim.noise import Noise
 from ionsim.basis import Basis, StandardBasis
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.state import State
+import ionsim.io as io 
 from ionsim.process import Gate 
 
-
-# Class to set up a grid of gates and then interpolate using the grid. 
-
-#class GateInterpolant(Gate): # May not need to inherit from Gate 
 @dataclass(frozen=True, eq=False) 
 class GateInterpolant(): 
     """ A class for building a grid of gates to do gate interpolation and compute interpolated gates. 
@@ -32,7 +26,7 @@ class GateInterpolant():
     grid_axes: dict[str, list[Vector]] 
     gate_name: str | None
     grid: list[tuple] #| NDArray 
-    basis: StandardBasis # important to understanding process matrix element meanings 
+    basis: StandardBasis | None # gives meaning to process matrix element ordering  
     computed_gates: list[Gate] # Representing non-interpolated gates, computed on the parameter grid  
 
     @property
@@ -110,6 +104,7 @@ class GateInterpolant():
 
         return cls(grid_axes, gate_name, grid, gate_basis, gates_on_grid)
 
+
     @classmethod
     def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, gate_duration: float, grid_axes: dict[str, NDArray], gate_name: str | None=None):
         """ Build gate interpolant from Schrodinger evolution of a Hamiltonian. 
@@ -131,42 +126,67 @@ class GateInterpolant():
         return cls(grid_axes, gate_name, grid, basis, gates_on_grid)
     
 
-    # Helper methods for computing (process matrix)-valued properties.  
     def compute_functional_of_gates(self, gate_property_functional: Callable) -> list:
-        """ Computes a functional of the gate at every gate in the grid, corresponding to each element of the returned list. """ 
-        # Ex] Gate_residuals = Gate - Gate_ideal or Gate/Gate_ideal - np.eye(gate_size) 
-        # TODO: Decide whether to loop over ALL gates or just the computed / interpolated gates 
+        """ Computes a functional of the gate (e.g. gate residual) at every gate in the grid, corresponding to each element of the returned list. """ 
         functional_output = []
         for gate in self.computed_gates: 
             functional_output.append(gate_property_functional(gate))
-        # TODO: Should we return a list or a np.array? 
         return functional_output
 
     def write_to_file(self, filename: str, attributes: dict=None):
         """ Function to write Gate Interpolant class data to an hd5f file """
         # TODO: Figure out how to read/write basis information 
-        results_dict = self.grid_axes 
+        results_dict = {}
+        results_dict.update(self.grid_axes) 
         if self.gate_name:
-            results_dict[self.gate_name + 'gate_data'] = self.computed_gate_data_as_array
+            results_dict[self.gate_name + '_gate_data'] = self.computed_gate_data_as_array
         else:
             results_dict['gate_data'] = self.computed_gate_data_as_array
         io.write_results_to_file(filename, results_dict, attributes)
         return 0
 
+    @classmethod
+    def read_from_file(cls, filename: str): 
+        # TODO: In progress, needs to resolve basis read/write issue: 
+        # TODO: Is it possible to read/write Basis objects? This functionality is not yet in IonSim. his class defaults to building without a basis  
+        """ Function to read Gate Interpolant class data from an hd5f file and instance the class """
+        results, attr_from_file = io.read_results_from_file(filename)
 
-#         # TODO: Method for reading and constructing class from stored gate data  
-#     @classmethod
-#     def read_from_file(self, filename: str, attributes: dict=None):
-#         """ Function to read Gate Interpolant class data from an hd5f file and instance the class """
-#         io.read_matrix(filename
-#         results_dict = self.grid_axes 
-#         if self.gate_name:
-#             results_dict[self.gate_name + 'gate_data'] = self.computed_gate_data_as_array
-#         else:
-#             results_dict['gate_data'] = self.computed_gate_data_as_array
-#         io.write_results_to_file(filename, results_dict, attributes)
-#         return 0
+        _grid_axes = {}
+        # Parse grid axes from reading 1D arrays; parse gate data from NDArray
+        for key, value in results:
+            if not isinstance(value, Vector) or not isinstance(value, Matrix):
+                raise ValueError("Data from file should contain a set of 1D arrays for the grid axes and one NDArray for the gate data.") 
+            if isinstance(value, Vector) and len(value.shape) == 1:
+                _grid_axes[key] = results[key]
 
+        gate_attribute = [x for x in results.keys() if x not in _grid_axes.keys()]
+        if not gate_attribute:
+            raise IonSimError("No gate NDArray data found in file.")
+        elif len(gate_attribute) > 1:
+            raise IonSimError("File should contain 1 gate data of shape (d^2, d^2, *grid_lengths).")
+            
+        try:
+            gate_name = attr_from_file[results.keys()[0]]['gate_name']
+        except:
+            gate_name = None
+
+        # Build grid and extract corresponding gates on the grid  
+        grid = cls.build_grid(_grid_axes) 
+        gates_on_grid = []
+        gate_data = results[gate_attribute[0]]
+        for values in grid:
+            # Find where the parameter values in the grid 
+            #parameter_coord_indices = grid.index(values)
+            parameter_coord_indices = [] 
+            #for axis_index, val in enumerate(values):
+            for axis, val in zip(_grid_axes.keys(), values):
+                parameter_coord_indices.append( np.where(_grid_axes[axis] == val )[0][0] )
+            assert len(parameter_coord_indices) == len(_grid_axes.keys()) 
+            gates_on_grid.append( gate_data[:, :, parameter_coord_indices] ) 
+
+        results = self.grid_axes 
+        return cls(_grid_axes, gate_name, grid, None, gates_on_grid )
 
     def construct_spline_for_gate_derived_matrix_property(self, gate_derived_property: AnyMatrix, complex_data: bool=True):
         """ Constructs interpolant spline for derived property that lives on the domain of the parameter grid.
@@ -215,6 +235,8 @@ class GateInterpolant():
         """ Returns a gate's process matrix interpolating function of the grid parameters, e.g. G(x,y) for x,y grid parameters""" 
         # TODO: determine real vs. complex data bool input 
         # Aren't gate process matrices supposed to be real in HS space? 
+
+        # Extract gate spline information, then build interpolant function from the splines 
         gate_spline_reals, gate_spline_imags = self.construct_spline_for_gate(complex_data=True)
         return self.interpolant_function_from_splines([gate_spline_reals, gate_spline_imags], 'process matrix')
         
@@ -245,7 +267,7 @@ class GateInterpolant():
                 missing_parameters = set(self.parameter_list).difference(set(kwargs.keys()))
                 extra_parameters = set(kwargs.keys()).difference(set(self.parameter_list)) 
                 if missing_parameters:
-                    raise ValueError(f"Function keyword arguments are missing the followign parameters: {missing_parameters}")
+                    raise ValueError(f"Function keyword arguments are missing the following parameters: {missing_parameters}")
                 if extra_parameters:
                     raise ValueError(f"Additional parameters specified that are not part of the interpolation parameter list: {extra_parameters}")
 
@@ -287,10 +309,6 @@ class GateInterpolant():
 
         return _interpolating_function
 
-    def interpolated_gate_from_derived_interpolating_function(self, basis, interpolated_gate_from_process_matrix_interpolant):  
-        """ Returns the gate evaluated at a point from a functional of the gate provided by the user.""" 
-        # TODO: test/verify 
-        return Gate(basis, interpolated_gate_from_process_matrix_interpolant) 
 
     def interpolated_gate_from_process_matrix_interpolating_function(self, process_matrix_interpolating_function: Callable, parameter_coordinate: tuple | dict[str, float]):  
         """ Returns the gate evaluated at a grid point off of the grid domain.""" 
@@ -305,9 +323,9 @@ class GateInterpolant():
 
     #@property
     @cached_property
-    def interpolated_gate_function(self):
+    def interpolated_gate_function(self) -> Callable:
         """ Returns a function that returns a Gate object evaluated at grid parameter values. """
-        # Build and return a general, dynamic interpolating function for a Gate object  
+        # Build and return a general interpolating function for a Gate object  
         # Retrieve process matrix interpolating function --> should only compute this once. 
         process_matrix_interpolating_function = self.process_matrix_interpolant_function
         args_str = ", ".join(self.parameter_list)
@@ -347,28 +365,3 @@ class GateInterpolant():
             return gate_output 
 
         return _gate_interpolating_function
-
-
-    def interpolate_gate_functional(self, gate_property_functional: Callable, parameter_coordinate: dict[str, float] | tuple):
-        """ Interpolates a gate property, defined as a functional of the gate for a requested parameter coordiante value """  
-        # e.g. process fidelity is a functional of the gate  
-        coordinate_values = tuple(parameter_coordinate.values())
-
-        return gate_property_functional(parameter_coordinate) 
-
-
-
- #class InterpolatedGate(Gate):
- #
- #
- #    parameter_grids: list[Vector]
- # 
- #    @cachedproperty
- #    def grid(self):
- #        """ Returns the N-dimensional parameter mesh grid """
- #        return np.meshgrid(*parameter_grids, indexing = 'ij')
- #
- #    @classmethod
- #    def from_gate():
- #        """ Build gate interpolant from a gate """ 
-

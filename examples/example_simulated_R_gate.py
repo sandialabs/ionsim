@@ -241,7 +241,7 @@ def main():
         size = len(basis.states)**2
 
         # Read results from file  
-        results_dictionary = sm.io.read_results_from_file(data_filename)        
+        results_dictionary, _ = sm.io.read_results_from_file(data_filename)        
         dxs = results_dictionary['dx']
         dxy = results_dictionary['dy']
         F_data = results_dictionary['relative_error']
@@ -254,11 +254,6 @@ def main():
 
         def interpolated_R(phi, theta, dx, dy):
             return sm.Gate(basis, (F_function(dx, dy) + np.eye(size)).dot(ideal_R(phi, theta).process_matrix))
-
- #        def interpolated_R(phi, theta, dx, dy):
- #            def R_process_matrix_from_error_functional(dx, dy): 
- #                return (F_function(dx, dy) + np.eye(size)).dot(ideal_R(phi, theta).process_matrix) 
- #            return R_gate_interpolant.interpolated_gate_from_process_matrix_interpolant(basis, R_process_matrix_from_error_functional)  
 
         dxs2 = np.linspace(dxs[0], dxs[-1], (len(dxs)-1)*2 + 1)
         dy = dys[-1]
