@@ -231,6 +231,33 @@ class GST_Data():
         # TODO need to check that basis equality checking works  
         if prep_state.basis != measurement_operator.basis:
             raise IonSimError("State and Measurement bases must be the same.")
+
+
+
+
+
+    @classmethod
+    def from_gst_sequences(cls, file_string: str, N_qubits: int, prep_state: State, measurement_operator: Operator, time_dependent: bool): 
+        """ Helper method for importing gst data from a file of GST circuit sequences with file extension .gstdata, often produced by PyGSTi.
+
+            file_string denotes the file name and location, e.g. "./my_datafile.gst" 
+
+            Organize measurement data into a data frame (df) with arguments: 
+            df['circuit_names'] 
+            df['gate_start_times'] 
+            df['gate_end_times'] 
+            df['germ_powers'] 
+            df['Measurement_outcomes'] --> {'state' : N_counts}, e.g. {'01' : 1000 counts, '10' : 2000 counts, ... } 
+            df['Number of shots'] 
+
+        """ 
+        data_frame = {}
+
+
+
+
+
+        return cls(gst_data_frame = data_frame, prep_state = prep_state, measurement = measurement_operator)  
     
         
     @classmethod

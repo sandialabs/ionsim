@@ -233,9 +233,6 @@ class GateInterpolant():
     @cached_property
     def process_matrix_interpolant_function(self): 
         """ Returns a gate's process matrix interpolating function of the grid parameters, e.g. G(x,y) for x,y grid parameters""" 
-        # TODO: determine real vs. complex data bool input 
-        # Aren't gate process matrices supposed to be real in HS space? 
-
         # Extract gate spline information, then build interpolant function from the splines 
         gate_spline_reals, gate_spline_imags = self.construct_spline_for_gate(complex_data=True)
         return self.interpolant_function_from_splines([gate_spline_reals, gate_spline_imags], 'process matrix')
