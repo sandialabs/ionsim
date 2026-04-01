@@ -181,6 +181,29 @@ class Basis(ABC):
         standard_matrix = self.transform_matrix_to_standard_basis(matrix)
         return new_basis.transform_matrix_from_standard_basis(standard_matrix)
 
+    # TODO: This is from old IonSim and needs to be adapted for new IonSim 
+    def compute_choi_jamiolkowski_process_matrix(self, process: Matrix, representation = 'superoperator'):
+        """ Return the Choi-Jamiolkowski representation of a quantum process """
+        # TODO: Add methods as necessary to accept different representations
+        allowed_representations = ['superoperator', 'unitary']
+        process = np.array(process)
+        if representation == 'unitary':
+            process = np.kron(process.conj(), process)
+            representation = 'superoperator'
+        if representation == 'superoperator':
+            # Superoperator is the linear operator acting on vec(rho)
+            dimension = int(np.sqrt(process.shape[0]))
+            jamiolkowski_matrix = np.zeros([dimension**2, dimension**2], dtype='complex')
+            for i in range(dimension**2):
+                Ei_vec= np.zeros(dimension**2)
+                Ei_vec[i] = 1
+                output = unvec(np.dot(process,Ei_vec))
+                jamiolkowski_matrix += np.kron(output, unvec(Ei_vec))
+            return jamiolkowski_matrix
+        else:
+            print('Input representation must be one of: ', allowed_representations)
+
+
 
 
 
