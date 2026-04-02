@@ -63,6 +63,38 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
     gst_experiments_data: GST_Data
 
 
+    circuit_name_dictionary: dict
+
+    circuit_name_dictionary['sqrt_X']
+
+    # +X pi/2
+    if gatelabel == 'Xpi2':
+        # theta = _np.pi/4
+        # phi = 0 # phi = -_np.pi
+        # time_scale = 0.5
+        nominal_relative_phase = 0.0
+
+    # -X pi/2
+    elif gatelabel == 'mXpi2':
+        # theta = _np.pi/4
+        # phi = _np.pi
+        # time_scale = 0.5
+        nominal_relative_phase = -_np.pi
+
+    # +X pi
+    elif gatelabel == 'Xpi':
+        # theta = _np.pi/2
+        # phi = 0
+        nominal_relative_phase = 0.0
+
+    # -X pi
+    elif gatelabel == 'mXpi':   
+        # theta = _np.pi/2 # theta = _np.pi
+        # phi = _np.pi
+        nominal_relative_phase = -_np.pi
+
+    # +Y pi
+    elif gatelabel == 'Ypi':
 
     #fiducial_circuit_list: list[str] #e.g. ['g1', 'f1,g1,g2']
         # Each gate has a dictionary of parameters, but this could be none.  
@@ -237,7 +269,7 @@ class GST_Data():
 
 
     @classmethod
-    def from_gst_sequences(cls, file_string: str, N_qubits: int, prep_state: State, measurement_operator: Operator, time_dependent: bool): 
+    def from_gst_sequence_data(cls, file_string: str, N_qubits: int, prep_state: State, measurement_operator: Operator, time_dependent: bool): 
         """ Helper method for importing gst data from a file of GST circuit sequences with file extension .gstdata, often produced by PyGSTi.
 
             file_string denotes the file name and location, e.g. "./my_datafile.gst" 
@@ -252,6 +284,11 @@ class GST_Data():
 
         """ 
         data_frame = {}
+
+
+        # Import GST sequences: 
+        imported_data = {} # dictionary with keys = circuit_sequences list, counts (.e.g for 0, 1).
+        circuit_sequences = imported_data['circuit_sequences']
 
 
 
@@ -342,6 +379,20 @@ class GST_Data():
 
 
 
+
+### Parser for GST circuit sequence files 
+import re 
+from dataclasses import dataclass, field
+from typing import Optional
+from pathlib import Path 
+
+#@dataclass
+#class  
+
+
+
+
+
 # ------ To be deleted later ------
 ''' Example usage: ''' 
 
@@ -378,6 +429,9 @@ gate_parameters = single_qubit_GST.solve_for_all_gate_parameters(solver='MLE')
 
 
 ## TODO: Transpiler between QSCOUT and our naming gate convention 
+
+
+
 
 
 
