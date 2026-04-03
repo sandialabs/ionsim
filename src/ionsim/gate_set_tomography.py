@@ -9,6 +9,7 @@ from functools import cached_property
 from ionsim.process import Gate, Circuit
 from ionsim.named_operators import Pauli, Unitary
 from ionsim.GST_data_parser  import *
+from ionsim.custom_math import matrix_AYB_multiply_to_superoperator 
 
 
 # Example Workflow: 
@@ -17,22 +18,16 @@ from ionsim.GST_data_parser  import *
 # 3. GST Class: Solve for model parameters and return  
 
 class GateSetTomography() # or GST() or GST_Base() if we plan to have child classes.
-    def __init__(self, basis: StandardBasis, prep_state: State, native_measurement: Operator, parsed_circuits: list[ParsedCircuit], gate_model_factory: Callable): 
+    def __init__(self, basis: StandardBasis, prep_state: State, POVM_measurement_effects: dict[str, list[Operator]], parsed_circuits: list[ParsedCircuit], gate_model_factory: Callable): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
     
             Member variables include:
                 - Basis where the quantum processes (gates), state, and measurement will live. 
-    
-    
-                - ideal prep state: rho_0, representing a state prepared natively. 
-                - ideal measurement: M_0, representing a native measurement projector. 
-                - gate set: list of Gates, which should include fidicual prep/measurement circuits
-    
+                - prep state: rho_0, representing an ideal state prepared natively. 
+                - POVM_measurement_effects: is a dictionary of measurement effects: ['0' : E0, '1': E1] or ['00' : E0, '01' : E1, ...] for N = 2 
                 - parsed_circuits is a list of Parsed GST Circuits that contain circuit information and measurement information.
-                - gate model factory is a function that takes a gate name and qubit tuple and returns a gate model  
+                - gate model factory is a function that takes a gate name and qubit tuple and returns a process matrix (gate) function   
     
-
-
         ################################## to delete ###################################### 
                 - parametrized_gates is a boolean. If True, the user should specify a model 
                     for the gates as a function of the parameters. If False, the class assumes 
@@ -40,7 +35,6 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
                 
                 - gate_parameters 
         ################################### end ###############################     
-    
     
         """ 
 
@@ -60,7 +54,7 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
 
         # Unpack |rho>> and <<E| or <<M| 
         self.ideal_prep_state = prep_state 
-        self.ideal_measurement = native_measurement 
+        self.measurement_effects = POVM_measurement_effects 
 
         # Parse circuits list contanining GST circuit sequences and correpsonding data (observations) 
         self.parsed_circuits = parsed_circuits 
@@ -94,8 +88,6 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         # Retrieve number of GST parameters (prep + gates + measure) and build & initialize parameter vector  
         self.gst_parameter_indices, self.num_gst_parameters = self._build_parameter_organization()
         self.gst_parameters = np.zeros(self.num_gst_parameters) 
-
-
 
 
 
@@ -142,14 +134,30 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
 
 
     def get_prep_state(self, theta) -> Vector:
-        """ Returns prep state supervector (d^2 x 1) given the parameter values theta """ 
+        """ Returns prep state supervector (d^2 x 1) given the parameter values theta.
+            - Enforces the constraint Tr[rho] = 1, eliminating 1 parameter.
+        """ 
+        # Prep state parameters function as a perturbation away from ideal prep state   
+        # TODO: consider a more sophisticated parametrization? 
         prep_params = theta[self.gst_parameter_indices["prep"]]
 
-        # Prep state parameters function as a perturbation away from ideal prep state   
         assert len(prep_parms) == self.d2
 
-        # TODO: more sophisticated parametrization? 
-        return self.ideal_prep_state.supervector + prep_params 
+        # Enforce constraint Tr[rho] = 1
+        ideal_state = self.ideal_prep_state.supervector
+
+        # Initialize prep state(theta) to the ideal staet
+        prep_state = ideal_state.copy()
+        # Current prep state is ideal + perturbation(theta); here perturbation(theta) = theta 
+        perturbation = prep_params
+        prep_state[:-1] += perturbation 
+        
+        diag_indices = [i * (self.d + 1) for i in range(self.d)]
+        free_diag_indices = diag_indices[:-1]
+         
+        prep_state[-1] = 1.0 - np.sum(rho_vec[diag_indices[:-1]]) 
+
+        return prep_state 
 
 
     def get_measurement_effects(self, theta) -> dict[str, Vector]:
@@ -157,16 +165,47 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
 
             - Effects are stored in a dictionary {'outcome' : Effect_vector} 
             - e.g. E_0 vector is d^2 x 1 corresponding to |0><0|
+            - There is a completeness constraint to enforce: \sum_m E_m = identity
+            - By convention, the last effect is constrained. ==> d^2 parameters are constrained.  
         """ 
+        # TODO: consider a more sophisticated parametrization? 
         M_effects = {}
 
         measurement_params = theta[self.parameter_indices["measure"]]
         #assert len(prep_parms) == self.d2
 
+        N_effects = len(self.measurement_effects)
+        N_params_per_op = self.d2
 
-        # TODO: more sophisticated parametrization? 
+        # Parametrize unconstrained (free) effects as ideal + perturbation:
+        for i, (label, effect_op) in enumerate(self.measurement_effects.items()):
+            if i == (N_effects - 1): # skip last index
+                break
+            # Use parameters for this operator by index slicing:  
+            variation = measurement_params[i * N_params_per_op : (i + 1) * N_params_per_op] 
+
+            # Get superoperator from operator representation 
+            ideal_effect_superoperator = matrix_AYB_multiply_to_superoperator(effect_op.static_matrix)
+
+            assert len(variation) == len(ideal_effect_superoperator)
+            # Compute resulting effect:  
+            M_effects[label] = ideal_effect_superoperator + variation 
+
+        # Final effect is constrained to be E_last = I - sum(E) over all other effects E 
+        constrained_effect = matrix_AYB_multiply_to_superoperator(np.eye(self.d)) # identity to superoperator 
+        last_label = list(self.measurement_effects.keys())[-1]
+
+        assert last_label is not in list(M_effects.keys()) 
+
+        # Loop over all free effects and subtract them from constrained effect: 
+        for i, (label, effect_op) in enumerate(self.measurement_effects.items()): 
+            if i == (N_effects - 1): # skip last index
+                break
+            constrained_effect -= M_effects[label]
+
+        M_effects[last_label] = constrained_effect
+
         return M_effects 
-        #return self.ideal_prep_state.supervector + prep_params 
 
 
     def _predict_probabilities(self, circ: ParsedCircuit, theta) -> Vector[float]: 
@@ -633,10 +672,10 @@ class GST_Data():
 
 
 ### Parser for GST circuit sequence files 
-import re 
-from dataclasses import dataclass, field
-from typing import Optional
-from pathlib import Path 
+ #import re 
+ #from dataclasses import dataclass, field
+ #from typing import Optional
+ #from pathlib import Path 
 
 #@dataclass
 #class  
@@ -646,25 +685,25 @@ from pathlib import Path
 
 
 # ------ To be deleted later ------
-''' Example usage: ''' 
-
-my_basis = StandardBasis([spins])
-my_gate_set = [Xpi_gate, Xpi_2_gate, idle_gate]
-coeffs = np.zeros(2)
-coeffs[0] = 1.
-rho_0 = State.from_coefficients(coeffs)
-Mz = Pauli.Z 
-
-
-single_qubit_GST = GateSetTomography(my_basis, rho_0, native_measurement = Mz, gate_set = my_gate_set) 
-gate_parameters = single_qubit_GST.solve_for_all_gate_parameters(solver='MLE')
-
-
-
-# Put Gate objects into a dictionary to maintain name <--> gate correspondence. 
-1Q_gate_set = {'Idle': idle_gate, 'X_pi2' : X_pi_2_gate, 'X_pi' : X_pi}
-
-
+ #''' Example usage: ''' 
+ #
+ #my_basis = StandardBasis([spins])
+ #my_gate_set = [Xpi_gate, Xpi_2_gate, idle_gate]
+ #coeffs = np.zeros(2)
+ #coeffs[0] = 1.
+ #rho_0 = State.from_coefficients(coeffs)
+ #Mz = Pauli.Z 
+ #
+ #
+ #single_qubit_GST = GateSetTomography(my_basis, rho_0, native_measurement = Mz, gate_set = my_gate_set) 
+ #gate_parameters = single_qubit_GST.solve_for_all_gate_parameters(solver='MLE')
+ #
+ #
+ #
+ ## Put Gate objects into a dictionary to maintain name <--> gate correspondence. 
+ #1Q_gate_set = {'Idle': idle_gate, 'X_pi2' : X_pi_2_gate, 'X_pi' : X_pi}
+ #
+ #
 
 # Need functionality that generates gate set based on experimental input. 
 # Is the gate set just the minimal number of IC gates? like is it G = [I, Xpi, X_pi2, Y_pi, Y_pi2] or something like that? From which we can recover the experimentally executed circuits? 
