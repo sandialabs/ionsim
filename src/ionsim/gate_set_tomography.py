@@ -152,7 +152,7 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         perturbation = prep_params
         prep_state[:-1] += perturbation 
         
-        diag_indices = [i * (self.d + 1) for i in range(self.d)]
+        diag_indices = [i * (self.d + 1) for i in range(self.d)] # assumes square density matrix 
         free_diag_indices = diag_indices[:-1]
          
         prep_state[-1] = 1.0 - np.sum(rho_vec[diag_indices[:-1]]) 
@@ -160,10 +160,10 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         return prep_state 
 
 
-    def get_measurement_effects(self, theta) -> dict[str, Vector]:
+    def get_measurement_effects(self, theta) -> dict[str, Matrix]:
         """ Returns measurement effects given the parameter values theta. 
 
-            - Effects are stored in a dictionary {'outcome' : Effect_vector} 
+            - Effects are stored in a dictionary {'outcome' : Effect_vector with superoperator d^2 x d^2 shape} 
             - e.g. E_0 vector is d^2 x 1 corresponding to |0><0|
             - There is a completeness constraint to enforce: \sum_m E_m = identity
             - By convention, the last effect is constrained. ==> d^2 parameters are constrained.  
