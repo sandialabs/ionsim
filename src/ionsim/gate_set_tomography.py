@@ -7,50 +7,307 @@ import scipy.optimize as opt
 from functools import cached_property
 
 from ionsim.process import Gate, Circuit
-from ionsim.named_operators import Pauli
+from ionsim.named_operators import Pauli, Unitary
 from ionsim.GST_data_parser  import *
 
 
 # Example Workflow: 
 # 1. GST_Data Class creation: User creates GST data class from experimental outcome data for various circuits. 
 # 2. GST Class creation: User specifies gate set, prep state, measurement operator, and GST measurement data
-# 3. User wants gate parameters: GST_Class.solve_for_gate_parameters() is the key method to do so. 
-#   3a) gets circuits ran in experiment from the GST_Data object, converts this into IonSim circuit objects 
-#   3b) gets frequency value for each experiment and each outcome for that experiment 
-#   3c) Do gradient descent / loss minimization procedure: 
-    #   - estimate frequency value for each experiment's circuit (and for each possible outcome too) from model/parametrization. 
-    #   - compute loss, cost, or likelihood, function. Or do linear inversion.
-    #   - evaluate gradient (e.g. difference in exp vs. gate model), take a step in parameter space. 
-    #   - repeat until minimizing loss to a tolerance.  
-# 4. Return gate model parameters for each gate in the gate set. 
-
-
-
-
+# 3. GST Class: Solve for model parameters and return  
 
 class GateSetTomography() # or GST() or GST_Base() if we plan to have child classes.
-    """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
-
-        Member variables include:
-            - Basis where the quantum processes (gates), state, and measurement will live. 
-            - initial state: rho_0, representing a state prepared natively. 
-            - native measurement: M_0, representing a native measurement projector. 
-            - gate set: list of Gates, which should include fidicual prep/measurement circuits
-
-
-        ### How to handle germs for long-form GST?? Does the user specify a germ sequence? Does a user specify "p" the power?  
-            -  does the class just iterate over powers or solve at one fixed power? 
-
-            - parametrized_gates is a boolean. If True, the user should specify a model 
-                for the gates as a function of the parameters. If False, the class assumes 
-                the gate is modeled as a generic, dense process matrix.  
-            
-            - gate_parameters 
+    def __init__(self, basis: StandardBasis, prep_state: State, native_measurement: Operator, parsed_circuits: list[ParsedCircuit], gate_model_factory: Callable): 
+        """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
+    
+            Member variables include:
+                - Basis where the quantum processes (gates), state, and measurement will live. 
+    
+    
+                - ideal prep state: rho_0, representing a state prepared natively. 
+                - ideal measurement: M_0, representing a native measurement projector. 
+                - gate set: list of Gates, which should include fidicual prep/measurement circuits
+    
+                - parsed_circuits is a list of Parsed GST Circuits that contain circuit information and measurement information.
+                - gate model factory is a function that takes a gate name and qubit tuple and returns a gate model  
+    
 
 
-    """ 
-        gate_set = set()
+        ################################## to delete ###################################### 
+                - parametrized_gates is a boolean. If True, the user should specify a model 
+                    for the gates as a function of the parameters. If False, the class assumes 
+                    the gate is modeled as a generic, dense process matrix.  
+                
+                - gate_parameters 
+        ################################### end ###############################     
+    
+    
+        """ 
+
+
+        # Could alternatively have the user specify this mapping 
+        @cached_property
+        def gate_dictionary(self):
+            ism_gate_dictionary = {}    
+            ism_gate_dictionary['Gxpi2'] = 'sqrt_X'
+            ism_gate_dictionary['Gxpi'] = 'Xpi'
+            ism_gate_dictionary['Gypi2'] = 'sqrt_Y'
+            ism_gate_dictionary['Gypi'] = 'Y'
+            ism_gate_dictionary['[]'] = 'I'
+            ism_gate_dictionary['{}'] = None
+            # TODO: add 2Q gates 
+            return ism_gate_dictionary
+
+        # Unpack |rho>> and <<E| or <<M| 
+        self.ideal_prep_state = prep_state 
+        self.ideal_measurement = native_measurement 
+
+        # Parse circuits list contanining GST circuit sequences and correpsonding data (observations) 
+        self.parsed_circuits = parsed_circuits 
+
+        self.gate_model_factory = gate_model_factory # TODO revise 
+
+        # Dimensionality of Hilbert and Hilbert-Schmidt spaces:
+        self.d = len(basis.states)
+        self.d2 = self.d * self.d
+
+        # 1. Get all unique gates in the gate set 
+        self.gate_set = set()  # gate_set contains ParsedGate objects
         for circ in parsed_circuits:
+            for g in circ.expanded_gates: 
+                gate_set.add(g) 
+            
+
+        # 2. Build gate models and possible interpolants during construction. 
+        self.gate_models = {} 
+        #self.gate_interpolants = {} 
+        for gate in gate_set:
+ #            if (gate.name == 'idle') or (gate.name == '[]'): # TODO check this 
+ #                self.gate_models[gate] = IdleGateModel()  # TODO: Define this 
+ #                continue  
+            ism_name = self.gate_dictionary[gate.name] 
+            self.gate_models[gate] = gate_model_factory(ism_name, gate.qubits)
+
+
+        # 3. Parameters: 
+        # Build a parameter look-up dictionary to organizing parameter indices. 
+        # Retrieve number of GST parameters (prep + gates + measure) and build & initialize parameter vector  
+        self.gst_parameter_indices, self.num_gst_parameters = self._build_parameter_organization()
+        self.gst_parameters = np.zeros(self.num_gst_parameters) 
+
+
+
+
+
+    def _build_parameter_organization(self) -> dict[str, slice], int:
+        """ Builds and organizes the parameters for GST. This organizes parameters based on:
+            1) Prep state 
+            2) Each Gate model, for all gates in the set  
+            3) Native measurement
+
+            - Parameter indexing are organized in a dictionary for easy retrieval, e.g. {'prep state' : prep_state_parameter_indexing (as slice)} 
+            - Returns the layout dictionary and the total number of parameters 
+        """
+
+        # Set up dictionary with appropriate number of independent parameters 
+        parameter_indices = {}
+
+        # Index i will incriment as we increase the number of tracked parameters 
+        i = 0
+
+        # SPAM has d^3 - 1 parameters 
+        N = self.d2 - 1         
+        parameter_indices["prep"] = slice(i, i + N) 
+        i += N
+
+        N = self.d2
+        parameter_indices["measurement"] = slice(i, i + N) 
+        i += N
+
+        for gate, gate_model in zip(self.gate_set, self.gate_models):
+            N = gate_model.num_parameters
+            # TODO: either use ism gate name or ParsedCircuit gate name 
+            # Default parametrization is dense (d^2 x d^2) for each gate: 
+            parameter_indices[gate.name] = slice(i, i + N)
+            i += N  
+
+        return parameter_indices, i 
+
+
+
+    def get_parameters_for_key(self, key):
+        """ Returns current parameter values for operator labelled by key. """
+        return self.gst_parameters[self.gst_parameter_indices[key]]
+
+
+
+    def get_prep_state(self, theta) -> Vector:
+        """ Returns prep state supervector (d^2 x 1) given the parameter values theta """ 
+        prep_params = theta[self.gst_parameter_indices["prep"]]
+
+        # Prep state parameters function as a perturbation away from ideal prep state   
+        assert len(prep_parms) == self.d2
+
+        # TODO: more sophisticated parametrization? 
+        return self.ideal_prep_state.supervector + prep_params 
+
+
+    def get_measurement_effects(self, theta) -> dict[str, Vector]:
+        """ Returns measurement effects given the parameter values theta. 
+
+            - Effects are stored in a dictionary {'outcome' : Effect_vector} 
+            - e.g. E_0 vector is d^2 x 1 corresponding to |0><0|
+        """ 
+        M_effects = {}
+
+        measurement_params = theta[self.parameter_indices["measure"]]
+        #assert len(prep_parms) == self.d2
+
+
+        # TODO: more sophisticated parametrization? 
+        return M_effects 
+        #return self.ideal_prep_state.supervector + prep_params 
+
+
+    def _predict_probabilities(self, circ: ParsedCircuit, theta) -> Vector[float]: 
+        """ Predicts outcome probabilities for a GST circuit with gates parametrized by theta """
+        #outcome_probabilities = np.zeros
+
+        rho_supervector = self.get_prep_state(theta)
+        M_effects = self.get_measurement_effects(theta)
+
+        # Build a composition (chain) of gate process matrices: 
+        quantum_map = np.eye(self.d2, dtype=complex)
+        # TODO: gate_model is Ionsim object?  
+        for gate_model in self.gate_models:
+            gate_parameters = theta[self.gst_parameter_indices[gate_model.name]]
+            quantum_map = gate_model.process_matrix_function(gate_parameters) @ quantum_map  
+            
+        mapped_state = quantum_map @ rho_supervector
+
+        outcome_probabilities = {}
+        for label, E in M_effects.items()
+            outcome_probabilities[label] = np.real(E.conj() @ mapped_state) 
+
+        return outcome_probabilities
+        
+
+    def _build_process_matrix_cache(self, theta): 
+        """ Evaluate each gate's process matrix function once"""
+        process_matrix_cache = {} 
+        # TODO: finalize gate_model data structure (DS) and values. 
+        for gate_model in self.gate_models.values():
+            gate_parameters = theta[self.gst_parameter_indices[gate_model.name]]
+            process_matrix_cache[gate_model.name] = gate_model.process_matrix_function(gate_parameters) 
+        return process_matrix_cache 
+
+
+
+    def log_likelihood(self, theta=None, theta_function=None) -> float:
+        """ Computes total log-likelihood of the parameters given the data.
+
+            theta:      parameter vector 
+            theta_func:     optional callable(t) -> parameter_vector for time-dependent data.
+                            If None, theta is assumed to be t-independent.
+
+        """                
+        # TODO: make a separate function for t-dependent parameters 
+        if theta is None:
+            theta = self.gst_parameters
+
+        l_likelihood = 0.
+
+        time_independent_gates = True
+        if theta_function is not None:
+            t_independent_gates = False 
+
+        self._build_process_matrix_cache()
+
+        probability_TOL = 1E-10
+
+        # Compute log likelihood for each GST circuit, then sum over all GST circuits 
+        for circ in self.parsed_circuits:
+            probabilities = self.predict_probabilities(circ, theta) # don't need the PM cache? 
+
+            if circ.measurement_data.counts is not None:
+                for outcome, count in circ.measurement_data.items()         
+                    if count > 0:
+                        p = np.clip(probs[outcome], probability_TOL, 1. - probability_TOL)
+                        l_likelihood += count * np.log(p)
+                 
+            else:
+                # Time-series data: each shot is equally weighted? 
+                for t, outcome in circ.measurement.timestamped_shots:
+                    p = np.clip(probs[outcome], probability_TOL, 1. - probability_TOL)
+                    l_likelihood += np.log(p)
+
+        return l_likelihood
+
+
+
+    def solve_for_gate_parameters(solver: str = 'MLE'):
+        """ Function to solve for the parametrization values of a particular gate. 
+
+            - Default behavior is a maximum likelihood approach that finds parameters 
+                that maximize the likelihood of the gate given the data, i.e. solving: 
+
+                max[ Likelihood( {G} | data) ] over parameter set Theta.
+
+            - Returns either a dictionary of parameters (name, value) or a 1D array of values.
+
+        """
+        # 2. Extract frequency values for each experiment 
+        #experimental_frequencies = gst_data.get_frequencies() # 2D array of shape circuit x outcomes -> frequency values 
+
+        #assert experimental_frequencies.shape[0] == len(gst_circuits) 
+
+        # TODO: Need to figure out how to get gate parameters and use them here, from IonSim's Gate objects. 
+        # - Compute expected probability of an outcome given a circuit's parametrization. 
+        if solver == 'MLE':
+            # Maximum likelihood estimation.
+            # Specify initial guess. 
+            theta_0 = self.gst_parameters.copy() 
+            # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
+            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B') # TODO consider adding parameter bounds  
+            self.gst_parameters = solver_result.x
+            return solver_result
+            
+        elif solver == 'linear':
+            # Solve matrix Ax = b problem: Frequencies = A_matrix @ Gate_parameters  
+            # Check that gram matrix A_{m,s} = <M | C_{m} C_{s} | rho> is invertible.            
+            # Compute x = A \ b
+
+        else:
+            raise IonSimError('Invalid solver input.')
+
+
+        #return gate_set_parameters 
+
+
+
+ #    def compute_circuit_log_likelihood(self, gst_circuit: ParsedCircuit, theta: Vector) -> float: 
+ #        """ Computes log likelihood of the parameters given the GST circuit data using the following:  
+ #
+ #            l_{exp} = sum_{outcomes} N_{outcome} log( p_{outcome} (theta) ) 
+ #
+ #            - theta is the vector of gate parameters, 
+ #            - p_outcome (theta)  is the probability of the outcome using gates modeled by theta 
+ #            - "outcome" <==> measurement effect. e.g. "0" or "1" for 1Q measurement. 
+ #        """ 
+ #
+ #        N_outcomes = len(circuit.measurement_counts)
+ #
+ #        log_likelihood = 0.
+ #        for outcome, counts in gst_circuit.measurement_counts.items():        
+ #            probability_of_outcome = estimate_probability(outcome, gst_circuit, gate_parameters)
+ #            log_likelihood += counts*np.log( probability_of_outcome) 
+ #
+ #
+ #        return log_likelihood            
+
+
+
+
 
 
     # Questions: 
@@ -62,43 +319,27 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
     # - user either specifies models for gates upon construction or uses something like an "add_gate_model()" function 
     # - user solves for parameters post-construction 
 
-    basis: Basis
-    prep_state: State
-    native_measurement: Operator 
-    gate_set: dict[str, Gate]    # instead of (list[Gate])
-    ideal_gate_set: dict[str, Gate]    
+ #    basis: Basis
+ #    prep_state: State
+ #    native_measurement: Operator 
+ #    gate_set: dict[str, Gate]    # instead of (list[Gate])
+ #    ideal_gate_set: dict[str, Gate]    
     #gate_set: dict[str, Gate]    # instead of (list[Gate])
 
     #gate_parameters: Vector  
 
     # experimental data per circuit listed. 
     # - allow for variable number of shots per experiment. 
-    gst_data: GST_Data
+    #gst_data: GST_Data
     #circuit_name_dictionary: dict
 
     #circuit_name_dictionary['sqrt_X']
 
-
-    parametrized_gates: bool = False 
-    gate_parameters: list[NDArray] 
-    system_size: int 
-
-
-
-    @cached_property
-    def gate_dictionary(self):
-        ism_gate_dictionary = {}    
-        ism_gate_dictionary['Gxpi2'] = 'sqrt_X'
-        ism_gate_dictionary['Gxpi'] = 'Xpi'
-        ism_gate_dictionary['Gypi2'] = 'sqrt_Y'
-        ism_gate_dictionary['Gypi'] = 'Y'
-        ism_gate_dictionary['[]'] = 'I'
-        ism_gate_dictionary['{}'] = None
-
-        # TODO: add 2Q gates 
-
-        return ism_gate_dictionary
-
+ #
+ #    parametrized_gates: bool = False 
+ #    gate_parameters: list[NDArray] 
+ #    system_size: int 
+ #
  
  #
  #    # +X pi/2
@@ -150,7 +391,6 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         if not compare_operator(gst_experiments_data.measurement, self.native_measurement):
             raise IonSimError("GST Data Class and GST Class should use the same measurement operator.")
 
-
     @classmethod
     def from_GST_Data(cls, gst_data: GST_Data)
 
@@ -159,12 +399,12 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         return cls( )
 
 
-    def compute_circuit_outcome_probability(circuit: Circuit, outcome: int):
-        """ Returns the probability of outcome "mu" for native measurement "M". """
-        # e.g. outcome = +1 or -1 for single qubit Z measurement 
-        outcome_index =  GST_experiments_data[0, :, 0].index(outcome)
-        return gst_data.get_experimental_outcome_frequency(outcome_index, circuit) 
-
+ #    def compute_circuit_outcome_probability(circuit: Circuit, outcome: int):
+ #        """ Returns the probability of outcome "mu" for native measurement "M". """
+ #        # e.g. outcome = +1 or -1 for single qubit Z measurement 
+ #        outcome_index =  GST_experiments_data[0, :, 0].index(outcome)
+ #        return gst_data.get_experimental_outcome_frequency(outcome_index, circuit) 
+ #
 
     ## I think you need to solve for all parameters simultaneously --> this is the self-consistency of GST  
     ## - evaluate cost function (negative likelihood), which is a sum over all possible measurement outcomes and all parameters 
@@ -181,138 +421,56 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
 
 
 
-    def estimate_probability(outcome: str, gst_circuit: ParsedCircuit, gate_parameters: Vector) -> float:
-        """ Computes the probability of outcome after a GST circuit modeled with various gate parameters. """ 
-        # Unpack circuits within the GST circuit
-        prep_circuit = gst_circuit.prep_circuit
-        measure_circuit = gst_circuit.measure_circuit
-        germ_circuit = gst_circuit.germ_circuit
-
-        # Convert each ParsedGate -> IonSim Gate object 
-        
-        
-
-        return 0. 
-
-
-    def compute_circuit_log_likelihood(self, gst_circuit: ParsedCircuit, theta: Vector) -> float: 
-        """ Computes log likelihood of the parameters given the GST circuit data using the following:  
-
-            l_{exp} = sum_{outcomes} N_{outcome} log( p_{outcome} (theta) ) 
-
-            - theta is the vector of gate parameters, 
-            - p_outcome (theta)  is the probability of the outcome using gates modeled by theta 
-            - "outcome" <==> measurement effect. e.g. "0" or "1" for 1Q measurement. 
-        """ 
-
-        N_outcomes = len(circuit.measurement_counts)
-
-        log_likelihood = 0.
-        for outcome, counts in gst_circuit.measurement_counts.items():        
-            probability_of_outcome = estimate_probability(outcome, gst_circuit, gate_parameters)
-            log_likelihood += counts*np.log( probability_of_outcome ) 
-            
-
-
-
-
-    def solve_for_gate_parameters(solver: str = 'MLE'):
-        """ Function to solve for the parametrization values of a particular gate. 
-
-            - Default behavior is a maximum likelihood approach that finds parameters 
-                that maximize the likelihood of the gate given the data, i.e. solving: 
-
-                max[ Likelihood( {G} | data) ] over parameter set Theta.
-
-            - Returns either a dictionary of parameters (name, value) or a 1D array of values.
-
-        """
-        # 3. User wants gate parameters: GST_Class.solve_for_gate_parameters() is the key method to do so. 
-        #   3a) gets circuits ran in experiment from the GST_Data object, converts this into IonSim circuit objects 
-        #   3b) gets frequency value for each experiment and each outcome for that experiment 
-        #   3c) Do gradient descent / loss minimization procedure: 
-            #   - estimate frequency value for each experiment's circuit (and for each possible outcome too) from model/parametrization. 
-            #   - compute loss, cost, or likelihood, function. Or do linear inversion.
-            #   - evaluate gradient (e.g. difference in exp vs. gate model), take a step in parameter space. 
-            #   - repeat until minimizing loss to a tolerance.  
-        # 4. Return gate model parameters for each gate in the gate set  
-
-
-        # 1. Extract circuits from experiment 
-        gst_circuits = self.GST_data.gst_circuits
-        #for circuit_name in GST_data.gst_data_frame['circuit_names']: 
-
-        # 2. Loop over all Parsed Circuits, containing experiment information  
-        for circuit_experiment in GST_data.gst_circuits: 
-            self.compute_circuit_log_likelihood(circuit_experiment)
-            gst_circuits.append( circuit_from_circuit_name(circuit_name) ) 
-
-
-        # 2. Extract frequency values for each experiment 
-        experimental_frequencies = gst_data.get_frequencies() # 2D array of shape circuit x outcomes -> frequency values 
-
-        assert experimental_frequencies.shape[0] == len(gst_circuits) 
-
-        # TODO: Need to get extract parameters from the gate set somehow  
-        # TODO: Need to figure out how to get gate parameters and use them here, from IonSim's Gate objects. 
-        # - Compute expected probability of an outcome given a circuit's parametrization. 
-
-
-        if solver == 'MLE':
-            # Maximum likelihood estimation.
-            # Specify initial guess. 
-            theta_0 = np.zeros_like(gate_parameters)  
-            #solver_result = opt.minimize(negative_log_likelihood, theta_0, method = 'L-BFGS-B', bounds = parameter_bounds)
-            solver_result = opt.minimize(negative_log_likelihood, theta_0, method = 'L-BFGS-B') 
-
-            
-        elif solver == 'linear':
-            # Solve matrix Ax = b problem: Frequencies = A_matrix @ Gate_parameters  
-            # Check that gram matrix A_{m,s} = <M | C_{m} C_{s} | rho> is invertible.            
-            # Compute x = A \ b
-
-        else:
-            raise IonSimError('Invalid solver input.')
-
-        return gate_set_parameters 
+ #    def estimate_probability(outcome: str, gst_circuit: ParsedCircuit, gate_parameters: Vector) -> float:
+ #        """ Computes the probability of outcome after a GST circuit modeled with various gate parameters. """ 
+ #        # Unpack circuits within the GST circuit
+ #        prep_circuit = gst_circuit.prep_circuit
+ #        measure_circuit = gst_circuit.measure_circuit
+ #        germ_circuit = gst_circuit.germ_circuit
+ #
+ #        # Convert each ParsedGate -> IonSim Gate object 
+ #        
+ #        
+ #
+ #        return 0. 
 
 
     #def circuit_from_circuit_name(circuit_name: str, noise: Noise) -> Circuit:
-    def circuit_from_parsed_circuit(parsed_circuit: ParsedCircuit) -> Circuit:
-        """ Function that returns a circuit object (list of gates) corresponding to the circuit name. 
-            - Helps to convert experiment circuit names into IonSim Gate/Circuit objects from the gate set. 
-            - e.g. circuit_name = 'idle, X_pi_2' -> gate_list = [idle_gate, X_pi_2_gate] -> Circuit 
-        """
-        # TODO: Need to decide and state convention for gate ordering: e.g. Left to right: state prep --> gates --> measurement
-            # need a look up table for the gates based on name 
-        
-        # Extract name of each gate from the circuit name  
-        gate_names = [name.strip() for name in circuit_names.split(',')]
+ #    def circuit_from_parsed_circuit(parsed_circuit: ParsedCircuit) -> Circuit:
+ #        """ Function that returns a circuit object (list of gates) corresponding to the circuit name. 
+ #            - Helps to convert experiment circuit names into IonSim Gate/Circuit objects from the gate set. 
+ #            - e.g. circuit_name = 'idle, X_pi_2' -> gate_list = [idle_gate, X_pi_2_gate] -> Circuit 
+ #        """
+ #        # TODO: Need to decide and state convention for gate ordering: e.g. Left to right: state prep --> gates --> measurement
+ #            # need a look up table for the gates based on name 
+ #        
+ #        # Extract name of each gate from the circuit name  
+ #        gate_names = [name.strip() for name in circuit_names.split(',')]
+ #
+ #        # TODO: Add functionality to parse the qubit number when we have 2+ qubits  
+ #
+ #        gate_list = []        
+ #        for gate_name in gate_names:
+ #            # Optional: map_experimental_gate_name_to_internal_gate_name(gate_name)
+ #            gate_list.append(self.gate_set[gate_name])
+ #            #if gate_name == 'I' or 'idle':
+ #
+ #        return Circuit.from_gates(gate_list, noise) 
+ #
 
-        # TODO: Add functionality to parse the qubit number when we have 2+ qubits  
-
-        gate_list = []        
-        for gate_name in gate_names:
-            # Optional: map_experimental_gate_name_to_internal_gate_name(gate_name)
-            gate_list.append(self.gate_set[gate_name])
-            #if gate_name == 'I' or 'idle':
-
-        return Circuit.from_gates(gate_list, noise) 
-
-
-
-    def map_experimental_gate_name_to_internal_gate_name(gate_name: str): -> str
-        """ Helper function to convert experimental gate nomenclature to internal
-                IonSim gate nomenclature used in this class. """
-        # TODO: Maybe the user will specify this mapping / look-up table? 
-        
-
-
-
-
-
-        return gate_name
-
+ #
+ #    def map_experimental_gate_name_to_internal_gate_name(gate_name: str): -> str
+ #        """ Helper function to convert experimental gate nomenclature to internal
+ #                IonSim gate nomenclature used in this class. """
+ #        # TODO: Maybe the user will specify this mapping / look-up table? 
+ #        
+ #
+ #
+ #
+ #
+ #
+ #        return gate_name
+ #
 
 
 class GST_Data():
