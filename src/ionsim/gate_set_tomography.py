@@ -4,9 +4,11 @@ from pathlib import Path
 
 import scipy.stats as stats 
 import scipy.optimize as opt 
+from functools import cached_property
 
 from ionsim.process import Gate, Circuit
 from ionsim.named_operators import Pauli
+from ionsim.GST_data_parser  import *
 
 
 # Example Workflow: 
@@ -21,6 +23,9 @@ from ionsim.named_operators import Pauli
     #   - evaluate gradient (e.g. difference in exp vs. gate model), take a step in parameter space. 
     #   - repeat until minimizing loss to a tolerance.  
 # 4. Return gate model parameters for each gate in the gate set. 
+
+
+
 
 
 class GateSetTomography() # or GST() or GST_Base() if we plan to have child classes.
@@ -44,6 +49,10 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
 
 
     """ 
+        gate_set = set()
+        for circ in parsed_circuits:
+
+
     # Questions: 
         # Should we allow more than 1 initial native state and 1 native measurement? 
             # GST manual suggests that ususally only 1 is available. 
@@ -54,56 +63,76 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
     # - user solves for parameters post-construction 
 
     basis: Basis
-    initial_state: State
+    prep_state: State
     native_measurement: Operator 
     gate_set: dict[str, Gate]    # instead of (list[Gate])
+    ideal_gate_set: dict[str, Gate]    
+    #gate_set: dict[str, Gate]    # instead of (list[Gate])
+
+    #gate_parameters: Vector  
 
     # experimental data per circuit listed. 
     # - allow for variable number of shots per experiment. 
-    gst_experiments_data: GST_Data
+    gst_data: GST_Data
+    #circuit_name_dictionary: dict
 
+    #circuit_name_dictionary['sqrt_X']
 
-    circuit_name_dictionary: dict
-
-    circuit_name_dictionary['sqrt_X']
-
-    # +X pi/2
-    if gatelabel == 'Xpi2':
-        # theta = _np.pi/4
-        # phi = 0 # phi = -_np.pi
-        # time_scale = 0.5
-        nominal_relative_phase = 0.0
-
-    # -X pi/2
-    elif gatelabel == 'mXpi2':
-        # theta = _np.pi/4
-        # phi = _np.pi
-        # time_scale = 0.5
-        nominal_relative_phase = -_np.pi
-
-    # +X pi
-    elif gatelabel == 'Xpi':
-        # theta = _np.pi/2
-        # phi = 0
-        nominal_relative_phase = 0.0
-
-    # -X pi
-    elif gatelabel == 'mXpi':   
-        # theta = _np.pi/2 # theta = _np.pi
-        # phi = _np.pi
-        nominal_relative_phase = -_np.pi
-
-    # +Y pi
-    elif gatelabel == 'Ypi':
-
-    #fiducial_circuit_list: list[str] #e.g. ['g1', 'f1,g1,g2']
-        # Each gate has a dictionary of parameters, but this could be none.  
-        # include logic of 
 
     parametrized_gates: bool = False 
     gate_parameters: list[NDArray] 
     system_size: int 
 
+
+
+    @cached_property
+    def gate_dictionary(self):
+        ism_gate_dictionary = {}    
+        ism_gate_dictionary['Gxpi2'] = 'sqrt_X'
+        ism_gate_dictionary['Gxpi'] = 'Xpi'
+        ism_gate_dictionary['Gypi2'] = 'sqrt_Y'
+        ism_gate_dictionary['Gypi'] = 'Y'
+        ism_gate_dictionary['[]'] = 'I'
+        ism_gate_dictionary['{}'] = None
+
+        # TODO: add 2Q gates 
+
+        return ism_gate_dictionary
+
+ 
+ #
+ #    # +X pi/2
+ #    if gatelabel == 'Xpi2':
+ #        # theta = _np.pi/4
+ #        # phi = 0 # phi = -_np.pi
+ #        # time_scale = 0.5
+ #        nominal_relative_phase = 0.0
+ #
+ #    # -X pi/2
+ #    elif gatelabel == 'mXpi2':
+ #        # theta = _np.pi/4
+ #        # phi = _np.pi
+ #        # time_scale = 0.5
+ #        nominal_relative_phase = -_np.pi
+ #
+ #    # +X pi
+ #    elif gatelabel == 'Xpi':
+ #        # theta = _np.pi/2
+ #        # phi = 0
+ #        nominal_relative_phase = 0.0
+ #
+ #    # -X pi
+ #    elif gatelabel == 'mXpi':   
+ #        # theta = _np.pi/2 # theta = _np.pi
+ #        # phi = _np.pi
+ #        nominal_relative_phase = -_np.pi
+ #
+ #    # +Y pi
+ #    elif gatelabel == 'Ypi':
+
+    #fiducial_circuit_list: list[str] #e.g. ['g1', 'f1,g1,g2']
+        # Each gate has a dictionary of parameters, but this could be none.  
+        # include logic of 
 
     def __post_init__(self):
         """ Safety checks: 
@@ -149,6 +178,44 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
  #        return gate_parameters
  #
 
+
+
+
+    def estimate_probability(outcome: str, gst_circuit: ParsedCircuit, gate_parameters: Vector) -> float:
+        """ Computes the probability of outcome after a GST circuit modeled with various gate parameters. """ 
+        # Unpack circuits within the GST circuit
+        prep_circuit = gst_circuit.prep_circuit
+        measure_circuit = gst_circuit.measure_circuit
+        germ_circuit = gst_circuit.germ_circuit
+
+        # Convert each ParsedGate -> IonSim Gate object 
+        
+        
+
+        return 0. 
+
+
+    def compute_circuit_log_likelihood(self, gst_circuit: ParsedCircuit, theta: Vector) -> float: 
+        """ Computes log likelihood of the parameters given the GST circuit data using the following:  
+
+            l_{exp} = sum_{outcomes} N_{outcome} log( p_{outcome} (theta) ) 
+
+            - theta is the vector of gate parameters, 
+            - p_outcome (theta)  is the probability of the outcome using gates modeled by theta 
+            - "outcome" <==> measurement effect. e.g. "0" or "1" for 1Q measurement. 
+        """ 
+
+        N_outcomes = len(circuit.measurement_counts)
+
+        log_likelihood = 0.
+        for outcome, counts in gst_circuit.measurement_counts.items():        
+            probability_of_outcome = estimate_probability(outcome, gst_circuit, gate_parameters)
+            log_likelihood += counts*np.log( probability_of_outcome ) 
+            
+
+
+
+
     def solve_for_gate_parameters(solver: str = 'MLE'):
         """ Function to solve for the parametrization values of a particular gate. 
 
@@ -172,9 +239,12 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
 
 
         # 1. Extract circuits from experiment 
-        # Loop over all circuits in the experiment and create IonSim circuits 
-        gst_circuits = []
-        for circuit_name in GST_data.gst_data_frame['circuit_names']: 
+        gst_circuits = self.GST_data.gst_circuits
+        #for circuit_name in GST_data.gst_data_frame['circuit_names']: 
+
+        # 2. Loop over all Parsed Circuits, containing experiment information  
+        for circuit_experiment in GST_data.gst_circuits: 
+            self.compute_circuit_log_likelihood(circuit_experiment)
             gst_circuits.append( circuit_from_circuit_name(circuit_name) ) 
 
 
@@ -207,7 +277,8 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         return gate_set_parameters 
 
 
-    def circuit_from_circuit_name(circuit_name: str, noise: Noise) -> Circuit:
+    #def circuit_from_circuit_name(circuit_name: str, noise: Noise) -> Circuit:
+    def circuit_from_parsed_circuit(parsed_circuit: ParsedCircuit) -> Circuit:
         """ Function that returns a circuit object (list of gates) corresponding to the circuit name. 
             - Helps to convert experiment circuit names into IonSim Gate/Circuit objects from the gate set. 
             - e.g. circuit_name = 'idle, X_pi_2' -> gate_list = [idle_gate, X_pi_2_gate] -> Circuit 
@@ -234,6 +305,11 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         """ Helper function to convert experimental gate nomenclature to internal
                 IonSim gate nomenclature used in this class. """
         # TODO: Maybe the user will specify this mapping / look-up table? 
+        
+
+
+
+
 
         return gate_name
 
@@ -245,13 +321,15 @@ class GST_Data():
     N_qubits: int  
 
     # Prep state and measurement may need to become circuit dependent for full generality for 2+ qubits 
-    prep_state: State
-    measurement: Operator 
+    ideal_prep_state: State
+    ideal_measurement: Operator 
 
     # Can organize data either as a single data structure 
     #   or have each member variable as a different data structure.
-    gst_data_frame: pd.DataFrame ## TODO: Decide on data structure 
+    #gst_data_frame: pd.DataFrame ## TODO: Decide on data structure 
     # N_shots x outcome x circuit 
+    
+    
     N_possible_outcomes: int
 
 
@@ -275,10 +353,10 @@ class GST_Data():
             file_string denotes the file name and location, e.g. "./my_datafile.gst" 
 
             Organize measurement data into a data frame (df) with arguments: 
-            df['circuit_names'] 
+            df['circuit_names'] , could be a dict of prep, germ, measure circuits. or these could be separate df entries.  
             df['gate_start_times'] 
             df['gate_end_times'] 
-            df['germ_powers'] 
+            df['germ_power'] 
             df['Measurement_outcomes'] --> {'state' : N_counts}, e.g. {'01' : 1000 counts, '10' : 2000 counts, ... } 
             df['Number of shots'] 
 
@@ -286,9 +364,25 @@ class GST_Data():
         data_frame = {}
 
 
+        # Get GST results from data, this contains a list of ParsedCircuit objects  
+        gst_results = parse_gst_circuit_file(fname)
+
+        data_frame['Parsed circuits'] = gst_results 
+
+        # Get IonSim Circuit object from this data  
+
+
+        # Map GST circuit sequences to 
+
+
+        #num_experiments = len(gst_results)
+        
+
+
+
         # Import GST sequences: 
-        imported_data = {} # dictionary with keys = circuit_sequences list, counts (.e.g for 0, 1).
-        circuit_sequences = imported_data['circuit_sequences']
+        #imported_data = {} # dictionary with keys = circuit_sequences list, counts (.e.g for 0, 1).
+        #circuit_sequences = imported_data['circuit_sequences']
 
 
 
@@ -296,7 +390,7 @@ class GST_Data():
 
         return cls(gst_data_frame = data_frame, prep_state = prep_state, measurement = measurement_operator)  
     
-        
+
     @classmethod
     def import_gst_data(cls, file_string: str, N_qubits: int, prep_state: State, measurement_operator: Operator, shot_averaged: bool):
         """ Helper method for importing gst data from a file.

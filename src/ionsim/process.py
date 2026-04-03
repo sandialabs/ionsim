@@ -231,3 +231,25 @@ def _combine_process_matrices(process_matrices: list[Matrix]):
         return process_matrices[0]
     else:
         return np.linalg.multi_dot(process_matrices[::-1])
+
+
+
+@dataclass(frozen=True,eq=False)
+class GST_Circuit():
+    """ Class containing IonSim GST Circuit Objects, containing lists of gates"""
+
+    name: str
+    prep_circuit: Circuit  
+    germ_circuit: Circuit 
+    measure_circuit: Circuit 
+    germ_power: int 
+    counts: dict[str, int] | None=None 
+    
+    @property
+    def expanded_circuit(self) -> list[Gate]:
+        """ List of gates, expanded (no germ power included) """
+        return self.prep_circuit.gates + self.germ_circuit.gates * self.germ_power.gates + self.measure_circuit.gates
+
+    def __repr__(self):
+        readable_name = " ".join(repr(gate.name) for gate in self.expanded_gates) or "(empty)"
+        return f"GST_Circuit({gates_readable}, counts={self.counts})"

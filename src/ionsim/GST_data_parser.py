@@ -4,13 +4,74 @@ from pathlib import Path
 import re
 
 
+
+@dataclass()
+class CircuitData:
+    """ Circuit experiment data either in the form of counts or single-shots with timestamps. 
+
+        - counts: {'0': 100, '1' : 100}  
+        - shots: [ (t0, '0') , (t1, '0'), (t2, '1'), ... (t_i, 'outcome') , ... ]
+            where t_i are floats representing the time of the measurement. 
+    """
+
+    counts: dict[str, int] | None=None
+    timestamped_shots: list[tuple[float, str]] | None=None
+
+
+    @staticmethod
+    def from_counts(counts):
+        return CircuitData(counts=counts, timestamped_shots =None)
+        
+
+    @staticmethod
+    def from_timestamped_shots(cls, single_shot_data):
+        return CircuitData(timestamped_shots = single_shot_data) 
+
+
+    def to_counts(self) -> dict:
+        """ Time-average single shots into counts (discards time information). """
+        if self.counts is not None:
+            return self.counts
+
+        c = {}
+        # Loop through times and incriment the count of each outcome
+        for _, outcome in self.timestamped_shots:
+            c[outcome] += c.get(outcome, 0) + 1 
+        return c
+
+    def time_binned(self, bin_edges: list[float]):
+        """ Bin the single-shot data into windows of time. Bin edges is a list of time points defining the N-1 bins. 
+
+            Returns list of count dictionaries, 1 per bin.
+
+        """
+        N_bins = len(bin_edges) - 1
+
+        bins = [{} for _ in range(N_bins) ]
+
+        # loop over all outcomes, binning as the loop proceeds
+        for t, outcome in self.timestamped_shots:
+            for i in range(N_bins):
+                if bin_edges[i] <= t < bin_edges[i + 1]:
+                    bins[i][outcome] = bins[i].get(outcome, 0) + 1
+                    break
+        return bins
+                    
+
+    @property
+    def total_counts(self):
+        if self.counts is not None:
+            return sum(self.counts.values()) 
+        return len(self.timestamped_shots)
+
+
+
 @dataclass(frozen=True) 
 class ParsedGate:
     """ Parsed gate from GST file with information on the gate and involved qubits """
 
     name: str 
     qubits: tuple[int, ...] # qubits are indexed by integers starting at 0 
-
 
     def __repr__(self):
         if (self.name == "idle") or (self.name == "I"):
@@ -25,9 +86,7 @@ class ParsedCircuit:
 
         - follows convention of Prep gates --> {(Germ_gates)^germ_power} --> measure gates  
         
-        - Stores the file string contents, 
-
-
+        - Stores the file string contents
     """
 
     unparsed_data: str
@@ -37,11 +96,12 @@ class ParsedCircuit:
     germ_power: int 
 
     line_labels: list[int]   # not as important, TODO: delete?   
-    measurement_counts: dict[str, int]
+    #measurement_counts: dict[str, int]
+    measurement_data: CircuitData
 
     
     @property
-    def expanded_gates(self) -> list[Gate]:
+    def expanded_gates(self) -> list[ParsedGate]:
         """ List of gates, expanded (no germ power included) """
         return self.prep_gates + self.germ_gates * self.germ_power + self.measurement_gates
 
@@ -49,7 +109,8 @@ class ParsedCircuit:
     @property
     def total_counts(self) -> int:
         """ Number of measurement counts """
-        return sum(self.measurement_counts.values())
+        return self.measurement_data.total_counts 
+        #return sum(self.measurement_counts.values())
 
 
     @property
@@ -107,6 +168,7 @@ def parse_measurement_outcome_labels(header: str) -> list[str]:
 
 def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
     """ Parse a GST circuit line, containing a sequence of gates and the measurement count outcomes. """ 
+    ## TODO: Add parsing functionality for t-dependent data. This is currently not handled 
     # For GST data files, this is of the format circuit list then measurement counts 
 
     # Strip the line if it's not already stripped 
@@ -134,7 +196,7 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
     # Parse circuit sequence, starting with empty (do nothing -- prep then measure) string 
     if circuit_sequence == "{}":
         return ParsedCircuit(unparsed_data = line, prep_gates=[], germ_gates = [], measurement_gates = [],
-                            germ_power = 1, line_labels = line_labels, measurement_counts = measurement_counts) 
+                            germ_power = 1, line_labels = line_labels, measurement_data = CircuitData.from_counts(measurement_counts)) 
 
 
     # Find the germ block if it exists  
@@ -158,7 +220,7 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
         germ_power = 1
         
     
-    return ParsedCircuit(line, prep_gates, germ_gates, measure_gates, 1, line_labels, measurement_counts) 
+    return ParsedCircuit(line, prep_gates, germ_gates, measure_gates, germ_power, line_labels, CircuitData.from_counts(measurement_counts)) 
 
 
 
@@ -200,7 +262,7 @@ if __name__=="__main__":
     # Run the main parsing function:  
     results = parse_gst_circuit_file(fname)
 
-    head = 64
+    head = 540
     # Print circuit information: 
     for i, circ in enumerate(results):
         print(f"\n--- Experiment {i} ---")
@@ -209,7 +271,7 @@ if __name__=="__main__":
         print(f"    Germ gates:    {circ.germ_gates}")
         print(f"    Germ power:    {circ.germ_power}")
         print(f"    Measure gates:    {circ.measurement_gates}")
-        print(f"    Measurement outcomes:    {circ.measurement_counts}")
+        print(f"    Measurement outcomes:    {circ.measurement_data.counts}")
         print(f"    Total shots:    {circ.total_counts}")
         print(f"    Circuit depth:    {circ.depth}")
         # Only print the first {head} 
