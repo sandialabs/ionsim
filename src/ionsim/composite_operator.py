@@ -93,5 +93,3 @@ class CompositeOperator(ABC):
         coupling_matrix = np.sum(op_ints, axis=0)
         Rate = np.sum(op_Rates, axis=0)
         return coupling_matrix, Rate  
-
-

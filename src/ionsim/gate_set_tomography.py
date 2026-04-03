@@ -26,18 +26,10 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
                 - prep state: rho_0, representing an ideal state prepared natively. 
                 - POVM_measurement_effects: is a dictionary of measurement effects: ['0' : E0, '1': E1] or ['00' : E0, '01' : E1, ...] for N = 2 
                 - parsed_circuits is a list of Parsed GST Circuits that contain circuit information and measurement information.
-                - gate model factory is a function that takes a gate name and qubit tuple and returns a process matrix (gate) function   
-    
-        ################################## to delete ###################################### 
-                - parametrized_gates is a boolean. If True, the user should specify a model 
-                    for the gates as a function of the parameters. If False, the class assumes 
-                    the gate is modeled as a generic, dense process matrix.  
-                
-                - gate_parameters 
-        ################################### end ###############################     
+                - gate model factory is a function that takes a gate name and qubit tuple and returns an IonSim Gate object, which holds a process matrix (gate) function. 
+                - gst_parameters: a 1D numpy array of gate parameters.  
     
         """ 
-
 
         # Could alternatively have the user specify this mapping 
         @cached_property
@@ -74,11 +66,7 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
 
         # 2. Build gate models and possible interpolants during construction. 
         self.gate_models = {} 
-        #self.gate_interpolants = {} 
         for gate in gate_set:
- #            if (gate.name == 'idle') or (gate.name == '[]'): # TODO check this 
- #                self.gate_models[gate] = IdleGateModel()  # TODO: Define this 
- #                continue  
             ism_name = self.gate_dictionary[gate.name] 
             self.gate_models[gate] = gate_model_factory(ism_name, gate.qubits)
 
@@ -124,12 +112,6 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
             i += N  
 
         return parameter_indices, i 
-
-
-
-    def get_parameters_for_key(self, key):
-        """ Returns current parameter values for operator labelled by key. """
-        return self.gst_parameters[self.gst_parameter_indices[key]]
 
 
 
@@ -249,6 +231,11 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
             theta_func:     optional callable(t) -> parameter_vector for time-dependent data.
                             If None, theta is assumed to be t-independent.
 
+            Log likelihood of parameters for each experiment:  
+                l_{exp} = sum_{outcomes} N_{outcome} log( p_{outcome} (theta) ) 
+             - p_outcome (theta)  is the probability of the outcome using gates modeled by theta. 
+             - "outcome" <==> measurement effect. e.g. "0" or "1" for 1Q measurement. 
+
         """                
         # TODO: make a separate function for t-dependent parameters 
         if theta is None:
@@ -324,43 +311,11 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
 
 
 
- #    def compute_circuit_log_likelihood(self, gst_circuit: ParsedCircuit, theta: Vector) -> float: 
- #        """ Computes log likelihood of the parameters given the GST circuit data using the following:  
- #
- #            l_{exp} = sum_{outcomes} N_{outcome} log( p_{outcome} (theta) ) 
- #
- #            - theta is the vector of gate parameters, 
- #            - p_outcome (theta)  is the probability of the outcome using gates modeled by theta 
- #            - "outcome" <==> measurement effect. e.g. "0" or "1" for 1Q measurement. 
- #        """ 
- #
- #        N_outcomes = len(circuit.measurement_counts)
- #
- #        log_likelihood = 0.
- #        for outcome, counts in gst_circuit.measurement_counts.items():        
- #            probability_of_outcome = estimate_probability(outcome, gst_circuit, gate_parameters)
- #            log_likelihood += counts*np.log( probability_of_outcome) 
- #
- #
- #        return log_likelihood            
-
-
-
-
-
-
     # Questions: 
         # Should we allow more than 1 initial native state and 1 native measurement? 
             # GST manual suggests that ususally only 1 is available. 
     
-    # Initial Thoughts: 
-    # - user constructs the class. 
-    # - user either specifies models for gates upon construction or uses something like an "add_gate_model()" function 
-    # - user solves for parameters post-construction 
-
  #    basis: Basis
- #    prep_state: State
- #    native_measurement: Operator 
  #    gate_set: dict[str, Gate]    # instead of (list[Gate])
  #    ideal_gate_set: dict[str, Gate]    
     #gate_set: dict[str, Gate]    # instead of (list[Gate])
@@ -414,28 +369,28 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         # Each gate has a dictionary of parameters, but this could be none.  
         # include logic of 
 
-    def __post_init__(self):
-        """ Safety checks: 
-            1. Gates need to be parametrized.  
-            2. Prep and Measurement needs to match between GST data and GST classes.  
-        """ 
-        for gate in self.gate_set:
-            if gate.parameters is None:
-                self.parametrized_gates = False  
+ #    def __post_init__(self):
+ #        """ Safety checks: 
+ #            1. Gates need to be parametrized.  
+ #            2. Prep and Measurement needs to match between GST data and GST classes.  
+ #        """ 
+ #        for gate in self.gate_set:
+ #            if gate.parameters is None:
+ #                self.parametrized_gates = False  
+ #
+ #        # TODO: we need to be able to check for state and operator equality. These compare methods don't exist yet. 
+ #        if not compare_state(gst_experiments_data.prep_state, self.initial_state):
+ #            raise IonSimError("GST Data Class and GST Class should use the same prep states.")
+ #
+ #        if not compare_operator(gst_experiments_data.measurement, self.native_measurement):
+ #            raise IonSimError("GST Data Class and GST Class should use the same measurement operator.")
 
-        # TODO: we need to be able to check for state and operator equality. These compare methods don't exist yet. 
-        if not compare_state(gst_experiments_data.prep_state, self.initial_state):
-            raise IonSimError("GST Data Class and GST Class should use the same prep states.")
-
-        if not compare_operator(gst_experiments_data.measurement, self.native_measurement):
-            raise IonSimError("GST Data Class and GST Class should use the same measurement operator.")
-
-    @classmethod
-    def from_GST_Data(cls, gst_data: GST_Data)
-
-
-
-        return cls( )
+ #    @classmethod
+ #    def from_GST_Data(cls, gst_data: GST_Data)
+ #
+ #
+ #
+ #        return cls( )
 
 
  #    def compute_circuit_outcome_probability(circuit: Circuit, outcome: int):
