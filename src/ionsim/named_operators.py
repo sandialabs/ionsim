@@ -70,6 +70,7 @@ class Unitary:
     def R(phi: float, theta: float):
         """A single-qubit rotation on the XY plane of the Bloch sphere."""
         sigma_phi = np.cos(phi) * Pauli.X + np.sin(phi) * Pauli.Y
+        # TODO: Resolve --> why is there overall phase of exp(i theta / 2)? Usually R(phi, theta) is exp[-i (theta/2) sigma_phi ]  
         return np.exp(1j*theta/2) * (np.cos(theta/2) * Pauli.I - 1j*np.sin(theta/2) * sigma_phi)
 
     @staticmethod

@@ -11,67 +11,21 @@ import ionsim as sm
 
 """ ################ Single qubit GST Example ################## """ 
 # Define Hamiltonian model: 
-def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
-    phase = phi
-    prefactor = np.exp(1j*phase) * rabi_rate/2  
-
-    raise_target_spins = [basis.enlarge_matrix(sm.Pauli.plus, [spin]) for spin in target_spins]
-    operator = prefactor * raise_target_spins[0]
-    operators = [
-        sm.CouplingOperator.from_matrix(basis, operator, omega, modulation_function=mod),
-    ]
-    interaction_frame_energies = [-state.energy for state in basis.states] 
-    return sm.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
-
-################ Define gate models: #################### 
-def idle(theta):
-    """ Returns d^2 x d^2 process matrix in standard basis for Z-rotation by theta """  
-    # Build identity matrix with Z rotation by theta:
-    # TODO: generalize to 2+ qubits  
-    assert len(spins) == 1
-    I = np.eye(2)
-    I[0,0] = np.exp( - 1j * theta ) 
-    I[1,1] = np.exp( 1j * theta ) 
-
-    # Promote to a d^2 x d^2 superoperator 
-    return self.basis.compute_superoperator_from_unitary_operator(I)
+ #def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
+ #    phase = phi
+ #    prefactor = np.exp(1j*phase) * rabi_rate/2  
+ #
+ #    raise_target_spins = [basis.enlarge_matrix(sm.Pauli.plus, [spin]) for spin in target_spins]
+ #    operator = prefactor * raise_target_spins[0]
+ #    operators = [
+ #        sm.CouplingOperator.from_matrix(basis, operator, omega, modulation_function=mod),
+ #    ]
+ #    interaction_frame_energies = [-state.energy for state in basis.states] 
+ #    return sm.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
 
 
-def X_pi2(X_rot, Z_rot):
-    """ Returns d^2 x d^2 process matrix in standard basis 
 
-        X_pi2 = exp( -i [ (pi/2 + X_rot) X  - i(Z_rot)Z ] )
-
-        - X_rot is an additional X_rotation parameter (over/under rotation).
-        - Z_rot is a Z_rotation parameter, e.g. from a detuned laser. 
-
-    """  
-    # TODO: generalize to 2+ qubits  
-    assert len(spins) == 1
-    x_angle = np.pi/2. + X_rot
-    Rxpi2 = sm.Unitary.R_bloch([x_angle/2., 0., Z_rot/2.]) 
-
-    # Promote to a d^2 x d^2 superoperator 
-    return self.basis.compute_superoperator_from_unitary_operator(Rxpi2)
-
-
-def Y_pi2(Y_rot, Z_rot):
-    """ Returns d^2 x d^2 process matrix in standard basis 
-
-        X_pi2 = exp( -i [ (pi/2 + X_rot) X  - i(Z_rot)Z ] )
-
-        - X_rot is an additional X_rotation parameter (over/under rotation).
-        - Z_rot is a Z_rotation parameter, e.g. from a detuned laser. 
-
-    """  
-    # TODO: generalize to 2+ qubits  
-    assert len(spins) == 1
-    y_angle = np.pi/2. + Y_rot
-    Rypi2 = sm.Unitary.R_bloch([0., y_angle/2., Z_rot/2.]) 
-
-    # Promote to a d^2 x d^2 superoperator 
-    return self.basis.compute_superoperator_from_unitary_operator(Rypi2)
-
+#def gate_fxn_builder(process_matrix_fxn: Callable):
 
 
 def main():
@@ -100,7 +54,15 @@ def main():
             if i > head:
                 break
 
-    sys.exit(0)
+    #sys.exit(0)
+    # Build gate functions from process matrix functions 
+    gate_functions = [idle, X_pi2, Y_pi2]
+
+ #    for pm_function in superoperator_fxns:
+ #        #parameters = {} 
+ #        gate_function = sm.Gate.from_process_matrix_function( basis, pm_function,  
+
+
     sparse = False
     modulate_amplitude = False
     num_spins = 1
@@ -112,7 +74,67 @@ def main():
     
     basis = sm.StandardBasis([*spins])
     target_spins = [spins[0]]
+    ################ Define gate models: #################### 
+    def idle(theta):
+        """ Returns d^2 x d^2 process matrix in standard basis for Z-rotation by theta """  
+        # Build identity matrix with Z rotation by theta:
+        # TODO: generalize to 2+ qubits  
+        assert len(spins) == 1
+        def superoperator_function(theta):
+            I = np.eye(2)
+            I[0,0] = np.exp( - 1j * theta ) 
+            I[1,1] = np.exp( 1j * theta ) 
+            # Promote to a d^2 x d^2 superoperator 
+            return self.basis.compute_superoperator_from_unitary_operator(I)
+        parameters = {'idle angle': theta}
+        return sm.Gate.from_process_matrix_function(basis, superoperator_function, parameters)
     
+    
+    
+    def X_pi2(X_rot, Z_rot):
+        """ Returns Gate from the d^2 x d^2 process matrix function in standard basis 
+    
+            X_pi2 = exp( -i [ (pi/2 + X_rot) X  - i(Z_rot)Z ] )
+    
+            - X_rot is an additional X_rotation parameter (over/under rotation).
+            - Z_rot is a Z_rotation parameter, e.g. from a detuned laser. 
+    
+        """  
+        # TODO: generalize to 2+ qubits  
+        assert len(spins) == 1
+        def superoperator_function(X_rot, Z_rot):
+            x_angle = np.pi/2. + X_rot
+            Rxpi2 = sm.Unitary.R_bloch([x_angle/2., 0., Z_rot/2.]) 
+        
+            # Promote to a d^2 x d^2 superoperator 
+            return self.basis.compute_superoperator_from_unitary_operator(Rxpi2) # superoperator 
+    
+        parameters = {'excess X rotation': X_rot, 'excess Z rotation' : Z_rot }
+        return sm.Gate.from_process_matrix_function(basis, superoperator_function, parameters)
+    
+
+    def Y_pi2(Y_rot, Z_rot):
+        """ Returns Gate from the d^2 x d^2 process matrix function in standard basis 
+    
+            X_pi2 = exp( -i [ (pi/2 + X_rot) X  - i(Z_rot)Z ] )
+    
+            - X_rot is an additional X_rotation parameter (over/under rotation).
+            - Z_rot is a Z_rotation parameter, e.g. from a detuned laser. 
+    
+        """  
+        # TODO: generalize to 2+ qubits  
+        assert len(spins) == 1
+        def superoperator_function(Y_rot, Z_rot):
+            y_angle = np.pi/2. + Y_rot
+            Rypi2 = sm.Unitary.R_bloch([0., y_angle/2., Z_rot/2.]) 
+    
+            # Promote to a d^2 x d^2 superoperator 
+            return self.basis.compute_superoperator_from_unitary_operator(Rypi2)
+    
+        parameters = {'excess Y rotation': Y_rot, 'excess Z rotation' : Z_rot }
+        return sm.Gate.from_process_matrix_function(basis, superoperator_function, parameters)
+
+
     
     rabi_rate = 100e3 * 2*np.pi # rad./s
     detuning = 0
