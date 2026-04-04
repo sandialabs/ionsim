@@ -6,6 +6,7 @@ import time
 from scipy.sparse import kron as skron
 from matplotlib import pyplot as plt
 from icecream import ic
+from typing import Callable
 
 import ionsim as sm
 
@@ -23,24 +24,19 @@ import ionsim as sm
  #    interaction_frame_energies = [-state.energy for state in basis.states] 
  #    return sm.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
 
-
-
-#def gate_fxn_builder(process_matrix_fxn: Callable):
-
-
 def main():
     # 1. Import GST sequence data 
-    fname = './example_1Q_gst_sequence.gstdata' 
+    fname = './1Q_gst_sequence.gstdata' 
 
     # Run the main parsing function:  
-    results = sm.parse_gst_circuit_file(fname)
+    parsed_circuits = sm.parse_gst_circuit_file(fname)
 
-    print_head = False 
+    print_head = True 
     if print_head:
         # Optional print out of first _ lines to check functionality  
         # Print circuit information: 
         head = 100
-        for i, circ in enumerate(results):
+        for i, circ in enumerate(parsed_circuits):
             print(f"\n--- Experiment {i} ---")
             print(f"    Unparsed circuit line:  {circ.unparsed_data}")
             print(f"    Prep gates:    {circ.prep_gates}")
@@ -54,17 +50,7 @@ def main():
             if i > head:
                 break
 
-    #sys.exit(0)
-    # Build gate functions from process matrix functions 
-    gate_functions = [idle, X_pi2, Y_pi2]
-
- #    for pm_function in superoperator_fxns:
- #        #parameters = {} 
- #        gate_function = sm.Gate.from_process_matrix_function( basis, pm_function,  
-
-
-    sparse = False
-    modulate_amplitude = False
+    # Set up basic 1-qubit (1Q) basis  
     num_spins = 1
     
     spins = [
@@ -74,7 +60,10 @@ def main():
     
     basis = sm.StandardBasis([*spins])
     target_spins = [spins[0]]
+
+
     ################ Define gate models: #################### 
+    # Requires a basis to be defined 
     def idle(theta):
         """ Returns d^2 x d^2 process matrix in standard basis for Z-rotation by theta """  
         # Build identity matrix with Z rotation by theta:
@@ -135,111 +124,83 @@ def main():
         return sm.Gate.from_process_matrix_function(basis, superoperator_function, parameters)
 
 
-    
-    rabi_rate = 100e3 * 2*np.pi # rad./s
-    detuning = 0
-    
-    omega = (
-        + target_spins[0].energy_levels[1].energy - target_spins[0].energy_levels[0].energy
-        + detuning
-    )
-    
-    amp_mod = None
-    
+    # Define dictionary mappings for GST gate name to ionsim gate function 
+    ism_gate_dictionary = {}    
+    ism_gate_dictionary['Gxpi2']  = X_pi2 
+    ism_gate_dictionary['Gypi2'] = Y_pi2
+    ism_gate_dictionary['[]'] = idle
+    ism_gate_dictionary['{}'] = None
+    #ism_gate_dictionary['Gypi'] = Y_pi2
+    # TODO: add 2Q gates 
 
-    def simulated_R(phi, theta, domega):
-        """ Builds R(phi, theta) Hamiltonian for a frequency change omega + domega, returns gate """ 
-        tau = abs(theta)/rabi_rate
-        hamiltonian = R_hamiltonian(basis, phi, rabi_rate, omega + domega, sparse=sparse, mod=amp_mod)
-        start = time.perf_counter()
-        ic(hamiltonian.hamiltonian_function(0))
-        end = time.perf_counter()
-        ic(f'Building Hamiltonian took {end - start} s.')
-        return sm.Gate.from_hamiltonian(basis, hamiltonian, tau)
+    def gate_factory_function(gate_name: str, qubits: tuple[int, ...]) -> Callable:
+        """ Function to map a gate name & qubit arguments to a gate function """ 
+        # TODO: Generalize to 2Q gates 
+        #   - for 1Q gates, this is made trivial by the dictionary. For 2Q, it requires functionality 
+        assert len(qubits) == 1
+        return ism_gate_dictionary[gate_name]
 
-    def R(phi, theta, domega, half_box_width):
-        """ Builds a process matrix function, then a gate by adding optional noise to it """ 
-        def process_matrix_function(domega):
-            gate = simulated_R(phi, theta, domega) # builds Hamiltonian and returns gate 
-            return gate.process_matrix
-        if half_box_width == 0:
-            omega_noise = None
-        else:
-            domegas = np.linspace(-half_box_width, half_box_width, 21)
-            omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
-        return sm.Gate.from_process_matrix_function(
-                basis, process_matrix_function, {'domega': domega}, omega_noise,
-            )
+    # For GST, define rho prep state and POVM effects: 
+    rho_prep = sm.State.from_coefficients(basis, list([1., 0.]))
 
-    def ideal_R(phi, theta):
-        return sm.Gate.from_unitary(basis, sm.Unitary.R(phi, theta), target_spins)
+    POVM_effects = {} 
+    POVM_effects['0'] = sm.EnergyShiftOperator.from_matrix(basis, sm.Pauli.projector_0) 
+    POVM_effects['1'] = sm.EnergyShiftOperator.from_matrix(basis, sm.Pauli.projector_1) 
 
-    def process_fidelity(phi, theta, dx, dy):
-        return R(phi, theta, dx, dy).compute_process_fidelity(ideal_R(phi, theta).process_matrix)
+    GST_analyzer = sm.GateSetTomography(basis, rho_prep, POVM_effects, parsed_circuits, gate_factory_function)
+    sys.exit(0)
 
-    compute_state_fidelity = False
-    compute_process_fidelity = False
-    compute_interpolated_gate = True
+
+
+
+ #    rabi_rate = 100e3 * 2*np.pi # rad./s
+ #    detuning = 0
+ #    
+ #    omega = (
+ #        + target_spins[0].energy_levels[1].energy - target_spins[0].energy_levels[0].energy
+ #        + detuning
+ #    )
+ #    
+ #    amp_mod = None
+ #    
+
+#     def simulated_R(phi, theta, domega):
+#         """ Builds R(phi, theta) Hamiltonian for a frequency change omega + domega, returns gate """ 
+#         tau = abs(theta)/rabi_rate
+#         hamiltonian = R_hamiltonian(basis, phi, rabi_rate, omega + domega, sparse=sparse, mod=amp_mod)
+#         start = time.perf_counter()
+#         ic(hamiltonian.hamiltonian_function(0))
+#         end = time.perf_counter()
+#         ic(f'Building Hamiltonian took {end - start} s.')
+#         return sm.Gate.from_hamiltonian(basis, hamiltonian, tau)
+# 
+#     def R(phi, theta, domega, half_box_width):
+#         """ Builds a process matrix function, then a gate by adding optional noise to it """ 
+#         def process_matrix_function(domega):
+#             gate = simulated_R(phi, theta, domega) # builds Hamiltonian and returns gate 
+#             return gate.process_matrix
+#         if half_box_width == 0:
+#             omega_noise = None
+#         else:
+#             domegas = np.linspace(-half_box_width, half_box_width, 21)
+#             omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
+#         return sm.Gate.from_process_matrix_function(
+#                 basis, process_matrix_function, {'domega': domega}, omega_noise,
+#             )
+# 
+#     def ideal_R(phi, theta):
+#         return sm.Gate.from_unitary(basis, sm.Unitary.R(phi, theta), target_spins)
+# 
+#     def process_fidelity(phi, theta, dx, dy):
+#         return R(phi, theta, dx, dy).compute_process_fidelity(ideal_R(phi, theta).process_matrix)
+
+    compute_interpolated_gate = False 
 
     data_directory = Path.home() / "tmp" / "ionsim_examples_data"
     if not data_directory.exists():
         data_directory.mkdir(parents=True, exist_ok=True)
 
     data_filename = data_directory / "simr.hdf5"
-
-    if compute_state_fidelity:
-        phi = 0
-        theta = np.pi/2
-        tau = abs(theta)/rabi_rate
-        target_wavefunction = 1/np.sqrt(2) * np.array([1, -1j])
-
-        hamiltonian = R_hamiltonian(basis, phi, rabi_rate, omega, sparse=sparse, mod=amp_mod)
-
-        start = time.perf_counter()
-        ic(hamiltonian.hamiltonian_function(0))
-        end = time.perf_counter()
-        ic(f'Building Hamiltonian took {end - start} s.')
-
-        coefs = np.zeros(len(basis.states))
-        coefs[0] = 1
-        initial_state = sm.State.from_coefficients(basis, list(coefs))
-
-        times = np.linspace(0, tau, 41) # setting to None will return only the final spin state
-
-        start = time.perf_counter()
-        psis = initial_state.propagate_using_schrodinger_equation(hamiltonian, tau, times)
-        end = time.perf_counter()
-        ic(f'Propagating state took {end - start} s.')
-
-        probs = np.array([psi.compute_basis_state_probabilities() for psi in psis])
-        ic(probs[-1,:])
-
-        target_psi = sm.State.from_wavefunction(basis, target_wavefunction)
-        fidelity = psis[-1].compute_state_fidelity(target_psi.density_matrix)
-        ic(fidelity)
-
-        for i,state in enumerate(basis.states):
-            plt.plot(times, probs[:, i], label=state.name)
-        plt.ylabel('Probabilities')
-        plt.xlabel('Gate Duration (s)')
-        plt.legend()
-        plt.show()
-
-    if compute_process_fidelity:
-
-        phi = 0
-        theta = np.pi/2
-
-        domega = 0
-        half_box_width = 50 * 2*np.pi*1e3
-
-        dx = domega
-        dy = half_box_width
-
-        start = time.perf_counter()
-        ic(process_fidelity(phi, theta, dx, dy))
-        end = time.perf_counter()
-        ic(f'Simulating process fidelity took {end - start} s.')
 
     # Step 1: Set up a grid where you actually build the gates. 
     if compute_interpolated_gate:
@@ -296,7 +257,6 @@ def main():
         ]
 
         plt.rcParams.update({'font.size': 16})
-
         dx_scale = 1/(2*np.pi*1e3)
         plt.plot(dxs * dx_scale, 1-np.array(fidelities), 'o', label='simulation: grid point')
         plt.plot(dxs2 * dx_scale, 1-np.array(approx_fids), '-', label='interpolation')

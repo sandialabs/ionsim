@@ -5,6 +5,7 @@ from pathlib import Path
 import scipy.stats as stats 
 import scipy.optimize as opt 
 from functools import cached_property
+from typing import Callable
 
 from ionsim.process import Gate, Circuit
 from ionsim.named_operators import Pauli, Unitary
@@ -17,8 +18,8 @@ from ionsim.custom_math import matrix_AYB_multiply_to_superoperator
 # 2. GST Class creation: User specifies gate set, prep state, measurement operator, and GST measurement data
 # 3. GST Class: Solve for model parameters and return  
 
-class GateSetTomography() # or GST() or GST_Base() if we plan to have child classes.
-    def __init__(self, basis: StandardBasis, prep_state: State, POVM_measurement_effects: dict[str, list[Operator]], parsed_circuits: list[ParsedCircuit], gate_model_factory: Callable): 
+class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
+    def __init__(self, basis: StandardBasis, prep_state: State, POVM_effects: dict[str, Operator], parsed_circuits: list[ParsedCircuit], gate_model_factory: Callable): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
     
             Member variables include:
@@ -32,21 +33,21 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         """ 
 
         # Could alternatively have the user specify this mapping 
-        @cached_property
-        def gate_dictionary(self):
-            ism_gate_dictionary = {}    
-            ism_gate_dictionary['Gxpi2'] = 'sqrt_X'
-            ism_gate_dictionary['Gxpi'] = 'Xpi'
-            ism_gate_dictionary['Gypi2'] = 'sqrt_Y'
-            ism_gate_dictionary['Gypi'] = 'Y'
-            ism_gate_dictionary['[]'] = 'I'
-            ism_gate_dictionary['{}'] = None
-            # TODO: add 2Q gates 
-            return ism_gate_dictionary
+ #        @cached_property
+ #        def gate_dictionary(self):
+ #            ism_gate_dictionary = {}    
+ #            ism_gate_dictionary['Gxpi2'] = 'sqrt_X'
+ #            ism_gate_dictionary['Gxpi'] = 'Xpi'
+ #            ism_gate_dictionary['Gypi2'] = 'sqrt_Y'
+ #            ism_gate_dictionary['Gypi'] = 'Y'
+ #            ism_gate_dictionary['[]'] = 'I'
+ #            ism_gate_dictionary['{}'] = None
+ #            # TODO: add 2Q gates 
+ #            return ism_gate_dictionary
 
         # Unpack |rho>> and <<E| or <<M| 
         self.ideal_prep_state = prep_state 
-        self.measurement_effects = POVM_measurement_effects 
+        self.measurement_effects = POVM_effects 
 
         # Parse circuits list contanining GST circuit sequences and correpsonding data (observations) 
         self.parsed_circuits = parsed_circuits 
@@ -61,11 +62,13 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         self.gate_set = set()  # gate_set contains ParsedGate objects
         for circ in parsed_circuits:
             for g in circ.expanded_gates: 
-                gate_set.add(g) 
+                self.gate_set.add(g) 
             
 
-        # 2. Build gate models and possible interpolants during construction. 
+        # 2. Retrieve gate models  
         self.gate_models = {} 
+        # TODO: decide, should gate_models hold Gate objects, or process_matrix_functions? 
+
         for gate in gate_set:
             ism_name = self.gate_dictionary[gate.name] 
             self.gate_models[gate] = gate_model_factory(ism_name, gate.qubits)
@@ -79,7 +82,7 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
 
 
 
-    def _build_parameter_organization(self) -> dict[str, slice], int:
+    def _build_parameter_organization(self) -> (dict[str, slice], int):
         """ Builds and organizes the parameters for GST. This organizes parameters based on:
             1) Prep state 
             2) Each Gate model, for all gates in the set  
@@ -105,7 +108,7 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         i += N
 
         for gate, gate_model in zip(self.gate_set, self.gate_models):
-            N = gate_model.num_parameters
+            N = len(gate_model.parameters)
             # TODO: either use ism gate name or ParsedCircuit gate name 
             # Default parametrization is dense (d^2 x d^2) for each gate: 
             parameter_indices[gate.name] = slice(i, i + N)
@@ -147,7 +150,7 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
 
             - Effects are stored in a dictionary {'outcome' : Effect_vector with superoperator d^2 x d^2 shape} 
             - e.g. E_0 vector is d^2 x 1 corresponding to |0><0|
-            - There is a completeness constraint to enforce: \sum_m E_m = identity
+            - There is a completeness constraint to enforce: sum_m E_m = identity
             - By convention, the last effect is constrained. ==> d^2 parameters are constrained.  
         """ 
         # TODO: consider a more sophisticated parametrization? 
@@ -177,7 +180,7 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         constrained_effect = matrix_AYB_multiply_to_superoperator(np.eye(self.d)) # identity to superoperator 
         last_label = list(self.measurement_effects.keys())[-1]
 
-        assert last_label is not in list(M_effects.keys()) 
+        assert last_label not in list(M_effects.keys()) 
 
         # Loop over all free effects and subtract them from constrained effect: 
         for i, (label, effect_op) in enumerate(self.measurement_effects.items()): 
@@ -207,7 +210,7 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
         mapped_state = quantum_map @ rho_supervector
 
         outcome_probabilities = {}
-        for label, E in M_effects.items()
+        for label, E in M_effects.items():
             outcome_probabilities[label] = np.real(E.conj() @ mapped_state) 
 
         return outcome_probabilities
@@ -256,7 +259,7 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
             probabilities = self.predict_probabilities(circ, theta) # don't need the PM cache? 
 
             if circ.measurement_data.counts is not None:
-                for outcome, count in circ.measurement_data.items()         
+                for outcome, count in circ.measurement_data.items(): 
                     if count > 0:
                         p = np.clip(probs[outcome], probability_TOL, 1. - probability_TOL)
                         l_likelihood += count * np.log(p)
@@ -304,7 +307,8 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
             # Solve matrix Ax = b problem: Frequencies = A_matrix @ Gate_parameters  
             # Check that gram matrix A_{m,s} = <M | C_{m} C_{s} | rho> is invertible.            
             # Compute x = A \ b
-
+            raise IonSimError('Linear GST is not yet programmed into IonSim.')
+            return None 
         else:
             raise IonSimError('Invalid solver input.')
 
@@ -545,85 +549,84 @@ class GST_Data():
         return cls(gst_data_frame = data_frame, prep_state = prep_state, measurement = measurement_operator)  
     
 
-    @classmethod
-    def import_gst_data(cls, file_string: str, N_qubits: int, prep_state: State, measurement_operator: Operator, shot_averaged: bool):
-        """ Helper method for importing gst data from a file.
+ #    @classmethod
+ #    def import_gst_data(cls, file_string: str, N_qubits: int, prep_state: State, measurement_operator: Operator, shot_averaged: bool):
+ #        """ Helper method for importing gst data from a file.
+ #
+ #            file_string denotes the file name and location, e.g. "./my_datafile.xlsx" 
+ #
+ #            Organize measurement data into a data frame (df) with arguments: 
+ #            df['circuit_names'] 
+ #            df['gate_start_times'] 
+ #            df['gate_end_times'] 
+ #            df['germ_powers'] 
+ #            df['Measurement_outcomes'] --> {'state' : N_counts}, e.g. {'01' : 1000 counts, '10' : 2000 counts, ... } 
+ #            df['Number of shots'] 
+ #
+ #        """ 
+ #        file_type = Path(file_string).suffix
+ #        file_type = file_type[1:]
+ #
+ #        outcome_col_label = "Outcome"
+ #
+ #        # TODO: Generalize to N qubits 
+ #        if N_qubits == 1:
+ #            possible_outcomes = ['0', '1']
+ #        elif N_qubits == 2:
+ #            possible_outcomes = ['00', '01', '10', '11']
+ #
+ #        # Import the data: 
+ #        if file_type in ['xlsx', 'xls', 'xlsm']:
+ #            data_sheet_name = '1Q GST'
+ #            data_frame = pd.read_excel(file_string, sheet_name = data_sheet_name) 
+ #        if file_type == 'hdf5': 
+ #            data_frame = pd.read_hdf5(file_string) 
+ #
+ #        # Process and organize data into measurement frequency information: 
+ #        if shot_averaged:
+ #            data_frame['Total shots'] = data_frame.filter(like = outcome_col_label).sum(axis=1) 
+ #            for outcome in possible_outcomes:
+ #                data_frame['Frequency ' + outcome] = data_frame[outcome_col_label + ' ' + outcome] / data_frame['Total shots'] 
+ #
+ #        else:
+ #            # Handle case where the circuits are reported with each shot. 
+ #            
+ #        #N_qubits = len(measurement_columns)//2
+ # #        qubit_measurements = [] # list of size number of qubits 
+ # #        for j in range(N_qubits): 
+ # #            qubit_measurements.append(gst_data[''])
+ #        #circuit_names = gst_data['circuit_names']
+ #        return cls(gst_data_frame = data_frame, prep_state = prep_state, measurement = measurement_operator)
 
-            file_string denotes the file name and location, e.g. "./my_datafile.xlsx" 
-
-            Organize measurement data into a data frame (df) with arguments: 
-            df['circuit_names'] 
-            df['gate_start_times'] 
-            df['gate_end_times'] 
-            df['germ_powers'] 
-            df['Measurement_outcomes'] --> {'state' : N_counts}, e.g. {'01' : 1000 counts, '10' : 2000 counts, ... } 
-            df['Number of shots'] 
-
-        """ 
-        file_type = Path(file_string).suffix
-        file_type = file_type[1:]
-
-        outcome_col_label = "Outcome"
-
-        # TODO: Generalize to N qubits 
-        if N_qubits == 1:
-            possible_outcomes = ['0', '1']
-        elif N_qubits == 2:
-            possible_outcomes = ['00', '01', '10', '11']
-
-        # Import the data: 
-        if file_type in ['xlsx', 'xls', 'xlsm']:
-            data_sheet_name = '1Q GST'
-            data_frame = pd.read_excel(file_string, sheet_name = data_sheet_name) 
-        if file_type == 'hdf5': 
-            data_frame = pd.read_hdf5(file_string) 
-
-        # Process and organize data into measurement frequency information: 
-        if shot_averaged:
-            data_frame['Total shots'] = data_frame.filter(like = outcome_col_label).sum(axis=1) 
-            for outcome in possible_outcomes:
-                data_frame['Frequency ' + outcome] = data_frame[outcome_col_label + ' ' + outcome] / data_frame['Total shots'] 
-
-        else:
-            # Handle case where the circuits are reported with each shot. 
-            
-        #N_qubits = len(measurement_columns)//2
- #        qubit_measurements = [] # list of size number of qubits 
- #        for j in range(N_qubits): 
- #            qubit_measurements.append(gst_data[''])
-        #circuit_names = gst_data['circuit_names']
-            
-        return cls(gst_data_frame = data_frame, prep_state = prep_state, measurement = measurement_operator)  
-
-    @cachedproperty
-    def get_frequencies() -> NDArray: 
-        """ Returns 2D array of shape N_circuits x N_outcomes with each value 
-             corresponding to a frequency of that outcome for that circuit. """  
-        # Calling .values builds a 2D array; therefore, we cache the result to save on cost.  
-        return self.gst_data_frame.filter(like = 'Frequency').values 
-
-    def get_experimental_outcome_frequency(measurement_outcome: 'str', circuit_name: str): 
-        """ Returns probability (shot-averaged outcomes -> frequency) of outcome "m" in circuit C 
-
-            - measurement_outcome is a string denoting the computational state observed.  
-                e.g. outcome = '0' for a single qubit, outcome = '10' for 2-qubits.  
-
-            - There are 2**N possible outcomes for N qubits. 
-
-        """
-        assert len(measurement_outcome) == self.N_qubits, 'Measurement outcome does not correspond with number of qubits.'
-
-        #return self.gst_data_frame['Frequency ' + measurement_outcome]
-        #shot_averaged_data = True 
-        if shot_averaged_data:
-            frequency = self.gst_data_frame[outcome_index, circuit_name]
-            frequency = self.gst_data_frame[outcome_index, circuit_name]
-        else:
-            # Sum over all measurement outcomes to get the number of total counts for the circuit 
-            total_counts = sum(list(self.gst_data_frame[:, circuit_name].values()))
-            frequency = self.gst_data_frame[outcome_index, circuit_name]/total_counts
-
-        return frequency 
+ #    @cachedproperty
+ #    def get_frequencies() -> NDArray: 
+ #        """ Returns 2D array of shape N_circuits x N_outcomes with each value 
+ #             corresponding to a frequency of that outcome for that circuit. """  
+ #        # Calling .values builds a 2D array; therefore, we cache the result to save on cost.  
+ #        return self.gst_data_frame.filter(like = 'Frequency').values 
+ #
+ #    def get_experimental_outcome_frequency(measurement_outcome: 'str', circuit_name: str): 
+ #        """ Returns probability (shot-averaged outcomes -> frequency) of outcome "m" in circuit C 
+ #
+ #            - measurement_outcome is a string denoting the computational state observed.  
+ #                e.g. outcome = '0' for a single qubit, outcome = '10' for 2-qubits.  
+ #
+ #            - There are 2**N possible outcomes for N qubits. 
+ #
+ #        """
+ #        assert len(measurement_outcome) == self.N_qubits, 'Measurement outcome does not correspond with number of qubits.'
+ #
+ #        #return self.gst_data_frame['Frequency ' + measurement_outcome]
+ #        #shot_averaged_data = True 
+ #        if shot_averaged_data:
+ #            frequency = self.gst_data_frame[outcome_index, circuit_name]
+ #            frequency = self.gst_data_frame[outcome_index, circuit_name]
+ #        else:
+ #            # Sum over all measurement outcomes to get the number of total counts for the circuit 
+ #            total_counts = sum(list(self.gst_data_frame[:, circuit_name].values()))
+ #            frequency = self.gst_data_frame[outcome_index, circuit_name]/total_counts
+ #
+ #        return frequency 
 
 
 

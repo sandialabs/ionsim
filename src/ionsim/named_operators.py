@@ -31,6 +31,18 @@ class Pauli:
          [0, 0]],
     )
 
+    ''' Projectors for single-qubit basis states: |0><0| and |1><1| ''' 
+    projector_0 = np.array(
+        [[1, 0],
+         [0, 0]],
+    )
+
+    projector_1 = np.array(
+        [[0, 0],
+         [0, 1]],
+    )
+
+
 class Fock:
 
     from scipy.special import genlaguerre
