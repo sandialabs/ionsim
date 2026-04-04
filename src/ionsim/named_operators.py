@@ -68,22 +68,36 @@ class Unitary:
 
     @staticmethod
     def R(phi: float, theta: float):
-        """A single-qubit rotation on the Bloch sphere."""
+        """A single-qubit rotation on the XY plane of the Bloch sphere."""
         sigma_phi = np.cos(phi) * Pauli.X + np.sin(phi) * Pauli.Y
         return np.exp(1j*theta/2) * (np.cos(theta/2) * Pauli.I - 1j*np.sin(theta/2) * sigma_phi)
 
     @staticmethod
     def R_bloch(bloch_vector: list[floats]):
-        """A single-qubit rotation on the Bloch sphere via the Bloch vector v = (v1, v2, v3)."""
+        """ A single-qubit rotation on the Bloch sphere via the Bloch vector v = (v1, v2, v3): 
+
+            U = exp( -i (v1 * sigma_x + v2*sigma_y + v3*sigma_z) ) 
+              = cos(alpha) I - i sin(alpha) (v_hat dot sigma) 
+
+            Unit vector: v_hat = v / |v|, sigma = (X, Y, Z) 
+
+            ex] Recover X_pi2 (sqrtX) gate via v1 = (π/2)/2
+        """
         # Magnitude of the Bloch vector: 
         alpha = 0.
         for v in bloch_vector:
             alpha += v**2 
+
         alpha = np.sqrt(alpha)
+        TOL = 1E-10
+
+        if alpha < TOL:
+            return np.eye(2, dtype=complex) 
+        
         # Pauli spin vector:  
         n_vector = [v / alpha for v in bloch_vector] 
-        sigma_n = n_vector[0] * Pauli.X + n_vector[1] * Pauli.Y + n_vector[2] * Pauli.Z  
-        return np.cos(alpha) * Pauli.I - 1j*np.sin(alpha) * sigma_n)
+        sigma_n = (n_vector[0] * Pauli.X + n_vector[1] * Pauli.Y + n_vector[2] * Pauli.Z ) # to absorb normalization  
+        return np.cos(alpha) * Pauli.I - 1j*np.sin(alpha) * sigma_n
 
     X = R(0, np.pi)
     sqrtX = R(0, np.pi/2)
