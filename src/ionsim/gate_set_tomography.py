@@ -293,8 +293,10 @@ class GateSetTomography() # or GST() or GST_Base() if we plan to have child clas
             # Maximum likelihood estimation.
             # Specify initial guess. 
             theta_0 = self.gst_parameters.copy() 
+
+            # TODO: Provide bounds for parameters if using interpolated gates 
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
-            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B') # TODO consider adding parameter bounds  
+            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B') # TODO consider adding parameter bounds in any case  
             self.gst_parameters = solver_result.x
             return solver_result
             

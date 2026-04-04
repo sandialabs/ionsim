@@ -10,7 +10,7 @@ from icecream import ic
 import ionsim as sm
 
 """ ################ Single qubit GST Example ################## """ 
-## Define gate models: 
+# Define Hamiltonian model: 
 def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
     phase = phi
     prefactor = np.exp(1j*phase) * rabi_rate/2  
@@ -23,24 +23,34 @@ def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
     interaction_frame_energies = [-state.energy for state in basis.states] 
     return sm.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
 
-
+## Define gate models: 
 def idle(theta):
     """ Returns d^2 x d^2 process matrix in standard basis for Z-rotation by theta """  
     # Build identity matrix with Z rotation by theta:
     # TODO: generalize to 2+ qubits  
     assert len(spins) == 1
-    I = np.exp( - 1j * theta * sm.Pauli.Z ) 
+    I = np.eye(2)
+    I[0,0] = np.exp( - 1j * theta ) 
+    I[1,1] = np.exp( 1j * theta ) 
 
     # Promote to a d^2 x d^2 superoperator 
     return self.basis.compute_superoperator_from_unitary_operator(I)
 
 
-def X_pi2(theta):
-    """ Returns d^2 x d^2 process matrix in standard basis for Z-rotation by theta """  
+def X_pi2(X_rot, Z_rot):
+    """ Returns d^2 x d^2 process matrix in standard basis 
+
+        X_pi2 = exp( -i [ (pi/2 + X_rot) X  - i(Z_rot)Z ] )
+
+        - X_rot is an additional X_rotation parameter (over/under rotation).
+        - Z_rot is a Z_rotation parameter, e.g. from a detuned laser. 
+
+    """  
     # Build identity matrix with Z rotation by theta:
     # TODO: generalize to 2+ qubits  
     assert len(spins) == 1
-    I = np.exp( - 1j * theta * sm.Pauli.Z ) 
+    r = np.sqrt(X_rot**2 + Z_rot**2)
+    R_xpi2 = np.cos( 
 
     # Promote to a d^2 x d^2 superoperator 
     return self.basis.compute_superoperator_from_unitary_operator(I)

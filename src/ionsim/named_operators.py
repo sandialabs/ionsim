@@ -72,6 +72,19 @@ class Unitary:
         sigma_phi = np.cos(phi) * Pauli.X + np.sin(phi) * Pauli.Y
         return np.exp(1j*theta/2) * (np.cos(theta/2) * Pauli.I - 1j*np.sin(theta/2) * sigma_phi)
 
+    @staticmethod
+    def R_bloch(bloch_vector: list[floats]):
+        """A single-qubit rotation on the Bloch sphere via the Bloch vector v = (v1, v2, v3)."""
+        # Magnitude of the Bloch vector: 
+        alpha = 0.
+        for v in bloch_vector:
+            alpha += v**2 
+        alpha = np.sqrt(alpha)
+        # Pauli spin vector:  
+        n_vector = [v / alpha for v in bloch_vector] 
+        sigma_n = n_vector[0] * Pauli.X + n_vector[1] * Pauli.Y + n_vector[2] * Pauli.Z  
+        return np.cos(alpha) * Pauli.I - 1j*np.sin(alpha) * sigma_n)
+
     X = R(0, np.pi)
     sqrtX = R(0, np.pi/2)
     Y = R(np.pi/2, np.pi)

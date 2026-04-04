@@ -230,7 +230,7 @@ class GateInterpolant():
 
 
     #### Interpolation methods #### 
-    @cached_property
+    @cached_property # TODO: decide whether this should be cached or just a property 
     def process_matrix_interpolant_function(self): 
         """ Returns a gate's process matrix interpolating function of the grid parameters, e.g. G(x,y) for x,y grid parameters""" 
         # Extract gate spline information, then build interpolant function from the splines 
@@ -319,7 +319,7 @@ class GateInterpolant():
         return Gate(self.basis, process_matrix = process_matrix_interpolating_function(*grid_values)) 
 
     #@property
-    @cached_property
+    @cached_property # TODO: decide whether this should be cached or just a property 
     def interpolated_gate_function(self) -> Callable:
         """ Returns a function that returns a Gate object evaluated at grid parameter values. """
         # Build and return a general interpolating function for a Gate object  
