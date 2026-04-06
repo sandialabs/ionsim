@@ -67,7 +67,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for circ in self.parsed_circuits:
             for g in circ.expanded_gates: 
                 self.gate_set.add(g) 
-            
 
         # 2. Retrieve gate models  
         self.gate_models = {}  # dictionary to map a Parsed Gate (from the gate set) to its model as a process matrix function  
@@ -87,6 +86,17 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         #self.gst_parameters = np.zeros(self.num_gst_parameters) 
         self.gst_parameters = np.ones(self.num_gst_parameters)*1E-4 
 
+        # 4. Debugging / diagnostics 
+        self.LL_eval = 0 
+        self.nll_data = []
+        # Test model fxn evaluations 
+ #        gate_model = list(self.gate_models.values())[1]
+ #
+ #        print(list(self.gate_models.keys())[1])
+ #        print(gate_model(0.1, 0.25))
+ #        print()
+ #        print(gate_model(0.33, 0.50))
+        #sys.exit(0)
 
 
     def _build_parameter_organization(self) -> (dict[str, slice], int):
@@ -141,7 +151,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         prep_params = theta[self.gst_parameter_indices["prep"]] # d^2 - 1 column vector  
 
         #print(f"d x d = {self.d2}")
-        print(f"Prep state parameters = {prep_params}")
+        #print(f"Prep state parameters = {prep_params}")
         # print(f"Number of prep state parameters = {len(prep_params)}")
         assert len(prep_params) == (self.d2 - 1)
 
@@ -176,7 +186,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         M_effects = {}
 
         measurement_params = theta[self.gst_parameter_indices["measurement"]]
-        print(f"POVM parameters = {measurement_params}")
+        #print(f"POVM parameters = {measurement_params}")
         #assert len(prep_parms) == self.d2
 
         N_effects = len(self.measurement_effects)
@@ -229,8 +239,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for gate in circ.expanded_gates:
             gate_model = self.gate_models[gate.name]
             gate_parameters = theta[self.gst_parameter_indices[gate.name]]
-            print(f"gate parameters: {gate_parameters}")
-            # Accumulate the map: 
+            #print(f"Gate {gate.name} parameters: {gate_parameters}")
+            # Accumulate the map:
             quantum_map = gate_model(*gate_parameters) @ quantum_map 
             
         mapped_state = quantum_map @ rho_supervector
@@ -268,7 +278,11 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
              - "outcome" <==> measurement effect. e.g. "0" or "1" for 1Q measurement. 
 
         """                
-        print(f"Evaluating log likelihood")
+        print(f"\nEvaluating log likelihood")
+        self.LL_eval += 1 
+        print(f"Evaluation number {self.LL_eval}")
+        print(f"\nParameter values: {theta}")
+
         # TODO: make a separate function for t-dependent parameters 
         if theta is None:
             theta = self.gst_parameters
@@ -282,14 +296,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         #self._build_process_matrix_cache()
         probability_TOL = 1E-12
 
-        # Compute log likelihood for each GST circuit, then sum over all GST circuits 
+        # Compute log likelihood for each GST circuit, accumulating over all GST circuits 
         for circ in self.parsed_circuits:
-            print(f"\nCircuit: {circ.unparsed_data}")
+            #print(f"\nCircuit: {circ.unparsed_data}")
             probabilities = self._predict_probabilities(circ, theta) # don't need the PM cache? 
 
             if circ.measurement_data.counts is not None:
                 for outcome, count in circ.measurement_data.counts.items(): 
-                    print(f"Probability of outcome {outcome} : {probabilities[outcome]}")
+                    #print(f"Probability of outcome {outcome} : {probabilities[outcome]}")
                     # Only non-zero counts will contribute to the likelihood.  
                     if count > 0:
                         p = np.clip(probabilities[outcome], probability_TOL, 1. - probability_TOL)
@@ -300,7 +314,36 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                     p = np.clip(probabilities[outcome], probability_TOL, 1. - probability_TOL)
                     l_likelihood += np.log(p)
 
+        print(f"Negative log likelihood: {-l_likelihood}")
+        self.nll_data.append(-l_likelihood) 
         return l_likelihood
+
+
+    def save_nll_data(self):
+        print(f"LL evals: {self.LL_eval}")
+        print(f"len(nll_data): {len(self.nll_data)})")
+        if self.nll_data : 
+            np.savetxt('negative_log_likelihood.dat', np.column_stack([np.array(range(0, self.LL_eval)), np.array(self.nll_data)]), header = 'Iteration Neg_Log_Likelihood')
+        else:
+            raise ValueError(f"No log likelihood data is stored.")
+
+
+    def print_parameters(self):
+        # Prep, measure, then gate parameters: 
+        # 1. Prep:
+        print(" --- Printing parameter values --- ")
+        prep_params = self.gst_parameters[self.gst_parameter_indices["prep"]] # d^2 - 1 column vector  
+        print(f"Prep state parameters: {prep_params}")
+
+        measurement_params = self.gst_parameters[self.gst_parameter_indices["measurement"]] # d^2 - 1 column vector  
+        print(f"\nMeasurement effect parameters: {measurement_params}")
+
+        for gate in self.gate_set:
+            gate_parameters = self.gst_parameters[self.gst_parameter_indices[gate.name]]
+            print("\n Gate {gate.name} parameters: {gate_parameters}")
+
+        return 0
+        
 
 
 
@@ -316,8 +359,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         """
         print(f"\n -- Solver for gate parameters in GST using {solver} --- ")
-        # TODO: Need to figure out how to get gate parameters and use them here, from IonSim's Gate objects. 
-        # - Compute expected probability of an outcome given a circuit's parametrization. 
         if solver == 'MLE':
             # Maximum likelihood estimation.
             # Specify initial guess. 
@@ -328,6 +369,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
             solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B') # TODO consider adding parameter bounds in any case  
             self.gst_parameters = solver_result.x
+            self.save_nll_data()
+            self.print_parameters()
             return solver_result
             
         elif solver == 'linear':

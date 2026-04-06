@@ -181,9 +181,8 @@ def main():
     GST_analyzer = sm.GateSetTomography(basis, rho_prep, POVM_effects, parsed_circuits, gate_factory_function)
     solver_results = GST_analyzer.solve_for_gate_parameters()
     print(f"Solver results: {solver_results}")
+    GST_analyzer.print_parameters()
     sys.exit(0)
-
-
 
 
  #    rabi_rate = 100e3 * 2*np.pi # rad./s
