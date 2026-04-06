@@ -64,19 +64,23 @@ def main():
 
     ################ Define gate models: #################### 
     # Requires a basis to be defined 
+    # 1. Gate builder functions --> return a gate, the parameters, and its process matrix function as a function of the parameters 
+    # 2. 
     def idle(theta):
         """ Returns d^2 x d^2 process matrix in standard basis for Z-rotation by theta """  
         # Build identity matrix with Z rotation by theta:
         # TODO: generalize to 2+ qubits  
         assert len(spins) == 1
-        def superoperator_function(theta):
-            I = np.eye(2)
-            I[0,0] = np.exp( - 1j * theta ) 
-            I[1,1] = np.exp( 1j * theta ) 
-            # Promote to a d^2 x d^2 superoperator 
-            return self.basis.compute_superoperator_from_unitary_operator(I)
-        parameters = {'idle angle': theta}
-        return sm.Gate.from_process_matrix_function(basis, superoperator_function, parameters)
+        #def superoperator_function(theta):
+        I = np.eye(2,dtype=complex)
+        I[0,0] = np.exp( - 1j * theta ) 
+        I[1,1] = np.exp( 1j * theta ) 
+        # Promote to a d^2 x d^2 superoperator 
+        return basis.compute_superoperator_from_unitary_operator(I)
+
+        #return superoperator_function # process matrix function     
+ #        parameters = {'idle_angle': theta}
+ #        return sm.Gate.from_process_matrix_function(basis, superoperator_function, parameters)
     
     
     
@@ -91,15 +95,16 @@ def main():
         """  
         # TODO: generalize to 2+ qubits  
         assert len(spins) == 1
-        def superoperator_function(X_rot, Z_rot):
-            x_angle = np.pi/2. + X_rot
-            Rxpi2 = sm.Unitary.R_bloch([x_angle/2., 0., Z_rot/2.]) 
+        #def superoperator_function(X_rot, Z_rot):
+        x_angle = np.pi/2. + X_rot
+        Rxpi2 = sm.Unitary.R_bloch([x_angle/2., 0., Z_rot/2.]) 
         
-            # Promote to a d^2 x d^2 superoperator 
-            return self.basis.compute_superoperator_from_unitary_operator(Rxpi2) # superoperator 
+        # Promote to a d^2 x d^2 superoperator 
+        return basis.compute_superoperator_from_unitary_operator(Rxpi2) # superoperator 
     
-        parameters = {'excess X rotation': X_rot, 'excess Z rotation' : Z_rot }
-        return sm.Gate.from_process_matrix_function(basis, superoperator_function, parameters)
+ #        parameters = {'excess_X_rotation': X_rot, 'excess_Z_rotation' : Z_rot }
+ #        return sm.Gate.from_process_matrix_function(basis, superoperator_function, parameters)
+        #return superoperator_function # process matrix function     
     
 
     def Y_pi2(Y_rot, Z_rot):
@@ -113,28 +118,54 @@ def main():
         """  
         # TODO: generalize to 2+ qubits  
         assert len(spins) == 1
-        def superoperator_function(Y_rot, Z_rot):
-            y_angle = np.pi/2. + Y_rot
-            Rypi2 = sm.Unitary.R_bloch([0., y_angle/2., Z_rot/2.]) 
+        #def superoperator_function(Y_rot, Z_rot):
+        y_angle = np.pi/2. + Y_rot
+        Rypi2 = sm.Unitary.R_bloch([0., y_angle/2., Z_rot/2.]) 
     
-            # Promote to a d^2 x d^2 superoperator 
-            return self.basis.compute_superoperator_from_unitary_operator(Rypi2)
-    
-        parameters = {'excess Y rotation': Y_rot, 'excess Z rotation' : Z_rot }
-        return sm.Gate.from_process_matrix_function(basis, superoperator_function, parameters)
+        # Promote to a d^2 x d^2 superoperator 
+        return basis.compute_superoperator_from_unitary_operator(Rypi2)
+
+        #return superoperator_function # process matrix function     
+ #         parameters = {'excess_Y_rotation': Y_rot, 'excess_Z_rotation' : Z_rot }
+ #         return sm.Gate.from_process_matrix_function(basis, superoperator_function, parameters)
+
+
+    def null():
+        """ Returns d^2 x d^2 process matrix in standard basis a null ("do nothing for no time") gate"""  
+        # Build identity matrix with Z rotation by theta:
+        # TODO: generalize to 2+ qubits  
+        assert len(spins) == 1
+        #def superoperator_function():
+        I = np.eye(2,dtype=complex)
+        # Promote to a d^2 x d^2 superoperator 
+        return basis.compute_superoperator_from_unitary_operator(I)
+        #return superoperator_function # process matrix function     
+ #        parameters = None 
+ #        return sm.Gate.from_process_matrix_function(basis, superoperator_function, parameters)
 
 
     # Define dictionary mappings for GST gate name to ionsim gate function 
     ism_gate_dictionary = {}    
     ism_gate_dictionary['Gxpi2']  = X_pi2 
     ism_gate_dictionary['Gypi2'] = Y_pi2
-    ism_gate_dictionary['[]'] = idle
-    ism_gate_dictionary['{}'] = None
+    #ism_gate_dictionary['[]'] = idle
+    ism_gate_dictionary['idle'] = idle
+    ism_gate_dictionary['{}'] = null 
     #ism_gate_dictionary['Gypi'] = Y_pi2
     # TODO: add 2Q gates 
 
     def gate_factory_function(gate_name: str, qubits: tuple[int, ...]) -> Callable:
         """ Function to map a gate name & qubit arguments to a gate function """ 
+        # Should this contain the name mappings from GST names to IonSim names? 
+ #        print(f"\n --- Gate factory function --- " )
+ #        print(f"Gate: {gate_name} with qubits: {qubits}")
+
+        # Handle cases with idle or none, where "qubits" will not contain any information. 
+        if gate_name == 'idle':
+            return ism_gate_dictionary[gate_name]
+        elif gate_name == '' or (gate_name is None):
+            return ism_gate_ditionary['{}']
+
         # TODO: Generalize to 2Q gates 
         #   - for 1Q gates, this is made trivial by the dictionary. For 2Q, it requires functionality 
         assert len(qubits) == 1
@@ -148,6 +179,8 @@ def main():
     POVM_effects['1'] = sm.EnergyShiftOperator.from_matrix(basis, sm.Pauli.projector_1) 
 
     GST_analyzer = sm.GateSetTomography(basis, rho_prep, POVM_effects, parsed_circuits, gate_factory_function)
+    solver_results = GST_analyzer.solve_for_gate_parameters()
+    print(f"Solver results: {solver_results}")
     sys.exit(0)
 
 

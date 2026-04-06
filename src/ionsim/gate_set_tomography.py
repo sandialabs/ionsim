@@ -6,11 +6,13 @@ import scipy.stats as stats
 import scipy.optimize as opt 
 from functools import cached_property
 from typing import Callable
+import inspect
 
 from ionsim.process import Gate, Circuit
 from ionsim.named_operators import Pauli, Unitary
 from ionsim.GST_data_parser  import *
 from ionsim.custom_math import matrix_AYB_multiply_to_superoperator 
+from ionsim.ionsim_error import IonSimError
 
 
 # Example Workflow: 
@@ -45,6 +47,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
  #            # TODO: add 2Q gates 
  #            return ism_gate_dictionary
 
+        print(f"\n\n --- Constructor for GateSetTomography Class IonSim --- ")
+
         # Unpack |rho>> and <<E| or <<M| 
         self.ideal_prep_state = prep_state 
         self.measurement_effects = POVM_effects 
@@ -52,7 +56,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Parse circuits list contanining GST circuit sequences and correpsonding data (observations) 
         self.parsed_circuits = parsed_circuits 
 
-        self.gate_model_factory = gate_model_factory # TODO revise 
+        self.gate_model_factory = gate_model_factory 
 
         # Dimensionality of Hilbert and Hilbert-Schmidt spaces:
         self.d = len(basis.states)
@@ -60,30 +64,33 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # 1. Get all unique gates in the gate set 
         self.gate_set = set()  # gate_set contains ParsedGate objects
-        for circ in parsed_circuits:
+        for circ in self.parsed_circuits:
             for g in circ.expanded_gates: 
                 self.gate_set.add(g) 
             
 
         # 2. Retrieve gate models  
-        self.gate_models = {} 
-        # TODO: decide, should gate_models hold Gate objects, or process_matrix_functions? 
-
-        for gate in gate_set:
-            ism_name = self.gate_dictionary[gate.name] 
-            self.gate_models[gate] = gate_model_factory(ism_name, gate.qubits)
+        self.gate_models = {}  # dictionary to map a Parsed Gate (from the gate set) to its model as a process matrix function  
+        for gate in self.gate_set:
+            #ism_name = gate_dictionary[gate.name] 
+            print(f"\n Printing gate set: ")
+            print(f"Gate: {gate}")
+            print(f"Name: {gate.name}")
+            self.gate_models[gate.name] = gate_model_factory(gate.name, gate.qubits)
+            #self.gate_models[gate] = gate_model_factory(ism_name, gate.qubits)
 
 
         # 3. Parameters: 
         # Build a parameter look-up dictionary to organizing parameter indices. 
         # Retrieve number of GST parameters (prep + gates + measure) and build & initialize parameter vector  
         self.gst_parameter_indices, self.num_gst_parameters = self._build_parameter_organization()
-        self.gst_parameters = np.zeros(self.num_gst_parameters) 
+        #self.gst_parameters = np.zeros(self.num_gst_parameters) 
+        self.gst_parameters = np.ones(self.num_gst_parameters)*1E-4 
 
 
 
     def _build_parameter_organization(self) -> (dict[str, slice], int):
-        """ Builds and organizes the parameters for GST. This organizes parameters based on:
+        """ Builds and organizes the independent parameters for GST. This organizes parameters based on:
             1) Prep state 
             2) Each Gate model, for all gates in the set  
             3) Native measurement
@@ -98,18 +105,25 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Index i will incriment as we increase the number of tracked parameters 
         i = 0
 
-        # SPAM has d^3 - 1 parameters 
-        N = self.d2 - 1         
+        # Prep: there are d^2 - 1 independent parameters due to the Trace[rho] = 1 constraint. 
+        N = self.d2 - 1 
         parameter_indices["prep"] = slice(i, i + N) 
         i += N
 
-        N = self.d2
+        # Measure: there are d - 1 independent measurement effects from the completeness constraint.
+        #   - each effect is a d x d matrix, so there are d^2(d-1) indepenent parameters  
+        N = self.d2 * (self.d - 1) # should this be d^3? 
         parameter_indices["measurement"] = slice(i, i + N) 
         i += N
 
-        for gate, gate_model in zip(self.gate_set, self.gate_models):
-            N = len(gate_model.parameters)
-            # TODO: either use ism gate name or ParsedCircuit gate name 
+        for gate, gate_model in zip(self.gate_set, self.gate_models.values()):
+            #print(f"\nGate: {gate}")
+            gate_model_sig = inspect.signature(gate_model)
+            N = len(gate_model_sig.parameters)
+            #print(f"Parameters: {gate_model_sig.parameters}")
+            ## TODO: need to skip null gate somehow. Does this happen already? 
+
+            #N = len(gate_model.parameters)
             # Default parametrization is dense (d^2 x d^2) for each gate: 
             parameter_indices[gate.name] = slice(i, i + N)
             i += N  
@@ -124,9 +138,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         """ 
         # Prep state parameters function as a perturbation away from ideal prep state   
         # TODO: consider a more sophisticated parametrization? 
-        prep_params = theta[self.gst_parameter_indices["prep"]]
+        prep_params = theta[self.gst_parameter_indices["prep"]] # d^2 - 1 column vector  
 
-        assert len(prep_parms) == self.d2
+        #print(f"d x d = {self.d2}")
+        print(f"Prep state parameters = {prep_params}")
+        # print(f"Number of prep state parameters = {len(prep_params)}")
+        assert len(prep_params) == (self.d2 - 1)
 
         # Enforce constraint Tr[rho] = 1
         ideal_state = self.ideal_prep_state.supervector
@@ -137,10 +154,11 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         perturbation = prep_params
         prep_state[:-1] += perturbation 
         
+        # Retrieve indices corresponding to diagonal density matrix entries 
         diag_indices = [i * (self.d + 1) for i in range(self.d)] # assumes square density matrix 
         free_diag_indices = diag_indices[:-1]
          
-        prep_state[-1] = 1.0 - np.sum(rho_vec[diag_indices[:-1]]) 
+        prep_state[-1] = 1.0 - np.sum(prep_state[diag_indices[:-1]]) 
 
         return prep_state 
 
@@ -151,83 +169,97 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - Effects are stored in a dictionary {'outcome' : Effect_vector with superoperator d^2 x d^2 shape} 
             - e.g. E_0 vector is d^2 x 1 corresponding to |0><0|
             - There is a completeness constraint to enforce: sum_m E_m = identity
-            - By convention, the last effect is constrained. ==> d^2 parameters are constrained.  
+            - By convention, the last effect is constrained. ==> d^2 parameters are constrained. 
+            - Therefore, there are d^2 (d-1) independent parameters for measurment.  
         """ 
         # TODO: consider a more sophisticated parametrization? 
         M_effects = {}
 
-        measurement_params = theta[self.parameter_indices["measure"]]
+        measurement_params = theta[self.gst_parameter_indices["measurement"]]
+        print(f"POVM parameters = {measurement_params}")
         #assert len(prep_parms) == self.d2
 
         N_effects = len(self.measurement_effects)
+        assert N_effects == self.d
         N_params_per_op = self.d2
 
-        # Parametrize unconstrained (free) effects as ideal + perturbation:
+        # Parametrize unconstrained effects as ideal + perturbation:
         for i, (label, effect_op) in enumerate(self.measurement_effects.items()):
             if i == (N_effects - 1): # skip last index
                 break
             # Use parameters for this operator by index slicing:  
             variation = measurement_params[i * N_params_per_op : (i + 1) * N_params_per_op] 
 
-            # Get superoperator from operator representation 
-            ideal_effect_superoperator = matrix_AYB_multiply_to_superoperator(effect_op.static_matrix)
+            # Convert d x d ideal effect matrix to a d^2 row vector: E --> flatten((E^{dagger}).T) = conj(E).flatten() 
+            ideal_effect_superoperator = (np.conj(effect_op.static_matrix.toarray())).flatten() 
+            # TODO: Check this 
 
             assert len(variation) == len(ideal_effect_superoperator)
             # Compute resulting effect:  
             M_effects[label] = ideal_effect_superoperator + variation 
 
         # Final effect is constrained to be E_last = I - sum(E) over all other effects E 
-        constrained_effect = matrix_AYB_multiply_to_superoperator(np.eye(self.d)) # identity to superoperator 
+        constrained_effect = np.eye(self.d)
         last_label = list(self.measurement_effects.keys())[-1]
 
         assert last_label not in list(M_effects.keys()) 
 
-        # Loop over all free effects and subtract them from constrained effect: 
+        # Loop over all independent effects to compute the constrained effect: 
         for i, (label, effect_op) in enumerate(self.measurement_effects.items()): 
             if i == (N_effects - 1): # skip last index
                 break
-            constrained_effect -= M_effects[label]
+            constrained_effect -= effect_op.static_matrix.toarray() 
+            #constrained_effect -= M_effects[label]
 
-        M_effects[last_label] = constrained_effect
+        M_effects[last_label] = (np.conj(constrained_effect)).flatten()
 
         return M_effects 
 
 
-    def _predict_probabilities(self, circ: ParsedCircuit, theta) -> Vector[float]: 
+    def _predict_probabilities(self, circ: ParsedCircuit, theta: Vector) -> Vector[float]: 
         """ Predicts outcome probabilities for a GST circuit with gates parametrized by theta """
-        #outcome_probabilities = np.zeros
-
         rho_supervector = self.get_prep_state(theta)
         M_effects = self.get_measurement_effects(theta)
 
         # Build a composition (chain) of gate process matrices: 
         quantum_map = np.eye(self.d2, dtype=complex)
-        # TODO: gate_model is Ionsim object?  
-        for gate_model in self.gate_models:
-            gate_parameters = theta[self.gst_parameter_indices[gate_model.name]]
-            quantum_map = gate_model.process_matrix_function(gate_parameters) @ quantum_map  
+        # Gate model is a callable that takes in the parameter vector and returns a process matrix  
+
+        # Retrieve a gate model for each gate and its parameter values  
+        for gate in circ.expanded_gates:
+            gate_model = self.gate_models[gate.name]
+            gate_parameters = theta[self.gst_parameter_indices[gate.name]]
+            print(f"gate parameters: {gate_parameters}")
+            # Accumulate the map: 
+            quantum_map = gate_model(*gate_parameters) @ quantum_map 
+
+ #            for gate_model in self.gate_models.values():
+ #                quantum_map = gate_model(gate_parameters) @ quantum_map
+            #quantum_map = gate_model.process_matrix_function(gate_parameters) @ quantum_map  
             
         mapped_state = quantum_map @ rho_supervector
 
         outcome_probabilities = {}
         for label, E in M_effects.items():
-            outcome_probabilities[label] = np.real(E.conj() @ mapped_state) 
-
+ #            print(f"outcome : {label}")
+ #            print(f"Effect: {E}")
+            outcome_probabilities[label] = np.real(E @ mapped_state) 
+            #outcome_probabilities[label] = np.real(E.conj() @ mapped_state) 
         return outcome_probabilities
         
 
-    def _build_process_matrix_cache(self, theta): 
-        """ Evaluate each gate's process matrix function once"""
-        process_matrix_cache = {} 
-        # TODO: finalize gate_model data structure (DS) and values. 
-        for gate_model in self.gate_models.values():
-            gate_parameters = theta[self.gst_parameter_indices[gate_model.name]]
-            process_matrix_cache[gate_model.name] = gate_model.process_matrix_function(gate_parameters) 
-        return process_matrix_cache 
+ #    def _build_process_matrix_cache(self, theta): 
+ #        """ Evaluate each gate's process matrix function once"""
+ #        process_matrix_cache = {} 
+ #        # TODO: finalize gate_model data structure (DS) and values. 
+ #        for gate_model in self.gate_models.values():
+ #            gate_parameters = theta[self.gst_parameter_indices[gate_model.name]]
+ #            process_matrix_cache[gate_model.name] = gate_model.process_matrix_function(gate_parameters) 
+ #        return process_matrix_cache 
+ #
 
 
-
-    def log_likelihood(self, theta=None, theta_function=None) -> float:
+    def log_likelihood(self, theta: Vector | None=None, theta_function=None) -> float:
         """ Computes total log-likelihood of the parameters given the data.
 
             theta:      parameter vector 
@@ -240,6 +272,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
              - "outcome" <==> measurement effect. e.g. "0" or "1" for 1Q measurement. 
 
         """                
+        print(f"Evaluating log likelihood")
         # TODO: make a separate function for t-dependent parameters 
         if theta is None:
             theta = self.gst_parameters
@@ -250,31 +283,31 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if theta_function is not None:
             t_independent_gates = False 
 
-        self._build_process_matrix_cache()
-
-        probability_TOL = 1E-10
+        #self._build_process_matrix_cache()
+        probability_TOL = 1E-12
 
         # Compute log likelihood for each GST circuit, then sum over all GST circuits 
         for circ in self.parsed_circuits:
-            probabilities = self.predict_probabilities(circ, theta) # don't need the PM cache? 
+            probabilities = self._predict_probabilities(circ, theta) # don't need the PM cache? 
 
             if circ.measurement_data.counts is not None:
-                for outcome, count in circ.measurement_data.items(): 
+                for outcome, count in circ.measurement_data.counts.items(): 
+                    print(f"Probability of outcome {outcome} : {probabilities[outcome]}")
+                    # Only non-zero counts will contribute to the likelihood.  
                     if count > 0:
-                        p = np.clip(probs[outcome], probability_TOL, 1. - probability_TOL)
+                        p = np.clip(probabilities[outcome], probability_TOL, 1. - probability_TOL)
                         l_likelihood += count * np.log(p)
-                 
             else:
                 # Time-series data: each shot is equally weighted? 
                 for t, outcome in circ.measurement.timestamped_shots:
-                    p = np.clip(probs[outcome], probability_TOL, 1. - probability_TOL)
+                    p = np.clip(probabilities[outcome], probability_TOL, 1. - probability_TOL)
                     l_likelihood += np.log(p)
 
         return l_likelihood
 
 
 
-    def solve_for_gate_parameters(solver: str = 'MLE'):
+    def solve_for_gate_parameters(self, solver: str = 'MLE'): 
         """ Function to solve for the parametrization values of a particular gate. 
 
             - Default behavior is a maximum likelihood approach that finds parameters 
@@ -285,17 +318,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - Returns either a dictionary of parameters (name, value) or a 1D array of values.
 
         """
-        # 2. Extract frequency values for each experiment 
-        #experimental_frequencies = gst_data.get_frequencies() # 2D array of shape circuit x outcomes -> frequency values 
-
-        #assert experimental_frequencies.shape[0] == len(gst_circuits) 
-
+        print(f"\n -- Solver for gate parameters in GST using {solver} --- ")
         # TODO: Need to figure out how to get gate parameters and use them here, from IonSim's Gate objects. 
         # - Compute expected probability of an outcome given a circuit's parametrization. 
         if solver == 'MLE':
             # Maximum likelihood estimation.
             # Specify initial guess. 
             theta_0 = self.gst_parameters.copy() 
+            print(f"Initial parameters: {theta_0}")
 
             # TODO: Provide bounds for parameters if using interpolated gates 
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
