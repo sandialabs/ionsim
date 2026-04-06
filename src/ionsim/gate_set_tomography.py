@@ -232,10 +232,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             print(f"gate parameters: {gate_parameters}")
             # Accumulate the map: 
             quantum_map = gate_model(*gate_parameters) @ quantum_map 
-
- #            for gate_model in self.gate_models.values():
- #                quantum_map = gate_model(gate_parameters) @ quantum_map
-            #quantum_map = gate_model.process_matrix_function(gate_parameters) @ quantum_map  
             
         mapped_state = quantum_map @ rho_supervector
 
@@ -288,6 +284,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Compute log likelihood for each GST circuit, then sum over all GST circuits 
         for circ in self.parsed_circuits:
+            print(f"\nCircuit: {circ.unparsed_data}")
             probabilities = self._predict_probabilities(circ, theta) # don't need the PM cache? 
 
             if circ.measurement_data.counts is not None:

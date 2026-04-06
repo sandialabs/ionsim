@@ -86,7 +86,7 @@ class Unitary:
         return np.exp(1j*theta/2) * (np.cos(theta/2) * Pauli.I - 1j*np.sin(theta/2) * sigma_phi)
 
     @staticmethod
-    def R_bloch(bloch_vector: list[floats]):
+    def R_bloch(bloch_vector: list[float]):
         """ A single-qubit rotation on the Bloch sphere via the Bloch vector v = (v1, v2, v3): 
 
             U = exp( -i (v1 * sigma_x + v2*sigma_y + v3*sigma_z) ) 
