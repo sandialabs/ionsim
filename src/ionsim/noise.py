@@ -115,8 +115,9 @@ class StochasticNoise:
     @staticmethod
     def ou_noise(n_trajectories: int, 
                  tau_c: float, 
-                 target_variance: float,
                  rng: np.random.Generator,
+                 c: float | None = None,
+                 target_variance: float | None = None,
                  first_time_step_all_trajectories: np.ndarray | None = None,
                  time_evals: Vector | None = None,
                  remove_mean: bool = False,
@@ -135,19 +136,21 @@ class StochasticNoise:
         Returns:
             x: Array of shape (n_trajectories, N) with OU noise samples
         """
-
+        if target_variance is None and c is None:
+            raise IonSimError("Must provide either target_variance or c for OU noise generation.")
+        
+        var = target_variance if target_variance is not None else c * tau_c / 2
         N = len(time_evals)
         dt = time_evals[1] - time_evals[0]
         
         phi = np.exp(-dt / tau_c)
-        sd = np.sqrt(target_variance * (1.0 - phi * phi))
+        sd = np.sqrt(var * (1.0 - phi * phi))
         x = np.empty((n_trajectories, N), float)
-        x[:, 0] = rng.normal(0.0, np.sqrt(target_variance), size=n_trajectories)
+        x[:, 0] = rng.normal(0.0, np.sqrt(var), size=n_trajectories)
         if first_time_step_all_trajectories is not None:
             x[:, 0] = first_time_step_all_trajectories
         else:
-            x[:, 0] = rng.normal(0.0, np.sqrt(target_variance), size=n_trajectories)
-
+            x[:, 0] = rng.normal(0.0, np.sqrt(var), size=n_trajectories)
         for n in range(1, N):
             x[:, n] = phi * x[:, n - 1] + sd * rng.standard_normal(size=n_trajectories)
         if remove_mean:
