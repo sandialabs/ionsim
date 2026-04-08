@@ -10,7 +10,7 @@ class CircuitData:
     """ Circuit experiment data either in the form of counts or single-shots with timestamps. 
 
         - counts: {'0': 100, '1' : 100}  
-        - shots: [ (t0, '0') , (t1, '0'), (t2, '1'), ... (t_i, 'outcome') , ... ]
+        - (single) shots: [ (t0, '0') , (t1, '0'), (t2, '1'), ... (t_i, 'outcome') , ... ]
             where t_i are floats representing the time of the measurement. 
     """
 
