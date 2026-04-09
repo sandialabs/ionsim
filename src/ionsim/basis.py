@@ -1,10 +1,3 @@
-from ionsim.ionsim_error import IonSimError
-from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicSpin
-from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
-from ionsim.energy_level import EnergyEigenstate
-from ionsim.custom_types import Vector, Matrix
-from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD
-
 import numpy as np
 from numpy.linalg import multi_dot
 from typing import Callable
@@ -18,8 +11,16 @@ from dataclasses import dataclass
 import itertools
 from functools import cached_property
 import functools as ft
-
 from icecream import ic
+
+from ionsim.ionsim_error import IonSimError
+from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicSpin
+from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
+from ionsim.energy_level import EnergyEigenstate
+from ionsim.custom_types import Vector, Matrix
+from ionsim.named_operators import Pauli
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD
+
 
 @dataclass(frozen=True, eq=False)
 class Basis(ABC):
@@ -30,6 +31,12 @@ class Basis(ABC):
     @abstractmethod
     def vectors(self):
         """Basis-state vectors."""
+
+    @property
+    def spin_DOFs(self):
+        """ Returns list of spin degrees of freedom or empty list if none. """
+        spins = [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicSpin)]
+        return spins
 
     @property
     def change_of_basis_matrix(self):
@@ -222,11 +229,96 @@ class StandardBasis(Basis):
         """Basis-state vectors corresponding to the energy eigenstates."""
         return list(np.eye(len(self.states)))
 
+
+@dataclass(frozen=True, eq=False)
+class PauliProductBasis(Basis):
+    """ A basis in the N-qubit Pauli group, which forms an orthonormal basis for the Hilbert-Schmidt space of d^2 x d^2 operators.  
+        - Basis vectors are basis operators in the Pauli group, which span d^2 unique d x d operators. 
+        - This basis is over-specified with respect to d x d states.  
+    """
+    degrees_of_freedom: list[AtomicSpin]  
+
+    def __post_init__(self):
+        self._check_if_qubit_basis()
+
+
+    # TODO: Consider cacheing these vectors to avoid building a list of d^2, dxd matrices every time you call this object.  
+    # TODO: The memory cost of storing this will need to be weighed against the time computing these vectors.  
     @property
-    def spin_DOFs(self):
-        """ Returns list of spin degrees of freedom or empty list if none. """
-        spins = [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicSpin)]
-        return spins
+    def vectors(self) -> list[Vector]:
+        """ Normalized basis vectors corresponding to vectorized (column-wise flattened) Pauli operator products: vec(P_i)/sqrt(2^{N}) """
+        N = len(self.degrees_of_freedom)
+        return [(op.T).flatten()/(2**(0.5*N)) for op in Pauli.product_operators] 
+
+    @property
+    def vector_labels(self):
+        """ Returns list of labels corresponding to each Pauli product operator basis vectors, e.g. "XIY" for 3 qubits. """  
+        # Convention in IonSim is to use the single-qubit pauli vector in the following order: (I, X, Y, Z) 
+        single_qubit_pauli_vector = ['I', 'X', 'Y', 'Z'] 
+        N = len(self.degrees_of_freedom)
+        pauli_op_labels  = ["".join(label) for label in product(single_qubit_pauli_vector, repeat = N)]
+ #        for label in product(single_qubit_pauli_vector, repeat=N): 
+ #            # operators are tuples containing the single-qubit Pauli matrices 
+ #            pauli_op_labels.append("".join(label)) 
+        return pauli_op_labels
+
+
+ #    def compute_basis_coefficients(self, superoperator: Matrix) -> list[float]:
+ #        """ Computes Pauli-product basis coefficient for an input superoperator via c_i = Tr[P_{i} A ]. 
+ #            - P_{i} represents the normalized i'th basis vector of the Pauli product basis.  
+ #            - A is the input superoperator  
+ #            - Basis coefficients are defined via A = sum_{i} c_i P_i over all d^2 Pauli operators.
+ #        """  
+ #        # TODO: add this computation 
+ #        assert superoperator.shape = (len(vectors), len(vectors))
+ #        return [np.trace(Pauli_operator @ superoperator for Pauli_operator in self.vectors) ]
+ #
+ #    def build_superoperator_from_coefficients(self, coefficients: list[float] | Vector[float] ):
+ #        """ Computes a superoperator from its pauli-product operator expansion coefficients: A = sum_{i} c_i P_i  
+ #            - P_{i} represents the i'th basis vector of the Pauli product basis.  
+ #            - A is the input superoperator with basis coefficients {c_i}  
+ #            - Basis coefficients are defined via A = sum_{i} c_i P_i over all d^2 Pauli operators.
+ #        """  
+ #        # TODO: add this computation 
+ #        assert len(coefficients) == len(vectors) # d^2 necessary coefficients 
+ #        superoperator = np.zeros((len(coefficients), len(coefficients), dtype=complex) # should it be real floats only? 
+ #        #for 
+ #        return [np.trace(Pauli_operator @ superoperator for Pauli_operator in self.vectors) ]
+
+    def superoperator_to_pauli_transfer_matrix(self, superoperator: Matrix, basis: StandardBasis) -> Matrix:
+        """ Converts a superoperator to a Pauli Transfer Matrix via
+
+            R = U S U^{dagger}
+
+            R is the Pauli Transfer Matrix  
+            U is a unitary change-of-basis matrix ,defined as U_(mu, :) = vec(P_{mu})*  
+            S is the input superoperator 
+        """
+        if not isinstance(gate.basis, StandardBasis):
+            raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
+        assert superoperator.shape = (len(vectors), len(vectors))
+        # Get change of basis matrix 
+        U = np.array(self.vectors).conj() 
+
+        # If S represents a completely positive, trace-preserving (CPTP) map, R will be purely real. 
+        pauli_transfer_matrix = np.real(U @ superoperator @ (U.T).conj() )
+
+        # TODO: test and verify these formulae 
+        return pauli_transfer_matrix 
+
+    def convert_gate_to_pauli_basis(self, gate: Gate) -> Gate:
+        """ Converts a Gate object to the Pauli product basis """ 
+        if not isinstance(gate.basis, StandardBasis):
+            raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
+
+        if gate.process_matrix_function:
+            @wraps(gate.process_matrix_function)
+            def ptm_function(*args, **kwargs):
+                return self.superoperator_to_pauli_transfer_matrix(gate.process_matrix_function(args, kwargs), gate.basis)
+            return Gate.from_process_matrix_function(basis = self, process_matrix_function = ptm_function, gate.parameters) 
+        else:
+            pauli_transfer_matrix = self.superoperator_to_pauli_transfer_matrix(gate.process_matrix, gate.basis)
+            return Gate(basis = self, process_matrix = pauli_transfer_matrix) 
 
 
 @dataclass(frozen=True, eq=False)

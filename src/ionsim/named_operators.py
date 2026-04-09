@@ -50,7 +50,6 @@ class Pauli:
             return self.vector
 
         pauli_operators = []
-        # N-qubit Pauli group contains d^2 operators, each represented as a d x d matrix: 
         for operators in product(self.vector, repeat=N_qubits): 
             # operators are tuples containing the single-qubit Pauli matrices 
             P = operators[0]
