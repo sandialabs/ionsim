@@ -1,5 +1,5 @@
 import numpy as np
-
+from itertools import product
 from icecream import ic
 
 class Pauli:
@@ -21,6 +21,10 @@ class Pauli:
          [0, 1]],
     )
 
+    # Attribute for the single-qubit Pauli vector: \sigma = (I, X, Y, Z)
+    self.vector = [I, X, Y, Z]
+
+
     ''' Raising/lowering operators assume |g> corresponds to row/column 1 and |e> corresponds to row/column 2 '''
     plus = np.array(
         [[0, 0],
@@ -30,6 +34,32 @@ class Pauli:
         [[0, 1],
          [0, 0]],
     )
+
+    def product_operators(self, N_qubits: int) -> list[Matrix]:
+        """ Helper function to compute a N-qubit Pauli operators. d = 2^N for N qubits. 
+            
+            - returns a list of pauli operators. 
+            - there are d^2 Pauli operators, each a d x d matrix. 
+
+        """ 
+        # Safety checks: 
+        if N_qubits <= 0 :
+            raise ValueError(f"Number of qubits cannot be negative or zero. Received N_qubits = {N_qubits}.")
+            
+        if N_qubits == 1:
+            return self.vector
+
+        pauli_operators = []
+        # N-qubit Pauli group contains d^2 operators, each represented as a d x d matrix: 
+        for operators in product(self.vector, repeat=N_qubits): 
+            # operators are tuples containing the single-qubit Pauli matrices 
+            P = operators[0]
+            for P_prime in operators[1:]:
+                P = np.kron(P, P_prime) 
+            pauli_operators.append(P)
+
+        return pauli_operators
+
 
 class Fock:
 
