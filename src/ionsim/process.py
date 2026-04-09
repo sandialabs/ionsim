@@ -236,7 +236,7 @@ class Gate(Process):
                 process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
 
         else:
-            print(f"Default method for generating process matrix from generic time-dependenet, non-commutating Lindbladian.")
+            print(f"Default method for generating process matrix from generic time-dependent, non-commutating Lindbladian.")
             # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
             # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
             # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 
