@@ -2,7 +2,7 @@ from ionsim.custom_math import trapz_for_matrix
 from ionsim.custom_types import Vector, Matrix
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.noise import Noise
-from ionsim.basis import DegreeOfFreedom, Basis, StandardBasis
+from ionsim.basis import DegreeOfFreedom, Basis, StandardBasis, PauliProductBasis
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.dissipator import Lindbladian 
@@ -272,6 +272,37 @@ class Gate(Process):
             process_matrix = np.array(process_matrix_columns).T # tranpose ensures column behavior  
 
         return cls(reduced_basis, process_matrix, unitary=None)
+
+
+
+    def compute_pauli_error_rates(self, pauli_twirled_approximation: bool=False) -> dict[str, float]:
+        """ Computes Pauli channel error rates, returned in a dictionary with entries (channel name, error rate) """ 
+
+        # Basis safety checks:  
+        basis = self.basis
+        if not isinstance(basis, PauliProductBasis):
+            # Create Pauli product basis 
+            pauli_group_basis = PauliProductBasis(self.basis.degrees_of_freedom)
+
+            # TODO: Consider automatically converting the gate to standard basis, then to Pauli basis 
+            if isinstance(basis, StandardBasis):
+                pauli_transfer_matrix = pauli_group_basis.compute_pauli_transfer_matrix(self.process_matrix)
+            else: 
+                raise IonSimError(f"Gate must be in the standard basis or pauli group basis to compute Pauli error rates.")
+        else:
+            pauli_group_basis = self.basis 
+            pauli_transfer_matrix = self.process_matrix # pointer assigment  
+ #
+ #        if pauli_twirled_approximation:
+ #            pauli_transfer_matrix = np.diag(pauli_transfer_matrix)      
+ 
+        # Extract error channel rate from Pauli transfer matrix for each pauli group operator  
+        # Walsh-Hadamard transform relates eigenvalues of PTM to to error rates in Pauli channel representation  
+        error_rates = pauli_group_basis.walsh_hadamard_transformation_matrix @ np.diag(pauli_transfer_matrix)
+
+        return dict(zip(pauli_group_basis.vector_labels, error_rates)) 
+ 
+
 
 # @dataclass(frozen=True, eq=False)
 # class PauliGate(Gate):

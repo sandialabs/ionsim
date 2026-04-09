@@ -83,6 +83,7 @@ class Basis(ABC):
     def compute_supervector_from_density_matrix(self, density_matrix: Matrix): # TODO: generalize for any basis
         """Compute a column-stacked supervector from a density matrix."""
         assert(density_matrix.shape == (len(self.vectors), len(self.vectors))) # TODO: replace with IonSimError
+
         return (density_matrix.T).flatten()
     
     def compute_density_matrix_from_supervector(self, supervector: Vector): # TODO: generalize for any basis
@@ -263,6 +264,34 @@ class PauliProductBasis(Basis):
         return pauli_op_labels
 
 
+    @property
+    def walsh_hadamard_transformation_matrix(self) -> Matrix:
+        """ Walsh-Hadamard transformation matrix for transforming between Pauli transfer matrix (PTM) 
+             eigenvalues and Pauli channel error rates. 
+
+                    W_{m,n} = (-1)^phi(m, n)   , parity phi(m,n) = 0 if P_m, P_n commute and 1 if they anticommute.  
+            
+            such that lambda = W @ q. 
+
+            - lambda is a vector of PTM eigenvalues (fidelities), describing how well a Pauli observable is preserved in the process.
+            - q is a vector of Pauli channel error rates. 
+
+        """
+
+        size = len(self.vector_labels) # d^2        
+        W = np.zeros((size, size))
+ 
+        for m, Pm in enumerate(self.vectors):
+            for n, Pn in enumerate(self.vectors):
+                # Expensive approach: phi(m,n) computed by trace operation 
+                W[m,n] = np.real( np.trace(Pm @ Pn @ Pm @ Pn) ) # always either +1 or -1  
+
+        # W is normalized by d
+        W *= 1./float(size)
+        return W 
+
+
+
  #    def compute_basis_coefficients(self, superoperator: Matrix) -> list[float]:
  #        """ Computes Pauli-product basis coefficient for an input superoperator via c_i = Tr[P_{i} A ]. 
  #            - P_{i} represents the normalized i'th basis vector of the Pauli product basis.  
@@ -285,6 +314,8 @@ class PauliProductBasis(Basis):
  #        #for 
  #        return [np.trace(Pauli_operator @ superoperator for Pauli_operator in self.vectors) ]
 
+ #    @staticmethod
+ #    def superoperator_to_pauli_transfer_matrix(self, superoperator: Matrix) -> Matrix:
     def superoperator_to_pauli_transfer_matrix(self, superoperator: Matrix, basis: StandardBasis) -> Matrix:
         """ Converts a superoperator to a Pauli Transfer Matrix via
 
@@ -296,7 +327,7 @@ class PauliProductBasis(Basis):
         """
         if not isinstance(gate.basis, StandardBasis):
             raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
-        assert superoperator.shape = (len(vectors), len(vectors))
+        assert superoperator.shape == (len(vectors), len(vectors))
         # Get change of basis matrix 
         U = np.array(self.vectors).conj() 
 
