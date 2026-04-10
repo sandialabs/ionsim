@@ -1,5 +1,6 @@
 import numpy as np
 from itertools import product
+from ionsim.custom_types import Matrix
 
 class Pauli:
 
