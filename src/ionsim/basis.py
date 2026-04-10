@@ -4,6 +4,7 @@ from typing import Callable
 from functools import wraps # do I need this?
 from scipy.sparse import csr_matrix
 from scipy.sparse import kron as skron
+from itertools import product
 
 from abc import ABC, abstractmethod
 from typing import Sequence
@@ -249,7 +250,7 @@ class PauliProductBasis(Basis):
     def vectors(self) -> list[Vector]:
         """ Normalized basis vectors corresponding to vectorized (column-wise flattened) Pauli operator products: vec(P_i)/sqrt(2^{N}) """
         N = len(self.degrees_of_freedom)
-        return [(op.T).flatten()/(2**(0.5*N)) for op in Pauli.product_operators] 
+        return [(op.T).flatten()/(2**(0.5*N)) for op in Pauli.product_operators(N)] 
 
     @property
     def vector_labels(self):
@@ -264,8 +265,22 @@ class PauliProductBasis(Basis):
         return pauli_op_labels
 
 
+    @staticmethod
+    def label_of_pauli_transfer_matrix_element(self, i: int, j: int):
+        """ Returns Pauli operator label corresponding to the R[i,j] for a Pauli transfer matrix R """ 
+        return self.vector_labels[i], self.vector_labels[j]
+
+
+    @staticmethod
+    def pauli_to_symplectic(pauli_label: str):
+        """ Converts Pauli operator bit string label """ 
+        encoding = {'I': (0,0), 'X': (1,0), 'Y': (1,1), 'Z': (0,1)}
+        a = [encoding[p][0] for p in pauli_label]
+        b = [encoding[p][1] for p in pauli_label]
+        return np.array(a + b, dtype=int)
+
     @property
-    def walsh_hadamard_transformation_matrix(self) -> Matrix:
+    def walsh_hadamard_transformation_matrix(self, include_normalization: bool=True) -> Matrix:
         """ Walsh-Hadamard transformation matrix for transforming between Pauli transfer matrix (PTM) 
              eigenvalues and Pauli channel error rates. 
 
@@ -281,15 +296,27 @@ class PauliProductBasis(Basis):
         size = len(self.vector_labels) # d^2        
         W = np.zeros((size, size))
  
-        for m, Pm in enumerate(self.vectors):
-            for n, Pn in enumerate(self.vectors):
-                # Expensive approach: phi(m,n) computed by trace operation 
-                W[m,n] = np.real( np.trace(Pm @ Pn @ Pm @ Pn) ) # always either +1 or -1  
+ #        for m, Pm in enumerate(self.vectors):
+ #            for n, Pn in enumerate(self.vectors):
+ #                # Expensive approach: phi(m,n) computed by trace operation 
+ #                W[m,n] = (-1)**self.symplectic_inner_product(Pm, Pn) 
+ #                #W[m,n] = np.real( np.trace(Pm @ Pn @ Pm @ Pn) ) # always either +1 or -1  
 
-        # W is normalized by d
-        W *= 1./float(size)
+        # Convert pauli labels to binary representation 
+        symplectic_encodings = np.array([self.pauli_to_symplectic(label) for label in self.vector_labels])
+        N = len(self.degrees_of_freedom)
+
+        A, B = symplectic_encodings[:, :N], symplectic_encodings[:, N:]
+
+        # Compute phi(m,n) via matrix multiplication mod 2         
+        Phi = (A @ B.T + B @ A.T) % 2  # matrix of integer -1, +1 values 
+
+        W = ((-1)**Phi).astype(float)
+        if include_normalization:
+            # W is normalized by d^2
+            W *= 1./float(size)
+
         return W 
-
 
 
  #    def compute_basis_coefficients(self, superoperator: Matrix) -> list[float]:
@@ -316,7 +343,7 @@ class PauliProductBasis(Basis):
 
  #    @staticmethod
  #    def superoperator_to_pauli_transfer_matrix(self, superoperator: Matrix) -> Matrix:
-    def superoperator_to_pauli_transfer_matrix(self, superoperator: Matrix, basis: StandardBasis) -> Matrix:
+    def superoperator_to_pauli_transfer_matrix(self, superoperator: Matrix, superoperator_basis: StandardBasis) -> Matrix:
         """ Converts a superoperator to a Pauli Transfer Matrix via
 
             R = U S U^{dagger}
@@ -325,9 +352,9 @@ class PauliProductBasis(Basis):
             U is a unitary change-of-basis matrix ,defined as U_(mu, :) = vec(P_{mu})*  
             S is the input superoperator 
         """
-        if not isinstance(gate.basis, StandardBasis):
+        if not isinstance(superoperator_basis, StandardBasis):
             raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
-        assert superoperator.shape == (len(vectors), len(vectors))
+        assert superoperator.shape == (len(self.vectors), len(self.vectors))
         # Get change of basis matrix 
         U = np.array(self.vectors).conj() 
 
@@ -345,8 +372,8 @@ class PauliProductBasis(Basis):
         if gate.process_matrix_function:
             @wraps(gate.process_matrix_function)
             def ptm_function(*args, **kwargs):
-                return self.superoperator_to_pauli_transfer_matrix(gate.process_matrix_function(args, kwargs), gate.basis)
-            return Gate.from_process_matrix_function(basis = self, process_matrix_function = ptm_function, gate.parameters) 
+                return self.superoperator_to_pauli_transfer_matrix(gate.process_matrix_function(*args, **kwargs), gate.basis)
+            return Gate.from_process_matrix_function(basis = self, process_matrix_function = ptm_function, parameters = gate.parameters) 
         else:
             pauli_transfer_matrix = self.superoperator_to_pauli_transfer_matrix(gate.process_matrix, gate.basis)
             return Gate(basis = self, process_matrix = pauli_transfer_matrix) 

@@ -1,6 +1,5 @@
 import numpy as np
 from itertools import product
-from icecream import ic
 
 class Pauli:
 
@@ -22,7 +21,7 @@ class Pauli:
     )
 
     # Attribute for the single-qubit Pauli vector: \sigma = (I, X, Y, Z)
-    self.vector = [I, X, Y, Z]
+    vector: list[Matrix] = [I, X, Y, Z]
 
 
     ''' Raising/lowering operators assume |g> corresponds to row/column 1 and |e> corresponds to row/column 2 '''
@@ -35,7 +34,8 @@ class Pauli:
          [0, 0]],
     )
 
-    def product_operators(self, N_qubits: int) -> list[Matrix]:
+    @classmethod
+    def product_operators(cls, N_qubits: int) -> list[Matrix]:
         """ Helper function to compute a N-qubit Pauli operators. d = 2^N for N qubits. 
             
             - returns a list of pauli operators. 
@@ -50,7 +50,7 @@ class Pauli:
             return self.vector
 
         pauli_operators = []
-        for operators in product(self.vector, repeat=N_qubits): 
+        for operators in product(cls.vector, repeat=N_qubits): 
             # operators are tuples containing the single-qubit Pauli matrices 
             P = operators[0]
             for P_prime in operators[1:]:

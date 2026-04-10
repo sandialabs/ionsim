@@ -286,7 +286,7 @@ class Gate(Process):
 
             # TODO: Consider automatically converting the gate to standard basis, then to Pauli basis 
             if isinstance(basis, StandardBasis):
-                pauli_transfer_matrix = pauli_group_basis.compute_pauli_transfer_matrix(self.process_matrix)
+                pauli_transfer_matrix = pauli_group_basis.superoperator_to_pauli_transfer_matrix(self.process_matrix, basis)
             else: 
                 raise IonSimError(f"Gate must be in the standard basis or pauli group basis to compute Pauli error rates.")
         else:

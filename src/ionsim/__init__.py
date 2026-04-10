@@ -19,7 +19,7 @@ def patched_kron(a, b, *args, **kwargs):
 
 np.kron = patched_kron
 
-from .basis import StandardBasis, XPauliBasis, XPauliAndFockBasis
+from .basis import StandardBasis, XPauliBasis, XPauliAndFockBasis, PauliProductBasis
 from .degree_of_freedom import AtomicSpin, MotionalMode
 from .hamiltonian import Hamiltonian
 from .operator import Operator, EnergyShiftOperator, CouplingOperator, GeneralOperator
