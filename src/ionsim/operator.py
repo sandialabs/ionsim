@@ -98,6 +98,12 @@ class Operator(ABC):
     def static_matrix(self):
         """The sparse-matrix representation of the operator. If purely offdiagonal, the time-dependent phase factor is set equal to one."""
 
+
+    @property
+    def superbra(self):
+        """ Flattened representation of a static operator (often a measurement (POVM)) as a row vector """ 
+        return (np.conj(self.static_matrix.toarray())).flatten() # TODO: add warning / fail for non-static operators? 
+
     @staticmethod
     def _create_sparse_static_coupling_matrix_and_rate_matrix(static_matrix: Matrix, oscillation_rate: float):
         """Create sparse matrices for the static operator matrix and the osciallation rate matrix."""

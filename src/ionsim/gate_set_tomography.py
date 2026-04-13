@@ -65,8 +65,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             print(f"Gate: {gate}")
             print(f"Name: {gate.name}")
             self.gate_models[gate.name] = self.gate_model_factory(gate.name, gate.qubits)
-            #self.gate_models[gate] = gate_model_factory(ism_name, gate.qubits)
-
 
         # 3. Parameters: 
         # Build a parameter look-up dictionary for organizing parameter indices. 
