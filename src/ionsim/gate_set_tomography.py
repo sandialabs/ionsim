@@ -25,7 +25,7 @@ from ionsim.custom_types import Vector
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     #def __init__(self, basis: StandardBasis, prep_state: State, POVM_effects: dict[str, Operator], parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
-    def __init__(self, basis: StandardBasis, prep_state_model: dict[str, Callable], POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
+    def __init__(self, basis: StandardBasis, prep_state_model: dict[Callable], POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
     #def __init__(self, basis: StandardBasis, prep_state_model: dict[str, Callable], POVM_effects: dict, parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
     

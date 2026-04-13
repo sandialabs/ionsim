@@ -37,6 +37,14 @@ class Gate(Process):
 
     unitary: Matrix | None = None
 
+    def __post_init__(self):
+        # Check that process_matrix_function(*parameter_args) == process_matrix 
+        parameter_names, arguments = list(self.parameters.keys()), list(self.parameters.values())
+        if self.process_matrix_function:
+            if not (self.process_matrix_function(*arguments) == self.process_matrix).all:
+                raise IonSimError(f"Error, process matrix function and process matrix attributes do not correspond.")
+
+
     @classmethod #TODO: let default target_dofs be all degrees of freedom
     def from_unitary(cls, basis: Basis, unitary: Matrix, target_dofs: list[DegreeOfFreedom]):
         """Build a gate from a unitary-gate matrix."""
