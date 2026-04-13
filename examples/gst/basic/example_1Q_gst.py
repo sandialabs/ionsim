@@ -117,38 +117,77 @@ def main():
     ism_gate_dictionary['idle'] = idle
     ism_gate_dictionary['{}'] = null 
 
-    # TODO 's: 
-        # Have user specify prep and measure parametrizations (models)  
-
     # For GST, define state and measurement parametrizations (models): 
     # Here, we choose deviations from an ideal prep state and ideal POVM effects: 
-    rho_prep = sm.State.from_coefficients(basis, list([1., 0.]))
+    ideal_rho_prep = sm.State.from_coefficients(basis, list([1., 0.]))
 
     ## Define a parametrization (model) for prep state as a function: 
-    def prep_state_function(state_parameters: Vector) -> 
-        """ Model of the prep state as a function of parameters """ 
-        # Here we choose deviation from the ideal prep state 
-        # What should we return? Flattened density matrix? 
-        return rho_prep.supervector + state_parameters 
+    d = len(basis.states)
+    def prep_state_function(state_parameters: Vector) -> Vector: 
+        """ Model of the prep state as a function of parameters (a vector with d^2 - 1 entries), returns a constrained supervector """ 
+        # TODO: Discuss w. Brandon: Should we normalize this here / enforce the constraint here? 
 
+        # Here, we parametrize the state as a deviation from a known ideal state
+        prep_state = ideal_rho_prep.supervector.copy()
+        prep_state[:-1] += state_parameters # deviations 
+
+        # Enforce Tr[rho] = 1 constraint: 
+        # Retrieve indices corresponding to diagonal density matrix entries 
+        diag_indices = [i * (d + 1) for i in range(d)] # assumes square density matrix 
+        free_diag_indices = diag_indices[:-1]
+         
+        prep_state[-1] = 1.0 - np.sum(prep_state[diag_indices[:-1]]) 
+        return prep_state  
+        #return ideal_rho_prep.supervector + state_parameters 
 
     ideal_POVM_effects = {} 
     ideal_POVM_effects['0'] = sm.EnergyShiftOperator.from_matrix(basis, sm.Pauli.projector_0) 
     ideal_POVM_effects['1'] = sm.EnergyShiftOperator.from_matrix(basis, sm.Pauli.projector_1) 
-        
-    def measurement_effect_function(POVM_parameters: dict[str, Vector]) -> 
-        """ Model of the prep state as a function of parameters """ 
-        # Here we choose deviation from the ideal prep state 
-        # What should we return? Flattened density matrix? 
-        POVM_models = {}
-        for outcome, effect in ideal_POVM_effects.items():
-            POVM_models[outcome] = effect.superbra 
 
-        return POVM_models 
+    N_effects = len(ideal_POVM_effects)
+    assert N_effects == d
+
+ #    def measurement_effect_function(POVM_parameters: dict[str, Vector]) -> dict[str, Callable]: 
+ #        """ Model of the prep state as a function of parameters """ 
+ #        # TODO: Should we enforce completeness here?  
+ #    POVM_models = {} # e.g. '0': effect_0_function, '1': effect_1_function
+ #    for outcome, effect in ideal_POVM_effects.items():
+ #        def effect_function(effect_parameters: Vector):
+ #            return effect.superbra + effect_parameters 
+ #        POVM_models[outcome] = effect_function
+
+    # Set up dictionary of constrained measurement effect (POVM) models 
+    POVM_models = {}
+    for i, (outcome, ideal_effect) in enumerate(ideal_POVM_effects.items()): 
+        if i == (N_effects - 1): 
+            POVM_models[outcome] = None 
+            break
+
+        # Define parametrization (model) for this effect: 
+        def effect_function(effect_parameters: Vector):
+            # Parameters represent deviations from ideal 
+            return ideal_effect.superbra + effect_parameters 
+
+        POVM_models[outcome] = effect_function
+
+    # Final POVM model is constrained by completeness / conservation of probability: 
+    # Final effect is constrained to be E_last = I - sum(E) over all other effects E 
+ #    constrained_effect = np.eye(self.d).flatten()
+ #    last_label = list(ideal_POVM_effects.keys())[-1]
+ #    assert last_label not in list(constrained_POVM_models.keys()) 
+ #
+ #    # Loop over all independent effects to compute the constrained effect: 
+ #    for i, outcome in enumerate(self.ideal_measurement_effects.keys()): 
+ #        if i == (N_effects - 1): # skip last index
+ #            break
+ #
+ #        constrained_effect -= M_effects[outcome]
+ #
+ #    M_effects[last_label] = np.conj(constrained_effect)
 
     #GST_analyzer = sm.GateSetTomography(basis, rho_prep, POVM_effects, parsed_circuits, gate_factory_function)
     #GST_analyzer = sm.GateSetTomography(basis, rho_prep, POVM_effects, parsed_circuits, ism_gate_dictionary)
-    GST_analyzer = sm.GateSetTomography(basis, prep_state_function, POVM_effects, parsed_circuits, ism_gate_dictionary)
+    GST_analyzer = sm.GateSetTomography(basis, prep_state_function, POVM_models, parsed_circuits, ism_gate_dictionary)
     solver_results = GST_analyzer.solve_for_gate_parameters()
     print(f"Solver results: {solver_results}")
     GST_analyzer.print_parameters()
