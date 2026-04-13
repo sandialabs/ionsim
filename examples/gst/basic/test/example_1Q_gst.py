@@ -18,11 +18,11 @@ def main():
     # Run the main parsing function:  
     parsed_circuits = sm.parse_gst_circuit_file(fname)
 
-    print_head = True 
+    print_head = False 
+    head = 20
     if print_head:
         # Optional print out of first _ lines to check functionality  
         # Print circuit information: 
-        head = 64
         for i, circ in enumerate(parsed_circuits):
             print(f"\n--- Experiment {i} ---")
             print(f"    Unparsed circuit line:  {circ.unparsed_data}")
@@ -37,6 +37,8 @@ def main():
             if i > head:
                 break
 
+    ## Check to see if GST runs quickly and gets decent estimates with not many circuits  
+    parsed_circuits = parsed_circuits[:head]
     # Set up basic 1-qubit (1Q) basis  
     num_spins = 1
     
@@ -156,11 +158,15 @@ def main():
             return POVM_operator.superbra + effect_parameters 
         POVM_models[outcome] = effect_function
 
+    import time
+    start = time.perf_counter()
     GST_analyzer = sm.GateSetTomography(basis, prep_state_function, POVM_models, parsed_circuits, ism_gate_dictionary)
     solver_results = GST_analyzer.solve_for_gate_parameters()
+    end = time.perf_counter()
+    print(f"Ran GST in {end - start} seconds")
     print(f"Solver results: {solver_results}")
-    GST_analyzer.print_parameters()
-    GST_analyzer.print_state_and_POVMs()
+    #GST_analyzer.print_parameters()
+    #GST_analyzer.print_state_and_POVMs()
     sys.exit(0)
 
     # TODO: Either save gates evaluated at the parameter values or just the parameter values.  
