@@ -75,7 +75,7 @@ class GateInterpolant():
 
     # TODO: add from_lindbladian_function class method? 
     @classmethod
-    def from_gate_function(cls, gate_function: Callable, grid_axes: dict[str, NDArray], gate_name: str | None=None):
+    def from_gate_function(cls, gate_function: Callable, grid_axes: dict[str, Vector], gate_name: str | None=None):
         """ Build gate interpolant from a gate function, which returns a gate from grid parameter values. """ 
         # NB: This is the cleanest way to handle noise. Noise is embedded in the gate function input. 
         grid = cls.build_grid(grid_axes) # a list of grid points 
@@ -92,7 +92,7 @@ class GateInterpolant():
 
 
     @classmethod
-    def from_process_matrix_function(cls, process_matrix_function: Callable, grid_axes: dict[str, NDArray], gate_basis: StandardBasis, gate_name: str | None=None): 
+    def from_process_matrix_function(cls, process_matrix_function: Callable, grid_axes: dict[str, Vector], gate_basis: StandardBasis, gate_name: str | None=None): 
         """ Build gate interpolant from a process matrix function. """ 
         # Build a grid and loop over every parameter value and build the gate from the process matrix function  
         grid = cls.build_grid(grid_axes)
@@ -106,7 +106,7 @@ class GateInterpolant():
 
 
     @classmethod
-    def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, gate_duration: float, grid_axes: dict[str, NDArray], gate_name: str | None=None):
+    def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, gate_duration: float, grid_axes: dict[str, Vector], gate_name: str | None=None):
         """ Build gate interpolant from Schrodinger evolution of a Hamiltonian. 
             - requires a function that returns the hamiltonian using the interpolant grid parameters  
             - requires a fixed duration to set the hamiltonian's time evolution 
@@ -156,13 +156,13 @@ class GateInterpolant():
         # Parse grid axes from reading 1D arrays; parse gate data from NDArray
         for key, value in results:
             if not isinstance(value, Vector) or not isinstance(value, Matrix):
-                raise ValueError("Data from file should contain a set of 1D arrays for the grid axes and one NDArray for the gate data.") 
+                raise ValueError("Data from file should contain a set of 1D arrays for the grid axes and one Vector for the gate data.") 
             if isinstance(value, Vector) and len(value.shape) == 1:
                 _grid_axes[key] = results[key]
 
         gate_attribute = [x for x in results.keys() if x not in _grid_axes.keys()]
         if not gate_attribute:
-            raise IonSimError("No gate NDArray data found in file.")
+            raise IonSimError("No gate Vector data found in file.")
         elif len(gate_attribute) > 1:
             raise IonSimError("File should contain 1 gate data of shape (d^2, d^2, *grid_lengths).")
             
