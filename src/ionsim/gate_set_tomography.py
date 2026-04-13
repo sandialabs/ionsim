@@ -21,7 +21,8 @@ from ionsim.ionsim_error import IonSimError
 # 3. GST Class: Solve for model parameters and return  
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
-    def __init__(self, basis: StandardBasis, prep_state: State, POVM_effects: dict[str, Operator], parsed_circuits: list[ParsedCircuit], gate_model_factory: Callable): 
+    #def __init__(self, basis: StandardBasis, prep_state: State, POVM_effects: dict[str, Operator], parsed_circuits: list[ParsedCircuit], gate_model_factory: Callable): 
+    def __init__(self, basis: StandardBasis, prep_state: State, POVM_effects: dict[str, Operator], parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
     
             Member variables include:
@@ -29,7 +30,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 - prep state: rho_0, representing an ideal state prepared natively. 
                 - POVM_measurement_effects: is a dictionary of measurement effects: ['0' : E0, '1': E1] or ['00' : E0, '01' : E1, ...] for N = 2 
                 - parsed_circuits is a list of Parsed GST Circuits that contain circuit information and measurement information.
-                - gate model factory is a function that takes a gate name and qubit tuple and returns an IonSim Gate object, which holds a process matrix (gate) function. 
+                #- gate model factory is a function that takes a gate name and qubit tuple and returns an IonSim Gate object, which holds a process matrix (gate) function. 
+                - gate_mappings represents a dictionary that maps GST gate names to IonSim model names, specified by the user.  
                 - gst_parameters: a 1D numpy array of gate parameters.  
     
         """ 
@@ -57,6 +59,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # 2. Retrieve gate models  
         self.gate_models = {}  # dictionary to map a Parsed Gate (from the gate set) to its model as a process matrix function  
+        gate_model_factory = self._initialize_gate_model_factory(gate_mappings)
         for gate in self.gate_set:
             #ism_name = gate_dictionary[gate.name] 
             print(f"\n Printing gate set: ")
@@ -86,6 +89,29 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
  #        print()
  #        print(gate_model(0.33, 0.50))
         #sys.exit(0)
+
+
+
+    def _initialize_gate_model_factory(self, gate_mappings: dict) -> Callable:
+        """ Sets up a "factory" function that returns a gate model as a function of 
+            - gate name (str) 
+            - involved qubits as a tuple of qubit indices, ranging from 0 to N_qubits - 1 
+        """
+        # TODO: Revise/finalize with 2Q examples 
+
+        def gate_factory(gate_name: str, qubits: tuple[int, ...]) -> Callable:
+            """ Function to map a gate name & qubit arguments to a gate function """ 
+            if gate_name == 'idle':
+                return gate_mappings[gate_name]
+            elif gate_name == '' or (gate_name is None):
+                return gate_mappings['{}']
+    
+            # TODO: Generalize to 2Q gates 
+            #   - for 1Q gates, this is made trivial by the dictionary. For 2Q, it requires functionality 
+            assert len(qubits) == 1
+            return gate_mappings[gate_name]
+
+        return gate_factory 
 
 
     def _build_parameter_organization(self) -> (dict[str, slice], int):

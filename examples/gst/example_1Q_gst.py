@@ -136,19 +136,19 @@ def main():
         # Make gate factory fxn internal 
         # Have user specify prep and measure parametrizations (models)  
         # 
-    def gate_factory_function(gate_name: str, qubits: tuple[int, ...]) -> Callable:
-        """ Function to map a gate name & qubit arguments to a gate function """ 
-        # Should this contain the name mappings from GST names to IonSim names? 
-        # Handle cases with idle or none, where "qubits" will not contain any information. 
-        if gate_name == 'idle':
-            return ism_gate_dictionary[gate_name]
-        elif gate_name == '' or (gate_name is None):
-            return ism_gate_ditionary['{}']
-
-        # TODO: Generalize to 2Q gates 
-        #   - for 1Q gates, this is made trivial by the dictionary. For 2Q, it requires functionality 
-        assert len(qubits) == 1
-        return ism_gate_dictionary[gate_name]
+ #    def gate_factory_function(gate_name: str, qubits: tuple[int, ...]) -> Callable:
+ #        """ Function to map a gate name & qubit arguments to a gate function """ 
+ #        # Should this contain the name mappings from GST names to IonSim names? 
+ #        # Handle cases with idle or none, where "qubits" will not contain any information. 
+ #        if gate_name == 'idle':
+ #            return ism_gate_dictionary[gate_name]
+ #        elif gate_name == '' or (gate_name is None):
+ #            return ism_gate_ditionary['{}']
+ #
+ #        # TODO: Generalize to 2Q gates 
+ #        #   - for 1Q gates, this is made trivial by the dictionary. For 2Q, it requires functionality 
+ #        assert len(qubits) == 1
+ #        return ism_gate_dictionary[gate_name]
 
     # For GST, define rho prep state and POVM effects: 
     rho_prep = sm.State.from_coefficients(basis, list([1., 0.]))
@@ -157,7 +157,8 @@ def main():
     POVM_effects['0'] = sm.EnergyShiftOperator.from_matrix(basis, sm.Pauli.projector_0) 
     POVM_effects['1'] = sm.EnergyShiftOperator.from_matrix(basis, sm.Pauli.projector_1) 
 
-    GST_analyzer = sm.GateSetTomography(basis, rho_prep, POVM_effects, parsed_circuits, gate_factory_function)
+    #GST_analyzer = sm.GateSetTomography(basis, rho_prep, POVM_effects, parsed_circuits, gate_factory_function)
+    GST_analyzer = sm.GateSetTomography(basis, rho_prep, POVM_effects, parsed_circuits, ism_gate_dictionary)
     solver_results = GST_analyzer.solve_for_gate_parameters()
     print(f"Solver results: {solver_results}")
     GST_analyzer.print_parameters()
