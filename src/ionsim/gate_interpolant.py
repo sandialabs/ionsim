@@ -188,7 +188,7 @@ class GateInterpolant():
         results = self.grid_axes 
         return cls(_grid_axes, gate_name, grid, None, gates_on_grid )
 
-    def construct_spline_for_gate_derived_matrix_property(self, gate_derived_property: AnyMatrix, complex_data: bool=True):
+    def construct_spline_for_gate_derived_matrix_property(self, gate_derived_property: Matrix, complex_data: bool=True):
         """ Constructs interpolant spline for derived property that lives on the domain of the parameter grid.
 
             - assumes gate_derived_property is matrix input of the shape: (d, d, parameter1_grid, parameter2_grid, ... )
@@ -219,7 +219,7 @@ class GateInterpolant():
         """ Constructs interpolant spline for the gate process matrices that live on the domain of the parameter grid. """ 
         return self.construct_spline_for_gate_derived_matrix_property(self.computed_gate_data_as_array, complex_data)
 
-    def construct_spline_for_gate_derived_scalar_property(self, gate_derived_property: AnyMatrix, complex_data: bool=True):
+    def construct_spline_for_gate_derived_scalar_property(self, gate_derived_property: Matrix, complex_data: bool=True):
         """ Constructs interpolant spline for derived property that lives on the domain of the parameter grid.""" 
         # Gate derived property input is a grid-dependent scalar property, e.g. Fidelity[x, y] -> Number  
         spline_reals = NdGridCubicSmoothingSpline(self.grids, gate_derived_property.real, smooth=1) 
