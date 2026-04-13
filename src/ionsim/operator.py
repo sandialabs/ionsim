@@ -102,6 +102,7 @@ class Operator(ABC):
     @property
     def superbra(self):
         """ Flattened representation of a static operator (often a measurement (POVM)) as a row vector """ 
+        # Convert d x d effect operator matrix to a d^2 row vector: E --> flatten((E^{dagger}).T) = conj(E).flatten() 
         return (np.conj(self.static_matrix.toarray())).flatten() # TODO: add warning / fail for non-static operators? 
 
     @staticmethod

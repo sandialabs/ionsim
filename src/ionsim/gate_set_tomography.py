@@ -50,7 +50,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Parse circuits list contanining GST circuit sequences and correpsonding data (observations) 
         self.parsed_circuits = parsed_circuits 
-
         #self.gate_model_factory = gate_model_factory 
 
         # Dimensionality of Hilbert and Hilbert-Schmidt spaces:
@@ -210,23 +209,21 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         M_effects = {}
         N_effects = len(self.POVM_effect_models) 
         measurement_params = theta[self.gst_parameter_indices["measurement"]]
-
         #print(f"POVM parameters = {measurement_params}")
         #assert len(prep_parms) == self.d2
 
         assert N_effects == (self.d) 
         N_params_per_op = self.d2
 
-        # Parametrize unconstrained effects as ideal + perturbation:
+        # 1. Evaluate unconstrained effect models 
         for i, (label, effect_model) in enumerate(self.POVM_effect_models.items()):
             if i == (N_effects - 1): # skip last index
                 break
             # Retrieve model parameters for this effect and plug into effect's model function 
             model_parameters = np.array(measurement_params[i * N_params_per_op : (i + 1) * N_params_per_op]) 
             M_effects[label] = effect_model(model_parameters)
- #            # Convert d x d ideal effect matrix to a d^2 row vector: E --> flatten((E^{dagger}).T) = conj(E).flatten() 
 
-        # Final effect is constrained to be E_last = I - sum(E) over all other effects E 
+        # 2. Determine Final effect, constrained to be E_last = I - sum(E) over all other effects E 
         last_label = list(self.POVM_effect_models.keys())[-1]
         constrained_effect = np.eye(self.d).flatten()
         assert last_label not in list(M_effects.keys()) 
@@ -240,7 +237,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             constrained_effect -= effect_op 
 
         M_effects[last_label] = constrained_effect
-        #M_effects[last_label] = np.conj(constrained_effect)
         return M_effects 
 
  #    def get_measurement_effects(self, theta) -> dict[str, Matrix]:
@@ -298,7 +294,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
  #        return M_effects 
 
 
-    def _predict_probabilities(self, circ: ParsedCircuit, theta: Vector) -> Vector[float]: 
+    def _predict_probabilities(self, circ: ParsedCircuit, theta: Vector) -> Vector: 
         """ Predicts outcome probabilities for a GST circuit with gates parametrized by theta """
         rho_supervector = self.get_prep_state(theta)
         M_effects = self.get_measurement_effects(theta)
