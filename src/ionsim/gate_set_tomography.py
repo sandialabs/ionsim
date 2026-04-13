@@ -8,6 +8,7 @@ from typing import Callable
 import inspect
 
 from ionsim.process import Gate, Circuit
+from ionsim.basis import StandardBasis
 from ionsim.named_operators import Pauli, Unitary
 from ionsim.GST_data_parser  import *
 from ionsim.custom_math import matrix_AYB_multiply_to_superoperator 
