@@ -21,7 +21,8 @@ from ionsim.ionsim_error import IonSimError
 # 3. GST Class: Solve for model parameters and return  
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
-    def __init__(self, basis: StandardBasis, prep_state: State, POVM_effects: dict[str, Operator], parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
+    #def __init__(self, basis: StandardBasis, prep_state: State, POVM_effects: dict[str, Operator], parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
+    def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: Callable, parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
     
             Member variables include:
@@ -38,8 +39,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         print(f"\n\n --- Constructor for GateSetTomography Class IonSim --- ")
 
         # Unpack |rho>> and <<E| or <<M| 
-        self.ideal_prep_state = prep_state 
-        self.ideal_measurement_effects = POVM_effects 
+        self.prep_state_model = prep_state_model
+        self.POVM_effect_models = POVM_effect_models 
+        #self.ideal_prep_state = prep_state 
+        #self.ideal_measurement_effects = POVM_effects 
 
         # Parse circuits list contanining GST circuit sequences and correpsonding data (observations) 
         self.parsed_circuits = parsed_circuits 
@@ -168,13 +171,19 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         assert len(prep_params) == (self.d2 - 1)
 
         # Enforce constraint Tr[rho] = 1
-        ideal_state = self.ideal_prep_state.supervector
+        prep_state = np.zeros(len(prep_params)+1, dtype=complex) # TODO: should this be reals only? 
 
-        # Initialize prep state(theta) to the ideal staet
-        prep_state = ideal_state.copy()
-        # Current prep state is ideal + perturbation(theta); here perturbation(theta) = theta 
-        perturbation = prep_params
-        prep_state[:-1] += perturbation 
+        # Note: prep_params contains the independent d^2 - 1 params. 
+        # Therefore, pass in a dumby parameter with value 0 since prep state model takes in d^2 parameters, even though d^2 - 1 are independent. 
+        prep_state += self.prep_state_model(*[prep_params, 0.]) 
+
+#         ideal_state = self.ideal_prep_state.supervector
+# 
+#         # Initialize prep state(theta) to the ideal staet
+#         prep_state = ideal_state.copy()
+#         # Current prep state is ideal + perturbation(theta); here perturbation(theta) = theta 
+#         perturbation = prep_params
+#         prep_state[:-1] += perturbation 
         
         # Retrieve indices corresponding to diagonal density matrix entries 
         diag_indices = [i * (self.d + 1) for i in range(self.d)] # assumes square density matrix 
@@ -213,12 +222,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             variation = measurement_params[i * N_params_per_op : (i + 1) * N_params_per_op] 
 
             # Convert d x d ideal effect matrix to a d^2 row vector: E --> flatten((E^{dagger}).T) = conj(E).flatten() 
-            ideal_effect_superoperator = (np.conj(effect_op.static_matrix.toarray())).flatten() 
+            ideal_effect_superbra = (np.conj(effect_op.static_matrix.toarray())).flatten() 
             # TODO: Check this 
 
-            assert len(variation) == len(ideal_effect_superoperator)
+            assert len(variation) == len(ideal_effect_superbra)
             # Compute resulting effect:  
-            M_effects[label] = ideal_effect_superoperator + variation 
+            M_effects[label] = ideal_effect_superbra + variation 
 
         # Final effect is constrained to be E_last = I - sum(E) over all other effects E 
         constrained_effect = np.eye(self.d).flatten()
