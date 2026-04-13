@@ -15,7 +15,7 @@ from ionsim.named_operators import Pauli, Unitary
 from ionsim.GST_data_parser  import *
 from ionsim.custom_math import matrix_AYB_multiply_to_superoperator 
 from ionsim.ionsim_error import IonSimError
-from ionsim.custom_types import Vector 
+from ionsim.custom_types import Vector
 
 
 # Example Workflow: 
@@ -25,8 +25,8 @@ from ionsim.custom_types import Vector
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     #def __init__(self, basis: StandardBasis, prep_state: State, POVM_effects: dict[str, Operator], parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
-    #def __init__(self, basis: StandardBasis, prep_state_model: dict[str, Callable], POVM_effect_models: Callable, parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
-    def __init__(self, basis: StandardBasis, prep_state_model: dict[str, Callable], POVM_effects: dict, parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
+    def __init__(self, basis: StandardBasis, prep_state_model: dict[str, Callable], POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
+    #def __init__(self, basis: StandardBasis, prep_state_model: dict[str, Callable], POVM_effects: dict, parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
     
             Member variables include:
@@ -44,9 +44,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Unpack |rho>> and <<E| or <<M| 
         self.prep_state_model = prep_state_model
-        #self.POVM_effect_models = POVM_effect_models 
+        self.POVM_effect_models = POVM_effect_models 
         #self.ideal_prep_state = prep_state 
-        self.ideal_measurement_effects = POVM_effects 
+        #self.ideal_measurement_effects = POVM_effects 
 
         # Parse circuits list contanining GST circuit sequences and correpsonding data (observations) 
         self.parsed_circuits = parsed_circuits 
@@ -198,6 +198,51 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         #return prep_state 
 
+    def get_measurement_effects(self, theta) -> dict[str, Vector]:
+        """ Returns measurement effects given the parameter values theta. 
+
+            - Effects are stored in a dictionary {'outcome' : Effect_vector with superoperator d^2 x d^2 shape} 
+            - e.g. E_0 vector is d^2 x 1 corresponding to |0><0|
+            - There is a completeness constraint to enforce: sum_m E_m = identity
+            - By convention, the last effect is constrained. ==> d^2 parameters are constrained. 
+            - Therefore, there are d^2 (d-1) independent parameters for measurment.  
+        """ 
+        M_effects = {}
+        N_effects = len(self.POVM_effect_models) 
+        measurement_params = theta[self.gst_parameter_indices["measurement"]]
+
+        #print(f"POVM parameters = {measurement_params}")
+        #assert len(prep_parms) == self.d2
+
+        assert N_effects == (self.d) 
+        N_params_per_op = self.d2
+
+        # Parametrize unconstrained effects as ideal + perturbation:
+        for i, (label, effect_model) in enumerate(self.POVM_effect_models.items()):
+            if i == (N_effects - 1): # skip last index
+                break
+            # Retrieve model parameters for this effect and plug into effect's model function 
+            model_parameters = np.array(measurement_params[i * N_params_per_op : (i + 1) * N_params_per_op]) 
+            M_effects[label] = effect_model(model_parameters)
+ #            # Convert d x d ideal effect matrix to a d^2 row vector: E --> flatten((E^{dagger}).T) = conj(E).flatten() 
+
+        # Final effect is constrained to be E_last = I - sum(E) over all other effects E 
+        last_label = list(self.POVM_effect_models.keys())[-1]
+        constrained_effect = np.eye(self.d).flatten()
+        assert last_label not in list(M_effects.keys()) 
+        assert self.POVM_effect_models[last_label] == None 
+        # TODO: Instead of having the last effect be None by arbitrary convention, have this code find which effect is constrained by checking if its function is None.
+
+        # Loop over all independent effects to compute the constrained effect: 
+        for i, effect_op in enumerate(M_effects.values()): 
+            if i == (N_effects - 1): # skip last index
+                break
+            constrained_effect -= effect_op 
+
+        M_effects[last_label] = constrained_effect
+        #M_effects[last_label] = np.conj(constrained_effect)
+        return M_effects 
+
  #    def get_measurement_effects(self, theta) -> dict[str, Matrix]:
  #        """ Returns measurement effects given the parameter values theta. 
  #
@@ -207,102 +252,50 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
  #            - By convention, the last effect is constrained. ==> d^2 parameters are constrained. 
  #            - Therefore, there are d^2 (d-1) independent parameters for measurment.  
  #        """ 
+ #        # TODO: consider a more sophisticated parametrization? 
  #        M_effects = {}
- #        N_effects = len(self.POVM_effect_models) 
- #        measurement_params = theta[self.gst_parameter_indices["measurement"]]
  #
+ #        measurement_params = theta[self.gst_parameter_indices["measurement"]]
  #        #print(f"POVM parameters = {measurement_params}")
  #        #assert len(prep_parms) == self.d2
  #
- #        assert N_effects == (self.d) 
+ #        N_effects = len(self.ideal_measurement_effects)
+ #        assert N_effects == self.d
  #        N_params_per_op = self.d2
  #
  #        # Parametrize unconstrained effects as ideal + perturbation:
- #        for i, (label, effect_model) in enumerate(self.POVM_effect_models.items()):
+ #        for i, (label, effect_op) in enumerate(self.ideal_measurement_effects.items()):
  #            if i == (N_effects - 1): # skip last index
  #                break
- #            # Retrieve model parameters for this effect and plug into effect's model function 
- #            model_parameters = measurement_params[i * N_params_per_op : (i + 1) * N_params_per_op] 
- #            M_effects[label] = effect_model(model_parameters)
+ #            # Use parameters for this operator by index slicing:  
+ #            variation = measurement_params[i * N_params_per_op : (i + 1) * N_params_per_op] 
  #
- # #            # Convert d x d ideal effect matrix to a d^2 row vector: E --> flatten((E^{dagger}).T) = conj(E).flatten() 
- # #            ideal_effect_superbra = (np.conj(effect_op.static_matrix.toarray())).flatten() 
- # #            # TODO: Check this 
- # #
- # #            assert len(variation) == len(ideal_effect_superbra)
- # #            # Compute resulting effect:  
- #            #M_effects[label] = ideal_effect_superbra + variation 
+ #            # Convert d x d ideal effect matrix to a d^2 row vector: E --> flatten((E^{dagger}).T) = conj(E).flatten() 
+ #            ideal_effect_superbra = effect_op.superbra 
+ #
+ #            # TODO: Check this 
+ #
+ #            assert len(variation) == len(ideal_effect_superbra)
+ #            # Compute resulting effect:  
+ #            M_effects[label] = ideal_effect_superbra + variation 
  #
  #        # Final effect is constrained to be E_last = I - sum(E) over all other effects E 
  #        constrained_effect = np.eye(self.d).flatten()
- #        last_label = list(self.POVM_effect_models.keys())[-1]
+ #        last_label = list(self.ideal_measurement_effects.keys())[-1]
+ #
  #        assert last_label not in list(M_effects.keys()) 
- #        assert self.POVM_effect_models[last_label] == None 
- #        # TODO: Instead of having the last effect be None by arbitrary convention, have this code find which effect is constrained by checking if its function is None.
  #
  #        # Loop over all independent effects to compute the constrained effect: 
- #        for i, effect_op in enumerate(M_effects.values()): 
+ #        for i, (label, effect_op) in enumerate(self.ideal_measurement_effects.items()): 
  #            if i == (N_effects - 1): # skip last index
  #                break
- #            constrained_effect -= effect_op 
+ #            constrained_effect -= M_effects[label]
+ #            #constrained_effect -= effect_op.static_matrix.toarray() 
  #
- #        M_effects[last_label] = constrained_effect
- #        #M_effects[last_label] = np.conj(constrained_effect)
+ #        M_effects[last_label] = np.conj(constrained_effect)
+ #        #M_effects[last_label] = (np.conj(constrained_effect)).flatten()
+ #
  #        return M_effects 
-
-    def get_measurement_effects(self, theta) -> dict[str, Matrix]:
-        """ Returns measurement effects given the parameter values theta. 
-
-            - Effects are stored in a dictionary {'outcome' : Effect_vector with superoperator d^2 x d^2 shape} 
-            - e.g. E_0 vector is d^2 x 1 corresponding to |0><0|
-            - There is a completeness constraint to enforce: sum_m E_m = identity
-            - By convention, the last effect is constrained. ==> d^2 parameters are constrained. 
-            - Therefore, there are d^2 (d-1) independent parameters for measurment.  
-        """ 
-        # TODO: consider a more sophisticated parametrization? 
-        M_effects = {}
-
-        measurement_params = theta[self.gst_parameter_indices["measurement"]]
-        #print(f"POVM parameters = {measurement_params}")
-        #assert len(prep_parms) == self.d2
-
-        N_effects = len(self.ideal_measurement_effects)
-        assert N_effects == self.d
-        N_params_per_op = self.d2
-
-        # Parametrize unconstrained effects as ideal + perturbation:
-        for i, (label, effect_op) in enumerate(self.ideal_measurement_effects.items()):
-            if i == (N_effects - 1): # skip last index
-                break
-            # Use parameters for this operator by index slicing:  
-            variation = measurement_params[i * N_params_per_op : (i + 1) * N_params_per_op] 
-
-            # Convert d x d ideal effect matrix to a d^2 row vector: E --> flatten((E^{dagger}).T) = conj(E).flatten() 
-            ideal_effect_superbra = effect_op.superbra 
-
-            # TODO: Check this 
-
-            assert len(variation) == len(ideal_effect_superbra)
-            # Compute resulting effect:  
-            M_effects[label] = ideal_effect_superbra + variation 
-
-        # Final effect is constrained to be E_last = I - sum(E) over all other effects E 
-        constrained_effect = np.eye(self.d).flatten()
-        last_label = list(self.ideal_measurement_effects.keys())[-1]
-
-        assert last_label not in list(M_effects.keys()) 
-
-        # Loop over all independent effects to compute the constrained effect: 
-        for i, (label, effect_op) in enumerate(self.ideal_measurement_effects.items()): 
-            if i == (N_effects - 1): # skip last index
-                break
-            constrained_effect -= M_effects[label]
-            #constrained_effect -= effect_op.static_matrix.toarray() 
-
-        M_effects[last_label] = np.conj(constrained_effect)
-        #M_effects[last_label] = (np.conj(constrained_effect)).flatten()
-
-        return M_effects 
 
 
     def _predict_probabilities(self, circ: ParsedCircuit, theta: Vector) -> Vector[float]: 

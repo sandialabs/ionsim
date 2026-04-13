@@ -120,8 +120,6 @@ def main():
     # For GST, define state and measurement parametrizations (models): 
     # Here, we choose deviations from an ideal prep state and ideal POVM effects: 
     ideal_rho_prep = sm.State.from_coefficients(basis, list([1., 0.]))
-    print(f"Supervector: {ideal_rho_prep.supervector}")
-
 
     ##### Define a parametrization (model) for prep state as a function:  ##### 
     d = len(basis.states)
@@ -162,12 +160,17 @@ def main():
             break
 
         # Define parametrization (model) for this effect: 
-        effect_function = lambda deviations: ideal_effect.superbra + deviations 
- #        def effect_function(effect_parameters: Vector):
- #            # Parameters represent deviations from ideal 
- #            return ideal_effect.superbra + effect_parameters 
+        #print(f"Printing superbra in the loop")
+        def effect_function(effect_parameters: Vector, POVM_operator=ideal_effect):
+            # Parameters represent deviations from ideal 
+            return POVM_operator.superbra + effect_parameters 
         POVM_models[outcome] = effect_function
 
+ #    print("\nDebug:\n")
+ #    print(f"POVM '0' evaluated at (zeros): {POVM_models['0'](np.array([0., 0., 0., 0.]))}")
+    #print(f"Ideal POVM '0' superbra: {ideal_POVM_effects['0'].superbra}")
+    #print(f"Ideal POVM '0' static matrix: {ideal_POVM_effects['0'].static_matrix.toarray()}")
+    #sys.exit(0)
     # Final POVM model is constrained by completeness / conservation of probability: 
     # Final effect is constrained to be E_last = I - sum(E) over all other effects E 
  #    constrained_effect = np.eye(self.d).flatten()
@@ -183,8 +186,8 @@ def main():
  #
  #    M_effects[last_label] = np.conj(constrained_effect)
 
-    #GST_analyzer = sm.GateSetTomography(basis, prep_state_function, POVM_models, parsed_circuits, ism_gate_dictionary)
-    GST_analyzer = sm.GateSetTomography(basis, prep_state_function, ideal_POVM_effects, parsed_circuits, ism_gate_dictionary)
+    GST_analyzer = sm.GateSetTomography(basis, prep_state_function, POVM_models, parsed_circuits, ism_gate_dictionary)
+    #GST_analyzer = sm.GateSetTomography(basis, prep_state_function, ideal_POVM_effects, parsed_circuits, ism_gate_dictionary)
     solver_results = GST_analyzer.solve_for_gate_parameters()
     print(f"Solver results: {solver_results}")
     GST_analyzer.print_parameters()
