@@ -398,7 +398,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
     def print_parameters(self):
         # Prep, measure, then gate parameters: 
-        # 1. Prep:
         print(" --- Printing parameter values --- ")
         prep_params = self.gst_parameters[self.gst_parameter_indices["prep"]] # d^2 - 1 column vector  
         print(f"Prep state parameters: {prep_params}")
@@ -409,9 +408,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for gate in self.gate_set:
             gate_parameters = self.gst_parameters[self.gst_parameter_indices[gate.name]]
             print(f"\n Gate {gate.name} parameters: {gate_parameters}")
-
-        return 0
-
 
     def print_state_and_POVMs(self):
         """ Output state supervector and measurement effects """ 
@@ -514,20 +510,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
  #        return gst_data.get_experimental_outcome_frequency(outcome_index, circuit) 
  #
 
-    ## I think you need to solve for all parameters simultaneously --> this is the self-consistency of GST  
-    ## - evaluate cost function (negative likelihood), which is a sum over all possible measurement outcomes and all parameters 
- #    @classmethod
- #    def solve_for_parameters_of_all_gates(cls, solver: str)
- #        """ Loops over all gates to solve for gate parameters. """ 
- #        gate_parameters = [] 
- #        for gate in self.gate_set:
- #            gate_parameters.append(cls.solve_for_gate_parameters(gate, solver))
- #
- #        return gate_parameters
- #
-
-
-
 
  #    def estimate_probability(outcome: str, gst_circuit: ParsedCircuit, gate_parameters: Vector) -> float:
  #        """ Computes the probability of outcome after a GST circuit modeled with various gate parameters. """ 
@@ -564,20 +546,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
  #            #if gate_name == 'I' or 'idle':
  #
  #        return Circuit.from_gates(gate_list, noise) 
- #
-
- #
- #    def map_experimental_gate_name_to_internal_gate_name(gate_name: str): -> str
- #        """ Helper function to convert experimental gate nomenclature to internal
- #                IonSim gate nomenclature used in this class. """
- #        # TODO: Maybe the user will specify this mapping / look-up table? 
- #        
- #
- #
- #
- #
- #
- #        return gate_name
  #
 
 
@@ -736,21 +704,11 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
  #
  #        return frequency 
 
-
-
-
 ### Parser for GST circuit sequence files 
  #import re 
  #from dataclasses import dataclass, field
  #from typing import Optional
  #from pathlib import Path 
-
-#@dataclass
-#class  
-
-
-
-
 
 # ------ To be deleted later ------
  #''' Example usage: ''' 
