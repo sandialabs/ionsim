@@ -21,6 +21,7 @@ from ionsim.energy_level import EnergyEigenstate
 from ionsim.custom_types import Vector, Matrix
 from ionsim.named_operators import Pauli
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD
+from ionsim.process import Gate 
 
 
 @dataclass(frozen=True, eq=False)
@@ -364,6 +365,7 @@ class PauliProductBasis(Basis):
         # TODO: test and verify these formulae 
         return pauli_transfer_matrix 
 
+    # TODO: Should this go here (in basis) or in the Process/Gate class? 
     def convert_gate_to_pauli_basis(self, gate: Gate) -> Gate:
         """ Converts a Gate object to the Pauli product basis """ 
         if not isinstance(gate.basis, StandardBasis):
