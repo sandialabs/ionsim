@@ -171,8 +171,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # print(f"Number of prep state parameters = {len(prep_params)}")
         assert len(prep_params) == (self.d2 - 1)
 
-        # Enforce constraint Tr[rho] = 1
         prep_state = self.prep_state_model(prep_params)
+        return prep_state
 
         #prep_state = np.zeros(len(prep_params)+1, dtype=complex) # TODO: should this be reals only? 
 
@@ -188,13 +188,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 #         perturbation = prep_params
 #         prep_state[:-1] += perturbation 
         
+        # Enforce constraint Tr[rho] = 1
         # Retrieve indices corresponding to diagonal density matrix entries 
  #        diag_indices = [i * (self.d + 1) for i in range(self.d)] # assumes square density matrix 
  #        free_diag_indices = diag_indices[:-1]
  #         
  #        prep_state[-1] = 1.0 - np.sum(prep_state[diag_indices[:-1]]) 
 
-        return prep_state 
+        #return prep_state 
 
  #    def get_measurement_effects(self, theta) -> dict[str, Matrix]:
  #        """ Returns measurement effects given the parameter values theta. 
@@ -276,7 +277,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             variation = measurement_params[i * N_params_per_op : (i + 1) * N_params_per_op] 
 
             # Convert d x d ideal effect matrix to a d^2 row vector: E --> flatten((E^{dagger}).T) = conj(E).flatten() 
-            ideal_effect_superbra = (np.conj(effect_op.static_matrix.toarray())).flatten() 
+            ideal_effect_superbra = effect_op.superbra 
+
             # TODO: Check this 
 
             assert len(variation) == len(ideal_effect_superbra)
@@ -374,7 +376,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Compute log likelihood for each GST circuit, accumulating over all GST circuits 
         for circ in self.parsed_circuits:
-            print(f"\nCircuit: {circ.unparsed_data}")
+            #print(f"\nCircuit: {circ.unparsed_data}")
             probabilities = self._predict_probabilities(circ, theta) # don't need the PM cache? 
 
             if circ.measurement_data.counts is not None:

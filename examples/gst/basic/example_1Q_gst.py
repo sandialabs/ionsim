@@ -67,7 +67,7 @@ def main():
     def X_pi2(X_rot, Z_rot):
         """ Returns Gate from the d^2 x d^2 process matrix function in standard basis 
     
-            X_pi2 = exp( -i [ (pi/2 + X_rot) X  - (Z_rot)Z ] )
+            X_pi2 = exp( -i [ (pi/2 + X_rot) X  + (Z_rot)Z ] )
     
             - X_rot is an additional X_rotation parameter (over/under rotation).
             - Z_rot is a Z_rotation parameter, e.g. from a detuned laser. 
@@ -85,7 +85,7 @@ def main():
     def Y_pi2(Y_rot, Z_rot):
         """ Returns Gate from the d^2 x d^2 process matrix function in standard basis 
     
-            Y_pi2 = exp( -i [ (pi/2 + Y_rot) Y  - (Z_rot)Z ] )
+            Y_pi2 = exp( -i [ (pi/2 + Y_rot) Y  + (Z_rot)Z ] )
     
             - Y_rot is an additional Y_rotation parameter (over/under rotation).
             - Z_rot is a Z_rotation parameter, e.g. from a detuned laser. 
@@ -100,22 +100,22 @@ def main():
         return basis.compute_superoperator_from_unitary_operator(Rypi2)
 
 
-    def null():
-        """ Returns d^2 x d^2 process matrix in standard basis a null ("do nothing for no time") gate"""  
-        # Build identity matrix with Z rotation by theta:
-        # TODO: generalize to 2+ qubits  
-        assert len(spins) == 1
-        I = np.eye(2,dtype=complex)
-        # Promote to a d^2 x d^2 superoperator 
-        return basis.compute_superoperator_from_unitary_operator(I)
-
+ #    def null():
+ #        """ Returns d^2 x d^2 process matrix in standard basis a null ("do nothing for no time") gate"""  
+ #        # Build identity matrix with Z rotation by theta:
+ #        # TODO: generalize to 2+ qubits  
+ #        assert len(spins) == 1
+ #        I = np.eye(2,dtype=complex)
+ #        # Promote to a d^2 x d^2 superoperator 
+ #        return basis.compute_superoperator_from_unitary_operator(I)
+ #
 
     # Define dictionary mappings for GST gate name to ionsim gate function 
     ism_gate_dictionary = {}    
     ism_gate_dictionary['Gxpi2']  = X_pi2 
     ism_gate_dictionary['Gypi2'] = Y_pi2
     ism_gate_dictionary['idle'] = idle
-    ism_gate_dictionary['{}'] = null 
+    #ism_gate_dictionary['{}'] = null  # no need to specify this; this case is handled by gst class  
 
     # For GST, define state and measurement parametrizations (models): 
     # Here, we choose deviations from an ideal prep state and ideal POVM effects: 
