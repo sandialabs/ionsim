@@ -120,25 +120,23 @@ def main():
     # For GST, define state and measurement parametrizations (models): 
     # Here, we choose deviations from an ideal prep state and ideal POVM effects: 
     ideal_rho_prep = sm.State.from_coefficients(basis, list([1., 0.]))
+    print(f"Supervector: {ideal_rho_prep.supervector}")
 
-    ## Define a parametrization (model) for prep state as a function: 
+
+    ##### Define a parametrization (model) for prep state as a function:  ##### 
     d = len(basis.states)
     def prep_state_function(state_parameters: Vector) -> Vector: 
         """ Model of the prep state as a function of parameters (a vector with d^2 - 1 entries), returns a constrained supervector """ 
         # TODO: Discuss w. Brandon: Should we normalize this here / enforce the constraint here? 
 
         # Here, we parametrize the state as a deviation from a known ideal state
-        prep_state = ideal_rho_prep.supervector.copy()
+        prep_state = (ideal_rho_prep.supervector).copy()
         prep_state[:-1] += state_parameters # deviations 
 
-        # Enforce Tr[rho] = 1 constraint: 
-        # Retrieve indices corresponding to diagonal density matrix entries 
+        # Enforce Tr[rho] = 1 constraint; Retrieve indices corresponding to diagonal density matrix entries 
         diag_indices = [i * (d + 1) for i in range(d)] # assumes square density matrix 
-        free_diag_indices = diag_indices[:-1]
-         
         prep_state[-1] = 1.0 - np.sum(prep_state[diag_indices[:-1]]) 
         return prep_state  
-        #return ideal_rho_prep.supervector + state_parameters 
 
     ideal_POVM_effects = {} 
     ideal_POVM_effects['0'] = sm.EnergyShiftOperator.from_matrix(basis, sm.Pauli.projector_0) 
@@ -164,10 +162,10 @@ def main():
             break
 
         # Define parametrization (model) for this effect: 
-        def effect_function(effect_parameters: Vector):
-            # Parameters represent deviations from ideal 
-            return ideal_effect.superbra + effect_parameters 
-
+        effect_function = lambda deviations: ideal_effect.superbra + deviations 
+ #        def effect_function(effect_parameters: Vector):
+ #            # Parameters represent deviations from ideal 
+ #            return ideal_effect.superbra + effect_parameters 
         POVM_models[outcome] = effect_function
 
     # Final POVM model is constrained by completeness / conservation of probability: 
@@ -185,9 +183,8 @@ def main():
  #
  #    M_effects[last_label] = np.conj(constrained_effect)
 
-    #GST_analyzer = sm.GateSetTomography(basis, rho_prep, POVM_effects, parsed_circuits, gate_factory_function)
-    #GST_analyzer = sm.GateSetTomography(basis, rho_prep, POVM_effects, parsed_circuits, ism_gate_dictionary)
-    GST_analyzer = sm.GateSetTomography(basis, prep_state_function, POVM_models, parsed_circuits, ism_gate_dictionary)
+    #GST_analyzer = sm.GateSetTomography(basis, prep_state_function, POVM_models, parsed_circuits, ism_gate_dictionary)
+    GST_analyzer = sm.GateSetTomography(basis, prep_state_function, ideal_POVM_effects, parsed_circuits, ism_gate_dictionary)
     solver_results = GST_analyzer.solve_for_gate_parameters()
     print(f"Solver results: {solver_results}")
     GST_analyzer.print_parameters()
