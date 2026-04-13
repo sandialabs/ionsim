@@ -21,7 +21,6 @@ from ionsim.ionsim_error import IonSimError
 # 3. GST Class: Solve for model parameters and return  
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
-    #def __init__(self, basis: StandardBasis, prep_state: State, POVM_effects: dict[str, Operator], parsed_circuits: list[ParsedCircuit], gate_model_factory: Callable): 
     def __init__(self, basis: StandardBasis, prep_state: State, POVM_effects: dict[str, Operator], parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
     
@@ -45,7 +44,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Parse circuits list contanining GST circuit sequences and correpsonding data (observations) 
         self.parsed_circuits = parsed_circuits 
 
-        self.gate_model_factory = gate_model_factory 
+        #self.gate_model_factory = gate_model_factory 
 
         # Dimensionality of Hilbert and Hilbert-Schmidt spaces:
         self.d = len(basis.states)
@@ -59,13 +58,13 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # 2. Retrieve gate models  
         self.gate_models = {}  # dictionary to map a Parsed Gate (from the gate set) to its model as a process matrix function  
-        gate_model_factory = self._initialize_gate_model_factory(gate_mappings)
+        self.gate_model_factory = self._initialize_gate_model_factory(gate_mappings)
         for gate in self.gate_set:
             #ism_name = gate_dictionary[gate.name] 
             print(f"\n Printing gate set: ")
             print(f"Gate: {gate}")
             print(f"Name: {gate.name}")
-            self.gate_models[gate.name] = gate_model_factory(gate.name, gate.qubits)
+            self.gate_models[gate.name] = self.gate_model_factory(gate.name, gate.qubits)
             #self.gate_models[gate] = gate_model_factory(ism_name, gate.qubits)
 
 
