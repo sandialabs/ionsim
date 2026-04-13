@@ -90,20 +90,19 @@ class ParsedCircuit:
     """
 
     unparsed_data: str
-    prep_gates: list[ParsedGate]
+    fiducial_prep_gates: list[ParsedGate]
     germ_gates: list[ParsedGate]
-    measurement_gates: list[ParsedGate]
+    fiducial_measurement_gates: list[ParsedGate]
     germ_power: int 
 
     line_labels: list[int]   # not as important, TODO: delete?   
-    #measurement_counts: dict[str, int]
     measurement_data: CircuitData
 
     
     @property
     def expanded_gates(self) -> list[ParsedGate]:
         """ List of gates, expanded (no germ power included) """
-        return self.prep_gates + self.germ_gates * self.germ_power + self.measurement_gates
+        return self.fiducial_prep_gates + self.germ_gates * self.germ_power + self.fiducial_measurement_gates
 
 
     @property
@@ -195,7 +194,7 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
 
     # Parse circuit sequence, starting with empty (do nothing -- prep then measure) string 
     if circuit_sequence == "{}":
-        return ParsedCircuit(unparsed_data = line, prep_gates=[], germ_gates = [], measurement_gates = [],
+        return ParsedCircuit(unparsed_data = line, fiducial_prep_gates=[], germ_gates = [], fiducial_measurement_gates = [],
                             germ_power = 1, line_labels = line_labels, measurement_data = CircuitData.from_counts(measurement_counts)) 
 
 

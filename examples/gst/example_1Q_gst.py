@@ -39,10 +39,10 @@ def main():
         for i, circ in enumerate(parsed_circuits):
             print(f"\n--- Experiment {i} ---")
             print(f"    Unparsed circuit line:  {circ.unparsed_data}")
-            print(f"    Prep gates:    {circ.prep_gates}")
+            print(f"    Prep gates:    {circ.fiducial_prep_gates}")
             print(f"    Germ gates:    {circ.germ_gates}")
             print(f"    Germ power:    {circ.germ_power}")
-            print(f"    Measure gates:    {circ.measurement_gates}")
+            print(f"    Measure gates:    {circ.fiducial_measurement_gates}")
             print(f"    Measurement outcomes:    {circ.measurement_data.counts}")
             print(f"    Total shots:    {circ.total_counts}")
             print(f"    Circuit depth:    {circ.depth}")
@@ -131,6 +131,11 @@ def main():
     ism_gate_dictionary['{}'] = null 
     # TODO: add 2Q gates 
 
+
+    # TODO 's: 
+        # Make gate factory fxn internal 
+        # Have user specify prep and measure parametrizations (models)  
+        # 
     def gate_factory_function(gate_name: str, qubits: tuple[int, ...]) -> Callable:
         """ Function to map a gate name & qubit arguments to a gate function """ 
         # Should this contain the name mappings from GST names to IonSim names? 
