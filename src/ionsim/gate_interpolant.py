@@ -26,7 +26,7 @@ class GateInterpolant():
     grid_axes: dict[str, list[Vector]] 
     gate_name: str | None
     grid: list[tuple] #| NDArray 
-    basis: StandardBasis | None # gives meaning to process matrix element ordering  
+    basis: StandardBasis | None # gives meaning to process matrix element ordering and required for gates  
     computed_gates: list[Gate] # Representing non-interpolated gates, computed on the parameter grid  
 
     @property

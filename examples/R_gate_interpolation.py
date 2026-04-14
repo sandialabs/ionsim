@@ -10,22 +10,21 @@ from icecream import ic
 import sys
 
 sparse = False
-
 modulate_amplitude = False
-
 num_spins = 1
 
+# Create a basis of 1 qubit: 
 spins = [
     sm.AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
     for _ in range(num_spins)
 ]
 basis = sm.StandardBasis([*spins])
-
 target_spins = [spins[0]]
 
+# Basic R hamiltonian function: 
 def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
 
-    phase = phi
+    phase = phi # gate phase 
     prefactor = np.exp(1j*phase) * rabi_rate/2  
 
     raise_target_spins = [basis.enlarge_matrix(sm.Pauli.plus, [spin]) for spin in target_spins]
@@ -38,6 +37,7 @@ def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
     interaction_frame_energies = [-state.energy for state in basis.states] # implement arbitrary hamiltonian (with time-dependence? need an adiabatic intertwiner)
     return sm.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
 
+# Fix the rabi rate and detuning 
 rabi_rate = 100e3 * 2*np.pi # rad./s
 detuning = 0
 
@@ -52,6 +52,7 @@ def main():
     import time
     from matplotlib import pyplot as plt
 
+    # R-gate helper functions 
     def simulated_R(phi, theta, domega):
         """ Builds R(phi, theta) Hamiltonian for a frequency change omega + domega, returns gate """ 
         tau = abs(theta)/rabi_rate
@@ -82,8 +83,6 @@ def main():
     def process_fidelity(phi, theta, dx, dy):
         return R(phi, theta, dx, dy).compute_process_fidelity(ideal_R(phi, theta).process_matrix)
 
-    compute_state_fidelity = False
-    compute_process_fidelity = False
     compute_interpolated_gate = True
 
     data_directory = Path.home() / "tmp" / "ionsim_examples_data"
@@ -91,60 +90,6 @@ def main():
         data_directory.mkdir(parents=True, exist_ok=True)
 
     data_filename = data_directory / "simr.hdf5"
-
-    if compute_state_fidelity:
-        phi = 0
-        theta = np.pi/2
-        tau = abs(theta)/rabi_rate
-        target_wavefunction = 1/np.sqrt(2) * np.array([1, -1j])
-
-        hamiltonian = R_hamiltonian(basis, phi, rabi_rate, omega, sparse=sparse, mod=amp_mod)
-
-        start = time.perf_counter()
-        ic(hamiltonian.hamiltonian_function(0))
-        end = time.perf_counter()
-        ic(f'Building Hamiltonian took {end - start} s.')
-
-        coefs = np.zeros(len(basis.states))
-        coefs[0] = 1
-        initial_state = sm.State.from_coefficients(basis, list(coefs))
-
-        times = np.linspace(0, tau, 41) # setting to None will return only the final spin state
-
-        start = time.perf_counter()
-        psis = initial_state.propagate_using_schrodinger_equation(hamiltonian, tau, times)
-        end = time.perf_counter()
-        ic(f'Propagating state took {end - start} s.')
-
-        probs = np.array([psi.compute_basis_state_probabilities() for psi in psis])
-        ic(probs[-1,:])
-
-        target_psi = sm.State.from_wavefunction(basis, target_wavefunction)
-        fidelity = psis[-1].compute_state_fidelity(target_psi.density_matrix)
-        ic(fidelity)
-
-        for i,state in enumerate(basis.states):
-            plt.plot(times, probs[:, i], label=state.name)
-        plt.ylabel('Probabilities')
-        plt.xlabel('Gate Duration (s)')
-        plt.legend()
-        plt.show()
-
-    if compute_process_fidelity:
-
-        phi = 0
-        theta = np.pi/2
-
-        domega = 0
-        half_box_width = 50 * 2*np.pi*1e3
-
-        dx = domega
-        dy = half_box_width
-
-        start = time.perf_counter()
-        ic(process_fidelity(phi, theta, dx, dy))
-        end = time.perf_counter()
-        ic(f'Simulating process fidelity took {end - start} s.')
 
     # Step 1: Set up a grid where you actually build the gates. 
     if compute_interpolated_gate:
