@@ -12,30 +12,7 @@ import ionsim as sm
 
 """ ################ Single qubit GST Example ################## """ 
 def main():
-    # 1. Import GST sequence data 
-    fname = './1Q_gst_sequence.gstdata' 
-
-    # Run the main parsing function:  
-    parsed_circuits = sm.parse_gst_circuit_file(fname)
-
-    print_head = True 
-    if print_head:
-        # Optional print out of first _ lines to check functionality  
-        # Print circuit information: 
-        head = 64
-        for i, circ in enumerate(parsed_circuits):
-            print(f"\n--- Experiment {i} ---")
-            print(f"    Unparsed circuit line:  {circ.unparsed_data}")
-            print(f"    Prep gates:    {circ.fiducial_prep_gates}")
-            print(f"    Germ gates:    {circ.germ_gates}")
-            print(f"    Germ power:    {circ.germ_power}")
-            print(f"    Measure gates:    {circ.fiducial_measurement_gates}")
-            print(f"    Measurement outcomes:    {circ.measurement_data.counts}")
-            print(f"    Total shots:    {circ.total_counts}")
-            print(f"    Circuit depth:    {circ.depth}")
-            # Only print the first {head} 
-            if i > head:
-                break
+    # Script for setting up gate models for GST  
 
     # Set up basic 1-qubit (1Q) basis  
     num_spins = 1
@@ -48,16 +25,15 @@ def main():
     basis = sm.StandardBasis([*spins])
     target_spins = [spins[0]]
 
-
     qubit_frequency = target_spins[0].energy_levels[1].energy - target_spins[0].energy_levels[0].energy
+
 
     ################ Define gate error models: #################### 
     # Requires a basis to be defined 
     # Function to build a Lindbladian for a generalized R gate 
     def R_gate_lindbladian_function(rabi_rate: float, phi: float, phase_mean: float, phase_variance: float):
         """ Builds a Lindbladian as a function of R gate rotation angle and phase, as well as phase noise mean and variance """ 
-
-        # Onus is on the user to achieve theta = rabi_rate * gate_duration 
+        # Onus is on the user to achieve theta = rabi_rate * gate_duration outside of this function.  
         raise_qubit_matrix = 0.5 * rabi_rate * basis.enlarge_matrix(sm.Pauli.plus, target_spins) 
         laser_freq = qubit_frequency
 
@@ -65,73 +41,73 @@ def main():
         coupling_operator = CouplingOperator.from_matrix(basis, raise_qubit_matrix, qubit_frequency) 
 
         # Include shift from mean of phase noise term  
-        Z_shift = EnergyShiftOperator.from_matrix(basis, sm.Pauli.Z * phase_mean) 
+        coherent_Z_shift = EnergyShiftOperator.from_matrix(basis, sm.Pauli.Z * phase_mean) 
 
         frame_energies = [-state.energy for state in basis.states] 
-        H_0 = sm.Hamiltonian(basis, [coupling_operator, Z_shift], frame_energies) 
+        H_0 = sm.Hamiltonian(basis, [coupling_operator, coherent_Z_shift], frame_energies) 
 
-        # Dephasing with Lindblad operator L = Z on qubit 1:                 
+        # Dephasing with Lindblad operator L = sqrt(sigma^2) Z on qubit 1:                 
         dephasing_matrix = np.sqrt(phase_variance) * basis.enlarge_matrix(sm.Pauli.Z , target_spins) 
         lindblad_ops = [EnergyShiftOperator.from_matrix(basis, dephasing_matrix)]               
 
         dephasing_dissipator = sm.Dissipator(basis, lindblad_ops, frame_energies) 
         return sm.Lindbladian(hamiltonian = H_0, dissipator = dephasing_dissipator)
 
-    # Builds X_pi/2 Lindbladian from generalized R gate 
-    def X_pi2_lindbladian_function(X_rot, phase_mean, phase_variance) -> Lindbladian:
-        """ Lindbladian for X_pi/2 rotation gate as a fxn of over/under rotation (X_rot), phase mean, phase variance """ 
-        gate_phase = 0. # for X rotation gate 
-        rabi_rate = 1.
+    # Option 1: We evaluate process matrix functions on the fly as needed in GST by creating a gate, extracting its process matrix, then discarding the created Gate at each eval.  
+    # Option 2: We precompute / set up a bunch of Gates on a grid and then build a process matrix interpolating function and give that to GST.  
 
-        X_pi2_lindbladian = general_lindbladian_function(rabi_rate, gate_phase, phase_mean, phase_variance) 
-
-        return X_pi2_lindbladian 
-
-    # Builds Y_pi/2 Lindbladian from generalized R gate 
-    def Y_pi2_lindbladian_function(Y_rot, phase_mean, phase_variance) -> Lindbladian:
-        """ Lindbladian for Y_pi/2 rotation gate as a fxn of over/under rotation (Y_rot), phase mean, phase variance """ 
-        gate_phase = np.pi/2. # for Y rotation gate 
-        rabi_rate = 1.
-
-        Y_pi2_lindbladian = general_lindbladian_function(rabi_rate, gate_phase, phase_mean, phase_variance) 
-
-        return Y_pi2_lindbladian 
-
-
-    # Maybe just have a method "compute_process_matrix_from_lindbladian" that avoids creation of gate (if we're sending straight to GST) 
-    # But, if we create gates at a set of points, we can do gate interpolation. 
-
-    # Option 1: We evaluate process matrix functions on the fly as needed in GST.  
-    # Option 2: We precompute / set up a bunch of Gates on a grid and then build an interpolating function and give to GST.  
-
+    # --- Option 1 ---
     # Returns process matrix for noisy X_pi/2 gate from the previous functions.  
-    def X_pi2_process_matrix(X_rot, phase_mean, phase_variance) -> Matrix:
+    def X_pi2_process_matrix(X_rot: float, phase_mean: float, phase_variance: float):
+        """ Process matrix from Lindbladian for X_pi/2 rotation gate as a fxn of over/under rotation (X_rot), phase mean, phase variance """ 
+        gate_phase = 0. # for X rotation gate 
         theta = np.pi/2. + X_rot
+        rabi_rate = theta 
+        # Rabi rate is set to theta, so gate_duration is 1. (Omega*t = theta)
+        gate_duration = 1. 
 
-        # Rabi rate is set to 1, so gate_duration to theta s.t. Omega*t = theta
-        gate_duration = theta 
+        # Build X_pi/2 Lindbladian from generalized R gate 
+        X_pi2_lindbladian = R_gate_lindbladian_function(rabi_rate, gate_phase, phase_mean, phase_variance) 
 
         # Option 1: Creates a gate at every function evaluation. The gate is discarded at the end of this function call.   
         X_pi2_gate = sm.Gate.from_lindbladian(basis, X_pi2_lindbladian_function(X_rot, phase_mean, phase_variance), gate_duration)
         return X_pi2_gate.process_matrix 
 
-    def Y_pi2_process_matrix(Y_rot, phase_mean, phase_variance) -> Matrix:
+    # Returns process matrix for noisy Y_pi/2 gate from the previous functions.  
+    def Y_pi2_process_matrix(Y_rot: float, phase_mean: float, phase_variance: float):
+        """ Process matrix from Lindbladian for Y_pi/2 rotation gate as a fxn of over/under rotation (Y_rot), phase mean, phase variance """ 
+        gate_phase = np.pi/2. # for Y rotation gate 
         theta = np.pi/2. + Y_rot
+        rabi_rate = theta 
+        # Rabi rate is set to theta, so gate_duration is 1. (Omega*t = theta)
+        gate_duration = 1. 
 
-        # Rabi rate is set to 1, so gate_duration to theta s.t. Omega*t = theta
-        gate_duration = theta 
+        # Build Y_pi/2 Lindbladian from generalized R gate 
+        Y_pi2_lindbladian = R_gate_lindbladian_function(rabi_rate, gate_phase, phase_mean, phase_variance) 
 
         # Option 1: Creates a gate at every function evaluation. The gate is discarded at the end of this function call.   
         Y_pi2_gate = sm.Gate.from_lindbladian(basis, Y_pi2_lindbladian_function(Y_rot, phase_mean, phase_variance), gate_duration)
         return Y_pi2_gate.process_matrix 
 
 
+    ### Note: trying to use "from_lindbladian_function" to build a gate and extract its process matrix function is an alternative/equivalent way to do this:  
+ #    def X_pi2_lindbladian(X_rot: float, phase_mean: float, phase_variance: float):
+ #        """ Process matrix from Lindbladian for X_pi/2 rotation gate as a fxn of over/under rotation (X_rot), phase mean, phase variance """ 
+ #        gate_phase = 0. # for X rotation gate 
+ #        theta = np.pi/2. + X_rot
+ #        rabi_rate = theta 
+ #
+ #        # Build X_pi/2 Lindbladian from generalized R gate 
+ #        X_pi2_lindbladian = R_gate_lindbladian_function(rabi_rate, gate_phase, phase_mean, phase_variance) 
+ #        return X_pi2_lindbladian 
+
+    #gate_duration = 1. # ensures rabi_rate = theta.     
+
     # Define dictionary mappings for GST gate name to ionsim gate function 
     ism_gate_dictionary = {}    
-    ism_gate_dictionary['Gxpi2']  = X_pi2_process_matrix 
+    ism_gate_dictionary['Gxpi2'] = X_pi2_process_matrix 
     ism_gate_dictionary['Gypi2'] = Y_pi2_process_matrix
-    ism_gate_dictionary['idle'] = idle
-    #ism_gate_dictionary['{}'] = null  # no need to specify this; this case is handled by gst class  
+    #ism_gate_dictionary['idle'] = idle
 
     # For GST, define state and measurement parametrizations (models): 
     # Here, we choose deviations from an ideal prep state and ideal POVM effects: 
