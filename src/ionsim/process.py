@@ -78,7 +78,6 @@ class Gate(Process):
         return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
 
 
-    #### New method from ECM 03/2026: ### 
     @classmethod
     def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, duration: float,  
             parameters: dict[str, float], target_dofs: list[DegreeOfFreedom], noise: Noise | None = None):
@@ -250,6 +249,22 @@ class Gate(Process):
         return cls(reduced_basis, process_matrix, unitary=None)
 
 
+    @classmethod
+    def from_lindbladian_function(cls, basis: StandardBasis, lindbladian_function: Callable, duration: float,  
+            parameters: dict[str, float], noise: Noise | None = None):
+        """ Build a gate from a hamiltonian function and its arguments."""
+        parameter_names, arguments = list(parameters.keys()), list(parameters.values())
+
+        @wraps(lindbladian_function)
+        def process_matrix_function(*args, **kwargs):
+            gate = cls.from_lindbladian(basis, lindbladian_function(*args, **kwargs), duration)
+            return gate.process_matrix
+
+        if noise is None or noise.parameter_name not in parameter_names:
+            noisy_parameter_index = parameter_names.index(noise.parameter_name)
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
+
+        return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
 
 
 
