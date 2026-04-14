@@ -4,6 +4,7 @@ from ionsim.noise import Noise
 from ionsim.basis import DegreeOfFreedom, Basis, StandardBasis
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
+from ionsim.dissipator import Lindbladian 
 from ionsim.state import State
 
 import numpy as np
