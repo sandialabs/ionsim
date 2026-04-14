@@ -250,8 +250,6 @@ def parse_gst_circuit_file(filepath: str | Path) -> list[ParsedCircuit]:
 
     return results 
 
-
-
  # Moved to an example in \examples\gst\ ,ECM 03 April 2026
  #if __name__=="__main__":
  #    # Example usage 
