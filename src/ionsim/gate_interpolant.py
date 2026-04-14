@@ -146,18 +146,21 @@ class GateInterpolant():
         return 0
 
     @classmethod
-    def read_from_file(cls, filename: str): 
+    def from_file(cls, filename: str, basis: StandardBasis): 
         # TODO: In progress, needs to resolve basis read/write issue: 
         # TODO: Is it possible to read/write Basis objects? This functionality is not yet in IonSim. his class defaults to building without a basis  
         """ Function to read Gate Interpolant class data from an hd5f file and instance the class """
         results, attr_from_file = io.read_results_from_file(filename)
 
         _grid_axes = {}
+
         # Parse grid axes from reading 1D arrays; parse gate data from NDArray
-        for key, value in results:
-            if not isinstance(value, Vector) or not isinstance(value, Matrix):
+        for key, value in results.items():
+            #if not isinstance(value, NDArray) or not isinstance(value, Matrix):
+            if not isinstance(value, np.ndarray): 
                 raise ValueError("Data from file should contain a set of 1D arrays for the grid axes and one Vector for the gate data.") 
-            if isinstance(value, Vector) and len(value.shape) == 1:
+            #if isinstance(value, Vector) and len(value.shape) == 1:
+            if isinstance(value, np.ndarray) and len(value.shape) == 1:
                 _grid_axes[key] = results[key]
 
         gate_attribute = [x for x in results.keys() if x not in _grid_axes.keys()]
@@ -177,16 +180,14 @@ class GateInterpolant():
         gate_data = results[gate_attribute[0]]
         for values in grid:
             # Find where the parameter values in the grid 
-            #parameter_coord_indices = grid.index(values)
             parameter_coord_indices = [] 
-            #for axis_index, val in enumerate(values):
             for axis, val in zip(_grid_axes.keys(), values):
                 parameter_coord_indices.append( np.where(_grid_axes[axis] == val )[0][0] )
             assert len(parameter_coord_indices) == len(_grid_axes.keys()) 
-            gates_on_grid.append( gate_data[:, :, parameter_coord_indices] ) 
+            # Build the corresponding gate at this parameter coordinate and append 
+            gates_on_grid.append( Gate(basis, gate_data[:, :, *parameter_coord_indices]) ) 
 
-        results = self.grid_axes 
-        return cls(_grid_axes, gate_name, grid, None, gates_on_grid )
+        return cls(_grid_axes, gate_name, grid, basis, gates_on_grid)
 
     def construct_spline_for_gate_derived_matrix_property(self, gate_derived_property: Matrix, complex_data: bool=True):
         """ Constructs interpolant spline for derived property that lives on the domain of the parameter grid.

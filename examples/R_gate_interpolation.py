@@ -84,12 +84,13 @@ def main():
         return R(phi, theta, dx, dy).compute_process_fidelity(ideal_R(phi, theta).process_matrix)
 
     compute_interpolated_gate = True
+    test_IO = True
 
     data_directory = Path.home() / "tmp" / "ionsim_examples_data"
     if not data_directory.exists():
         data_directory.mkdir(parents=True, exist_ok=True)
 
-    data_filename = data_directory / "simr.hdf5"
+    data_filename = data_directory / "test_R.hdf5"
 
     # Step 1: Set up a grid where you actually build the gates. 
     if compute_interpolated_gate:
@@ -101,33 +102,41 @@ def main():
         #  and y is a noise width. 
         #  Ex] So y = 0 corresponds to no noise. 
         #  Ex] x = 0 corresponds to being on resonance with some noise (unless y=0). 
-        domegas = np.linspace(-50 * 2*np.pi*1e3, 50 * 2*np.pi*1e3, 5) 
-        half_box_widths = np.linspace(0, 50 * 2*np.pi*1e3, 3) 
-
-        dxs = domegas
-        dys = half_box_widths
-
-        gate_name = 'sqrtX'
         dx_name = 'domega'
         dy_name = 'half_box_width'
 
-        grid_axes = {dx_name : dxs, dy_name : dys} 
+        if test_IO: 
+            # Optional: Write interpolant to a file using gate interpolant class 
+            #R_gate_interpolant.write_to_file(data_filename)
+            R_gate_interpolant_v2 = sm.GateInterpolant.from_file(data_filename, basis)
+            interpolated_R = R_gate_interpolant_v2.interpolated_gate_function
 
-        # Define a gate function to build the gate interpolant. 
-        def R_function(domega, half_box_width):
-            """ Gate function of the interpolation parameters; returns a Gate object """ 
-            return R(phi, theta, domega, half_box_width)
+            grid_axes = R_gate_interpolant_v2.grid_axes
+            dxs = grid_axes[dx_name]
+            dys = grid_axes[dy_name]
+            #sys.exit(0)
+        else:
+            # Define a gate function to build the gate interpolant. 
+            def R_function(domega, half_box_width):
+                """ Gate function of the interpolation parameters; returns a Gate object """ 
+                # domega and half_box_width are the interpolant parameters 
+                return R(phi, theta, domega, half_box_width)
+    
+            # 1. Construct the gate interpolant class instance 
+            print("Building gate interpolant using gate function")
+            gate_name = 'sqrtX'
+            domegas = np.linspace(-50 * 2*np.pi*1e3, 50 * 2*np.pi*1e3, 5) 
+            half_box_widths = np.linspace(0, 50 * 2*np.pi*1e3, 3) 
 
-        # 1. Construct the gate interpolant class instance 
-        print("Building gate interpolant using gate function")
-        R_gate_interpolant = sm.GateInterpolant.from_gate_function(R_function, grid_axes, gate_name) 
+            dxs = domegas
+            dys = half_box_widths
 
-        # 2 Build a gate interpolating function (this uses cubic splines): returns Gate evaluated at grid / off-grid parameter values  
-        """ Ex] interpolated_R(x = 0.5 * 2π * 1E3, y = 2.) returns an R Gate object at domega = 0.5 * 2π * 1E3, half_box_width 2. """ 
-        interpolated_R = R_gate_interpolant.interpolated_gate_function # returns a Gate object at a grid point 
-
-        # Optional: Write interpolant to a file using gate interpolant class 
-        R_gate_interpolant.write_to_file(data_filename)
+            grid_axes = {dx_name : dxs, dy_name : dys} 
+            R_gate_interpolant = sm.GateInterpolant.from_gate_function(R_function, grid_axes, gate_name) 
+    
+            # 2 Build a gate interpolating function (this uses cubic splines): returns Gate evaluated at grid / off-grid parameter values  
+            """ Ex] interpolated_R(x = 0.5 * 2π * 1E3, y = 2.) returns an R Gate object at domega = 0.5 * 2π * 1E3, half_box_width 2. """ 
+            interpolated_R = R_gate_interpolant.interpolated_gate_function # returns a Gate object at a grid point 
 
         dxs2 = np.linspace(dxs[0], dxs[-1], (len(dxs)-1)*2 + 1)
         dy = dys[-1]
