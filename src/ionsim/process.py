@@ -174,6 +174,85 @@ class Gate(Process):
 
         return cls(reduced_basis, process_matrix, unitary=unitary)
 
+
+    @classmethod
+    def from_lindbladian(cls, basis: StandardBasis, lindbladian: Lindbladian, duration: float, 
+            dofs_to_trace_out: list[DegreeOfFreedom] | None = None,
+            initial_density_matrices_for_dofs_to_trace_out: list[State] | None = None,
+            lindbladian_time_independent: bool = False, 
+            lindbladian_commutes_at_later_times: bool = False, 
+            ode_solver: str = 'odeintz',
+            **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
+        """ Build a gate using either the matrix-exponentiated Lindbladian or by solving the Lindblad master equation for a complete set of initial states.
+            - optional argument to trace out DOF or project out states. 
+            - The gate is built in the reduced or projected basis. 
+        """
+        # TODO: Include tracing out DOF functionality 
+        if dofs_to_trace_out is not None:
+            assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
+            assert(len(dofs_to_trace_out) == len(initial_wavefunctions_for_dofs_to_trace_out))
+            assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
+            dof_to_trace_out = dofs_to_trace_out[0]
+            initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
+            # TODO: consider if this function should just accept a reduced basis...? ==> ECM 03/2026: Yes I think so. 
+
+        if dofs_to_trace_out is None:
+            reduced_basis = basis
+        else:
+            reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
+
+        # Use general t-dependent, non-commutating Lindbladian method unless user specifies otherwise 
+        if lindbladian_time_independent:
+            print(f"Lindbladian is time-independent. Simplifying computation of process matrix via direct matrix exponentiation.")
+            # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
+            process_matrix = scipy.linalg.expm(lindbladian.matrix_function(0) * duration)
+
+        elif lindbladian_commutes_at_later_times:
+            print(f"Lindbladian commutes at different times. Integrating Lindbladian directly in time.") 
+            # Integrate each element of the lindbladian matrix forward in time from t = 0 to t = duration            
+            L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
+
+            process_matrix = scipy.linalg.expm(L_integral)
+
+        else:
+            print(f"Default method for generating process matrix from generic time-dependent, non-commutating Lindbladian.")
+            # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
+            # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
+            # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 
+
+            process_matrix_columns = []
+            # When projecting, loop over all vectors in the total basis and then skip the ones that will be zero, i.e. set those cols = zero and skip evolution.   
+                # Projection does this redundantly by setting the appropriate parts to zero. But skipping t-evolution saves substantially on computation.
+            for i, vector in enumerate(basis.vectors):
+                for j, vector_p in enumerate(basis.vectors):
+                    if projection_info and ((i in unwanted_state_indices) or (j in unwanted_state_indices)):
+                        # Skip pure non-computational basis states, e.g. Rydberg or Raman states  
+                        pass 
+                    else:
+                        # Necessary to do |vector_p > <vector| to get correct basis ordering after projection  
+                        initial_state = State.from_density_matrix(basis,  np.outer(vector_p, vector))
+    
+                        # TODO: Include tracing out DOF functionality 
+                        # Time-evolve with Lindbladian, this yields the ij'th column of the process matrix.
+     #                    if dofs_to_trace_out is None:
+     #                        initial_state = State.from_wavefunction(basis, vector)
+     #                    else:
+     #                        initial_state = State.from_wavefunction_with_new_component(
+     #                            basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
+     #                        )
+                        final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
+
+                        # Supervector of final state gives you 1 column of the process matrix  
+                        process_matrix_columns.append(final_state.supervector) 
+    
+            process_matrix = np.array(process_matrix_columns).T # tranpose ensures column behavior  
+
+        return cls(reduced_basis, process_matrix, unitary=None)
+
+
+
+
+
 # @dataclass(frozen=True, eq=False)
 # class PauliGate(Gate):
 #     """A quantum gate in the z-Pauli spin basis.""" # TODO: Should we say "qubit basis" instead?

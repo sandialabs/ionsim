@@ -3,8 +3,6 @@ from dataclasses import dataclass, field
 from pathlib import Path 
 import re
 
-
-
 @dataclass()
 class CircuitData:
     """ Circuit experiment data either in the form of counts or single-shots with timestamps. 
