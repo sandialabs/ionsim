@@ -99,23 +99,11 @@ def main():
         # Promote to a d^2 x d^2 superoperator 
         return basis.compute_superoperator_from_unitary_operator(Rypi2)
 
-
- #    def null():
- #        """ Returns d^2 x d^2 process matrix in standard basis a null ("do nothing for no time") gate"""  
- #        # Build identity matrix with Z rotation by theta:
- #        # TODO: generalize to 2+ qubits  
- #        assert len(spins) == 1
- #        I = np.eye(2,dtype=complex)
- #        # Promote to a d^2 x d^2 superoperator 
- #        return basis.compute_superoperator_from_unitary_operator(I)
- #
-
     # Define dictionary mappings for GST gate name to ionsim gate function 
     ism_gate_dictionary = {}    
     ism_gate_dictionary['Gxpi2']  = X_pi2 
     ism_gate_dictionary['Gypi2'] = Y_pi2
     ism_gate_dictionary['idle'] = idle
-    #ism_gate_dictionary['{}'] = null  # no need to specify this; this case is handled by gst class  
 
     # For GST, define state and measurement parametrizations (models): 
     # Here, we choose deviations from an ideal prep state and ideal POVM effects: 
@@ -125,8 +113,6 @@ def main():
     d = len(basis.states)
     def prep_state_function(state_parameters: Vector) -> Vector: 
         """ Model of the prep state as a function of parameters (a vector with d^2 - 1 entries), returns a constrained supervector """ 
-        # TODO: Discuss w. Brandon: Should we normalize this here / enforce the constraint here? 
-
         # Here, we parametrize the state as a deviation from a known ideal state
         prep_state = (ideal_rho_prep.supervector).copy()
         prep_state[:-1] += state_parameters # deviations 

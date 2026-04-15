@@ -117,8 +117,6 @@ def main():
     d = len(basis.states)
     def prep_state_function(state_parameters: Vector) -> Vector: 
         """ Model of the prep state as a function of parameters (a vector with d^2 - 1 entries), returns a constrained supervector """ 
-        # TODO: Discuss w. Brandon: Should we normalize this here / enforce the constraint here? 
-
         # Here, we parametrize the state as a deviation from a known ideal state
         prep_state = (ideal_rho_prep.supervector).copy()
         prep_state[:-1] += state_parameters # deviations 

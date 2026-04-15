@@ -73,7 +73,6 @@ class GateInterpolant():
         return gate_data
 
 
-    # TODO: add from_lindbladian_function class method? 
     @classmethod
     def from_gate_function(cls, gate_function: Callable, grid_axes: dict[str, Vector], gate_name: str | None=None):
         """ Build gate interpolant from a gate function, which returns a gate from grid parameter values. """ 
@@ -105,25 +104,25 @@ class GateInterpolant():
         return cls(grid_axes, gate_name, grid, gate_basis, gates_on_grid)
 
 
-    @classmethod
-    def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, gate_duration: float, grid_axes: dict[str, Vector], gate_name: str | None=None):
-        """ Build gate interpolant from Schrodinger evolution of a Hamiltonian. 
-            - requires a function that returns the hamiltonian using the interpolant grid parameters  
-            - requires a fixed duration to set the hamiltonian's time evolution 
-            - requires a dictionary of parameters to specify the grid
-        """ 
-        # TODO: Test/verify this function. 
-        # Build a grid and loop over every parameter value and build the gate from the hamiltonian
-        grid = cls.build_grid(grid_axes)
-
-        # For each parameter combination in the parameter grid, compute the gate and process matrix.
-        gates_on_grid = []
-        for values in grid:
-            coordinate = dict(zip(grid_axes.keys(), values)) 
-            # TODO: accomodate args for from_hamiltonian() like DOF to trace out, etc. 
-            gates_on_grid.append(Gate.from_hamiltonian_function(basis, hamiltonian_function, gate_duration, coordinate)) 
-
-        return cls(grid_axes, gate_name, grid, basis, gates_on_grid)
+ #    @classmethod
+ #    def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, gate_duration: float, grid_axes: dict[str, Vector], gate_name: str | None=None):
+ #        """ Build gate interpolant from Schrodinger evolution of a Hamiltonian. 
+ #            - requires a function that returns the hamiltonian using the interpolant grid parameters  
+ #            - requires a fixed duration to set the hamiltonian's time evolution 
+ #            - requires a dictionary of parameters to specify the grid
+ #        """ 
+ #        # TODO: Test/verify this function. 
+ #        # Build a grid and loop over every parameter value and build the gate from the hamiltonian
+ #        grid = cls.build_grid(grid_axes)
+ #
+ #        # For each parameter combination in the parameter grid, compute the gate and process matrix.
+ #        gates_on_grid = []
+ #        for values in grid:
+ #            coordinate = dict(zip(grid_axes.keys(), values)) 
+ #            # TODO: accomodate args for from_hamiltonian() like DOF to trace out, etc. 
+ #            gates_on_grid.append(Gate.from_hamiltonian_function(basis, hamiltonian_function, gate_duration, coordinate)) 
+ #
+ #        return cls(grid_axes, gate_name, grid, basis, gates_on_grid)
     
 
     def compute_functional_of_gates(self, gate_property_functional: Callable) -> list:
@@ -147,8 +146,6 @@ class GateInterpolant():
 
     @classmethod
     def from_file(cls, filename: str, basis: StandardBasis): 
-        # TODO: In progress, needs to resolve basis read/write issue: 
-        # TODO: Is it possible to read/write Basis objects? This functionality is not yet in IonSim. his class defaults to building without a basis  
         """ Function to read Gate Interpolant class data from an hd5f file and instance the class """
         results, attr_from_file = io.read_results_from_file(filename)
 
