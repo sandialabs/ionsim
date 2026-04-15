@@ -106,6 +106,7 @@ def main():
         dy_name = 'half_box_width'
 
         if test_IO: 
+            print(f" -- Reading R gate data from file {data_filename} --- ")
             # Optional: Write interpolant to a file using gate interpolant class 
             #R_gate_interpolant.write_to_file(data_filename)
             R_gate_interpolant_v2 = sm.GateInterpolant.from_file(data_filename, basis)

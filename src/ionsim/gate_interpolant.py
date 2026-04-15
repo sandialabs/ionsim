@@ -181,10 +181,16 @@ class GateInterpolant():
             for axis, val in zip(_grid_axes.keys(), values):
                 parameter_coord_indices.append( np.where(_grid_axes[axis] == val )[0][0] )
             assert len(parameter_coord_indices) == len(_grid_axes.keys()) 
+
             # Build the corresponding gate at this parameter coordinate and append 
-            gates_on_grid.append( Gate(basis, gate_data[:, :, *parameter_coord_indices]) ) 
+            if sys.version_info >= (3, 10):
+                gates_on_grid.append( Gate(basis = basis, process_matrix = gate_data[:, :, *parameter_coord_indices]) ) 
+            else:
+                arr_indices = (slice(None), slice(None)) + tuple(parameter_coord_indices)
+                gates_on_grid.append( Gate(basis = basis, process_matrix = gate_data[arr_indices]) ) 
 
         return cls(_grid_axes, gate_name, grid, basis, gates_on_grid)
+
 
     def construct_spline_for_gate_derived_matrix_property(self, gate_derived_property: Matrix, complex_data: bool=True):
         """ Constructs interpolant spline for derived property that lives on the domain of the parameter grid.
