@@ -184,11 +184,11 @@ class GateInterpolant():
             assert len(parameter_coord_indices) == len(_grid_axes.keys()) 
 
             # Build the corresponding gate at this parameter coordinate and append 
-            if sys.version_info >= (3, 10):
-                gates_on_grid.append( Gate(basis = basis, process_matrix = gate_data[:, :, *parameter_coord_indices]) ) 
-            else:
-                arr_indices = (slice(None), slice(None)) + tuple(parameter_coord_indices)
-                gates_on_grid.append( Gate(basis = basis, process_matrix = gate_data[arr_indices]) ) 
+#           if sys.version_info >= (3, 10):
+#               gates_on_grid.append( Gate(basis = basis, process_matrix = gate_data[:, :, *parameter_coord_indices]) ) 
+#           else:
+            arr_indices = (slice(None), slice(None)) + tuple(parameter_coord_indices)
+            gates_on_grid.append( Gate(basis = basis, process_matrix = gate_data[arr_indices]) ) 
 
         return cls(_grid_axes, gate_name, grid, basis, gates_on_grid)
 
@@ -323,7 +323,6 @@ class GateInterpolant():
 
         return Gate(self.basis, process_matrix = process_matrix_interpolating_function(*grid_values)) 
 
-    #@property
     @cached_property # TODO: decide whether this should be cached or just a property 
     def interpolated_gate_function(self) -> Callable:
         """ Returns a function that returns a Gate object evaluated at grid parameter values. """
