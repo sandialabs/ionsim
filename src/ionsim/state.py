@@ -4,6 +4,7 @@ from ionsim.custom_types import Vector, Matrix
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.dissipator import Dissipator, Lindbladian
+from ionsim.named_operators import Fock 
 
 import numpy as np
 # from typing import Any
@@ -159,7 +160,7 @@ class State:
         """Compute the coherent displacement (expectation value of the lowering operator) for each spin state."""
         assert(len(self.basis.degrees_of_freedom) == len(spin_dofs) + 1) # TODO: trace out other degrees of freedom
         spin_basis = StandardBasis(spin_dofs)
-        lowering = lowering_motion(len(motional_dof.energy_levels))
+        lowering = Fock.lowering(len(motional_dof.energy_levels))
         diplacements = []
         for vector in spin_basis.vectors:
             spin_proj = spin_basis.compute_projector_matrix(vector)
@@ -168,6 +169,3 @@ class State:
         return diplacements
 
     # def transform_to_spin_eigenbasis(self):
-
-def lowering_motion(fock_dimension: int):
-    return np.diag([np.sqrt(n+1) for n in range(fock_dimension-1)], k=1)
