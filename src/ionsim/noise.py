@@ -75,6 +75,7 @@ class StochasticNoise:
         n_trajectories: int,
         target_variance: float,
         rng: np.random.Generator,
+        first_time_step_all_trajectories: np.ndarray | None = None,
         time_evals: Vector | None = None,
         same_psd: bool = False,
         dt_step: float | None = None,
@@ -88,6 +89,7 @@ class StochasticNoise:
             dt: Time step size
             target_variance: Desired variance of the noise
             rng: numpy random number generator
+            first_time_step_all_trajectories: Initial values for each trajectory (optional)
             same_psd: If True, use the same PSD for all steps (for legacy compatibility)
             dt_step: Reference time step for the simulation grid (required if same_psd=True)
         Returns:
@@ -107,7 +109,21 @@ class StochasticNoise:
         else:
             f_nye = 1 / (2 * dt)
         psd = target_variance / f_nye  # (rad/s)^2/Hz
-        noise_all = rng.normal(0.0, np.sqrt(psd * 1/(2 * dt)), size=(n_trajectories, N))
+
+        noise_all = np.empty((n_trajectories, N), dtype=np.float64)
+
+        if first_time_step_all_trajectories is not None:
+            first_time_step_all_trajectories = np.asarray(first_time_step_all_trajectories, dtype=np.float64)
+                        
+            noise_all[:, 0] = first_time_step_all_trajectories
+
+            noise_all[:, 1:] = rng.normal(
+                0.0,
+                np.sqrt(psd * 1/(2 * dt)),
+                size=(n_trajectories, N - 1),
+            )
+        else:
+            noise_all = rng.normal(0.0, np.sqrt(psd * 1/(2 * dt)), size=(n_trajectories, N))
         if remove_mean:
             noise_all = noise_all - np.mean(noise_all, axis=1, keepdims=True)
         return noise_all
@@ -151,8 +167,11 @@ class StochasticNoise:
             x[:, 0] = first_time_step_all_trajectories
         else:
             x[:, 0] = rng.normal(0.0, np.sqrt(var), size=n_trajectories)
+        # Pre-generate all innovations in one batch call to avoid N separate
+        # RNG dispatches inside the loop.
+        xi = rng.standard_normal((n_trajectories, N))
         for n in range(1, N):
-            x[:, n] = phi * x[:, n - 1] + sd * rng.standard_normal(size=n_trajectories)
+            x[:, n] = phi * x[:, n - 1] + sd * xi[:, n]
         if remove_mean:
             x = x - np.mean(x, axis=1, keepdims=True)
         if mean != 0.0:

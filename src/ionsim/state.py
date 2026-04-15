@@ -127,27 +127,24 @@ class State:
         # trajectory_results: shape (n_traj, n_time, dim)
         if return_density_average == 'raw' or return_density_average:
             # Fast build of ensemble-averaged density matrices ρ_avg(t) = E[ |ψ_k(t)><ψ_k(t)| ]
+            # Single einsum over all trajectories and times — no Python loop over n_time.
+            # rho_avg[t,i,j] = (1/trajs) * sum_k  psi[k,t,i] * psi*[k,t,j]
             trajs, n_time, dim = trajectory_results.shape
-            rhos_avg: list[np.ndarray] = []
-          
-            for ti in range(n_time):
-                psi_trajs = trajectory_results[:, ti, :]
-                
-                # Fast vectorized path
-                rhos = psi_trajs[:, :, None] * psi_trajs.conj()[:, None, :]
-                
-                rho_avg = np.mean(rhos, axis=0)
-                rhos_avg.append(rho_avg)
-            
-            # Only check norm error at the last time step for all trajectories, to avoid the overhead of repeated checks.
-            _, error = zip(*[self.basis.compute_density_matrix_from_wavefunction(psi_trajs[k], return_error=True) 
+            rhos_avg_arr = (
+                np.einsum('kti,ktj->tij', trajectory_results, trajectory_results.conj())
+                / trajs
+            )  # shape (n_time, dim, dim)
+
+            # Norm check on last time step only (same as before, no change in semantics).
+            psi_last = trajectory_results[:, -1, :]
+            _, error = zip(*[self.basis.compute_density_matrix_from_wavefunction(psi_last[k], return_error=True)
                             for k in range(trajs)])
             print(f"[DEBUG] Max norm error: {np.max(error):.3e}")
 
             if return_density_average == 'raw':
                 # Skip State-wrapping: return shape (n_t, d, d) ndarray directly.
-                return np.array(rhos_avg, dtype='complex')
-            return [State(self.basis, rho) for rho in rhos_avg]
+                return rhos_avg_arr
+            return [State(self.basis, rho) for rho in rhos_avg_arr]
         else:
             # Preserve trajectory structure: return raw trajectory results (n_traj, n_time, n_state)
             # Caller can compute density matrices vectorized if needed

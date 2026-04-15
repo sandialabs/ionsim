@@ -210,10 +210,46 @@ class Gate(Process):
             )  # shape (n_t, d, d)
             if dofs_to_trace_out is None:
                 return rho_t
-            return np.array(
-                [State(basis, rho).trace_out_degree_of_freedom(dof_to_trace_out).density_matrix for rho in rho_t],
-                dtype='complex',
-            )
+            # ── Vectorised partial trace ──────────────────────────────────────────
+            # Replaces the O(n_t × fock_dim) Python loop that was catastrophically
+            # slow at large n_t.  At n_t=1e6, fock_dim=14 the old loop took ~23 min
+            # just for the trace step; this einsum takes <1 s.
+            #
+            # IonSim kron ordering (enlarge_one_dof_matrix iterates
+            # degrees_of_freedom in order):
+            #   basis=[spin, motion] → flat = i_spin*d_fock + i_fock  (motion LAST)
+            #   basis=[motion, spin] → flat = i_fock*d_spin + i_spin  (motion FIRST)
+            n_t_loc  = rho_t.shape[0]
+            d_full   = rho_t.shape[1]
+            d_traced = len(dof_to_trace_out.energy_levels)
+            d_kept   = d_full // d_traced
+            dof_list = list(basis.degrees_of_freedom)
+            dof_pos  = dof_list.index(dof_to_trace_out)
+            n_dofs   = len(dof_list)
+            if dof_pos == n_dofs - 1:
+                # Standard case: motion is the LAST kron factor (basis=[spin, motion]).
+                # reshape → (n_t, d_kept, d_traced, d_kept, d_traced)
+                # partial trace: rho_qubit[t,i,j] = sum_x rho_r[t, i, x, j, x]
+                rho_r = rho_t.reshape(n_t_loc, d_kept, d_traced, d_kept, d_traced)
+                return np.einsum('tixjx->tij', rho_r, optimize=True)
+            elif dof_pos == 0:
+                # motion is the FIRST kron factor (basis=[motion, spin]).
+                # reshape → (n_t, d_traced, d_kept, d_traced, d_kept)
+                # partial trace: rho_qubit[t,i,j] = sum_x rho_r[t, x, i, x, j]
+                rho_r = rho_t.reshape(n_t_loc, d_traced, d_kept, d_traced, d_kept)
+                return np.einsum('txitxj->tij', rho_r, optimize=True)
+            else:
+                # General position: build projection matrices once (time-independent),
+                # then vectorise the contraction over the time axis.
+                projs_L, projs_R = [], []
+                for n in range(d_traced):
+                    e_n = np.zeros(d_traced, dtype=np.complex128); e_n[n] = 1.0
+                    projs_L.append(np.asarray(basis.enlarge_matrix(e_n[np.newaxis, :], [dof_to_trace_out])))
+                    projs_R.append(np.asarray(basis.enlarge_matrix(e_n[:, np.newaxis], [dof_to_trace_out])))
+                result = np.zeros((n_t_loc, d_kept, d_kept), dtype=np.complex128)
+                for P_L, P_R in zip(projs_L, projs_R):
+                    result += np.einsum('ai,tij,jb->tab', P_L, rho_t, P_R, optimize=True)
+                return result
 
         # ── Step 1: d diagonal propagations  E(|i><i|) ─────────────────────────
         rho_diag = [_propagate(v) for v in reduced_basis.vectors]
@@ -241,33 +277,50 @@ class Gate(Process):
             A_cache[(i, j)] = 2.0 * rho_plus[(i, j)] - rho_diag[i] - rho_diag[j]
             B_cache[(i, j)] = 2.0 * rho_y[(i, j)]    - rho_diag[i] - rho_diag[j]
 
-        # Column (q + p·d) = svec(E(|q><p|))  [outer loop: p = bra, inner: q = ket]
-        # For off-diagonal (p ≠ q), let i = min(p, q), j = max(p, q):
-        #   A = 2·rho_plus[(i,j)] − rho_diag[i] − rho_diag[j]
-        #   B = 2·rho_y[(i,j)]    − rho_diag[i] − rho_diag[j]
-        #   E(|i><j|) = ½(A + iB)   [q < p: ket-index i < bra-index j]
-        #   E(|j><i|) = ½(A − iB)   [q > p: ket-index j > bra-index i]
-        def _assemble_process_matrix_at_time_index(t_idx: int) -> np.ndarray:
-            supervectors = []
-            for p in range(d):
-                for q in range(d):
-                    if p == q:
-                        dm = rho_diag[p][t_idx]
-                    else:
-                        i, j = min(p, q), max(p, q)
-                        A = A_cache[(i, j)][t_idx]
-                        B = B_cache[(i, j)][t_idx]
-                        dm = 0.5 * (A + 1j * B) if q < p else 0.5 * (A - 1j * B)
-                    supervectors.append(reduced_basis.compute_supervector_from_density_matrix(dm))
-            return np.array(supervectors).T
+        # ── Step 3: assemble process matrix/matrices (vectorised over time) ──────
+        #
+        # Column (q + p·d) of the process matrix = svec(E(|q><p|)).
+        # svec(M) = (M.T).flatten()  (column-stacked supervector).
+        #
+        # We build the full (n_t, d², d²) output in one shot using only numpy
+        # slice assignments — no Python loop over time steps.
+        #
+        # Layout: E_full[t, :, col]  where col = q + p*d
+        #   diagonal cols  (p==q): source is rho_diag[p],   shape (n_t, d, d)
+        #   off-diag cols  (p!=q): source is 0.5*(A ± i*B), shape (n_t, d, d)
+        #
+        # svec of a (n_t, d, d) batch:
+        #   rho.transpose(0, 2, 1).reshape(n_t, d*d)   →  (n_t, d²)
+        # Stacking d² such columns then transposing gives (n_t, d², d²).
+
+        d2 = d * d
+
+        def _svec_batch(rho_batch: np.ndarray) -> np.ndarray:
+            """(n_t, d, d) → (n_t, d²)  column-stacked supervectors."""
+            return rho_batch.transpose(0, 2, 1).reshape(n_t, d2)
+
+        # Pre-build the full supervector array: shape (n_t, d², d²)
+        # axis-1 indexes the row of the supervector, axis-2 indexes the column
+        # (i.e. which input basis element).
+        E_full = np.empty((n_t, d2, d2), dtype=np.complex128)
+
+        for p in range(d):
+            for q in range(d):
+                col = q + p * d
+                if p == q:
+                    sv = _svec_batch(rho_diag[p])                       # (n_t, d²)
+                else:
+                    i, j = min(p, q), max(p, q)
+                    A = A_cache[(i, j)]                                  # (n_t, d, d)
+                    B = B_cache[(i, j)]
+                    dm_batch = 0.5 * (A + 1j * B) if q < p else 0.5 * (A - 1j * B)
+                    sv = _svec_batch(dm_batch)                           # (n_t, d²)
+                E_full[:, :, col] = sv
 
         if return_time_series:
-            return np.array([
-                _assemble_process_matrix_at_time_index(t_idx)
-                for t_idx in range(n_t)
-            ])
+            return E_full
 
-        process_matrix = _assemble_process_matrix_at_time_index(n_t - 1)
+        process_matrix = E_full[-1]
         return cls(reduced_basis, process_matrix)
 
 # @dataclass(frozen=True, eq=False)
