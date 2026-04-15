@@ -5,6 +5,7 @@ from csaps import NdGridCubicSmoothingSpline
 from itertools import product 
 import inspect 
 from functools import cached_property
+import sys
 
 from ionsim.custom_types import Vector, Matrix
 from ionsim.noise import Noise
