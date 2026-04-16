@@ -5,6 +5,7 @@ from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.dissipator import Dissipator, Lindbladian
 from ionsim.named_operators import Fock 
+from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel 
 
 import numpy as np
 # from typing import Any
@@ -170,7 +171,10 @@ class State:
 
     def compute_wigner_distribution(self, x_grid: Vector, p_grid: Vector): 
         """ Computes W(x,p) the Wigner distribution for each motional mode in the basis; assumes a Fock basis for each mode.
-            - requires a specification of the x and p grids as 1-dimensional arrays 
+            - requires a specification of the x and p grids as 1-dimensional arrays, determines resolution of Wigner distributions. 
+            - returns a list of Wigner distributions -> one for each mode. 
+            - returns an empty list if there are no modes in the basis.  
+            - assumes the motional modes are in the Fock number state basis  
         """  
         from qutip import Qobj, wigner
         wigner_distributions = []
@@ -184,6 +188,9 @@ class State:
 
         # For each mode, trace out all other modes  
         for i, mode_i in enumerate(self.basis.motional_modes):
+            if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
+                raise IonSimError("Wigner distribution calculation assumes motional mode is in the Fock number state basis.")
+
             mode_state = motional_state # reset the state  
             for j, mode_j in enumerate(self.basis.motional_modes):
                 if i == j:
