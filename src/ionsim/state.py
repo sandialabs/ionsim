@@ -4,6 +4,7 @@ from ionsim.custom_types import Vector, Matrix
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.dissipator import Dissipator, Lindbladian
+from ionsim.named_operators import Fock 
 
 import numpy as np
 # from typing import Any
@@ -159,7 +160,7 @@ class State:
         """Compute the coherent displacement (expectation value of the lowering operator) for each spin state."""
         assert(len(self.basis.degrees_of_freedom) == len(spin_dofs) + 1) # TODO: trace out other degrees of freedom
         spin_basis = StandardBasis(spin_dofs)
-        lowering = lowering_motion(len(motional_dof.energy_levels))
+        lowering = Fock.lowering(len(motional_dof.energy_levels))
         diplacements = []
         for vector in spin_basis.vectors:
             spin_proj = spin_basis.compute_projector_matrix(vector)
@@ -167,7 +168,30 @@ class State:
             diplacements.append(displacement)
         return diplacements
 
-    # def transform_to_spin_eigenbasis(self):
+    def compute_wigner_distribution(self, x_grid: Vector, p_grid: Vector): 
+        """ Computes W(x,p) the Wigner distribution for each motional mode in the basis; assumes a Fock basis for each mode.
+            - requires a specification of the x and p grids as 1-dimensional arrays 
+        """  
+        from qutip import Qobj, wigner
+        wigner_distributions = []
 
-def lowering_motion(fock_dimension: int):
-    return np.diag([np.sqrt(n+1) for n in range(fock_dimension-1)], k=1)
+        # Retrieve and trace out spin DOFs from the density matrix 
+        spin_DOFs = self.basis.spin_DOFs
+
+        motional_state = self  
+        for spin in spin_DOFs:
+            motional_state = motional_state.trace_out_degree_of_freedom(spin)            
+
+        # For each mode, trace out all other modes  
+        for i, mode_i in enumerate(self.basis.motional_modes):
+            mode_state = motional_state # reset the state  
+            for j, mode_j in enumerate(self.basis.motional_modes):
+                if i == j:
+                    continue 
+                mode_state = motional_state.trace_out_degree_of_freedom(mode_j) 
+            N_fock = len(mode_i.energy_levels) 
+            wigner_distributions.append(wigner(Qobj(mode_state.density_matrix, dims=[[N_fock], [N_fock]]), x_grid, p_grid))
+
+        return wigner_distributions 
+
+    # def transform_to_spin_eigenbasis(self):
