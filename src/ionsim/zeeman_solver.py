@@ -183,6 +183,7 @@ class ZeemanHyperfineSolver():
             raise ValueError("Invalid approximation specified. `approximation` constructor argument must be either None or 'weak field'.")
 
         # Apply the units to the entire array simultaneously
+        tmp = (H * magnetic_field * self.mu_b * planck_inverse).to(self.internal_freq_units) 
         return (H * magnetic_field * self.mu_b * planck_inverse).to(self.internal_freq_units) 
 
     def solve_at_field(self, magnetic_field: float) -> tuple[NDArray, NDArray]:
