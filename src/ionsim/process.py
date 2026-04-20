@@ -2,7 +2,8 @@ from ionsim.custom_math import trapz_for_matrix
 from ionsim.custom_types import Vector, Matrix
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.noise import Noise
-from ionsim.basis import DegreeOfFreedom, Basis, StandardBasis, PauliProductBasis
+from ionsim.degree_of_freedom import DegreeOfFreedom
+from ionsim.basis import Basis, StandardBasis, PauliProductBasis
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.dissipator import Lindbladian 

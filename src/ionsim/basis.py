@@ -21,7 +21,7 @@ from ionsim.energy_level import EnergyEigenstate
 from ionsim.custom_types import Vector, Matrix
 from ionsim.named_operators import Pauli
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD
-from ionsim.process import Gate 
+#from ionsim.process import Gate 
 
 
 @dataclass(frozen=True, eq=False)
@@ -366,19 +366,20 @@ class PauliProductBasis(Basis):
         return pauli_transfer_matrix 
 
     # TODO: Should this go here (in basis) or in the Process/Gate class? 
-    def convert_gate_to_pauli_basis(self, gate: Gate) -> Gate:
-        """ Converts a Gate object to the Pauli product basis """ 
-        if not isinstance(gate.basis, StandardBasis):
-            raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
-
-        if gate.process_matrix_function:
-            @wraps(gate.process_matrix_function)
-            def ptm_function(*args, **kwargs):
-                return self.superoperator_to_pauli_transfer_matrix(gate.process_matrix_function(*args, **kwargs), gate.basis)
-            return Gate.from_process_matrix_function(basis = self, process_matrix_function = ptm_function, parameters = gate.parameters) 
-        else:
-            pauli_transfer_matrix = self.superoperator_to_pauli_transfer_matrix(gate.process_matrix, gate.basis)
-            return Gate(basis = self, process_matrix = pauli_transfer_matrix) 
+    # This should go in Gate to avoid circular import  
+ #    def convert_gate_to_pauli_basis(self, gate: Gate) -> Gate:
+ #        """ Converts a Gate object to the Pauli product basis """ 
+ #        if not isinstance(gate.basis, StandardBasis):
+ #            raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
+ #
+ #        if gate.process_matrix_function:
+ #            @wraps(gate.process_matrix_function)
+ #            def ptm_function(*args, **kwargs):
+ #                return self.superoperator_to_pauli_transfer_matrix(gate.process_matrix_function(*args, **kwargs), gate.basis)
+ #            return Gate.from_process_matrix_function(basis = self, process_matrix_function = ptm_function, parameters = gate.parameters) 
+ #        else:
+ #            pauli_transfer_matrix = self.superoperator_to_pauli_transfer_matrix(gate.process_matrix, gate.basis)
+ #            return Gate(basis = self, process_matrix = pauli_transfer_matrix) 
 
 
 @dataclass(frozen=True, eq=False)
