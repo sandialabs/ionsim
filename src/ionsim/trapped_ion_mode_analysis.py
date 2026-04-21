@@ -17,6 +17,7 @@ import scipy.optimize as opt
 ########## List of non-substantive changes by Ethan: 
 ## 1. Variable changes for readable (e.g. omega_x instead of wx) 
 ## 2. Type-hinting in functions  
+## 3. Consolidated the functions for solving for ion positions equilibria 
 
 
 
@@ -110,7 +111,7 @@ class TrappedIonModeAnalysis:
         if not self.trap_is_stable():
             raise IonSimError(f"Error: Trap is unstable from negative trap frequencies.")
 
-        self.initial_equilibrium_guess = None
+        #self.initial_equilibrium_guess = None
         self.hasrun = False 
     
 
@@ -129,7 +130,7 @@ class TrappedIonModeAnalysis:
    
 
     def trap_is_stable(self):
-        # check that all trap frequencies are positive  
+        # Checks that all trap frequencies are positive  
         return np.all(self.omega_z > 0) and np.all(self.omega_y > 0) and np.all(self.omega_x > 0)
 
 
@@ -229,7 +230,8 @@ class TrappedIonModeAnalysis:
         self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
         #assert self.trap_is_stable()   # checked in the constructor  
         
-        self.u = self.calculate_equilibrium_positions()
+        #self.u = self.calculate_equilibrium_positions()
+        self.u = self.solve_for_equilibrium_positions()
         self.reindex_ions()
         self.E_matrix = self.get_E_matrix(self.u)  
         self.T_matrix = self.get_momentum_transform() 
@@ -242,20 +244,6 @@ class TrappedIonModeAnalysis:
         self.checks() 
         self.hasrun = True  
     
-
-
-    def calculate_equilibrium_positions(self):
-
-        if self.initial_equilibrium_guess is None:
-            self.initial_equilibrium_guess = self.get_initial_equilibrium_guess()
-        else:
-            self.u0 = self.initial_equilibrium_guess
-
-        u = self.find_equilibrium_positions(self.u0)
-        self.p0 = self.potential(u)
-        return u   
-
-
 
     def get_canonical_transformation(self):
         return get_canonical_transformation(self.H_matrix,self.eigvecs,evs=self.eigvals)    
@@ -291,7 +279,6 @@ class TrappedIonModeAnalysis:
         return eigvals, eigvecs 
 
 
-
     def ion_coordinates_from_flattened(self, flattened_coordinate_vector: Vector) -> tuple(Vector, Vector, Vector):
         """ Returns arrays corresponding to an ion's x, y, and z coordinates, respectively, from a flattened vector u:
                 x = u[0:N], y = u[N:2N], z[2N:]
@@ -303,14 +290,6 @@ class TrappedIonModeAnalysis:
         z = flattened_coordinate_vector[2*self.num_ions:]
         return x, y, z 
         
-
-    def get_initial_equilibrium_guess(self):
-        """ Initialize the set of ion coordinates {u} as a flattened 1D array. """
-        # TODO: option for random vs. equally spaced along one axis? 
-        self.u0 = np.zeros(3*self.num_ions)
-        self.u0[:] = (np.random.rand(3*self.num_ions) * 2 - 1) * self.num_ions 
-        return self.u0
-
 
     def reindex_ions(self):  
         """ Re-indexes the ions to order based on the distance from the center of the trap, where smallest index is closest to the center """
@@ -328,31 +307,39 @@ class TrappedIonModeAnalysis:
         self.atomic_numbers = self.atomic_numbers[idx]
 
 
-    def find_equilibrium_positions(self, u0: Vector):
-        """ Solves for equilibrium position vector: u0, which is a flattened spatial grid. """
+    def solve_for_equilibrium_positions(self, positions_guess: Vector | None=None):
+        """ Solves for equilibrium position vector: u, which represents a flattened spatial grid. """
+
+        # TODO: option for an initial guess choice? 
+        # Set the initial guess for the solver  
+        if positions_guess == None:
+            # Initialize a random guess  
+            u0 = np.zeros(3*self.num_ions)
+            u0[:] = (np.random.rand(3*self.num_ions) * 2 - 1) * self.num_ions 
+        else:
+            u0 = positions_guess
+
+        # Solve for the equilibrium positions by minimizing the potential energy (trap + Coulomb) 
         bfgs_tolerance = 1e-34
-        out = opt.minimize(self.potential, u0, method='BFGS', jac=self.force,
+        solver_output = opt.minimize(self.potential_energy, u0, method='BFGS', jac=self.force,
                                     options={'gtol': bfgs_tolerance, 'disp': False})
-        return out.x
+        equilibrium_positions = solver_output.x 
+
+        # Get potential energy at equilibrium positions  
+        self.p0 = self.potential_energy(equilibrium_positions)
+        return equilibrium_positions 
+
 
     def potential_trap(self, positions: Vector):
         """ Computes trapping potential, takes in a flattened (1D) array of all position coordinates """
- #        x = positions[0:self.num_ions]
- #        y = positions[self.num_ions:2*self.num_ions]
- #        z = positions[2*self.num_ions:]
         x,y,z = self.ion_coordinates_from_flattened(positions)
         V_trap = 0.5 * np.sum((self.m * self.wx ** 2) * x ** 2) + \
             0.5 * np.sum((self.m * self.wy ** 2) * y ** 2) + \
                 0.5 * np.sum((self.m * self.wz ** 2) * z ** 2)
         return V_trap
     
-
-
     def potential_coulomb(self, positions: Vector):
         """ Computes Coulomb potential, takes in a flattened (1D) array of all position coordinates """
- #        x = positions[0:self.num_ions]
- #        y = positions[self.num_ions:2*self.num_ions]
- #        z = positions[2*self.num_ions:]
         x,y,z = self.ion_coordinates_from_flattened(positions)
 
         dx = x[:, np.newaxis] - x
@@ -366,15 +353,11 @@ class TrappedIonModeAnalysis:
         V_Coulomb *= .5 
         return V_Coulomb
 
-    def potential(self, positions):
+    def potential_energy(self, positions):
         return self.potential_trap(positions) + self.potential_coulomb(positions)   
 
 
-
     def force_trap(self, positions):
-#         x = positions[0:self.num_ions]
-#         y = positions[self.num_ions:2*self.num_ions]
-#         z = positions[2*self.num_ions:]
         x,y,z = self.ion_coordinates_from_flattened(positions)
 
         Ftrapx = self.m * self.wx**2 * x
@@ -387,15 +370,12 @@ class TrappedIonModeAnalysis:
 
 
     def force_coulomb(self, positions): 
-        #x = positions[0:self.num_ions]
-        #y = positions[self.num_ions:2*self.num_ions]
-        #z = positions[2*self.num_ions:]
         x,y,z = self.ion_coordinates_from_flattened(positions)
 
         dx = x[:, np.newaxis] - x
         dy = y[:, np.newaxis] - y
         dz = z[:, np.newaxis] - z
-        rsep = np.sqrt(dx ** 2 + dy ** 2 + dz ** 2).astype(np.float64)
+        rsep = np.sqrt(dx**2 + dy**2 + dz**2).astype(np.float64)
         qq = (self.q * self.q[:, np.newaxis]).astype(np.float64)    
 
         with np.errstate(divide='ignore', invalid='ignore'):
@@ -424,6 +404,7 @@ class TrappedIonModeAnalysis:
         return Force
 
 
+    #### Matrix methods 
     def hessian_trap(self, positions: Vector):
         """ Computes the Hessian of the trap  """ 
         Hxx = np.diag(self.m * (self.wx**2) * np.ones(self.num_ions))
@@ -501,6 +482,7 @@ class TrappedIonModeAnalysis:
         return E_matrix
 
     def get_H_matrix(self, T_matrix, E_matrix):  
+        """ Computes 6N x 6N Hermitian Hamiltonian matrix in (q, p) canonical coordinates """ 
         T_matrix_inv = np.linalg.inv(T_matrix)  
         H_matrix = T_matrix_inv.T @ E_matrix @ T_matrix_inv
         return H_matrix 
@@ -514,11 +496,13 @@ class TrappedIonModeAnalysis:
         return T    
 
     def get_symplectic_matrix(self):
+        """ Computes J a 6N x 6N symplectic matrix defined as J = (0 , I ; I, 0) (eq. 1.67 of thesis) """
         zeros = np.zeros((3*self.num_ions, 3*self.num_ions), dtype=np.complex128)
         I = np.eye(3*self.num_ions, dtype=np.complex128)
         J = np.block([[zeros, I], [-I, zeros]])
         return J    
 
+    ### Mode organizing helper methods  
     def sort_modes(self, eigvals, eigvecs):
        eigvals = np.imag(eigvals)
        sort_dex = np.argsort(eigvals)
@@ -608,7 +592,7 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
         self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
         #assert self.trap_is_stable()    
         
-        self.u = self.calculate_equilibrium_positions()
+        self.u = self.solve_for_equilibrium_positions()
         self.reindex_ions_by_z()
         self.E_matrix = self.get_E_matrix(self.u)  
         self.T_matrix = self.get_momentum_transform()
