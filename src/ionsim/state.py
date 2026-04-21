@@ -169,7 +169,7 @@ class State:
             diplacements.append(displacement)
         return diplacements
 
-    def compute_wigner_distribution(self, x_grid: Vector, p_grid: Vector): 
+    def compute_wigner_distribution(self, x_grid: Vector[float], p_grid: Vector[float]): 
         """ Computes W(x,p) the Wigner distribution for each motional mode in the basis; assumes a Fock basis for each mode.
             - requires a specification of the x and p grids as 1-dimensional arrays, determines resolution of Wigner distributions. 
             - returns a list of Wigner distributions -> one for each mode. 
