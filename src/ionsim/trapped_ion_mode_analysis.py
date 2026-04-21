@@ -2,6 +2,7 @@ import numpy as np
 #from generalized_mode_analysis import GeneralizedModeAnalysis as mode_analyzer
 #plt.style.use('ionsim')
 from time import time as timer
+from numpy.typing import NDArray
 import scipy.constants as const
 import warnings
 import scipy.optimize as opt    
@@ -67,7 +68,7 @@ def get_canonical_transformation(H,ens,evs=None):
     return T
 
 
-def convert_num_to_array(x):
+def convert_to_array(x: float | int | list | NDArray):
     """ Converts a scalar to a vector or returns the vector """ 
     if not hasattr(x, "__len__"):
         x = np.ones(N) * x 
@@ -89,8 +90,8 @@ class TrappedIonModeAnalysis:
         # TODO: Decide how to handle units and how much of pint we should use.  
         self.num_ions = num_ions
 
-        self.atomic_masses = convert_num_to_array(atomic_masses) * const.u # kg from amu 
-        self.atomic_numbers = convert_num_to_array(atomic_numbers)
+        self.atomic_masses = convert_to_array(atomic_masses) * const.u # kg from amu 
+        self.atomic_numbers = convert_to_array(atomic_numbers)
 
         # Safety checks: 
         assert len(self.atomic_masses) == num_ions
@@ -143,6 +144,14 @@ class TrappedIonModeAnalysis:
             - characteristic energy 
 
         """
+        # Check positivity:
+        if trap_freq_scale <= 0:
+            raise IonSimError(f"Trap frequency scale should be positive. Received {trap_freq_scale}")
+        if mass_scale <= 0:
+            raise IonSimError(f"Mass scale should be positive. Received {mass_scale}")
+ #        if charge_scale <= 0:
+ #            raise IonSimError(f"Charge scale should be positive. Received {charge_scale}")
+
         # Store the scales so they are retrievable by the user 
         self.charge_scale = charge_scale
         self.mass_scale = mass_scale
@@ -167,7 +176,7 @@ class TrappedIonModeAnalysis:
         self.characteristic_parameters['energy'] = 0.5 * mass_scale * self.characteristic_parameters['velocity'] ** 2  # characteristic energy  
 
     def check_for_zero_modes(self):
-        assert np.all(self.evals > 0), "All eigenvalues must be positive"   
+        assert np.all(self.eigvals > 0), "All eigenvalues must be positive"   
 
     def check_outer_relation(self): 
         H = self.H_matrix.copy()       
@@ -191,8 +200,8 @@ class TrappedIonModeAnalysis:
 
 
 
-    def has_duplicate_evals(self,evals):
-        evs = evals.copy()    
+    def has_duplicate_eigvals(eigvals):
+        evs = eigvals.copy()    
         return np.any(np.triu(np.isclose(evs[:, None], evs[None, :], atol=1e-6), k=1))  
     
 
@@ -200,13 +209,13 @@ class TrappedIonModeAnalysis:
     def check_diagnolization(self):
         M = np.linalg.inv(self.T_matrix) @ self.S_matrix    
         H_diag = M.T @ self.E_matrix @ M    
-        H_diag_check = np.diag(np.tile(self.evals,2)) 
+        H_diag_check = np.diag(np.tile(self.eigvals,2)) 
         np.set_printoptions(precision=2, suppress=True) 
         try:
             assert np.allclose(H_diag,H_diag_check)
         except AssertionError:
             warnings.warn("Diagnolization check failed")    
-            print("has duplicate evals: ", self.has_duplicate_evals(self.evals))
+            print("has duplicate eigenvalues: ", self.has_duplicate_eigvals(self.eigvals))
 
 
 
@@ -218,15 +227,16 @@ class TrappedIonModeAnalysis:
         #self.dimensionless_parameters()
         # Convert to dimensionless units using axial trap frequency and first ion's mass and charge  
         self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
-        #assert self.trap_is_stable()    
+        #assert self.trap_is_stable()   # checked in the constructor  
         
         self.u = self.calculate_equilibrium_positions()
-        #self.reindex_ions(self.u)
+        self.reindex_ions()
         self.E_matrix = self.get_E_matrix(self.u)  
         self.T_matrix = self.get_momentum_transform() 
         self.H_matrix = self.get_H_matrix(self.T_matrix, self.E_matrix)   
-        self.evals, self.evecs = self.calculate_normal_modes(self.H_matrix)
-        self.evecs_vel = self.get_eigen_vectors_xv_coords(self.T_matrix,self.evecs)    
+
+        self.eigvals, self.eigvecs = self.calculate_normal_modes(self.H_matrix)
+        self.eigvecs_vel = self.get_eigen_vectors_xv_coords(self.T_matrix,self.eigvecs)    
         self.check_for_zero_modes() 
         self.S_matrix = self.get_canonical_transformation() 
         self.checks() 
@@ -248,12 +258,12 @@ class TrappedIonModeAnalysis:
 
 
     def get_canonical_transformation(self):
-        return get_canonical_transformation(self.H_matrix,self.evecs,evs=self.evals)    
+        return get_canonical_transformation(self.H_matrix,self.eigvecs,evs=self.eigvals)    
 
 
 
-    def normalize_eigen_vectors(self, evecs, H_matrix,evs=None):
-        return normalize_eigen_vectors(evecs,H_matrix,evs=evs) 
+    def normalize_eigen_vectors(self, eigvecs, H_matrix,evs=None):
+        return normalize_eigen_vectors(eigvecs,H_matrix,evs=evs) 
 
 
 
@@ -263,16 +273,22 @@ class TrappedIonModeAnalysis:
         return ens_vel 
 
 
-    def calculate_normal_modes(self, H_matrix):
+    def calculate_normal_modes(self, H_matrix: Matrix) -> (Vector, list[Vector]):
+        """ Compute normal mode frequencies from eigenvalues of the matrix D. Returns eigenvalues and eigenvectors.
 
+            Solves det( D + i*omega*Identity) == 0 for omega.
+            
+            The matrix "D" is defind as D = JH, where J = (0 , I ; I, 0) (eq. 1.67 of thesis)
+
+        """
         J = self.get_symplectic_matrix()
         D_matrix = J @ H_matrix  
         # u_n(t) = exp(-i w_n t) u_n(0), minus by convention
-        evals, evecs = np.linalg.eig(-D_matrix)   
-        evals, evecs = self.organize_modes(evals, evecs)
-        evecs = self.normalize_eigen_vectors(evecs, H_matrix) 
+        eigvals, eigvecs = np.linalg.eig(-D_matrix)   
+        eigvals, eigvecs = self.organize_modes(eigvals, eigvecs)
+        eigvecs = self.normalize_eigen_vectors(eigvecs, H_matrix) 
 
-        return evals, evecs 
+        return eigvals, eigvecs 
 
 
 
@@ -280,7 +296,7 @@ class TrappedIonModeAnalysis:
         """ Returns arrays corresponding to an ion's x, y, and z coordinates, respectively, from a flattened vector u:
                 x = u[0:N], y = u[N:2N], z[2N:]
 
-            -e.g. x[1], y[1], z[1] is the x, y, z coordinate values for ion 2. 
+            e.g. x[1], y[1], z[1] is the x, y, z coordinate values for ion 2. 
         """
         x = flattened_coordinate_vector[0:self.num_ions]
         y = flattened_coordinate_vector[self.num_ions:2*self.num_ions]
@@ -296,20 +312,20 @@ class TrappedIonModeAnalysis:
         return self.u0
 
 
-
-    def reindex_ions(self, u):  
-        # based on the distance from the center of the trap, reindex the ions, smallest index is closest to the center
-        x,y,z = self.ion_coordinates_from_flattened(u)
+    def reindex_ions(self):  
+        """ Re-indexes the ions to order based on the distance from the center of the trap, where smallest index is closest to the center """
+        # TODO: How are even/odd cases is handled? 
+        x,y,z = self.ion_coordinates_from_flattened(self.u)
         r = np.sqrt(x**2 + y**2 + z**2)
         idx = np.argsort(r)
-        u = np.hstack((x[idx], y[idx], z[idx]))
-        self.u = u 
-        self.m = self.m[idx]
-        self.m_E = self.m_E[idx]
-        self.q = self.q[idx]
-        self.q_E = self.q_E[idx]
-        self.Z = self.Z[idx]
 
+        reindexed_positions = np.hstack((x[idx], y[idx], z[idx]))
+        self.u = reindexed_positions 
+        self.m = self.m[idx]
+        self.q = self.q[idx]
+        self.atomic_masses = self.atomic_masses[idx]
+        self.nuclear_charges = self.nuclear_charges[idx]
+        self.atomic_numbers = self.atomic_numbers[idx]
 
 
     def find_equilibrium_positions(self, u0: Vector):
@@ -319,12 +335,12 @@ class TrappedIonModeAnalysis:
                                     options={'gtol': bfgs_tolerance, 'disp': False})
         return out.x
 
-    def potential_trap(self, pos_array: Vector):
+    def potential_trap(self, positions: Vector):
         """ Computes trapping potential, takes in a flattened (1D) array of all position coordinates """
- #        x = pos_array[0:self.num_ions]
- #        y = pos_array[self.num_ions:2*self.num_ions]
- #        z = pos_array[2*self.num_ions:]
-        x,y,z = self.ion_coordinates_from_flattened(pos_array)
+ #        x = positions[0:self.num_ions]
+ #        y = positions[self.num_ions:2*self.num_ions]
+ #        z = positions[2*self.num_ions:]
+        x,y,z = self.ion_coordinates_from_flattened(positions)
         V_trap = 0.5 * np.sum((self.m * self.wx ** 2) * x ** 2) + \
             0.5 * np.sum((self.m * self.wy ** 2) * y ** 2) + \
                 0.5 * np.sum((self.m * self.wz ** 2) * z ** 2)
@@ -332,12 +348,12 @@ class TrappedIonModeAnalysis:
     
 
 
-    def potential_coulomb(self, pos_array: Vector):
+    def potential_coulomb(self, positions: Vector):
         """ Computes Coulomb potential, takes in a flattened (1D) array of all position coordinates """
- #        x = pos_array[0:self.num_ions]
- #        y = pos_array[self.num_ions:2*self.num_ions]
- #        z = pos_array[2*self.num_ions:]
-        x,y,z = self.ion_coordinates_from_flattened(pos_array)
+ #        x = positions[0:self.num_ions]
+ #        y = positions[self.num_ions:2*self.num_ions]
+ #        z = positions[2*self.num_ions:]
+        x,y,z = self.ion_coordinates_from_flattened(positions)
 
         dx = x[:, np.newaxis] - x
         dy = y[:, np.newaxis] - y
@@ -350,16 +366,16 @@ class TrappedIonModeAnalysis:
         V_Coulomb *= .5 
         return V_Coulomb
 
-    def potential(self, pos_array):
-        return self.potential_trap(pos_array) + self.potential_coulomb(pos_array)   
+    def potential(self, positions):
+        return self.potential_trap(positions) + self.potential_coulomb(positions)   
 
 
 
-    def force_trap(self, pos_array):
-#         x = pos_array[0:self.num_ions]
-#         y = pos_array[self.num_ions:2*self.num_ions]
-#         z = pos_array[2*self.num_ions:]
-        x,y,z = self.ion_coordinates_from_flattened(pos_array)
+    def force_trap(self, positions):
+#         x = positions[0:self.num_ions]
+#         y = positions[self.num_ions:2*self.num_ions]
+#         z = positions[2*self.num_ions:]
+        x,y,z = self.ion_coordinates_from_flattened(positions)
 
         Ftrapx = self.m * self.wx**2 * x
         Ftrapy = self.m * self.wy**2 * y
@@ -370,11 +386,11 @@ class TrappedIonModeAnalysis:
 
 
 
-    def force_coulomb(self, pos_array): 
-        #x = pos_array[0:self.num_ions]
-        #y = pos_array[self.num_ions:2*self.num_ions]
-        #z = pos_array[2*self.num_ions:]
-        x,y,z = self.ion_coordinates_from_flattened(pos_array)
+    def force_coulomb(self, positions): 
+        #x = positions[0:self.num_ions]
+        #y = positions[self.num_ions:2*self.num_ions]
+        #z = positions[2*self.num_ions:]
+        x,y,z = self.ion_coordinates_from_flattened(positions)
 
         dx = x[:, np.newaxis] - x
         dy = y[:, np.newaxis] - y
@@ -399,17 +415,17 @@ class TrappedIonModeAnalysis:
 
 
 
-    def force(self, pos_array):
-        Force = self.force_coulomb(pos_array) + self.force_trap(pos_array)  
+    def force(self, positions):
+        Force = self.force_coulomb(positions) + self.force_trap(positions)  
         return Force
 
-    def force(self, pos_array):
-        Force = self.force_coulomb(pos_array) + self.force_trap(pos_array)  
+    def force(self, positions):
+        Force = self.force_coulomb(positions) + self.force_trap(positions)  
         return Force
 
 
-
-    def hessian_trap(self, pos_array):
+    def hessian_trap(self, positions: Vector):
+        """ Computes the Hessian of the trap  """ 
         Hxx = np.diag(self.m * (self.wx**2) * np.ones(self.num_ions))
         Hyy = np.diag(self.m * (self.wy**2) * np.ones(self.num_ions))  
         Hzz = np.diag(self.m * (self.wz**2) * np.ones(self.num_ions))  
@@ -417,13 +433,9 @@ class TrappedIonModeAnalysis:
         H = np.block([[Hxx, zeros, zeros], [zeros, Hyy, zeros], [zeros, zeros, Hzz]])
         return H
 
-
-
-    def hessian_coulomb(self, pos_array):
- #        x = pos_array[0:self.num_ions]
- #        y = pos_array[self.num_ions:2*self.num_ions]
- #        z = pos_array[2*self.num_ions:]
-        x,y,z = self.ion_coordinates_from_flattened(pos_array)
+    def hessian_coulomb(self, positions: Vector):
+        """ Computes the Hessian of the Coulomb interaction """ 
+        x,y,z = self.ion_coordinates_from_flattened(positions)
         
         dx = x[:, np.newaxis] - x
         dy = y[:, np.newaxis] - y
@@ -468,32 +480,30 @@ class TrappedIonModeAnalysis:
         return H_coulomb
 
 
-    def hessian(self, pos_array):
-        H = self.hessian_coulomb(pos_array) + self.hessian_trap(pos_array)  
+    def hessian(self, positions: Vector):
+        """ Computes total Hessian (trap + Coulomb interaction) """
+        H = self.hessian_coulomb(positions) + self.hessian_trap(positions)  
         return H
 
-    def get_mass_matrix(self,m):    
+    def get_mass_matrix(self, m): 
         return np.diag(np.tile(m, 3)) 
 
-    def get_E_matrix(self,u): 
+    def get_E_matrix(self, positions: Vector): 
+        """ 6N x 6N energy matrix for N ions """ 
         PE_matrix = np.zeros((3*self.num_ions, 3*self.num_ions), dtype=np.complex128)
         KE_matrix = np.zeros((3*self.num_ions, 3*self.num_ions), dtype=np.complex128)
         E_matrix = np.zeros((6*self.num_ions, 6*self.num_ions), dtype=np.complex128)
 
-        PE_matrix = self.hessian(u)
+        PE_matrix = self.hessian(positions)
         KE_matrix = self.get_mass_matrix(self.m) 
         zeros = np.zeros((3*self.num_ions, 3*self.num_ions)) 
         E_matrix = np.block([[PE_matrix, zeros], [zeros, KE_matrix]])
         return E_matrix
 
-
-
     def get_H_matrix(self, T_matrix, E_matrix):  
         T_matrix_inv = np.linalg.inv(T_matrix)  
         H_matrix = T_matrix_inv.T @ E_matrix @ T_matrix_inv
         return H_matrix 
-
-
 
     def get_momentum_transform(self):
         # assuming no magnetic field
@@ -503,35 +513,30 @@ class TrappedIonModeAnalysis:
         T = np.block([[eye, zeros], [zeros, mass_matrix]])  
         return T    
 
-
-
     def get_symplectic_matrix(self):
         zeros = np.zeros((3*self.num_ions, 3*self.num_ions), dtype=np.complex128)
         I = np.eye(3*self.num_ions, dtype=np.complex128)
         J = np.block([[zeros, I], [-I, zeros]])
         return J    
 
-    def sort_modes(self,evals, evecs):
-       evals = np.imag(evals)
-       sort_dex = np.argsort(evals)
-       evals = evals[sort_dex]
-       evecs = evecs[:,sort_dex]
-       return evals, evecs  
+    def sort_modes(self, eigvals, eigvecs):
+       eigvals = np.imag(eigvals)
+       sort_dex = np.argsort(eigvals)
+       eigvals = eigvals[sort_dex]
+       eigvecs = eigvecs[:,sort_dex]
+       return eigvals, eigvecs  
+    
+    def split_modes(self, eigvals, eigvecs): 
+       half = len(eigvals) // 2
+       eigvals = eigvals[half:]
+       eigvecs = eigvecs[:,half:]
+       return eigvals, eigvecs
     
 
-
-    def split_modes(self,evals, evecs): 
-       half = len(evals) // 2
-       evals = evals[half:]
-       evecs = evecs[:,half:]
-       return evals, evecs
-    
-
-
-    def organize_modes(self,evals, evecs):  
-        evals, evecs = self.sort_modes(evals, evecs)    
-        evals, evecs = self.split_modes(evals, evecs)
-        return evals, evecs 
+    def organize_modes(self, eigvals, eigvecs):  
+        eigvals, eigvecs = self.sort_modes(eigvals, eigvecs)    
+        eigvals, eigvecs = self.split_modes(eigvals, eigvecs)
+        return eigvals, eigvecs 
 
 
  
@@ -568,34 +573,32 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
             sorted_by_branch_evecs[:, direction*N_ions:(direction+1)*N_ions] = evecs[:, direction_indices]
         return sorted_by_branch_evals, sorted_by_branch_evecs
  
-    def organize_modes(self, evals, evecs):        
-        evals, evecs = self.sort_modes(evals, evecs)
-        evals, evecs = self.split_modes(evals, evecs)
-        evals, evecs = self.sort_by_branch(evals, evecs)
-        return evals, evecs
+    def organize_modes(self, eigvals, eigvecs):        
+        eigvals, eigvecs = self.sort_modes(eigvals, eigvecs)
+        eigvals, eigvecs = self.split_modes(eigvals, eigvecs)
+        eigvals, eigvecs = self.sort_by_branch(eigvals, eigvecs)
+        return eigvals, eigvecs
  
  
-    def reindex_ions_by_z(self, u):  
+    def reindex_ions_by_z(self): 
         # based on the position along z, lowest i, is 0, up to N - 1
-        x = u[0:self.num_ions]
-        y = u[self.num_ions:2*self.num_ions]
-        z = u[2*self.num_ions:]
+        x,y,z = self.ion_coordinates_from_flattened(self.u)
  
         idx = np.argsort(z)
         self.u = np.hstack((x[idx], y[idx], z[idx]))
  
-        # reindex the other arrays accordingly
+        # Reindex all other arrays accordingly
         self.m = self.m[idx]
-        self.m_E = self.m_E[idx]
         self.q = self.q[idx]
-        self.q_E = self.q_E[idx]
-        self.Z = self.Z[idx]
-        self.ionmass_amu = self.ionmass_amu[idx]
+        self.atomic_masses = self.atomic_masses[idx]
+        self.nuclear_charges = self.nuclear_charges[idx]
+        self.atomic_numbers = self.atomic_numbers[idx]
+
         # trapping frequencies
-        self.omega_z = self.omega_z[idx]
-        self.omega_y = self.omega_y[idx]
         self.omega_x = self.omega_x[idx]
-        # all ions are the same so this is safe
+        self.omega_y = self.omega_y[idx]
+        self.omega_z = self.omega_z[idx]
+        # all ions are the same so this is safe. TODO: When does this change? 
         #self.dimensionless_parameters()
         self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
  
@@ -603,15 +606,15 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
     def run(self):
         #self.dimensionless_parameters()
         self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
-        assert self.trap_is_stable()    
+        #assert self.trap_is_stable()    
         
         self.u = self.calculate_equilibrium_positions()
-        self.reindex_ions_by_z(self.u)
+        self.reindex_ions_by_z()
         self.E_matrix = self.get_E_matrix(self.u)  
         self.T_matrix = self.get_momentum_transform()
         self.H_matrix = self.get_H_matrix(self.T_matrix, self.E_matrix)   
-        self.evals, self.evecs = self.calculate_normal_modes(self.H_matrix)
-        self.evecs_vel = self.get_eigen_vectors_xv_coords(self.T_matrix,self.evecs)    
+        self.eigvals, self.eigvecs = self.calculate_normal_modes(self.H_matrix)
+        self.eigvecs_vel = self.get_eigen_vectors_xv_coords(self.T_matrix,self.eigvecs)    
         self.check_for_zero_modes()
         self.S_matrix = self.get_canonical_transformation()
         self.checks()
@@ -621,10 +624,6 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
 #You could redefine the equilibrium finding function to assert that the equilibrium is linear. For example, make a wrapper inside the function for the potential, Jacobian, and Hessian that forces x_i and y_i = 0. 
  
 #This is the code for the Lamb-Dicke parameters: (not that overall phases don't matter here, but the relative phase does. We could pin down the phase with some convention like, "each mode's first non-negative LD value is defined positive." I also include some extra helper functions. 
- 
-
-## helper ? 
-
 def two_central_ion_separation(wz_Hz, l_2_cent):
     mass_yb_amu = 170.936 # TODO: hardcoded for now
     four_ion_analysis = GeneralizedModeAnalysisWithBranchSortedModes(N=4, wz=2*np.pi*wz_Hz, wy=2*np.pi*10e6, wx=2*np.pi*11e6, ionmass_amu=mass_yb_amu)
@@ -655,17 +654,17 @@ def calc_mode_energies(res, Fock_cutoffs):
     return energies_m1, energies_m2
  
 def calculate_mode_participation_factors(mode_analysis):
-    evecs = mode_analysis.evecs
-    num_coords, num_modes = np.shape(evecs)
+    eigvecs = mode_analysis.eigvecs
+    num_coords, num_modes = np.shape(eigvecs)
     num_ions = num_modes // 3
     mode_participation_factors = np.zeros((3, num_ions, num_modes), dtype = np.complex128)
     for mode_index in range(num_modes):
         for pos_coord in range(num_coords//2):
             direction_index = pos_coord // num_ions
             ion_index = pos_coord % num_ions
-            factor = np.sqrt(2* mode_analysis.m[ion_index] * mode_analysis.evals[mode_index] )
+            factor = np.sqrt(2* mode_analysis.m[ion_index] * mode_analysis.eigvals[mode_index] )
             zpm_dimensionful = np.sqrt(const.hbar / (2* mode_analysis.mass_scale * mode_analysis.trap_freq_scale))
-            mode_participation_factors[direction_index, ion_index, mode_index] = zpm_dimensionful * factor * evecs[pos_coord, mode_index]
+            mode_participation_factors[direction_index, ion_index, mode_index] = zpm_dimensionful * factor * eigvecs[pos_coord, mode_index]
     return mode_participation_factors
  
  
