@@ -11,6 +11,12 @@ import scipy.optimize as opt
 
 ########## List of substantive changes by Ethan: 
 ## 1. Made dimensionless variable function take in inputs so the user can choose the charge, mass, and trap freq scales to use.   
+## 2. Added a helper function to pack/unpack the ion coordinates to reduce code. 
+
+########## List of non-substantive changes by Ethan: 
+## 1. Variable changes for readable (e.g. omega_x instead of wx) 
+## 2. Type-hinting in functions  
+
 
 
 def characteristic_length(q: float, mass: float, omega: float):
@@ -270,7 +276,21 @@ class TrappedIonModeAnalysis:
 
 
 
+    def ion_coordinates_from_flattened(self, flattened_coordinate_vector: Vector) -> tuple(Vector, Vector, Vector):
+        """ Returns arrays corresponding to an ion's x, y, and z coordinates, respectively, from a flattened vector u:
+                x = u[0:N], y = u[N:2N], z[2N:]
+
+            -e.g. x[1], y[1], z[1] is the x, y, z coordinate values for ion 2. 
+        """
+        x = flattened_coordinate_vector[0:self.num_ions]
+        y = flattened_coordinate_vector[self.num_ions:2*self.num_ions]
+        z = flattened_coordinate_vector[2*self.num_ions:]
+        return x, y, z 
+        
+
     def get_initial_equilibrium_guess(self):
+        """ Initialize the set of ion coordinates {u} as a flattened 1D array. """
+        # TODO: option for random vs. equally spaced along one axis? 
         self.u0 = np.zeros(3*self.num_ions)
         self.u0[:] = (np.random.rand(3*self.num_ions) * 2 - 1) * self.num_ions 
         return self.u0
@@ -279,9 +299,7 @@ class TrappedIonModeAnalysis:
 
     def reindex_ions(self, u):  
         # based on the distance from the center of the trap, reindex the ions, smallest index is closest to the center
-        x = u[0:self.num_ions]
-        y = u[self.num_ions:2*self.num_ions]
-        z = u[2*self.num_ions:]
+        x,y,z = self.ion_coordinates_from_flattened(u)
         r = np.sqrt(x**2 + y**2 + z**2)
         idx = np.argsort(r)
         u = np.hstack((x[idx], y[idx], z[idx]))
@@ -294,16 +312,19 @@ class TrappedIonModeAnalysis:
 
 
 
-    def find_equilibrium_positions(self, u0):
+    def find_equilibrium_positions(self, u0: Vector):
+        """ Solves for equilibrium position vector: u0, which is a flattened spatial grid. """
         bfgs_tolerance = 1e-34
         out = opt.minimize(self.potential, u0, method='BFGS', jac=self.force,
                                     options={'gtol': bfgs_tolerance, 'disp': False})
         return out.x
 
-    def potential_trap(self, pos_array):
-        x = pos_array[0:self.num_ions]
-        y = pos_array[self.num_ions:2*self.num_ions]
-        z = pos_array[2*self.num_ions:]
+    def potential_trap(self, pos_array: Vector):
+        """ Computes trapping potential, takes in a flattened (1D) array of all position coordinates """
+ #        x = pos_array[0:self.num_ions]
+ #        y = pos_array[self.num_ions:2*self.num_ions]
+ #        z = pos_array[2*self.num_ions:]
+        x,y,z = self.ion_coordinates_from_flattened(pos_array)
         V_trap = 0.5 * np.sum((self.m * self.wx ** 2) * x ** 2) + \
             0.5 * np.sum((self.m * self.wy ** 2) * y ** 2) + \
                 0.5 * np.sum((self.m * self.wz ** 2) * z ** 2)
@@ -311,10 +332,12 @@ class TrappedIonModeAnalysis:
     
 
 
-    def potential_coulomb(self, pos_array):
-        x = pos_array[0:self.num_ions]
-        y = pos_array[self.num_ions:2*self.num_ions]
-        z = pos_array[2*self.num_ions:]
+    def potential_coulomb(self, pos_array: Vector):
+        """ Computes Coulomb potential, takes in a flattened (1D) array of all position coordinates """
+ #        x = pos_array[0:self.num_ions]
+ #        y = pos_array[self.num_ions:2*self.num_ions]
+ #        z = pos_array[2*self.num_ions:]
+        x,y,z = self.ion_coordinates_from_flattened(pos_array)
 
         dx = x[:, np.newaxis] - x
         dy = y[:, np.newaxis] - y
@@ -333,9 +356,10 @@ class TrappedIonModeAnalysis:
 
 
     def force_trap(self, pos_array):
-        x = pos_array[0:self.num_ions]
-        y = pos_array[self.num_ions:2*self.num_ions]
-        z = pos_array[2*self.num_ions:]
+#         x = pos_array[0:self.num_ions]
+#         y = pos_array[self.num_ions:2*self.num_ions]
+#         z = pos_array[2*self.num_ions:]
+        x,y,z = self.ion_coordinates_from_flattened(pos_array)
 
         Ftrapx = self.m * self.wx**2 * x
         Ftrapy = self.m * self.wy**2 * y
@@ -347,9 +371,10 @@ class TrappedIonModeAnalysis:
 
 
     def force_coulomb(self, pos_array): 
-        x = pos_array[0:self.num_ions]
-        y = pos_array[self.num_ions:2*self.num_ions]
-        z = pos_array[2*self.num_ions:]
+        #x = pos_array[0:self.num_ions]
+        #y = pos_array[self.num_ions:2*self.num_ions]
+        #z = pos_array[2*self.num_ions:]
+        x,y,z = self.ion_coordinates_from_flattened(pos_array)
 
         dx = x[:, np.newaxis] - x
         dy = y[:, np.newaxis] - y
@@ -395,9 +420,10 @@ class TrappedIonModeAnalysis:
 
 
     def hessian_coulomb(self, pos_array):
-        x = pos_array[0:self.num_ions]
-        y = pos_array[self.num_ions:2*self.num_ions]
-        z = pos_array[2*self.num_ions:]
+ #        x = pos_array[0:self.num_ions]
+ #        y = pos_array[self.num_ions:2*self.num_ions]
+ #        z = pos_array[2*self.num_ions:]
+        x,y,z = self.ion_coordinates_from_flattened(pos_array)
         
         dx = x[:, np.newaxis] - x
         dy = y[:, np.newaxis] - y
