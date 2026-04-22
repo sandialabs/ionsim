@@ -157,7 +157,6 @@ class TrappedIonModeAnalysis:
         # the sign is likely due to the convention of writing the time evolution as exp(-iwt)
         return T
 
-
     def check_for_zero_modes(self):
         assert np.all(self.eigvals > 0), "All eigenvalues must be positive"   
 
@@ -346,8 +345,7 @@ class TrappedIonModeAnalysis:
 
     def force_coulomb(self, positions: Vector): 
         """ Computes the Coulomb force by derivative w.r.t. ion coordinates """
-        x,y,z = self.ion_coordinates_from_flattened(positions)
-        r = [x,y,z]
+        r = self.ion_coordinates_from_flattened(positions)
         dr = []
 
         for coord in r:
@@ -376,45 +374,43 @@ class TrappedIonModeAnalysis:
         Force = self.force_coulomb(positions) + self.force_trap(positions)  
         return Force
 
-
-    #### Matrix methods 
     def hessian_trap(self, positions: Vector) -> Matrix:
         """ Computes the Hessian of the trap  """ 
-        Hxx = np.diag(self.m * (self.wx**2) * np.ones(self.num_ions))
-        Hyy = np.diag(self.m * (self.wy**2) * np.ones(self.num_ions))  
-        Hzz = np.diag(self.m * (self.wz**2) * np.ones(self.num_ions))  
+        H_rr = []
+        for i, omega in enumerate(self.trap_frequencies_ND): 
+            H_rr.append(np.diag(self.m * omega**2 * np.ones(self.num_ions)))
         zeros = np.zeros((self.num_ions, self.num_ions))  
-        H = np.block([[Hxx, zeros, zeros], [zeros, Hyy, zeros], [zeros, zeros, Hzz]])
+        H = np.block([[H_rr[0], zeros, zeros], [zeros, H_rr[1], zeros], [zeros, zeros, H_rr[2]]])
         return H
 
     def hessian_coulomb(self, positions: Vector) -> Matrix:
         """ Computes the Hessian of the Coulomb interaction """ 
-        x,y,z = self.ion_coordinates_from_flattened(positions)
-        
-        dx = x[:, np.newaxis] - x
-        dy = y[:, np.newaxis] - y
-        dz = z[:, np.newaxis] - z
-        rsep = np.sqrt(dx ** 2 + dy ** 2 + dz ** 2).astype(np.float64)  
+        r = self.ion_coordinates_from_flattened(positions)
+        dr = []
+
+        for coord in r:
+            dr.append(coord[:, np.newaxis] - coord)
+        rsep = np.sqrt(dr[0]**2 + dr[1]**2 + dr[2]**2).astype(np.float64)
         qq = (self.q * self.q[:, np.newaxis]).astype(np.float64)    
 
         with np.errstate(divide='ignore'):
             rsep5 = np.where(rsep != 0., rsep ** (-5), 0)
 
-        dxsq = dx ** 2
-        dysq = dy ** 2
-        dzsq = dz ** 2
+        dr_sq = np.array(dr)**2
         rsep2 = rsep ** 2
 
         # X derivatives, Y derivatives for alpha != beta
-        Hxx = (rsep2 - 3 * dxsq) * rsep5
-        Hyy = (rsep2 - 3 * dysq) * rsep5
-        Hzz = (rsep2 - 3 * dzsq) * rsep5
+        H_rr = (rsep2 - 3 * dr_sq) * rsep5 # form: [Hxx, Hyy, Hzz] 
 
         # Above, for alpha == beta
-        Hxx[np.diag_indices(self.num_ions)] = -np.sum(Hxx, axis=0)
-        Hyy[np.diag_indices(self.num_ions)] = -np.sum(Hyy, axis=0)
-        Hzz[np.diag_indices(self.num_ions)] = -np.sum(Hzz, axis=0)
+        # Compute diagonals: 
+        for i in range(3):
+            H_rr[i][np.diag_indices(self.num_ions)] = -np.sum(H_rr[i], axis=0)
+        dx = dr[0]
+        dy = dr[1]
+        dz = dr[2]
 
+        # Off-diagonal elements:
         Hxy = -3 * dx * dy * rsep5
         Hxy[np.diag_indices(self.num_ions)] = 3 * np.sum(dx * dy * rsep5, axis=0)
         Hxz = -3 * dx * dz * rsep5
@@ -422,14 +418,12 @@ class TrappedIonModeAnalysis:
         Hyz = -3 * dy * dz * rsep5
         Hyz[np.diag_indices(self.num_ions)] = 3 * np.sum(dy * dz * rsep5, axis=0)
         
-        Hxx *= qq
-        Hyy *= qq
-        Hzz *= qq
+        H_rr *= qq
         Hxy *= qq
         Hxz *= qq
         Hyz *= qq
 
-        H_coulomb = np.block([[Hxx, Hxy, Hxz], [Hxy, Hyy, Hyz], [Hxz, Hyz, Hzz]])
+        H_coulomb = np.block([[H_rr[0], Hxy, Hxz], [Hxy, H_rr[1], Hyz], [Hxz, Hyz, H_rr[2]]])
         H_coulomb /= 2
         return H_coulomb
 
