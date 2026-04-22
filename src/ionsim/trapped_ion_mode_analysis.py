@@ -4,8 +4,8 @@ import scipy.constants as const
 import warnings
 import scipy.optimize as opt    
 from ionsim.custom_types import Matrix, Vector
-from ionsim.degree_of_freedom import AtomicSpin
-from ionsim.basis import Basis 
+from ionsim.degree_of_freedom import AtomicSpin, MotionalMode
+from ionsim.basis import StandardBasis 
 
 ########## List of substantive changes: 
 ## 1. Made dimensionless variable function take in inputs so the user can choose the charge, mass, and trap freq scales to use.   
@@ -654,6 +654,21 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
         # Construct the class 
         return cls(num_ions, omega_x, omega_y, omega_z, atomic_mass, atomic_number)
 
+
+
+    def build_mode_DOFs(self, mode_indices: list[int], fock_dimensions: Vector | int) -> MotionalMode:
+        """ Builds and returns an IonSim Motional Degree of Freedom.
+
+            - Applies each fock dimension to each mode, or applies the same fock dimension to all the modes  
+        """
+        modes = []
+        # Convert list of Fock dimensions to an array if it's not already an array 
+        fock_dimensions = self.convert_to_array(fock_dimensions).astype(int)
+        for idx, fock_dim in zip(mode_indices, fock_dimensions):
+            mode_index = idx # or some function of this index 
+            modes.append(MotionalMode.from_frequency(self.eigvals[mode_index], fock_dim))
+
+        return modes 
 
  
 #You could redefine the equilibrium finding function to assert that the equilibrium is linear. For example, make a wrapper inside the function for the potential, Jacobian, and Hessian that forces x_i and y_i = 0. 
