@@ -18,15 +18,15 @@ import scipy.optimize as opt
 ########## Questions: 
 # 1. Is there a need for the "has run" boolean? 
 # 2. Should the dimensionless parameters have a naming convention, e.g. omega_x --> omega_x_ND 
-# 3. See TODO's 
+# 3. What sets the phases of the Lamb-Dicke parameters?  
+# 4. See TODO's 
 
 
-def characteristic_length(q: float, mass: float, omega: float):
+def characteristic_length(q: float, mass: float, omega: float) -> float:
     """ Computes characteristic length in trapped ion system """
     k_e = 1 / (4 * np.pi * const.epsilon_0)  # Coulomb constant
     l0 = ((k_e * q ** 2) / (.5 * mass * omega ** 2)) ** (1 / 3)
     return l0
-
 
 
 class TrappedIonModeAnalysis:
@@ -74,14 +74,13 @@ class TrappedIonModeAnalysis:
             w_i = sqrt(q_{i} m_0 / m_{i} q_0) omega 
 
         """ 
-        # TODO: Does Wes have a ref. for this? 
+        # TODO: Does Wes have a ref. for this? Why is omega species-dependent?  
         # assume that the trapping frequency given corresponds to the first ion species 
         q0 = self.nuclear_charges[0] # charge of first ion 
         m0 = self.atomic_masses[0] # charge of first ion 
         species_trap_frequencies = np.sqrt(self.nuclear_charges * m0 /(q0 * self.atomic_masses)) * omega 
         return species_trap_frequencies 
    
-
     def trap_is_stable(self):
         # Checks that all trap frequencies are positive  
         return np.all(self.omega_z > 0) and np.all(self.omega_y > 0) and np.all(self.omega_x > 0)
@@ -92,7 +91,6 @@ class TrappedIonModeAnalysis:
             x = np.ones(self.num_ions) * x 
             return x
         return np.array(x) 
-
 
     #def dimensionless_parameters(self):
     #def nondimensionalize_parameters(self):
@@ -162,8 +160,6 @@ class TrappedIonModeAnalysis:
         assert np.all(self.eigvals > 0), "All eigenvalues must be positive"   
 
     def check_outer_relation(self, H: Matrix): 
-        # TODO: Should this return something (True/False)? 
-        #H = self.H_matrix.copy()       
         D = self.build_symplectic_matrix() @ H
         Eval, Evec = np.linalg.eig(D)
         _, en = self.sort_modes(Eval,Evec)
@@ -182,10 +178,6 @@ class TrappedIonModeAnalysis:
         except AssertionError:
             warnings.warn("Outer relation check failed")
 
-    def has_duplicate_eigvals(eigvals):
-        evs = eigvals.copy()    
-        return np.any(np.triu(np.isclose(evs[:, None], evs[None, :], atol=1e-6), k=1))  
-    
     def check_diagonalization(self, T: Matrix, S: Matrix, E: Matrix) -> bool:
         M = np.linalg.inv(T) @ S
         H_diag = M.T @ E @ M    
@@ -194,8 +186,10 @@ class TrappedIonModeAnalysis:
         try:
             assert np.allclose(H_diag,H_diag_check)
         except AssertionError:
+            has_duplicate_eigenvalues = np.any(np.triu(np.isclose(eigenvalues[:, None], eigenvalues[None, :], atol = 1E-6), k=1))
             warnings.warn("Diagnolization check failed")    
-            print("has duplicate eigenvalues: ", self.has_duplicate_eigvals(self.eigvals))
+            print("has duplicate eigenvalues: ", has_duplicate_eigvals)
+
 
     #def run(self):
     def solve_ion_trap_equilibrium(self): 
@@ -212,7 +206,7 @@ class TrappedIonModeAnalysis:
         H_matrix = self.compute_H_matrix(T_matrix, E_matrix)   
 
         self.eigvals, self.eigvecs = self.calculate_normal_modes(H_matrix)
-        self.eigvecs_vel = self.get_eigen_vectors_xv_coords(T_matrix, self.eigvecs)    
+        self.eigvecs_vel = self.get_eigenvectors_xv_coords(T_matrix, self.eigvecs)    
         self.check_for_zero_modes() 
         S_matrix = self.get_canonical_transformation(H_matrix, self.eigvecs, self.eigvals) 
 
@@ -238,7 +232,7 @@ class TrappedIonModeAnalysis:
         return eigvecs_rescaled 
 
 
-    def get_eigen_vectors_xv_coords(self,T,ens): 
+    def get_eigenvectors_xv_coords(self,T,ens): 
         ens_vel = np.zeros_like(ens,dtype=complex)
         ens_vel[:,:] = np.linalg.inv(T) @ ens
         return ens_vel 
@@ -313,7 +307,7 @@ class TrappedIonModeAnalysis:
         return equilibrium_positions 
 
 
-    def potential_trap(self, positions: Vector):
+    def potential_trap(self, positions: Vector) -> Vector:
         """ Computes trapping potential, takes in a flattened (1D) array of all position coordinates """
         x,y,z = self.ion_coordinates_from_flattened(positions)
         V_trap = 0.5 * np.sum((self.m * self.wx ** 2) * x ** 2) + \
@@ -321,7 +315,7 @@ class TrappedIonModeAnalysis:
                 0.5 * np.sum((self.m * self.wz ** 2) * z ** 2)
         return V_trap
     
-    def potential_coulomb(self, positions: Vector):
+    def potential_coulomb(self, positions: Vector) -> Vector:
         """ Computes Coulomb potential, takes in a flattened (1D) array of all position coordinates """
         x,y,z = self.ion_coordinates_from_flattened(positions)
 
@@ -336,10 +330,11 @@ class TrappedIonModeAnalysis:
         V_Coulomb *= .5 
         return V_Coulomb
 
-    def potential_energy(self, positions):
+    def potential_energy(self, positions: Vector) -> Vector:
+        """ Computes the potential energy of each ion in its coordinate basis """ 
         return self.potential_trap(positions) + self.potential_coulomb(positions)   
 
-    def force_trap(self, positions):
+    def force_trap(self, positions: Vector):
         x,y,z = self.ion_coordinates_from_flattened(positions)
 
         Ftrapx = self.m * self.wx**2 * x
@@ -379,7 +374,7 @@ class TrappedIonModeAnalysis:
 
 
     #### Matrix methods 
-    def hessian_trap(self, positions: Vector):
+    def hessian_trap(self, positions: Vector) -> Matrix:
         """ Computes the Hessian of the trap  """ 
         Hxx = np.diag(self.m * (self.wx**2) * np.ones(self.num_ions))
         Hyy = np.diag(self.m * (self.wy**2) * np.ones(self.num_ions))  
@@ -388,7 +383,7 @@ class TrappedIonModeAnalysis:
         H = np.block([[Hxx, zeros, zeros], [zeros, Hyy, zeros], [zeros, zeros, Hzz]])
         return H
 
-    def hessian_coulomb(self, positions: Vector):
+    def hessian_coulomb(self, positions: Vector) -> Matrix:
         """ Computes the Hessian of the Coulomb interaction """ 
         x,y,z = self.ion_coordinates_from_flattened(positions)
         
@@ -441,6 +436,7 @@ class TrappedIonModeAnalysis:
         return H
 
     def build_mass_matrix(self, masses: Vector) -> Matrix: 
+        """ Builds a diagonal mass matrix representing the ions """ 
         return np.diag(np.tile(masses, 3)) 
 
     def build_E_matrix(self, positions: Vector, mass_matrix: Matrix) -> Matrix: 
@@ -510,8 +506,22 @@ class TrappedIonModeAnalysis:
                 zpm_dimensionful = np.sqrt(const.hbar / (2 * self.mass_scale * self.trap_freq_scale))
                 mode_participation_factors[direction_index, ion_index, mode_index] = zpm_dimensionful * prefactor * eigvecs[pos_coord, mode_index]
         return mode_participation_factors
- 
 
+    # Derived properties 
+    def compute_reference_single_ion_lamb_dicke_factors(self, wavenumber: float) -> (float, float, float):
+        """ Computes analytical Lamb-Dicke parameter by eta = k * sqrt(hbar / m omega) for an ion in a light-field with wavevector |k| 
+
+            - wavenumber: wavevector magnitude |k| in units of 1 / m  
+
+        """
+        # TODO: better way to handle units? 
+        # Convention to use first value of trap frequency arrays (representing one of the ions)  
+        trap_frequencies = np.array([self.omega_x[0], self.omega_y[0], self.omega_z[0]])        
+        mass = self.atomic_masses[0] 
+        eta_x, eta_y, eta_z = wavenumber * np.sqrt(const.hbar / (2 * mass * trap_frequencies))
+        return eta_x, eta_y, eta_z    # ignore the phase
+ 
+    
 #classes
 class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
  
@@ -532,6 +542,7 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
         return classifier
  
     def sort_by_branch(self, evals, evecs):
+        """ Sorts the eigenvalues, eigenvectors by mode branch (radial x, radial y, axial (z)) """
         classifier = self._xyz_classify_modes(evecs)
         # within each branch, sort by frequency
         N_ions = len(evals) // 3
@@ -543,7 +554,8 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
             sorted_by_branch_evals[direction*N_ions:(direction+1)*N_ions] = evals[direction_indices]
             sorted_by_branch_evecs[:, direction*N_ions:(direction+1)*N_ions] = evecs[:, direction_indices]
         return sorted_by_branch_evals, sorted_by_branch_evecs
- 
+
+    # Override from parent  
     def organize_modes(self, eigvals, eigvecs):        
         eigvals, eigvecs = self.sort_modes(eigvals, eigvecs)
         eigvals, eigvecs = self.split_modes(eigvals, eigvecs)
@@ -584,13 +596,15 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
         H_matrix = self.compute_H_matrix(T_matrix, E_matrix)   
 
         self.eigvals, self.eigvecs = self.calculate_normal_modes(H_matrix)
-        self.eigvecs_vel = self.get_eigen_vectors_xv_coords(T_matrix, self.eigvecs)    
+        self.eigvecs_vel = self.get_eigenvectors_xv_coords(T_matrix, self.eigvecs)    
         self.check_for_zero_modes()
-        S_matrix = self.get_canonical_transformation(H_matrix, self.eigvecs, self.eigvals) 
         self.check_outer_relation(H_matrix)
+
+        S_matrix = self.get_canonical_transformation(H_matrix, self.eigvecs, self.eigvals) 
         self.check_diagonalization(T_matrix, S_matrix, E_matrix)
         #self.hasrun = True  
-    
+
+
  
 #You could redefine the equilibrium finding function to assert that the equilibrium is linear. For example, make a wrapper inside the function for the potential, Jacobian, and Hessian that forces x_i and y_i = 0. 
  
@@ -624,10 +638,6 @@ def calc_mode_energies(res, Fock_cutoffs):
         energies_m2[k] = qt.expect(E2_op, state)
     return energies_m1, energies_m2
  
-def calc_single_ion_ld_factors(omega, k, mass_amu):
-    z0 = np.sqrt(const.hbar / (2 * mass_amu * const.u * omega))
-    return k * z0 # ignore the phase
- 
 def check_single_ion_case():
     # for a single ion, the mode participation factors should just be the LD factors for each mode and direction.
     # this is a good sanity check to make sure the mode participation factor calculation is correct.
@@ -642,18 +652,18 @@ def check_single_ion_case():
 
     mode_analysis_one = TrappedIonModeAnalysis(num_ions, wx, wy, wz, np.ones(num_ions)*mass_yb_amu, Z) 
     mode_analysis_one.solve_ion_trap_equilibrium()
-    #mode_participation_factors_one = calculate_mode_participation_factors(mode_analysis_one)
     mode_participation_factors_one = mode_analysis_one.calculate_mode_participation_factors()
-    ld_factors_one = k * mode_participation_factors_one
-    eta_x = calc_single_ion_ld_factors(wx, k, mass_yb_amu)
-    eta_y = calc_single_ion_ld_factors(wy, k, mass_yb_amu)
-    eta_z = calc_single_ion_ld_factors(wz, k, mass_yb_amu)
+    simulated_LD_parameters = k * mode_participation_factors_one
+
+    # Compute analytical reference 
+    eta_x, eta_y, eta_z = mode_analysis_one.compute_reference_single_ion_lamb_dicke_factors(k) 
     ld_factors_one_analytical = np.zeros((3, 1, 3), dtype = np.complex128)
     ld_factors_one_analytical[0, 0, 2] = eta_x
     ld_factors_one_analytical[1, 0, 1] = eta_y
     ld_factors_one_analytical[2, 0, 0] = eta_z
     print(f"\nLD factors: {ld_factors_one_analytical}")
-    print("\nRatio of single ion LD factors from mode participation calculation to analytical calculation: \n", ld_factors_one / ld_factors_one_analytical)
+    #print("\nRatio of single ion LD factors from mode participation calculation to analytical calculation: \n", simulated_LD_parameters / ld_factors_one_analytical)
+    print(f"\nLD factors (via diagonalization):\n {simulated_LD_parameters}")
  
 def check_two_ion_case():
     wz = 2 * np.pi * .5e6  # axial trap frequency
@@ -671,9 +681,7 @@ def check_two_ion_case():
     #mode_participation_factors_two= calculate_mode_participation_factors(mode_analysis_two)
     mode_participation_factors_two = mode_analysis_two.calculate_mode_participation_factors()
     ld_factors_two = k * mode_participation_factors_two
-    eta_x = calc_single_ion_ld_factors(wx, k, mass_yb_amu)
-    eta_y = calc_single_ion_ld_factors(wy, k, mass_yb_amu)
-    eta_z = calc_single_ion_ld_factors(wz, k, mass_yb_amu)
+    eta_x, eta_y, eta_z = mode_analysis_two.compute_reference_single_ion_lamb_dicke_factors(k) 
     eta_COM_x = eta_x / np.sqrt(2)
     eta_COM_y = eta_y / np.sqrt(2)
     eta_COM_z = eta_z / np.sqrt(2)
@@ -696,8 +704,9 @@ def check_two_ion_case():
     ld_factors_two_analytical[2, 1, 1] = -eta_stretch_z
     # these seem to work out!
     print(f"\nLD factors: {ld_factors_two_analytical}")
-    print("Ratio of two ion LD factors from mode participation calculation to analytical calculation: \n", ld_factors_two / ld_factors_two_analytical)
- 
+    #print("Ratio of two ion LD factors from mode participation calculation to analytical calculation: \n", ld_factors_two / ld_factors_two_analytical)
+    print(f"\nLD factors (via diagonalization):\n {ld_factors_two}")
+
  
 
  
@@ -705,5 +714,5 @@ def check_two_ion_case():
 if __name__ == '__main__':
     # Test analysis: 
     # TODO: convert to tests 
-    #check_two_ion_case() 
-    check_single_ion_case()
+    check_two_ion_case() 
+    #check_single_ion_case()
