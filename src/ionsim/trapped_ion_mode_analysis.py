@@ -137,7 +137,7 @@ class TrappedIonModeAnalysis:
         self.characteristic_parameters['energy'] = 0.5 * mass_scale * self.characteristic_parameters['velocity'] ** 2  # characteristic energy  
 
 
-    def get_norm(self, eigenvector: Vector, H: Matrix) -> float:
+    def get_eigenvector_norm(self, eigenvector: Vector, H: Matrix) -> float:
         """ Computes the norm of the eigenvector en w.r.t. the Hamiltonian H. """
         norm = np.sqrt(eigenvector.T.conj() @ H @ eigenvector)
         return norm
@@ -167,7 +167,7 @@ class TrappedIonModeAnalysis:
         en = self.normalize_eigenvectors(en,H)
         Outers = np.zeros((6*self.num_ions,6*self.num_ions),dtype=complex)
         for i in range(6*self.num_ions):
-            norm = self.get_norm(en[:,i],H)
+            norm = self.get_eigenvector_norm(en[:,i],H)
             Outers = Outers + np.outer(en[:,i],en[:,i].conj())/norm 
         I_right = H @ Outers
         I_left  = Outers @ H
@@ -194,7 +194,9 @@ class TrappedIonModeAnalysis:
 
     #def run(self):
     def solve_ion_trap_equilibrium(self): 
+        """ Diagonalizes the Coulomb + harmonic trap Hamiltonian for a system of ions. """
         # Convert to dimensionless units using axial trap frequency and first ion's mass and charge  
+        # TODO: take in input here or in class constructor for mass, charge, trap scales. 
         self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
         
         self.u = self.solve_for_equilibrium_positions()
@@ -227,7 +229,7 @@ class TrappedIonModeAnalysis:
             eigenvalues = np.ones(num_eigenvalues)
         for i in range(num_eigenvalues):
             en = eigvecs[:,i].reshape(num_coords,1)
-            norm = self.get_norm(en,H)
+            norm = self.get_eigenvector_norm(en,H)
             eigvecs_rescaled[:,i] = en[:,0]/norm
             eigvecs_rescaled[:,i] *= np.sqrt(eigenvalues[i])
         return eigvecs_rescaled 
@@ -584,6 +586,7 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
  
     #def run(self):
     def solve_ion_trap_equilibrium(self): 
+        """ Diagonalizes the Coulomb + harmonic trap Hamiltonian for a system of ions. """
         self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
         
         self.u = self.solve_for_equilibrium_positions()
