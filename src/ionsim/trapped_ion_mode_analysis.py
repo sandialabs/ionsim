@@ -18,6 +18,8 @@ import scipy.optimize as opt
 ## 1. Variable changes for readable (e.g. omega_x instead of wx) 
 ## 2. Type-hinting in functions  
 ## 3. Consolidated the functions for solving for ion positions equilibria 
+## 4. Moved eigenvector helper functions into the class. 
+## 5. Reduced number of matrices that we store as class attributes: Need to check whether we want to be storing those. 
 
 
 
@@ -26,48 +28,6 @@ def characteristic_length(q: float, mass: float, omega: float):
     k_e = 1 / (4 * np.pi * const.epsilon_0)  # Coulomb constant
     l0 = ((k_e * q ** 2) / (.5 * mass * omega ** 2)) ** (1 / 3)
     return l0
-
-def get_norm(en,H):
-    """
-    Get the norm of the eigen vector en w.r.t. the Hamiltonian H.
-    """
-    norm = np.sqrt(en.T.conj() @ H @ en)
-    return norm
-
-
-def normalize_eigen_vectors(ens,H,evs=None): 
-    """
-    Rescale the eigen vectors ens w.r.t. the Hamiltonian H.
-    """
-    ens_rescaled = np.zeros_like(ens,dtype=complex)
-    num_coords,num_evs = np.shape(ens)
-    if evs is None:
-        evs = np.ones(num_evs)
-    for i in range(num_evs):
-        en = ens[:,i].reshape(num_coords,1)
-        norm = get_norm(en,H)
-        ens_rescaled[:,i] = en[:,0]/norm
-        ens_rescaled[:,i] *= np.sqrt(evs[i])
-    return ens_rescaled 
-
-
-
-def get_canonical_transformation(H,ens,evs=None):
-    """
-    Given the eigen-solve of the dynamical matrix, get the transform matrix 
-    to the canonical coordinates.
-    X = S X', where X' = (Q,P)^T and X = (q,p)^T
-    """
-    ## TODO: understand the sign in the transformation matrix
-    sign = -1
-    num_coords, num_evs = np.shape(ens)
-    assert num_coords //2 == num_evs    
-    T = np.zeros((num_coords,num_coords),dtype=complex) 
-    ens = normalize_eigen_vectors(ens,H,evs=evs)
-    T = np.sqrt(2)*np.concatenate((np.real(ens), sign*np.imag(ens)), axis=1)
-    # the sign is likely due to the convention of writing the time evolution as exp(-iwt)
-    return T
-
 
 def convert_to_array(x: float | int | list | NDArray):
     """ Converts a scalar to a vector or returns the vector """ 
@@ -87,6 +47,7 @@ class TrappedIonModeAnalysis:
             - omega_z: harmonic trap frequency in the z direction. This is the "axial" direction used for 1D chains.  
             - atomic masses: array of atomic masses or a single number => same mass for each ion. Units are amu (atomic mass units) 
             - atomic numbers: array of (Z) atomic numbers (# of protons of an element) or a single number => all ions are the same.  
+
         """ 
         # TODO: Decide how to handle units and how much of pint we should use.  
         self.num_ions = num_ions
@@ -176,18 +137,41 @@ class TrappedIonModeAnalysis:
         self.characteristic_parameters['velocity'] = self.characteristic_parameters['length'] * trap_freq_scale  # characteristic velocity
         self.characteristic_parameters['energy'] = 0.5 * mass_scale * self.characteristic_parameters['velocity'] ** 2  # characteristic energy  
 
+
+    def get_norm(self, eigenvector: Vector, H: Matrix) -> float:
+        """ Computesthe norm of the eigenvector en w.r.t. the Hamiltonian H. """
+        norm = np.sqrt(eigenvector.T.conj() @ H @ eigenvector)
+        return norm
+    
+    
+    def get_canonical_transformation(self, H, eigenvectors, eigenvalues: Vector | None=None):
+        """ Given the eigensolve of the dynamical matrix, get the transform matrix to the canonical coordinates.
+            X = S X', where X' = (Q,P)^T and X = (q,p)^T
+        """
+        ## TODO: understand the sign in the transformation matrix
+        sign = -1
+        num_coords, num_eigenvalues = np.shape(eigenvectors)
+        assert num_coords //2 == num_eigenvalues 
+        T = np.zeros((num_coords,num_coords),dtype=complex) 
+        eigenvectors = self.normalize_eigenvectors(eigenvectors, H, eigenvalues)
+        T = np.sqrt(2)*np.concatenate((np.real(eigenvectors), sign*np.imag(eigenvectors)), axis=1)
+        # the sign is likely due to the convention of writing the time evolution as exp(-iwt)
+        return T
+
+
     def check_for_zero_modes(self):
         assert np.all(self.eigvals > 0), "All eigenvalues must be positive"   
 
-    def check_outer_relation(self): 
-        H = self.H_matrix.copy()       
-        D = self.get_symplectic_matrix() @ H
+    def check_outer_relation(self, H: Matrix): 
+        # TODO: Should this return something (True/False)? 
+        #H = self.H_matrix.copy()       
+        D = self.build_symplectic_matrix() @ H
         Eval, Evec = np.linalg.eig(D)
         _, en = self.sort_modes(Eval,Evec)
-        en = self.normalize_eigen_vectors(en,H)
+        en = self.normalize_eigenvectors(en,H)
         Outers = np.zeros((6*self.num_ions,6*self.num_ions),dtype=complex)
         for i in range(6*self.num_ions):
-            norm = get_norm(en[:,i],H)
+            norm = self.get_norm(en[:,i],H)
             Outers = Outers + np.outer(en[:,i],en[:,i].conj())/norm 
         I_right = H @ Outers
         I_left  = Outers @ H
@@ -199,17 +183,13 @@ class TrappedIonModeAnalysis:
         except AssertionError:
             warnings.warn("Outer relation check failed")
 
-
-
     def has_duplicate_eigvals(eigvals):
         evs = eigvals.copy()    
         return np.any(np.triu(np.isclose(evs[:, None], evs[None, :], atol=1e-6), k=1))  
     
-
-
-    def check_diagnolization(self):
-        M = np.linalg.inv(self.T_matrix) @ self.S_matrix    
-        H_diag = M.T @ self.E_matrix @ M    
+    def check_diagonalization(self, T: Matrix, S: Matrix, E: Matrix) -> bool:
+        M = np.linalg.inv(T) @ S
+        H_diag = M.T @ E @ M    
         H_diag_check = np.diag(np.tile(self.eigvals,2)) 
         np.set_printoptions(precision=2, suppress=True) 
         try:
@@ -218,41 +198,45 @@ class TrappedIonModeAnalysis:
             warnings.warn("Diagnolization check failed")    
             print("has duplicate eigenvalues: ", self.has_duplicate_eigvals(self.eigvals))
 
-
-
-    def checks(self):   
-        self.check_outer_relation()
-        self.check_diagnolization()
-
-    def run(self):
-        #self.dimensionless_parameters()
+    def solve_ion_trap_equilibria(self): 
+    #def run(self):
         # Convert to dimensionless units using axial trap frequency and first ion's mass and charge  
         self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
         #assert self.trap_is_stable()   # checked in the constructor  
         
-        #self.u = self.calculate_equilibrium_positions()
         self.u = self.solve_for_equilibrium_positions()
         self.reindex_ions()
-        self.E_matrix = self.get_E_matrix(self.u)  
-        self.T_matrix = self.get_momentum_transform() 
-        self.H_matrix = self.get_H_matrix(self.T_matrix, self.E_matrix)   
+        # Compute matrices 
+        mass_matrix = self.build_mass_matrix(self.m)  
+        E_matrix = self.build_E_matrix(self.u, mass_matrix)  
+        T_matrix = self.build_momentum_transform_matrix(mass_matrix)
+        H_matrix = self.compute_H_matrix(T_matrix, E_matrix)   
 
-        self.eigvals, self.eigvecs = self.calculate_normal_modes(self.H_matrix)
-        self.eigvecs_vel = self.get_eigen_vectors_xv_coords(self.T_matrix,self.eigvecs)    
+        self.eigvals, self.eigvecs = self.calculate_normal_modes(H_matrix)
+        self.eigvecs_vel = self.get_eigen_vectors_xv_coords(T_matrix, self.eigvecs)    
         self.check_for_zero_modes() 
-        self.S_matrix = self.get_canonical_transformation() 
-        self.checks() 
+        S_matrix = self.get_canonical_transformation(H_matrix, self.eigvecs, self.eigvals) 
+
+        # Perform checks 
+        self.check_outer_relation(H_matrix)
+        self.check_diagonalization(T_matrix, S_matrix, E_matrix)
         self.hasrun = True  
     
 
-    def get_canonical_transformation(self):
-        return get_canonical_transformation(self.H_matrix,self.eigvecs,evs=self.eigvals)    
-
-
-
-    def normalize_eigen_vectors(self, eigvecs, H_matrix,evs=None):
-        return normalize_eigen_vectors(eigvecs,H_matrix,evs=evs) 
-
+    def normalize_eigenvectors(self, eigvecs, H: Matrix, eigenvalues: Vector | None=None): 
+        """
+        Rescale the eigenvectors ens w.r.t. the Hamiltonian H.
+        """
+        eigvecs_rescaled = np.zeros_like(eigvecs,dtype=complex)
+        num_coords, num_eigenvalues = np.shape(eigvecs)
+        if eigenvalues is None:
+            eigenvalues = np.ones(num_eigenvalues)
+        for i in range(num_eigenvalues):
+            en = eigvecs[:,i].reshape(num_coords,1)
+            norm = self.get_norm(en,H)
+            eigvecs_rescaled[:,i] = en[:,0]/norm
+            eigvecs_rescaled[:,i] *= np.sqrt(eigenvalues[i])
+        return eigvecs_rescaled 
 
 
     def get_eigen_vectors_xv_coords(self,T,ens): 
@@ -269,12 +253,12 @@ class TrappedIonModeAnalysis:
             The matrix "D" is defind as D = JH, where J = (0 , I ; I, 0) (eq. 1.67 of thesis)
 
         """
-        J = self.get_symplectic_matrix()
+        J = self.build_symplectic_matrix()
         D_matrix = J @ H_matrix  
         # u_n(t) = exp(-i w_n t) u_n(0), minus by convention
         eigvals, eigvecs = np.linalg.eig(-D_matrix)   
         eigvals, eigvecs = self.organize_modes(eigvals, eigvecs)
-        eigvecs = self.normalize_eigen_vectors(eigvecs, H_matrix) 
+        eigvecs = self.normalize_eigenvectors(eigvecs, H_matrix) 
 
         return eigvals, eigvecs 
 
@@ -461,41 +445,40 @@ class TrappedIonModeAnalysis:
         return H_coulomb
 
 
-    def hessian(self, positions: Vector):
+    def hessian(self, positions: Vector) -> Matrix:
         """ Computes total Hessian (trap + Coulomb interaction) """
         H = self.hessian_coulomb(positions) + self.hessian_trap(positions)  
         return H
 
-    def get_mass_matrix(self, m): 
-        return np.diag(np.tile(m, 3)) 
+    def build_mass_matrix(self, masses: Vector) -> Matrix: 
+        return np.diag(np.tile(masses, 3)) 
 
-    def get_E_matrix(self, positions: Vector): 
+    def build_E_matrix(self, positions: Vector, mass_matrix: Matrix) -> Matrix: 
         """ 6N x 6N energy matrix for N ions """ 
         PE_matrix = np.zeros((3*self.num_ions, 3*self.num_ions), dtype=np.complex128)
         KE_matrix = np.zeros((3*self.num_ions, 3*self.num_ions), dtype=np.complex128)
         E_matrix = np.zeros((6*self.num_ions, 6*self.num_ions), dtype=np.complex128)
 
         PE_matrix = self.hessian(positions)
-        KE_matrix = self.get_mass_matrix(self.m) 
+        KE_matrix = mass_matrix 
         zeros = np.zeros((3*self.num_ions, 3*self.num_ions)) 
         E_matrix = np.block([[PE_matrix, zeros], [zeros, KE_matrix]])
         return E_matrix
 
-    def get_H_matrix(self, T_matrix, E_matrix):  
+    def compute_H_matrix(self, T_matrix, E_matrix):  
         """ Computes 6N x 6N Hermitian Hamiltonian matrix in (q, p) canonical coordinates """ 
         T_matrix_inv = np.linalg.inv(T_matrix)  
         H_matrix = T_matrix_inv.T @ E_matrix @ T_matrix_inv
         return H_matrix 
 
-    def get_momentum_transform(self):
+    def build_momentum_transform_matrix(self, mass_matrix: Matrix) -> Matrix:
         # assuming no magnetic field
-        mass_matrix = self.get_mass_matrix(self.m)  
         eye = np.eye(3*self.num_ions)  
         zeros = np.zeros((3*self.num_ions, 3*self.num_ions))
         T = np.block([[eye, zeros], [zeros, mass_matrix]])  
         return T    
 
-    def get_symplectic_matrix(self):
+    def build_symplectic_matrix(self) -> Matrix:
         """ Computes J a 6N x 6N symplectic matrix defined as J = (0 , I ; I, 0) (eq. 1.67 of thesis) """
         zeros = np.zeros((3*self.num_ions, 3*self.num_ions), dtype=np.complex128)
         I = np.eye(3*self.num_ions, dtype=np.complex128)
@@ -587,21 +570,27 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
         self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
  
  
-    def run(self):
+    #def run(self):
+    def solve_ion_trap_equilibria(self): 
         #self.dimensionless_parameters()
         self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
         #assert self.trap_is_stable()    
         
         self.u = self.solve_for_equilibrium_positions()
         self.reindex_ions_by_z()
-        self.E_matrix = self.get_E_matrix(self.u)  
-        self.T_matrix = self.get_momentum_transform()
-        self.H_matrix = self.get_H_matrix(self.T_matrix, self.E_matrix)   
-        self.eigvals, self.eigvecs = self.calculate_normal_modes(self.H_matrix)
-        self.eigvecs_vel = self.get_eigen_vectors_xv_coords(self.T_matrix,self.eigvecs)    
+        #self.E_matrix = self.build_E_matrix(self.u)  
+        mass_matrix = self.build_mass_matrix(self.m)  
+        E_matrix = self.build_E_matrix(self.u, mass_matrix)  
+        T_matrix = self.build_momentum_transform_matrix(mass_matrix)
+        H_matrix = self.compute_H_matrix(T_matrix, E_matrix)   
+
+        self.eigvals, self.eigvecs = self.calculate_normal_modes(H_matrix)
+        self.eigvecs_vel = self.get_eigen_vectors_xv_coords(T_matrix, self.eigvecs)    
         self.check_for_zero_modes()
-        self.S_matrix = self.get_canonical_transformation()
-        self.checks()
+        #S_matrix = self.get_canonical_transformation(H_matrix) 
+        S_matrix = self.get_canonical_transformation(H_matrix, self.eigvecs, self.eigvals) 
+        self.check_outer_relation(H_matrix)
+        self.check_diagonalization(T_matrix, S_matrix, E_matrix)
         self.hasrun = True  
     
  
@@ -669,7 +658,7 @@ def check_single_ion_case():
     num_ions = 1
 
     mode_analysis_one = TrappedIonModeAnalysis(num_ions, wx, wy, wz, np.ones(num_ions)*mass_yb_amu, atomic_nums) 
-    mode_analysis_one.run()
+    mode_analysis_one.solve_ion_trap_equilibria()
     mode_participation_factors_one = calculate_mode_participation_factors(mode_analysis_one)
     ld_factors_one = k * mode_participation_factors_one
     eta_x = calc_single_ion_ld_factors(wx, k, mass_yb_amu)
