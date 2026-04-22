@@ -30,7 +30,7 @@ def characteristic_length(q: float, mass: float, omega: float) -> float:
 
 
 class TrappedIonModeAnalysis:
-    def __init__(self, num_ions: int, omega_x: float, omega_y: float, omega_z: float, atomic_masses: Vector[float] | float, atomic_numbers: Vector[int] | int): 
+    def __init__(self, num_ions: int, omega_x: float, omega_y: float, omega_z: float, atomic_masses: Vector | float, atomic_numbers: Vector | int): 
         """ Class for determining properties of trapped-ion phonon modes, requiring the following system parameters:
 
             - num_ions: the number of ions
@@ -68,7 +68,7 @@ class TrappedIonModeAnalysis:
         #self.hasrun = False 
     
 
-    def calculate_species_trap_frequencies(self, omega: float) -> Vector[float]: 
+    def calculate_species_trap_frequencies(self, omega: float) -> Vector: 
         """ Computes relative trap frequencies for each species:
 
             w_i = sqrt(q_{i} m_0 / m_{i} q_0) omega 
@@ -638,82 +638,82 @@ def calc_mode_energies(res, Fock_cutoffs):
         energies_m2[k] = qt.expect(E2_op, state)
     return energies_m1, energies_m2
  
-def check_single_ion_case():
-    # for a single ion, the mode participation factors should just be the LD factors for each mode and direction.
-    # this is a good sanity check to make sure the mode participation factor calculation is correct.
-    wz = 2 * np.pi * .5e6  # axial trap frequency
-    wy = 2 * np.pi * 1.9e6  # radial trap frequency
-    wx = 2 * np.pi * 10e6  # radial trap frequency, something high to avoid any issues with mode ordering
-    mass_yb_amu = 170.936
-    k = 2 * np.pi / 355e-9
-    #atomic_nums = np.array([70]) 
-    Z = 70 
-    num_ions = 1
-
-    mode_analysis_one = TrappedIonModeAnalysis(num_ions, wx, wy, wz, np.ones(num_ions)*mass_yb_amu, Z) 
-    mode_analysis_one.solve_ion_trap_equilibrium()
-    mode_participation_factors_one = mode_analysis_one.calculate_mode_participation_factors()
-    simulated_LD_parameters = k * mode_participation_factors_one
-
-    # Compute analytical reference 
-    eta_x, eta_y, eta_z = mode_analysis_one.compute_reference_single_ion_lamb_dicke_factors(k) 
-    ld_factors_one_analytical = np.zeros((3, 1, 3), dtype = np.complex128)
-    ld_factors_one_analytical[0, 0, 2] = eta_x
-    ld_factors_one_analytical[1, 0, 1] = eta_y
-    ld_factors_one_analytical[2, 0, 0] = eta_z
-    print(f"\nLD factors: {ld_factors_one_analytical}")
-    #print("\nRatio of single ion LD factors from mode participation calculation to analytical calculation: \n", simulated_LD_parameters / ld_factors_one_analytical)
-    print(f"\nLD factors (via diagonalization):\n {simulated_LD_parameters}")
- 
-def check_two_ion_case():
-    wz = 2 * np.pi * .5e6  # axial trap frequency
-    wy = 2 * np.pi * 1.5e6  # radial trap frequency
-    wx = 2 * np.pi * 2e6  # radial trap frequency
-    wy_tilt = np.sqrt(wy**2 - wz**2)
-    wx_tilt = np.sqrt(wx**2 - wz**2)
-    mass_yb_amu = 170.936
-    k = 2 * np.pi / 355e-9
-    num_ions = 2
-    Z = 70
-    #mode_analysis_two= mode_analyzer(N =2, wz = wz, wy = wy, wx = wx, ionmass_amu= mass_yb_amu)
-    mode_analysis_two = TrappedIonModeAnalysis(num_ions, wx, wy, wz, mass_yb_amu, Z) 
-    mode_analysis_two.solve_ion_trap_equilibrium()
-    #mode_participation_factors_two= calculate_mode_participation_factors(mode_analysis_two)
-    mode_participation_factors_two = mode_analysis_two.calculate_mode_participation_factors()
-    ld_factors_two = k * mode_participation_factors_two
-
-    eta_x, eta_y, eta_z = mode_analysis_two.compute_reference_single_ion_lamb_dicke_factors(k) 
-    eta_COM_x = eta_x / np.sqrt(2)
-    eta_COM_y = eta_y / np.sqrt(2)
-    eta_COM_z = eta_z / np.sqrt(2)
-    eta_stretch_z = eta_z /np.sqrt(2) /3**(1/4)
-    # I don't know the analytical expressions for the tilt modes off the top of my head... let's assume its the square root of the normalized mode frequency
-    eta_tilt_x = eta_x / np.sqrt(2) / np.sqrt(wx_tilt / wx)
-    eta_tilt_y = eta_y / np.sqrt(2) / np.sqrt(wy_tilt / wy)
-    ld_factors_two_analytical = np.zeros((3, 2, 6), dtype = np.complex128)
-    ld_factors_two_analytical[0, 0, 5] = eta_COM_x
-    ld_factors_two_analytical[0, 1, 5] = eta_COM_x
-    ld_factors_two_analytical[0, 0, 4] = eta_tilt_x
-    ld_factors_two_analytical[0, 1, 4] = -eta_tilt_x
-    ld_factors_two_analytical[1, 0, 3] = eta_COM_y
-    ld_factors_two_analytical[1, 1, 3] = eta_COM_y
-    ld_factors_two_analytical[1, 0, 2] = eta_tilt_y
-    ld_factors_two_analytical[1, 1, 2] = -eta_tilt_y
-    ld_factors_two_analytical[2, 0, 0] = eta_COM_z
-    ld_factors_two_analytical[2, 1, 0] = eta_COM_z
-    ld_factors_two_analytical[2, 0, 1] = eta_stretch_z
-    ld_factors_two_analytical[2, 1, 1] = -eta_stretch_z
-    # these seem to work out!
-    print(f"\nLD factors: {ld_factors_two_analytical}")
-    #print("Ratio of two ion LD factors from mode participation calculation to analytical calculation: \n", ld_factors_two / ld_factors_two_analytical)
-    print(f"\nLD factors (via diagonalization):\n {ld_factors_two}")
-
- 
-
- 
-### Example usage  ###  
-if __name__ == '__main__':
-    # Test analysis: 
-    # TODO: convert to tests 
-    check_two_ion_case() 
-    #check_single_ion_case()
+ #def check_single_ion_case():
+ #    # for a single ion, the mode participation factors should just be the LD factors for each mode and direction.
+ #    # this is a good sanity check to make sure the mode participation factor calculation is correct.
+ #    wz = 2 * np.pi * .5e6  # axial trap frequency
+ #    wy = 2 * np.pi * 1.9e6  # radial trap frequency
+ #    wx = 2 * np.pi * 10e6  # radial trap frequency, something high to avoid any issues with mode ordering
+ #    mass_yb_amu = 170.936
+ #    k = 2 * np.pi / 355e-9
+ #    #atomic_nums = np.array([70]) 
+ #    Z = 70 
+ #    num_ions = 1
+ #
+ #    mode_analysis_one = TrappedIonModeAnalysis(num_ions, wx, wy, wz, np.ones(num_ions)*mass_yb_amu, Z) 
+ #    mode_analysis_one.solve_ion_trap_equilibrium()
+ #    mode_participation_factors_one = mode_analysis_one.calculate_mode_participation_factors()
+ #    simulated_LD_parameters = k * mode_participation_factors_one
+ #
+ #    # Compute analytical reference 
+ #    eta_x, eta_y, eta_z = mode_analysis_one.compute_reference_single_ion_lamb_dicke_factors(k) 
+ #    ld_factors_one_analytical = np.zeros((3, 1, 3), dtype = np.complex128)
+ #    ld_factors_one_analytical[0, 0, 2] = eta_x
+ #    ld_factors_one_analytical[1, 0, 1] = eta_y
+ #    ld_factors_one_analytical[2, 0, 0] = eta_z
+ #    print(f"\nLD factors: {ld_factors_one_analytical}")
+ #    #print("\nRatio of single ion LD factors from mode participation calculation to analytical calculation: \n", simulated_LD_parameters / ld_factors_one_analytical)
+ #    print(f"\nLD factors (via diagonalization):\n {simulated_LD_parameters}")
+ # 
+ #def check_two_ion_case():
+ #    wz = 2 * np.pi * .5e6  # axial trap frequency
+ #    wy = 2 * np.pi * 1.5e6  # radial trap frequency
+ #    wx = 2 * np.pi * 2e6  # radial trap frequency
+ #    wy_tilt = np.sqrt(wy**2 - wz**2)
+ #    wx_tilt = np.sqrt(wx**2 - wz**2)
+ #    mass_yb_amu = 170.936
+ #    k = 2 * np.pi / 355e-9
+ #    num_ions = 2
+ #    Z = 70
+ #    #mode_analysis_two= mode_analyzer(N =2, wz = wz, wy = wy, wx = wx, ionmass_amu= mass_yb_amu)
+ #    mode_analysis_two = TrappedIonModeAnalysis(num_ions, wx, wy, wz, mass_yb_amu, Z) 
+ #    mode_analysis_two.solve_ion_trap_equilibrium()
+ #    #mode_participation_factors_two= calculate_mode_participation_factors(mode_analysis_two)
+ #    mode_participation_factors_two = mode_analysis_two.calculate_mode_participation_factors()
+ #    ld_factors_two = k * mode_participation_factors_two
+ #
+ #    eta_x, eta_y, eta_z = mode_analysis_two.compute_reference_single_ion_lamb_dicke_factors(k) 
+ #    eta_COM_x = eta_x / np.sqrt(2)
+ #    eta_COM_y = eta_y / np.sqrt(2)
+ #    eta_COM_z = eta_z / np.sqrt(2)
+ #    eta_stretch_z = eta_z /np.sqrt(2) /3**(1/4)
+ #    # I don't know the analytical expressions for the tilt modes off the top of my head... let's assume its the square root of the normalized mode frequency
+ #    eta_tilt_x = eta_x / np.sqrt(2) / np.sqrt(wx_tilt / wx)
+ #    eta_tilt_y = eta_y / np.sqrt(2) / np.sqrt(wy_tilt / wy)
+ #    ld_factors_two_analytical = np.zeros((3, 2, 6), dtype = np.complex128)
+ #    ld_factors_two_analytical[0, 0, 5] = eta_COM_x
+ #    ld_factors_two_analytical[0, 1, 5] = eta_COM_x
+ #    ld_factors_two_analytical[0, 0, 4] = eta_tilt_x
+ #    ld_factors_two_analytical[0, 1, 4] = -eta_tilt_x
+ #    ld_factors_two_analytical[1, 0, 3] = eta_COM_y
+ #    ld_factors_two_analytical[1, 1, 3] = eta_COM_y
+ #    ld_factors_two_analytical[1, 0, 2] = eta_tilt_y
+ #    ld_factors_two_analytical[1, 1, 2] = -eta_tilt_y
+ #    ld_factors_two_analytical[2, 0, 0] = eta_COM_z
+ #    ld_factors_two_analytical[2, 1, 0] = eta_COM_z
+ #    ld_factors_two_analytical[2, 0, 1] = eta_stretch_z
+ #    ld_factors_two_analytical[2, 1, 1] = -eta_stretch_z
+ #    # these seem to work out!
+ #    print(f"\nLD factors: {ld_factors_two_analytical}")
+ #    #print("Ratio of two ion LD factors from mode participation calculation to analytical calculation: \n", ld_factors_two / ld_factors_two_analytical)
+ #    print(f"\nLD factors (via diagonalization):\n {ld_factors_two}")
+ #
+ # 
+ #
+ # 
+ #### Example usage  ###  
+ #if __name__ == '__main__':
+ #    # Test analysis: 
+ #    # TODO: convert to tests 
+ #    check_two_ion_case() 
+ #    #check_single_ion_case()
