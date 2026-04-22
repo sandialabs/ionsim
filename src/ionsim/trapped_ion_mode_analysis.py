@@ -257,7 +257,7 @@ class TrappedIonModeAnalysis:
         return eigvals, eigvecs 
 
 
-    def ion_coordinates_from_flattened(self, flattened_coordinate_vector: Vector) -> tuple(Vector, Vector, Vector):
+    def ion_coordinates_from_flattened(self, flattened_coordinate_vector: Vector) -> tuple[Vector, Vector, Vector]:
         """ Returns arrays corresponding to an ion's x, y, and z coordinates, respectively, from a flattened vector u:
                 x = u[0:N], y = u[N:2N], z[2N:]
 
@@ -287,7 +287,6 @@ class TrappedIonModeAnalysis:
 
     def solve_for_equilibrium_positions(self, positions_guess: Vector | None=None):
         """ Solves for equilibrium position vector: u, which represents a flattened spatial grid. """
-
         # TODO: option for an initial guess choice? 
         # Set the initial guess for the solver  
         if positions_guess == None:
@@ -345,7 +344,7 @@ class TrappedIonModeAnalysis:
         force_trap = np.hstack((Ftrapx, Ftrapy, Ftrapz))
         return force_trap
 
-    def force_coulomb(self, positions): 
+    def force_coulomb(self, positions: Vector): 
         x,y,z = self.ion_coordinates_from_flattened(positions)
 
         dx = x[:, np.newaxis] - x
@@ -369,7 +368,7 @@ class TrappedIonModeAnalysis:
         force_coulomb *= 0.5    
         return force_coulomb
 
-    def force(self, positions):
+    def force(self, positions: Vector):
         Force = self.force_coulomb(positions) + self.force_trap(positions)  
         return Force
 
