@@ -89,6 +89,16 @@ def main():
         Y_pi2_gate = sm.Gate.from_lindbladian(basis, Y_pi2_lindbladian_function(Y_rot, phase_mean, phase_variance), gate_duration)
         return Y_pi2_gate.process_matrix 
 
+    def idle(theta):
+        """ Returns d^2 x d^2 process matrix in standard basis for Z-rotation by theta """  
+        # Build identity matrix with Z rotation by theta:
+        # TODO: generalize to 2+ qubits  
+        assert len(spins) == 1
+        I = np.eye(2,dtype=complex)
+        I[0,0] = np.exp( - 1j * theta ) 
+        I[1,1] = np.exp( 1j * theta ) 
+        # Promote to a d^2 x d^2 superoperator 
+        return basis.compute_superoperator_from_unitary_operator(I)
 
     ### Note: trying to use "from_lindbladian_function" to build a gate and extract its process matrix function is an alternative/equivalent way to do this:  
  #    def X_pi2_lindbladian(X_rot: float, phase_mean: float, phase_variance: float):
@@ -107,7 +117,7 @@ def main():
     ism_gate_dictionary = {}    
     ism_gate_dictionary['Gxpi2'] = X_pi2_process_matrix 
     ism_gate_dictionary['Gypi2'] = Y_pi2_process_matrix
-    #ism_gate_dictionary['idle'] = idle
+    ism_gate_dictionary['idle'] = idle
 
     # For GST, define state and measurement parametrizations (models): 
     # Here, we choose deviations from an ideal prep state and ideal POVM effects: 

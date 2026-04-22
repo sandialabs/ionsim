@@ -356,3 +356,9 @@ def _combine_process_matrices(process_matrices: list[Matrix]):
 #    def __repr__(self):
 #        readable_name = " ".join(repr(gate.name) for gate in self.expanded_gates) or "(empty)"
 #        return f"GST_Circuit({gates_readable}, counts={self.counts})"
+
+
+
+### Define a custom "Gate Set" object to store the core gates in a GST? This is a way to avoid storing excess gates / process matrices for GST circuits. 
+
+    # Defines gate set and does Circuit design for GST 
