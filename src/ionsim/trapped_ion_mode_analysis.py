@@ -3,6 +3,7 @@ from numpy.typing import NDArray
 import scipy.constants as const
 import warnings
 import scipy.optimize as opt    
+from ionsim.custom_types import Matrix, Vector
 
 ########## List of substantive changes by Ethan: 
 ## 1. Made dimensionless variable function take in inputs so the user can choose the charge, mass, and trap freq scales to use.   
