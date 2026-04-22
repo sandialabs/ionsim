@@ -20,7 +20,9 @@ from ionsim.custom_types import Matrix, Vector
 # 1. Is there a need for the "has run" boolean? e.g. is there a time where it stays False?  
 # 2. Should the dimensionless parameters have a naming convention, e.g. omega_x --> omega_x_ND 
 # 3. What sets the phases of the Lamb-Dicke parameters?  
-# 4. See TODO's 
+# 4. Does the LD calculation properly do k dot r?
+# 5. Can we vectorize this to convert loops into vector operations?  
+# 6. See TODO's 
 
 
 def characteristic_length(q: float, mass: float, omega: float) -> float:
@@ -492,8 +494,18 @@ class TrappedIonModeAnalysis:
         return eigvals, eigvecs 
 
 
-    def calculate_mode_participation_factors(self):
-        """ Computes ion-mode participation factors, related to the Lamb-Dicke parameters """ 
+    def calculate_mode_participation_factors(self) -> Matrix:
+        """ Computes ion-mode participation factors, related to the Lamb-Dicke parameters.
+
+            Mode participation factors (eta) take the following form:
+             
+            shape of eta matrix: (dimension, ion, mode) 
+            e.g. eta[1, 2, 3] is eta in the "y" direction, ion 1, and the 2nd mode. 
+
+            For N ions, this form organizes the 3N modes into N modes per direction "d", where d = x, y, z. 
+
+        """ 
+
         eigvecs = self.eigvecs
         num_coords, num_modes = np.shape(eigvecs)
         num_ions = num_modes // 3
