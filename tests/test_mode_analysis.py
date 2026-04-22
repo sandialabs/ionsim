@@ -1,10 +1,8 @@
 import unittest
 import numpy as np
 from scipy.linalg import expm
-#from ionsim.zeeman_solver import ZeemanHyperfineSolver 
 from ionsim.trapped_ion_mode_analysis import TrappedIonModeAnalysis 
 from ionsim.testing import assert_array_close
-from ionsim.degree_of_freedom import AtomicSpin
 
 class TestModeAnalysis(unittest.TestCase):
 
@@ -39,59 +37,59 @@ class TestModeAnalysis(unittest.TestCase):
                 for case in self.test_cases
             }
 
-        # Test 3: Use AtomicSpin from_species()  
-        self.spin = AtomicSpin.from_species(species='171Yb', term_symbols=['S0'], level_names=['S0,1/2,1/2', 'S0,1/2,-1/2'], magnetic_field = 400.) 
+        # Compute Lamb-Dicke parameter analytical reference for each case  
+        self.references = {}
+
+        # 1. Single ion case: 
+        k = self.test_cases[0]['wavevector']
+        eta_x, eta_y, eta_z = self.mode_analyzers['single ion 171Yb'].compute_reference_single_ion_lamb_dicke_factors(k)
+        etas_analytical = np.zeros((3, 1, 3), dtype = np.complex128)
+        etas_analytical[0, 0, 2] = eta_x
+        etas_analytical[1, 0, 1] = eta_y
+        etas_analytical[2, 0, 0] = eta_z
+        self.references['single ion 171Yb'] = etas_analytical
+
+        # 2. Two-ion case: 
+        k = self.test_cases[1]['wavevector']
+        eta_x, eta_y, eta_z = self.mode_analyzers['two ion 171Yb'].compute_reference_single_ion_lamb_dicke_factors(k)
+        wx = self.test_cases[1]['omega x']
+        wy = self.test_cases[1]['omega y']
+        wz = self.test_cases[1]['omega z']
+
+        wy_tilt = np.sqrt(wy**2 - wz**2)
+        wx_tilt = np.sqrt(wx**2 - wz**2)
+        eta_COM_x = eta_x / np.sqrt(2)
+        eta_COM_y = eta_y / np.sqrt(2)
+        eta_COM_z = eta_z / np.sqrt(2)
+        eta_stretch_z = eta_z /np.sqrt(2) /3**(1/4)
+        # I don't know the analytical expressions for the tilt modes off the top of my head... let's assume its the square root of the normalized mode frequency
+        eta_tilt_x = eta_x / np.sqrt(2) / np.sqrt(wx_tilt / wx) 
+        eta_tilt_y = eta_y / np.sqrt(2) / np.sqrt(wy_tilt / wy) 
+        etas_analytical = np.zeros((3, 2, 6), dtype = np.complex128)
+        etas_analytical[0, 0, 5] = eta_COM_x
+        etas_analytical[0, 1, 5] = eta_COM_x
+        etas_analytical[0, 0, 4] = eta_tilt_x
+        etas_analytical[0, 1, 4] = -eta_tilt_x
+        etas_analytical[1, 0, 3] = eta_COM_y
+        etas_analytical[1, 1, 3] = eta_COM_y
+        etas_analytical[1, 0, 2] = eta_tilt_y
+        etas_analytical[1, 1, 2] = -eta_tilt_y
+        etas_analytical[2, 0, 0] = eta_COM_z
+        etas_analytical[2, 1, 0] = eta_COM_z
+        etas_analytical[2, 0, 1] = eta_stretch_z
+        etas_analytical[2, 1, 1] = -eta_stretch_z
+        self.references['two ion 171Yb'] = etas_analytical
+
 
     def test_mode_analysis_solvers(self):
         # Test functionality of mode analysis for computing Lamb-Dicke parameters as compared to a reference  
-        # Create tests for each solver. Each atom case has a list of tests:  
-        #tests = {case['test name'] : [] for case in self.test_cases}
-
-
-        # Compute Lamb-Dicke parameters for both test cases 
-        for case, mode_analyzer in zip(self.test_cases, self.mode_analyzers):
+        # Compute Lamb-Dicke parameters for all test cases 
+        for case, mode_analyzer, reference_values in zip(self.test_cases, self.mode_analyzers.values(), self.references.values()):
             # Solve the ion-trap equilibrium problem
             mode_analyzer.solve_ion_trap_equilibrium()
             # Compute and store Lamb-Dicke parameters: 
             case['Lamb Dicke parameters'] = case['wavevector'] * mode_analyzer.calculate_mode_participation_factors()
-            print(f"Lamb Dicke parameters: {case['Lamb Dicke parameters']}")
-
-
-        # For magnetic field strength, verify energy shift for a state: 
- #        tests['171Yb'].append({'Magnetic field' : 400, # Gauss
- #                'state type' : 'hyperfine',
- #                'F,mF' : (0.5,-0.5),
- #                'Zeeman shift' : 149.98214416459987 # kHz
- #            })    
- #
- #        tests['171Yb'].append({'Magnetic field' : 400, # Gauss
- #                'state type' : 'hyperfine',
- #                'F,mF' : (0.5,0.5),
- #                'Zeeman shift' : -149.98214416459987 # kHz
- #            })        
- #
- #        # Loop through each solver and loop through each tests
- #        for name, solver in (self.solvers).items():
- #            test_list = tests[name] 
- #            for test in test_list:
- #                shifts, eigenvecs = solver.solve_at_field(test['Magnetic field'])
- #                if test['state type'] == 'hyperfine':
- #                    f, mF = test['F,mF']
- #                    calculated_value = solver.get_state_energy(shifts, eigenvecs, f = f, mf = mF)
- #                else:
- #                    mj, mi = test['mJ,mI']
- #                    calculated_value = solver.get_state_energy_from_mjmi_pair(shifts, eigenvecs, mj = mj, mi = mi)
- #
- #                self.assertAlmostEqual(calculated_value, test['Zeeman shift'], places=6) 
-
-
- #    def test_AtomicSpin_ZeemanShift(self): 
- #        """Test the Zeemaen shift functionality within AtomicSpin class."""
- #        expected_frequency = 149.98214416459987*2. # kHz
- #        qubit_frequency = self.spin.energy_levels[1].energy - self.spin.energy_levels[0].energy
- #        qubit_frequency /= (2.* np.pi) # convert from rad/s to Hz 
- #        self.assertAlmostEqual(expected_frequency, np.abs(qubit_frequency)*1E-3, places=6)
-
+            assert_array_close(np.abs(case['Lamb Dicke parameters']), np.abs(reference_values), atol = 1E-10, rtol=None)
 
 if __name__ == '__main__':
     unittest.main()

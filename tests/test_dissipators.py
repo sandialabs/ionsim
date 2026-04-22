@@ -5,7 +5,6 @@ from scipy.optimize import curve_fit
 from scipy.sparse import kron as skron
 
 from ionsim.zeeman_solver import ZeemanHyperfineSolver 
-from ionsim.testing import assert_array_close
 from ionsim.basis import StandardBasis
 from ionsim.operator import CouplingOperator, EnergyShiftOperator
 from ionsim.named_operators import Pauli, Fock
