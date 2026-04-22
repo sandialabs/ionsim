@@ -126,6 +126,7 @@ class TrappedIonModeAnalysis:
         self.wz = self.omega_z / self.trap_freq_scale 
         self.wy = self.omega_y / self.trap_freq_scale 
         self.wx = self.omega_x / self.trap_freq_scale  
+        self.trap_frequencies_ND = [self.wx, self.wy, self.wz]
 
         # TODO: Is hbar set to 1? Reconcile hbar somewhere  
         # Compute characteristic length, time, velocity, and energy scales and store in a dictionary  
@@ -309,22 +310,21 @@ class TrappedIonModeAnalysis:
 
     def potential_trap(self, positions: Vector) -> Vector:
         """ Computes trapping potential, takes in a flattened (1D) array of all position coordinates """
-        x,y,z = self.ion_coordinates_from_flattened(positions)
-        V_trap = 0.5 * np.sum((self.m * self.wx ** 2) * x ** 2) + \
-            0.5 * np.sum((self.m * self.wy ** 2) * y ** 2) + \
-                0.5 * np.sum((self.m * self.wz ** 2) * z ** 2)
+        r = self.ion_coordinates_from_flattened(positions)
+        V_trap = 0.
+        for coord, omega in zip(r, self.trap_frequencies_ND): 
+            V_trap += 0.5 * np.sum((self.m * omega**2) * coord**2)
         return V_trap
     
     def potential_coulomb(self, positions: Vector) -> Vector:
         """ Computes Coulomb potential, takes in a flattened (1D) array of all position coordinates """
-        x,y,z = self.ion_coordinates_from_flattened(positions)
+        r = self.ion_coordinates_from_flattened(positions)
+        dr = []
+        for coord in r:
+            dr.append(coord[:, np.newaxis] - coord)
 
-        dx = x[:, np.newaxis] - x
-        dy = y[:, np.newaxis] - y
-        dz = z[:, np.newaxis] - z
-        rsep = np.sqrt(dx ** 2 + dy ** 2 + dz ** 2).astype(np.float64)
+        rsep = np.sqrt(dr[0]**2 + dr[1]**2 + dr[2]**2).astype(np.float64)
         qq = (self.q * self.q[:, np.newaxis]).astype(np.float64)    
-
         with np.errstate(divide='ignore'):
             V_Coulomb = np.sum( np.where(rsep != 0., qq / rsep, 0) ) / 2 # divide by 2 to avoid double counting
         V_Coulomb *= .5 
@@ -335,13 +335,13 @@ class TrappedIonModeAnalysis:
         return self.potential_trap(positions) + self.potential_coulomb(positions)   
 
     def force_trap(self, positions: Vector):
-        x,y,z = self.ion_coordinates_from_flattened(positions)
+        r = self.ion_coordinates_from_flattened(positions)
 
-        Ftrapx = self.m * self.wx**2 * x
-        Ftrapy = self.m * self.wy**2 * y
-        Ftrapz = self.m * self.wz**2 * z
+        F_r = []
+        for coord, omega in zip(r, self.trap_frequencies_ND): 
+            F_r.append(self.m * omega**2 * coord)
 
-        force_trap = np.hstack((Ftrapx, Ftrapy, Ftrapz))
+        force_trap = np.hstack(F_r)
         return force_trap
 
     def force_coulomb(self, positions: Vector): 
@@ -352,7 +352,6 @@ class TrappedIonModeAnalysis:
 
         for coord in r:
             dr.append(coord[:, np.newaxis] - coord)
-        #rsep = np.sqrt(np.sum( [dx**2 for dx in dr])).astype(float)
         rsep = np.sqrt(dr[0]**2 + dr[1]**2 + dr[2]**2).astype(np.float64)
         qq = (self.q * self.q[:, np.newaxis]).astype(np.float64)    
 
@@ -360,11 +359,11 @@ class TrappedIonModeAnalysis:
             rsep3 = np.where(rsep != 0., rsep ** (-3), 0)
 
         F_r = [] # Force in each direction 
-        for coord in dr:
-            f_r = coord * rsep3 * qq
+        for dx in dr:
+            f_r = dx * rsep3 * qq
             F_r.append(-np.sum(np.array(f_r), axis=1))
 
-        force_coulomb = np.hstack(tuple(F_r))
+        force_coulomb = np.hstack(F_r)
         force_coulomb *= 0.5    
         return force_coulomb
 
