@@ -496,6 +496,22 @@ class TrappedIonModeAnalysis:
         return eigvals, eigvecs 
 
 
+    def calculate_mode_participation_factors(self):
+        """ Computes ion-mode participation factors, related to the Lamb-Dicke parameters """ 
+        eigvecs = self.eigvecs
+        num_coords, num_modes = np.shape(eigvecs)
+        num_ions = num_modes // 3
+        mode_participation_factors = np.zeros((3, num_ions, num_modes), dtype = np.complex128)
+        for mode_index in range(num_modes):
+            for pos_coord in range(num_coords//2):
+                direction_index = pos_coord // num_ions
+                ion_index = pos_coord % num_ions
+                prefactor = np.sqrt(2 * self.m[ion_index] * self.eigvals[mode_index] )
+                zpm_dimensionful = np.sqrt(const.hbar / (2 * self.mass_scale * self.trap_freq_scale))
+                mode_participation_factors[direction_index, ion_index, mode_index] = zpm_dimensionful * prefactor * eigvecs[pos_coord, mode_index]
+        return mode_participation_factors
+ 
+
 #classes
 class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
  
@@ -608,22 +624,6 @@ def calc_mode_energies(res, Fock_cutoffs):
         energies_m2[k] = qt.expect(E2_op, state)
     return energies_m1, energies_m2
  
-def calculate_mode_participation_factors(mode_analysis):
-    eigvecs = mode_analysis.eigvecs
-    num_coords, num_modes = np.shape(eigvecs)
-    num_ions = num_modes // 3
-    mode_participation_factors = np.zeros((3, num_ions, num_modes), dtype = np.complex128)
-    for mode_index in range(num_modes):
-        for pos_coord in range(num_coords//2):
-            direction_index = pos_coord // num_ions
-            ion_index = pos_coord % num_ions
-            factor = np.sqrt(2* mode_analysis.m[ion_index] * mode_analysis.eigvals[mode_index] )
-            zpm_dimensionful = np.sqrt(const.hbar / (2* mode_analysis.mass_scale * mode_analysis.trap_freq_scale))
-            mode_participation_factors[direction_index, ion_index, mode_index] = zpm_dimensionful * factor * eigvecs[pos_coord, mode_index]
-    return mode_participation_factors
- 
- 
- 
 def calc_single_ion_ld_factors(omega, k, mass_amu):
     z0 = np.sqrt(const.hbar / (2 * mass_amu * const.u * omega))
     return k * z0 # ignore the phase
@@ -642,7 +642,8 @@ def check_single_ion_case():
 
     mode_analysis_one = TrappedIonModeAnalysis(num_ions, wx, wy, wz, np.ones(num_ions)*mass_yb_amu, Z) 
     mode_analysis_one.solve_ion_trap_equilibrium()
-    mode_participation_factors_one = calculate_mode_participation_factors(mode_analysis_one)
+    #mode_participation_factors_one = calculate_mode_participation_factors(mode_analysis_one)
+    mode_participation_factors_one = mode_analysis_one.calculate_mode_participation_factors()
     ld_factors_one = k * mode_participation_factors_one
     eta_x = calc_single_ion_ld_factors(wx, k, mass_yb_amu)
     eta_y = calc_single_ion_ld_factors(wy, k, mass_yb_amu)
@@ -667,7 +668,8 @@ def check_two_ion_case():
     #mode_analysis_two= mode_analyzer(N =2, wz = wz, wy = wy, wx = wx, ionmass_amu= mass_yb_amu)
     mode_analysis_two = TrappedIonModeAnalysis(num_ions, wx, wy, wz, np.ones(num_ions)*mass_yb_amu, Z) 
     mode_analysis_two.solve_ion_trap_equilibrium()
-    mode_participation_factors_two= calculate_mode_participation_factors(mode_analysis_two)
+    #mode_participation_factors_two= calculate_mode_participation_factors(mode_analysis_two)
+    mode_participation_factors_two = mode_analysis_two.calculate_mode_participation_factors()
     ld_factors_two = k * mode_participation_factors_two
     eta_x = calc_single_ion_ld_factors(wx, k, mass_yb_amu)
     eta_y = calc_single_ion_ld_factors(wy, k, mass_yb_amu)
@@ -703,5 +705,5 @@ def check_two_ion_case():
 if __name__ == '__main__':
     # Test analysis: 
     # TODO: convert to tests 
-    check_two_ion_case() 
-    #check_single_ion_case()
+    #check_two_ion_case() 
+    check_single_ion_case()
