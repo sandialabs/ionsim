@@ -4,6 +4,8 @@ import scipy.constants as const
 import warnings
 import scipy.optimize as opt    
 from ionsim.custom_types import Matrix, Vector
+from ionsim.degree_of_freedom import AtomicSpin
+from ionsim.basis import Basis 
 
 ########## List of substantive changes: 
 ## 1. Made dimensionless variable function take in inputs so the user can choose the charge, mass, and trap freq scales to use.   
@@ -17,7 +19,9 @@ from ionsim.custom_types import Matrix, Vector
 ## 5. Reduced number of matrices that we store as class attributes: Need to check whether we want to be storing those. 
 
 ########## Questions: 
-# 1. Is there a need for the "has run" boolean? e.g. is there a time where it stays False?  
+# -1. Should the branch sorting be the default option? This seems like what we would want to do for our problems  
+# 0. LD parameter matrix shape? 
+# 1. Is there a need for the "has run" boolean? e.g. is there a time where it stays False? Ah I think it refers to whether the eqb solver has been successfully executed. 
 # 2. Should the dimensionless parameters have a naming convention, e.g. omega_x --> omega_x_ND 
 # 3. What sets the phases of the Lamb-Dicke parameters?  
 # 4. Does the LD calculation properly do k dot r?
@@ -67,17 +71,14 @@ class TrappedIonModeAnalysis:
         if not self.trap_is_stable():
             raise IonSimError(f"Trap is unstable from negative trap frequencies.")
 
-        #self.initial_equilibrium_guess = None
-        #self.hasrun = False 
-    
-
     def calculate_species_trap_frequencies(self, omega: float) -> Vector: 
         """ Computes relative trap frequencies for each species:
 
-            w_i = sqrt(q_{i} m_0 / m_{i} q_0) omega 
+            w_i = sqrt(q_{i} m_0 / m_{i} q_0) omega
+
+            from omega_(secular, i) = sqrt(q_i V_0 / (2 m_i d^2) ) for the i'th ion. 
 
         """ 
-        # TODO: Does Wes have a ref. for this? Why is omega species-dependent?  
         # assume that the trapping frequency given corresponds to the first ion species 
         q0 = self.nuclear_charges[0] # charge of first ion 
         m0 = self.atomic_masses[0] # charge of first ion 
@@ -193,20 +194,20 @@ class TrappedIonModeAnalysis:
             warnings.warn("Diagnolization check failed")    
             print("has duplicate eigenvalues: ", has_duplicate_eigvals)
 
-
     #def run(self):
+
     def solve_ion_trap_equilibrium(self): 
         """ Diagonalizes the Coulomb + harmonic trap Hamiltonian for a system of ions. """
         # Convert to dimensionless units using axial trap frequency and first ion's mass and charge  
         # TODO: take in input here or in class constructor for mass, charge, trap scales. 
         self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
         
-        self.u = self.solve_for_equilibrium_positions()
+        self.equilibrium_positions = self.solve_for_equilibrium_positions()
         self.reindex_ions()
 
-        # Compute matrices 
+        # Compute helper matrices for computing normal mode properties 
         mass_matrix = self.build_mass_matrix(self.m)  
-        E_matrix = self.build_E_matrix(self.u, mass_matrix)  
+        E_matrix = self.build_E_matrix(self.equilibrium_positions, mass_matrix)  
         T_matrix = self.build_momentum_transform_matrix(mass_matrix)
         H_matrix = self.compute_H_matrix(T_matrix, E_matrix)   
 
@@ -219,12 +220,10 @@ class TrappedIonModeAnalysis:
         self.check_outer_relation(H_matrix)
         self.check_diagonalization(T_matrix, S_matrix, E_matrix)
         #self.hasrun = True  
-    
+
 
     def normalize_eigenvectors(self, eigvecs, H: Matrix, eigenvalues: Vector | None=None): 
-        """
-        Rescale the eigenvectors ens w.r.t. the Hamiltonian H.
-        """
+        """ Rescale the eigenvectors ens w.r.t. the Hamiltonian H. """
         eigvecs_rescaled = np.zeros_like(eigvecs,dtype=complex)
         num_coords, num_eigenvalues = np.shape(eigvecs)
         if eigenvalues is None:
@@ -276,12 +275,12 @@ class TrappedIonModeAnalysis:
     def reindex_ions(self):  
         """ Re-indexes the ions to order based on the distance from the center of the trap, where smallest index is closest to the center """
         # TODO: How are even/odd cases is handled? 
-        x,y,z = self.ion_coordinates_from_flattened(self.u)
+        x,y,z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
         r = np.sqrt(x**2 + y**2 + z**2)
         idx = np.argsort(r)
 
         reindexed_positions = np.hstack((x[idx], y[idx], z[idx]))
-        self.u = reindexed_positions 
+        self.equilibrium_positions = reindexed_positions 
         self.m = self.m[idx]
         self.q = self.q[idx]
         self.atomic_masses = self.atomic_masses[idx]
@@ -497,17 +496,18 @@ class TrappedIonModeAnalysis:
     def calculate_mode_participation_factors(self) -> Matrix:
         """ Computes ion-mode participation factors, related to the Lamb-Dicke parameters.
 
-            Mode participation factors (eta) take the following form:
+            Mode participation factors (eta) take the following matrix form:
              
-            shape of eta matrix: (dimension, ion, mode) 
+            shape: (dimension, ion, mode), for N ions this is (3, N, N) 
             e.g. eta[1, 2, 3] is eta in the "y" direction, ion 1, and the 2nd mode. 
 
             For N ions, this form organizes the 3N modes into N modes per direction "d", where d = x, y, z. 
 
         """ 
 
+        # TODO: Question: shouldn't the shape be (d, N, N) for d dimensions (3), N ions, and N modes per direction. 
         eigvecs = self.eigvecs
-        num_coords, num_modes = np.shape(eigvecs)
+        num_coords, num_modes = np.shape(eigvecs) 
         num_ions = num_modes // 3
         mode_participation_factors = np.zeros((3, num_ions, num_modes), dtype = np.complex128)
         for mode_index in range(num_modes):
@@ -577,10 +577,10 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
  
     def reindex_ions_by_z(self): 
         # based on the position along z, lowest i, is 0, up to N - 1
-        x,y,z = self.ion_coordinates_from_flattened(self.u)
+        x,y,z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
  
         idx = np.argsort(z)
-        self.u = np.hstack((x[idx], y[idx], z[idx]))
+        self.equilibrium_positions = np.hstack((x[idx], y[idx], z[idx]))
  
         # Reindex all other arrays accordingly
         self.m = self.m[idx]
@@ -601,10 +601,10 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
         """ Diagonalizes the Coulomb + harmonic trap Hamiltonian for a system of ions. """
         self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
         
-        self.u = self.solve_for_equilibrium_positions()
+        self.equilibrium_positions = self.solve_for_equilibrium_positions()
         self.reindex_ions_by_z()
         mass_matrix = self.build_mass_matrix(self.m)  
-        E_matrix = self.build_E_matrix(self.u, mass_matrix)  
+        E_matrix = self.build_E_matrix(self.equilibrium_positions, mass_matrix)  
         T_matrix = self.build_momentum_transform_matrix(mass_matrix)
         H_matrix = self.compute_H_matrix(T_matrix, E_matrix)   
 
@@ -618,15 +618,52 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
         #self.hasrun = True  
 
 
+# Extra methods?
+    def return_equilibrium_positions(self, dimensionless: bool) -> Vector:
+        """ Return equilibrium positions in either dimensionless or SI units (inverse meters) """
+        if dimensionless:
+            return self.equilibrium_positions
+        else:
+            return self.equilibrium_positions * self.characteristic_parameters['length']
+
+
+    @classmethod
+    def from_species(cls, species_name: str, num_ions: int, omega_x: float, omega_y: float, omega_z: float): 
+        """ Build the mode analysis class from a species name, corresponding to a system of N ions under harmonic trapping. """ 
+        # Import necessary data for the species 
+        species_data = AtomicSpin.get_config_data(species_name)
+        atomic_mass = species_data['mass']
+        atomic_number = species_data['Z']
+        # Construct the class 
+        return cls(num_ions, omega_x, omega_y, omega_z, atomic_mass, atomic_number)
+
+    @classmethod
+    def from_atomic_spin_basis(cls, atomic_structure_basis: StandardBasis, omega_x: float, omega_y: float, omega_z: float): 
+        """ Build the mode analysis class from a basis of AtomicSpin degrees of freedom under harmonic trapping. """ 
+        # Extract number of ions and the mass and atomic number from the DOF in the basis 
+        DOFs = atomic_structure_basis.degrees_of_freedom
+        num_ions = len(DOFs)
+        atomic_masses = []
+        atomic_numbers = []
+
+        for DOF in DOFs:
+            if not isinstance(DOF, AtomicSpin):
+                raise IonSimError("Atomic structure basis should only contain AtomicSpin or AtomicStructure objects. No motional modes should be included.")
+                atomic_masses.append(DOF.atomic_mass) 
+                atomic_numbers.append(DOF.atomic_number) 
+        # Construct the class 
+        return cls(num_ions, omega_x, omega_y, omega_z, atomic_mass, atomic_number)
+
+
  
 #You could redefine the equilibrium finding function to assert that the equilibrium is linear. For example, make a wrapper inside the function for the potential, Jacobian, and Hessian that forces x_i and y_i = 0. 
  
 #This is the code for the Lamb-Dicke parameters: (not that overall phases don't matter here, but the relative phase does. We could pin down the phase with some convention like, "each mode's first non-negative LD value is defined positive." I also include some extra helper functions. 
 def two_central_ion_separation(wz_Hz, l_2_cent):
     mass_yb_amu = 170.936 # TODO: hardcoded for now
-    four_ion_analysis = GeneralizedModeAnalysisWithBranchSortedModes(N=4, wz=2*np.pi*wz_Hz, wy=2*np.pi*10e6, wx=2*np.pi*11e6, ionmass_amu=mass_yb_amu)
-    four_ion_analysis.run()
-    positions_z = four_ion_analysis.u[2*4:] * four_ion_analysis.characteristic_parameters['length']
+    four_ion_analysis = GeneralizedModeAnalysisWithBranchSortedModes(num_ions=4, omega_x=2*np.pi*11e6, omega_y=2*np.pi*10e6, omega_z=2*np.pi*wz_Hz, atomic_masses=mass_yb_amu, atomic_numbers = 70)
+    four_ion_analysis.solve_ion_trap_equilibrium()
+    positions_z = four_ion_analysis.equilibrium_positions[2*4:] * four_ion_analysis.characteristic_parameters['length']
     central_ions = np.argsort(np.abs(positions_z))[:2]
     dl = np.abs(positions_z[central_ions[0]] - positions_z[central_ions[1]])
     return dl - l_2_cent
@@ -650,4 +687,7 @@ def calc_mode_energies(res, Fock_cutoffs):
         energies_m1[k] = qt.expect(E1_op, state)
         energies_m2[k] = qt.expect(E2_op, state)
     return energies_m1, energies_m2
- 
+
+
+if __name__ == '__main__':
+    print(two_central_ion_separation(10. * 1E6 * 2*np.pi, 0.05)) 

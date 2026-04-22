@@ -19,12 +19,16 @@ from icecream import ic
 class DegreeOfFreedom(ABC):
     """A degree of freedom in a basis of states."""
     energy_levels: Sequence[EnergyLevel]
-    name: str | None = None # TODO: will we use these names?
+    #name: str | None = None # TODO: will we use these names?
 
 @dataclass(frozen=True, eq=False)
 class AtomicSpin(DegreeOfFreedom):
     """An atomic spin degree of freedom, i.e. its coupled spin and orbital angular momentum."""
     energy_levels: list[AtomicInternalEnergyLevel]
+    # Store mass and atomic number 
+    atomic_mass: float 
+    atomic_number: int # should we allowe for effective Z's which are non-integer?) 
+    name: str | None = None # TODO: will we use these names?
 
     @classmethod
     def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None,
@@ -102,7 +106,7 @@ class AtomicSpin(DegreeOfFreedom):
                         level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy)
                         if level_names is None or level.name in level_names:
                             levels.append(level)
-        return cls(levels, name)
+        return cls(levels, mass, z, name)
 
     @classmethod
     def get_level_factory(cls, coupling_scheme: str):
@@ -185,6 +189,7 @@ class AtomicSpin(DegreeOfFreedom):
 class MotionalMode(DegreeOfFreedom):
     """An normal mode of motion for a linear chain of ions."""
     energy_levels: list[CollectiveMotionalEnergyLevel]
+    name: str | None = None # TODO: will we use these names?
 
     @classmethod
     def from_frequency(cls, frequency: float, fock_dimension: int, name: str | None = None):

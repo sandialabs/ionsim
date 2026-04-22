@@ -88,8 +88,8 @@ class TestModeAnalysis(unittest.TestCase):
             # Solve the ion-trap equilibrium problem
             mode_analyzer.solve_ion_trap_equilibrium()
             # Compute and store Lamb-Dicke parameters: 
-            case['Lamb Dicke parameters'] = case['wavevector'] * mode_analyzer.calculate_mode_participation_factors()
-            assert_array_close(np.abs(case['Lamb Dicke parameters']), np.abs(reference_values), atol = 1E-10, rtol=None)
+            computed_Lamb_Dicke_parameters = case['wavevector'] * mode_analyzer.calculate_mode_participation_factors()
+            assert_array_close(np.abs(computed_Lamb_Dicke_parameters), np.abs(reference_values), atol = 1E-10, rtol=None)
 
 if __name__ == '__main__':
     unittest.main()
