@@ -5,19 +5,19 @@ import warnings
 import scipy.optimize as opt    
 from ionsim.custom_types import Matrix, Vector
 
-########## List of substantive changes by Ethan: 
+########## List of substantive changes: 
 ## 1. Made dimensionless variable function take in inputs so the user can choose the charge, mass, and trap freq scales to use.   
 ## 2. Added a helper function to pack/unpack the ion coordinates to reduce code. 
 
-########## List of non-substantive changes by Ethan: 
-## 1. Variable changes for readable (e.g. omega_x instead of wx) 
+########## List of non-substantive changes: 
+## 1. Variable changes for readability (e.g. omega_x instead of wx) 
 ## 2. Type-hinting in functions  
 ## 3. Consolidated the functions for solving for ion positions equilibria 
 ## 4. Moved eigenvector helper functions into the class. 
 ## 5. Reduced number of matrices that we store as class attributes: Need to check whether we want to be storing those. 
 
 ########## Questions: 
-# 1. Is there a need for the "has run" boolean? 
+# 1. Is there a need for the "has run" boolean? e.g. is there a time where it stays False?  
 # 2. Should the dimensionless parameters have a naming convention, e.g. omega_x --> omega_x_ND 
 # 3. What sets the phases of the Lamb-Dicke parameters?  
 # 4. See TODO's 
@@ -345,30 +345,35 @@ class TrappedIonModeAnalysis:
         return force_trap
 
     def force_coulomb(self, positions: Vector): 
+        """ Computes the Coulomb force by derivative w.r.t. ion coordinates """
         x,y,z = self.ion_coordinates_from_flattened(positions)
+        r = [x,y,z]
+        dr = []
 
-        dx = x[:, np.newaxis] - x
-        dy = y[:, np.newaxis] - y
-        dz = z[:, np.newaxis] - z
-        rsep = np.sqrt(dx**2 + dy**2 + dz**2).astype(np.float64)
+        for coord in r:
+            dr.append(coord[:, np.newaxis] - coord)
+        #rsep = np.sqrt(np.sum( [dx**2 for dx in dr])).astype(float)
+        rsep = np.sqrt(dr[0]**2 + dr[1]**2 + dr[2]**2).astype(np.float64)
         qq = (self.q * self.q[:, np.newaxis]).astype(np.float64)    
 
         with np.errstate(divide='ignore', invalid='ignore'):
             rsep3 = np.where(rsep != 0., rsep ** (-3), 0)
 
-        fx = dx * rsep3 * qq
-        fy = dy * rsep3 * qq
-        fz = dz * rsep3 * qq    
+        F_r = [] # Force in each direction 
+        for coord in dr:
+            f_r = coord * rsep3 * qq
+            F_r.append(-np.sum(np.array(f_r), axis=1))
 
-        Fx = -np.sum(fx, axis=1)
-        Fy = -np.sum(fy, axis=1)
-        Fz = -np.sum(fz, axis=1)
-
-        force_coulomb = np.hstack((Fx, Fy, Fz))
+        force_coulomb = np.hstack(tuple(F_r))
         force_coulomb *= 0.5    
         return force_coulomb
 
-    def force(self, positions: Vector):
+    def force(self, positions: Vector) -> Vector:
+        """ Computes the force vector, e.g. derivative of the potential energy w.r.t. ion position: dU/dx, dU/dy, dU/dz. 
+
+            - returns a one-dimensional length-3N array characterizing forces w.r.t. ion coordinates for N ions. 
+        
+        """
         Force = self.force_coulomb(positions) + self.force_trap(positions)  
         return Force
 
