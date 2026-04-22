@@ -676,11 +676,12 @@ def check_two_ion_case():
     num_ions = 2
     Z = 70
     #mode_analysis_two= mode_analyzer(N =2, wz = wz, wy = wy, wx = wx, ionmass_amu= mass_yb_amu)
-    mode_analysis_two = TrappedIonModeAnalysis(num_ions, wx, wy, wz, np.ones(num_ions)*mass_yb_amu, Z) 
+    mode_analysis_two = TrappedIonModeAnalysis(num_ions, wx, wy, wz, mass_yb_amu, Z) 
     mode_analysis_two.solve_ion_trap_equilibrium()
     #mode_participation_factors_two= calculate_mode_participation_factors(mode_analysis_two)
     mode_participation_factors_two = mode_analysis_two.calculate_mode_participation_factors()
     ld_factors_two = k * mode_participation_factors_two
+
     eta_x, eta_y, eta_z = mode_analysis_two.compute_reference_single_ion_lamb_dicke_factors(k) 
     eta_COM_x = eta_x / np.sqrt(2)
     eta_COM_y = eta_y / np.sqrt(2)
