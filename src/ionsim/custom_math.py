@@ -225,10 +225,20 @@ class StochasticOdeSolver(OdeSolver):
                 f'Unknown trajectory_backend "{self.trajectory_backend}"'
             )
 
+        initial_vectors = np.asarray(self.initial_vector, dtype=np.complex128)
+        batched_initial_states = initial_vectors.ndim == 2
+        if initial_vectors.ndim not in {1, 2}:
+            raise IonSimError('initial_vector must be a 1D state vector or a 2D batch of state vectors.')
+        if batched_initial_states and backend not in {"numba_rk4", "numba_general_propagator"}:
+            raise IonSimError(
+                'Batched initial-state stochastic evolution is only implemented for '
+                'trajectory_backend="numba_rk4" and "numba_general_propagator".'
+            )
+
         solver_kwargs = dict(self.base_solver_kwargs)
 
         component_data = self.interaction_function(
-                initial_wavefunction=self.initial_vector,
+                initial_wavefunction=initial_vectors[0] if batched_initial_states else initial_vectors,
                 duration=self.duration,
                 time_evals=time_grid,
                 trajectory_noise=noise_array[0],
@@ -237,32 +247,48 @@ class StochasticOdeSolver(OdeSolver):
             )
 
         if backend == "numba_rk4":
-
-            stacked_results = _run_stochastic_trajectories_numba(
-                noise_array,
-                np.asarray(self.initial_vector, dtype=np.complex128, order='C'),
-                time_grid,
-                component_data,
-                method='RK4',
-            )
+            if batched_initial_states:
+                stacked_results = _run_stochastic_trajectories_numba_batched_initial_vectors(
+                    noise_array,
+                    np.asarray(initial_vectors, dtype=np.complex128, order='C'),
+                    time_grid,
+                    component_data,
+                    method='RK4',
+                )
+            else:
+                stacked_results = _run_stochastic_trajectories_numba(
+                    noise_array,
+                    np.asarray(initial_vectors, dtype=np.complex128, order='C'),
+                    time_grid,
+                    component_data,
+                    method='RK4',
+                )
         elif backend == "numba_rk5":
 
             stacked_results = _run_stochastic_trajectories_numba(
                 noise_array,
-                np.asarray(self.initial_vector, dtype=np.complex128, order='C'),
+                np.asarray(initial_vectors, dtype=np.complex128, order='C'),
                 time_grid,
                 component_data,
                 method='RK5',
             )
         elif backend == "numba_general_propagator":
-
-            stacked_results = _run_stochastic_trajectories_numba(
-                noise_array,
-                np.asarray(self.initial_vector, dtype=np.complex128, order='C'),
-                time_grid,
-                component_data,
-                method='general_propagator',
-            )
+            if batched_initial_states:
+                stacked_results = _run_stochastic_trajectories_numba_batched_initial_vectors(
+                    noise_array,
+                    np.asarray(initial_vectors, dtype=np.complex128, order='C'),
+                    time_grid,
+                    component_data,
+                    method='general_propagator',
+                )
+            else:
+                stacked_results = _run_stochastic_trajectories_numba(
+                    noise_array,
+                    np.asarray(initial_vectors, dtype=np.complex128, order='C'),
+                    time_grid,
+                    component_data,
+                    method='general_propagator',
+                )
 
 
         elif backend == 'python':
@@ -272,7 +298,7 @@ class StochasticOdeSolver(OdeSolver):
                 time_grid,
                 noise_array,
                 interaction_function=self.interaction_function,
-                initial_vector=self.initial_vector,
+                initial_vector=initial_vectors,
                 duration=self.duration,
                 base_solver=self.base_solver,
             )
@@ -434,7 +460,6 @@ def _run_stochastic_trajectories_numba(
 
     noise_transformation_types = np.ascontiguousarray(component_data.noise_transformation_types, dtype=np.int32)
     noise_transformation_params = np.ascontiguousarray(component_data.noise_transformation_params, dtype=np.float64)
-    all_rates_zero = np.uint8(np.all(det_has_rate == 0) and np.all(stoch_has_rate == 0))
 
     if method == 'RK4':
         return _run_stochastic_trajectories_numba_RK4(
@@ -442,7 +467,6 @@ def _run_stochastic_trajectories_numba(
             initial_vec_c,
             time_grid_f64,
             H_det,
-            all_rates_zero,
             det_hints,
             det_rates,
             det_has_rate,
@@ -493,6 +517,79 @@ def _run_stochastic_trajectories_numba(
         )
     else:
         raise IonSimError(f'Unknown numba integration method "{method}".')
+
+
+def _run_stochastic_trajectories_numba_batched_initial_vectors(
+    noise_array: np.ndarray,
+    initial_vectors: np.ndarray,
+    time_grid: np.ndarray,
+    component_data: Any,
+    method: str = 'RK4',
+) -> np.ndarray:
+    """Execute stochastic trajectories for a batch of initial states."""
+    if not _NUMBA_AVAILABLE:
+        raise IonSimError('trajectory_backend="numba" requested but numba is not installed.')
+
+    noise_array_f64 = np.ascontiguousarray(noise_array, dtype=np.float64)
+    time_grid_f64 = np.ascontiguousarray(np.asarray(time_grid, dtype=np.float64))
+    initial_vecs_c = np.ascontiguousarray(initial_vectors, dtype=np.complex128)
+
+    H_det = np.ascontiguousarray(component_data.H_det, dtype=np.complex128)
+    det_hints = np.ascontiguousarray(component_data.deterministic_hints, dtype=np.complex128)
+    det_rates = np.ascontiguousarray(component_data.deterministic_rates, dtype=np.float64)
+    det_has_rate = np.ascontiguousarray(component_data.deterministic_has_rate, dtype=np.uint8)
+
+    stoch_hints = np.ascontiguousarray(component_data.stochastic_hints, dtype=np.complex128)
+    stoch_rates = np.ascontiguousarray(component_data.stochastic_rates, dtype=np.float64)
+    stoch_has_rate = np.ascontiguousarray(component_data.stochastic_has_rate, dtype=np.uint8)
+
+    noise_strengths = np.ascontiguousarray(component_data.noise_strengths, dtype=np.complex128)
+    noise_offsets = np.ascontiguousarray(component_data.noise_offsets, dtype=np.float64)
+    noise_sources = np.ascontiguousarray(component_data.noise_source_indices, dtype=np.int64)
+
+    noise_transformation_types = np.ascontiguousarray(component_data.noise_transformation_types, dtype=np.int32)
+    noise_transformation_params = np.ascontiguousarray(component_data.noise_transformation_params, dtype=np.float64)
+
+    if method == 'RK4':
+        return _run_stochastic_trajectories_numba_RK4_batched_initial_vectors(
+            noise_array_f64,
+            initial_vecs_c,
+            time_grid_f64,
+            H_det,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_sources,
+            noise_transformation_types,
+            noise_transformation_params,
+        )
+    elif method == 'general_propagator':
+        return _run_stochastic_trajectories_numba_general_propagator_batched_initial_vectors(
+            noise_array_f64,
+            initial_vecs_c,
+            time_grid_f64,
+            H_det,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_sources,
+            noise_transformation_types,
+            noise_transformation_params,
+        )
+    else:
+        raise IonSimError(
+            f'Batched initial-state support is not implemented for numba integration method "{method}".'
+        )
 
 
 if _NUMBA_AVAILABLE:
@@ -643,13 +740,6 @@ if _NUMBA_AVAILABLE:
         return -1j * H.dot(psi)
 
     @njit(cache=True)
-    def _numba_rhs_from_hamiltonian(
-        H: np.ndarray,
-        psi: np.ndarray,
-    ) -> np.ndarray:
-        return -1j * H.dot(psi)
-
-    @njit(cache=True)
     def _numba_rk4_step(
         t0: float,
         dt: float,
@@ -659,7 +749,6 @@ if _NUMBA_AVAILABLE:
         noise_array: np.ndarray,
         time_grid: np.ndarray,
         H_det: np.ndarray,
-        all_rates_zero: np.uint8,
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
@@ -672,33 +761,6 @@ if _NUMBA_AVAILABLE:
         noise_transformation_types: np.ndarray,
         noise_transformation_params: np.ndarray,
     ) -> np.ndarray:
-        if all_rates_zero != 0:
-            H_step = _numba_build_hamiltonian(
-                t0,
-                step,
-                traj_idx,
-                noise_array,
-                time_grid,
-                H_det,
-                det_hints,
-                det_rates,
-                det_has_rate,
-                stoch_hints,
-                stoch_rates,
-                stoch_has_rate,
-                noise_strengths,
-                noise_offsets,
-                noise_source_indices,
-                noise_transformation_types,
-                noise_transformation_params,
-                interpolate=False,
-            )
-            k1 = _numba_rhs_from_hamiltonian(H_step, psi)
-            k2 = _numba_rhs_from_hamiltonian(H_step, psi + 0.5 * dt * k1)
-            k3 = _numba_rhs_from_hamiltonian(H_step, psi + 0.5 * dt * k2)
-            k4 = _numba_rhs_from_hamiltonian(H_step, psi + dt * k3)
-            return psi + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-
         k1 = _numba_rhs(
             t0,
             psi,
@@ -785,13 +847,107 @@ if _NUMBA_AVAILABLE:
         )
         return psi + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
+    @njit(cache=True)
+    def _numba_rk4_step_batched_initial_vectors(
+        t0: float,
+        dt: float,
+        step: int,
+        psi_batch: np.ndarray,
+        traj_idx: int,
+        noise_array: np.ndarray,
+        time_grid: np.ndarray,
+        H_det: np.ndarray,
+        det_hints: np.ndarray,
+        det_rates: np.ndarray,
+        det_has_rate: np.ndarray,
+        stoch_hints: np.ndarray,
+        stoch_rates: np.ndarray,
+        stoch_has_rate: np.ndarray,
+        noise_strengths: np.ndarray,
+        noise_offsets: np.ndarray,
+        noise_source_indices: np.ndarray,
+        noise_transformation_types: np.ndarray,
+        noise_transformation_params: np.ndarray,
+    ) -> np.ndarray:
+        H_t0 = _numba_build_hamiltonian(
+            t0,
+            step,
+            traj_idx,
+            noise_array,
+            time_grid,
+            H_det,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
+            interpolate=False,
+        )
+        H_half = _numba_build_hamiltonian(
+            t0 + 0.5 * dt,
+            step,
+            traj_idx,
+            noise_array,
+            time_grid,
+            H_det,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
+            interpolate=False,
+        )
+        H_t1 = _numba_build_hamiltonian(
+            t0 + dt,
+            step,
+            traj_idx,
+            noise_array,
+            time_grid,
+            H_det,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
+            interpolate=False,
+        )
+
+        n_init = psi_batch.shape[0]
+        updated = np.empty_like(psi_batch)
+        for init_idx in range(n_init):
+            psi = psi_batch[init_idx]
+            k1 = -1j * H_t0.dot(psi)
+            k2 = -1j * H_half.dot(psi + 0.5 * dt * k1)
+            k3 = -1j * H_half.dot(psi + 0.5 * dt * k2)
+            k4 = -1j * H_t1.dot(psi + dt * k3)
+            updated[init_idx] = psi + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+        return updated
+
     @njit(parallel=True, cache=True)
     def _run_stochastic_trajectories_numba_RK4(
         noise_array: np.ndarray,
         initial_vector: np.ndarray,
         time_grid: np.ndarray,
         H_det: np.ndarray,
-        all_rates_zero: np.uint8,
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
@@ -825,7 +981,6 @@ if _NUMBA_AVAILABLE:
                     noise_array,
                     time_grid,
                     H_det,
-                    all_rates_zero,
                     det_hints,
                     det_rates,
                     det_has_rate,
@@ -839,6 +994,61 @@ if _NUMBA_AVAILABLE:
                     noise_transformation_params,
                 )
                 result[traj_idx, step + 1, :] = psi
+        return result
+
+    @njit(parallel=True, cache=True)
+    def _run_stochastic_trajectories_numba_RK4_batched_initial_vectors(
+        noise_array: np.ndarray,
+        initial_vectors: np.ndarray,
+        time_grid: np.ndarray,
+        H_det: np.ndarray,
+        det_hints: np.ndarray,
+        det_rates: np.ndarray,
+        det_has_rate: np.ndarray,
+        stoch_hints: np.ndarray,
+        stoch_rates: np.ndarray,
+        stoch_has_rate: np.ndarray,
+        noise_strengths: np.ndarray,
+        noise_offsets: np.ndarray,
+        noise_source_indices: np.ndarray,
+        noise_transformation_types: np.ndarray,
+        noise_transformation_params: np.ndarray,
+    ) -> np.ndarray:
+        n_traj = noise_array.shape[0]
+        n_time = time_grid.shape[0]
+        n_init = initial_vectors.shape[0]
+        n_state = initial_vectors.shape[1]
+        result = np.empty((n_traj, n_time, n_init, n_state), dtype=np.complex128)
+
+        for traj_idx in prange(n_traj):
+            psi_batch = initial_vectors.copy()
+            result[traj_idx, 0, :, :] = psi_batch
+            for step in range(n_time - 1):
+                t0 = time_grid[step]
+                t1 = time_grid[step + 1]
+                dt = t1 - t0
+                psi_batch = _numba_rk4_step_batched_initial_vectors(
+                    t0,
+                    dt,
+                    step,
+                    psi_batch,
+                    traj_idx,
+                    noise_array,
+                    time_grid,
+                    H_det,
+                    det_hints,
+                    det_rates,
+                    det_has_rate,
+                    stoch_hints,
+                    stoch_rates,
+                    stoch_has_rate,
+                    noise_strengths,
+                    noise_offsets,
+                    noise_source_indices,
+                    noise_transformation_types,
+                    noise_transformation_params,
+                )
+                result[traj_idx, step + 1, :, :] = psi_batch
         return result
     # ============ End RK4 numba implementation ============
 
@@ -1240,6 +1450,71 @@ if _NUMBA_AVAILABLE:
                 psi = V @ scaled
                 
                 result[traj_idx, step + 1, :] = psi
+        return result
+
+    @njit(parallel=True, cache=True)
+    def _run_stochastic_trajectories_numba_general_propagator_batched_initial_vectors(
+        noise_array: np.ndarray,
+        initial_vectors: np.ndarray,
+        time_grid: np.ndarray,
+        H_det: np.ndarray,
+        det_hints: np.ndarray,
+        det_rates: np.ndarray,
+        det_has_rate: np.ndarray,
+        stoch_hints: np.ndarray,
+        stoch_rates: np.ndarray,
+        stoch_has_rate: np.ndarray,
+        noise_strengths: np.ndarray,
+        noise_offsets: np.ndarray,
+        noise_source_indices: np.ndarray,
+        noise_transformation_types: np.ndarray,
+        noise_transformation_params: np.ndarray,
+    ) -> np.ndarray:
+        n_traj = noise_array.shape[0]
+        n_time = time_grid.shape[0]
+        n_init = initial_vectors.shape[0]
+        n_state = initial_vectors.shape[1]
+        result = np.empty((n_traj, n_time, n_init, n_state), dtype=np.complex128)
+
+        for traj_idx in prange(n_traj):
+            psi_batch = initial_vectors.copy()
+            result[traj_idx, 0, :, :] = psi_batch
+
+            for step in range(n_time - 1):
+                t = time_grid[step]
+                dt_step = time_grid[step + 1] - time_grid[step]
+
+                H = _numba_build_hamiltonian(
+                    t,
+                    step,
+                    traj_idx,
+                    noise_array,
+                    time_grid,
+                    H_det,
+                    det_hints,
+                    det_rates,
+                    det_has_rate,
+                    stoch_hints,
+                    stoch_rates,
+                    stoch_has_rate,
+                    noise_strengths,
+                    noise_offsets,
+                    noise_source_indices,
+                    noise_transformation_types,
+                    noise_transformation_params,
+                    interpolate=False,
+                )
+
+                e, V = np.linalg.eigh(H)
+                exp_e = np.exp(-1j * e * dt_step)
+
+                for init_idx in range(n_init):
+                    psi = psi_batch[init_idx]
+                    V_dag_psi = V.conj().T @ psi
+                    scaled = V_dag_psi * exp_e
+                    psi_batch[init_idx] = V @ scaled
+
+                result[traj_idx, step + 1, :, :] = psi_batch
         return result
 
 else:  # pragma: no cover - fallback when numba is missing

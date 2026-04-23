@@ -11,8 +11,133 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 from abc import ABC
 from scipy.signal import savgol_filter
+from numba import njit, prange
 
 from icecream import ic
+
+
+@njit(cache=True)
+def _batch_trace_contrib_jit(proj_left: np.ndarray, rho_t: np.ndarray, proj_right: np.ndarray) -> np.ndarray:
+    """JIT-compiled partial trace contribution for one basis element.
+    
+    Computes the batched matrix product: (n_t, d_left, d_right) array where each
+    slice [t] = proj_left @ rho_t[t] @ proj_right.
+    
+    Parameters
+    ----------
+    proj_left : ndarray, shape (d_left, d_full)
+        Left projection matrix (bra).
+    rho_t : ndarray, shape (n_t, d_full, d_full)
+        Batch of full density matrices over time.
+    proj_right : ndarray, shape (d_full, d_right)
+        Right projection matrix (ket).
+        
+    Returns
+    -------
+    ndarray, shape (n_t, d_left, d_right)
+        Contribution to the traced-out density matrices.
+    """
+    n_t = rho_t.shape[0]
+    d_left = proj_left.shape[0]
+    d_right = proj_right.shape[1]
+    contrib = np.zeros((n_t, d_left, d_right), dtype=np.complex128)
+    
+    for t in range(n_t):
+        contrib[t] = proj_left @ rho_t[t] @ proj_right
+    
+    return contrib
+
+
+@njit(parallel=True, cache=True)
+def _batched_wavefunctions_to_density_avg_parallel(trajectory_results: np.ndarray) -> np.ndarray:
+    """Compute ensemble-averaged density matrices from batched trajectory wavefunctions.
+
+    Parameters
+    ----------
+    trajectory_results : ndarray, shape (n_traj, n_t, n_init, dim)
+        Raw batched trajectory wavefunctions.
+
+    Returns
+    -------
+    ndarray, shape (n_init, n_t, dim, dim)
+        Averaged density matrices for each initial state and time.
+    """
+    n_traj, n_t, n_init, dim = trajectory_results.shape
+    rho_batches = np.zeros((n_init, n_t, dim, dim), dtype=np.complex128)
+
+    work_items = n_init * n_t
+    inv_traj = 1.0 / n_traj
+
+    for item in prange(work_items):
+        init_idx = item // n_t
+        t_idx = item - init_idx * n_t
+        acc = np.zeros((dim, dim), dtype=np.complex128)
+
+        for traj_idx in range(n_traj):
+            psi = trajectory_results[traj_idx, t_idx, init_idx]
+            psi_conj = np.conj(psi)
+
+            # Density matrices are Hermitian: accumulate only upper-triangular
+            # terms and mirror them to halve arithmetic in the innermost loop.
+            for i in range(dim):
+                psi_i = psi[i]
+                for j in range(i, dim):
+                    val = psi_i * psi_conj[j]
+                    acc[i, j] += val
+                    if j != i:
+                        acc[j, i] += np.conj(val)
+
+        acc *= inv_traj
+        rho_batches[init_idx, t_idx, :, :] = acc
+
+    return rho_batches
+
+
+def _batch_trace_out_one_dof(
+    basis: StandardBasis,
+    rho_t: np.ndarray,
+    dof_to_trace_out: DegreeOfFreedom,
+) -> np.ndarray:
+    """Trace out one degree of freedom for a batch of density matrices.
+
+    Parameters
+    ----------
+    basis : StandardBasis
+        Full basis for the input density matrices.
+    rho_t : ndarray, shape (n_t, dim_full, dim_full)
+        Batch of density matrices over time.
+    dof_to_trace_out : DegreeOfFreedom
+        The dof to trace out.
+
+    Returns
+    -------
+    ndarray, shape (n_t, dim_red, dim_red)
+        Reduced density matrices over time.
+    """
+    rho_t = np.asarray(rho_t, dtype=np.complex128)
+    if rho_t.ndim != 3:
+        raise IonSimError(f"rho_t must be 3D with shape (n_t, d, d), got {rho_t.shape}")
+
+    size = len(dof_to_trace_out.energy_levels)
+    vectors = np.eye(size, dtype=np.complex128)
+
+    # Pre-compute all projection matrix pairs (Python side, since basis.enlarge_matrix is not JIT-able)
+    proj_pairs = []
+    for n in range(size):
+        bra = vectors[n].T
+        ket = vectors[n][:, None]
+        proj_left = basis.enlarge_matrix(bra, [dof_to_trace_out])
+        proj_right = basis.enlarge_matrix(ket, [dof_to_trace_out])
+        proj_pairs.append((np.asarray(proj_left, dtype=np.complex128), 
+                          np.asarray(proj_right, dtype=np.complex128)))
+
+    # Accumulate using JIT-compiled function for the tight numerical loop
+    traced = None
+    for proj_left, proj_right in proj_pairs:
+        contrib = _batch_trace_contrib_jit(proj_left, rho_t, proj_right)
+        traced = contrib if traced is None else traced + contrib
+
+    return np.asarray(traced, dtype=np.complex128)
 
 @dataclass(frozen=True, eq=False)
 class Process(ABC): 
@@ -210,62 +335,69 @@ class Gate(Process):
             )  # shape (n_t, d, d)
             if dofs_to_trace_out is None:
                 return rho_t
-            # ── Vectorised partial trace ──────────────────────────────────────────
-            # Replaces the O(n_t × fock_dim) Python loop that was catastrophically
-            # slow at large n_t.  At n_t=1e6, fock_dim=14 the old loop took ~23 min
-            # just for the trace step; this einsum takes <1 s.
-            #
-            # IonSim kron ordering (enlarge_one_dof_matrix iterates
-            # degrees_of_freedom in order):
-            #   basis=[spin, motion] → flat = i_spin*d_fock + i_fock  (motion LAST)
-            #   basis=[motion, spin] → flat = i_fock*d_spin + i_spin  (motion FIRST)
-            n_t_loc  = rho_t.shape[0]
-            d_full   = rho_t.shape[1]
-            d_traced = len(dof_to_trace_out.energy_levels)
-            d_kept   = d_full // d_traced
-            dof_list = list(basis.degrees_of_freedom)
-            dof_pos  = dof_list.index(dof_to_trace_out)
-            n_dofs   = len(dof_list)
-            if dof_pos == n_dofs - 1:
-                # Standard case: motion is the LAST kron factor (basis=[spin, motion]).
-                # reshape → (n_t, d_kept, d_traced, d_kept, d_traced)
-                # partial trace: rho_qubit[t,i,j] = sum_x rho_r[t, i, x, j, x]
-                rho_r = rho_t.reshape(n_t_loc, d_kept, d_traced, d_kept, d_traced)
-                return np.einsum('tixjx->tij', rho_r, optimize=True)
-            elif dof_pos == 0:
-                # motion is the FIRST kron factor (basis=[motion, spin]).
-                # reshape → (n_t, d_traced, d_kept, d_traced, d_kept)
-                # partial trace: rho_qubit[t,i,j] = sum_x rho_r[t, x, i, x, j]
-                rho_r = rho_t.reshape(n_t_loc, d_traced, d_kept, d_traced, d_kept)
-                return np.einsum('txitxj->tij', rho_r, optimize=True)
-            else:
-                # General position: build projection matrices once (time-independent),
-                # then vectorise the contraction over the time axis.
-                projs_L, projs_R = [], []
-                for n in range(d_traced):
-                    e_n = np.zeros(d_traced, dtype=np.complex128); e_n[n] = 1.0
-                    projs_L.append(np.asarray(basis.enlarge_matrix(e_n[np.newaxis, :], [dof_to_trace_out])))
-                    projs_R.append(np.asarray(basis.enlarge_matrix(e_n[:, np.newaxis], [dof_to_trace_out])))
-                result = np.zeros((n_t_loc, d_kept, d_kept), dtype=np.complex128)
-                for P_L, P_R in zip(projs_L, projs_R):
-                    result += np.einsum('ai,tij,jb->tab', P_L, rho_t, P_R, optimize=True)
-                return result
+            return _batch_trace_out_one_dof(basis, rho_t, dof_to_trace_out)
 
-        # ── Step 1: d diagonal propagations  E(|i><i|) ─────────────────────────
-        rho_diag = [_propagate(v) for v in reduced_basis.vectors]
+        # Build all propagation jobs first so they can run serially or in parallel.
+        propagation_jobs: list[tuple[str, Any, np.ndarray]] = []
+        for i, vec in enumerate(reduced_basis.vectors):
+            propagation_jobs.append(('diag', i, vec))
 
-        # ── Step 2: d(d-1) superposition propagations for off-diagonal elements ─
-        # For each pair (i, j) with i < j, propagate:
-        #   |+_ij> = (|i> + |j>) / √2   →  rho_plus[(i, j)] = E(|+_ij><+_ij|)
-        #   |y_ij> = (|i> + i|j>) / √2  →  rho_y[(i, j)]    = E(|y_ij><y_ij|)
         offdiag_keys = [(i, j) for i in range(d) for j in range(i + 1, d)]
+        for i, j in offdiag_keys:
+            vi, vj = reduced_basis.vectors[i], reduced_basis.vectors[j]
+            propagation_jobs.append(('plus', (i, j), (vi + vj) / np.sqrt(2.0)))
+            propagation_jobs.append(('y', (i, j), (vi + 1j * vj) / np.sqrt(2.0)))
+
+        full_wavefunctions = []
+        for _, _, wavefunction in propagation_jobs:
+            if dofs_to_trace_out is None:
+                full_wavefunctions.append(wavefunction)
+            else:
+                full_wavefunctions.append(
+                    State.from_wavefunction_with_new_component(
+                        basis,
+                        wavefunction,
+                        initial_wavefunction_for_dof_to_trace_out,
+                        [dof_to_trace_out],
+                    ).wavefunction
+                )
+
+        try:
+            _, trajectory_results = hamiltonian.evolve_stochastic_wavefunctions(
+                np.asarray(full_wavefunctions, dtype=np.complex128),
+                _time_evals,
+                noisy_trajectories=noisy_trajectories,
+                return_density_average=False,
+                **sse_kwargs,
+            )
+            rho_batches = _batched_wavefunctions_to_density_avg_parallel(
+                np.asarray(trajectory_results, dtype=np.complex128)
+            )
+
+            results = []
+            for idx, (kind, key, _) in enumerate(propagation_jobs):
+                rho_t = rho_batches[idx]
+                if dofs_to_trace_out is not None:
+                    rho_t = _batch_trace_out_one_dof(basis, rho_t, dof_to_trace_out)
+                results.append((kind, key, rho_t))
+        except IonSimError as exc:
+            if 'Batched initial-state stochastic evolution is only implemented' not in str(exc):
+                raise
+            results = [(kind, key, _propagate(wf)) for kind, key, wf in propagation_jobs]
+
+        rho_diag = [None] * d
         rho_plus: dict[tuple[int, int], np.ndarray] = {}
-        rho_y:    dict[tuple[int, int], np.ndarray] = {}
-        for i in range(d):
-            for j in range(i + 1, d):
-                vi, vj = reduced_basis.vectors[i], reduced_basis.vectors[j]
-                rho_plus[(i, j)] = _propagate((vi + vj) / np.sqrt(2.0))
-                rho_y[(i, j)]    = _propagate((vi + 1j * vj) / np.sqrt(2.0))
+        rho_y: dict[tuple[int, int], np.ndarray] = {}
+        for kind, key, value in results:
+            if kind == 'diag':
+                rho_diag[int(key)] = value
+            elif kind == 'plus':
+                rho_plus[key] = value
+            else:
+                rho_y[key] = value
+
+        if any(item is None for item in rho_diag):
+            raise IonSimError('Missing diagonal propagation result while assembling stochastic process map.')
 
         # ── Step 3: assemble process matrix/matrices ───────────────────────────
         # Precompute A and B for every off-diagonal pair across all n_t time points

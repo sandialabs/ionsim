@@ -555,6 +555,50 @@ class Hamiltonian(CompositeOperator):
 
         return times, trajectory_results
 
+    def evolve_stochastic_wavefunctions(self, initial_wavefunctions: Matrix, time_evals: Vector | None = None,
+        noisy_trajectories: Any = None, **kwargs):
+        initial_wavefunctions = np.asarray(initial_wavefunctions, dtype=np.complex128)
+        if initial_wavefunctions.ndim != 2:
+            raise IonSimError('initial_wavefunctions must have shape (n_initial_states, dim).')
+        if initial_wavefunctions.shape[1] != self.size:
+            raise IonSimError(
+                f'Initial wavefunction dimension {initial_wavefunctions.shape[1]} does not match Hamiltonian size {self.size}.'
+            )
+
+        if not self.stochastic:
+            raise IonSimError('Hamiltonian is not set up for stochastic evolution (no stochastic coupling operators found).')
+        if noisy_trajectories is None:
+            raise IonSimError('No noisy trajectories provided for stochastic evolution.')
+        if time_evals is None:
+            raise IonSimError('time_evals must be provided for stochastic evolution.')
+
+        time_evals = np.asarray(time_evals, dtype=float)
+        if time_evals.ndim != 1:
+            time_evals = time_evals.reshape(-1)
+
+        trajectory_backend = kwargs.pop('trajectory_backend', 'python')
+        base_solver = kwargs.pop('base_solver', 'odeintz')
+        base_solver_kwargs = kwargs.pop('base_solver_kwargs', {})
+        if kwargs:
+            base_solver_kwargs = {**base_solver_kwargs, **kwargs}
+
+        duration = float(time_evals[-1] - time_evals[0]) if len(time_evals) > 0 else 0.0
+        times, trajectory_results = solve_time_evolution_equation(
+            self.stochastic_hamiltonian_function,
+            initial_wavefunctions,
+            duration,
+            time_evals,
+            ode_solver='stochastic',
+            noisy_trajectories=noisy_trajectories,
+            base_solver=base_solver,
+            base_solver_kwargs=base_solver_kwargs,
+            trajectory_backend=trajectory_backend,
+        )
+
+        print(f"[INFO] Batched stochastic evolution with {trajectory_backend} backend completed. Processing results...")
+
+        return times, trajectory_results
+
     def evolve_supervector(self, initial_supervector: Vector, duration: float, time_evals: Vector | None = None,
         dissipation_matrix: AnyMatrix | None = None, **kwargs):
         """Evolve a supervector by solving the time-dependent Lindblad master equation."""
