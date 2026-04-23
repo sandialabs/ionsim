@@ -12,16 +12,16 @@ import ionsim as ism
         and providing "measurement" info for the GST analysis.  """ 
 def main():
 
-
     # 1. Given the gate set, run the GST circuit planner if it has not been ran yet.  
-    ## This part does not need to be run more than once, or it could be ran in a separate script. 
+    gate_set = ['idle', 'Gxpi2', 'Gypi2']
+    ism.gst_circuit_planner.generate_gst_circuit_instructions(gate_set, N_shots)
 
     # 2. Using the GST circuit list from a file, read those circuits in.  
     gst_circuit_filename = 'circuit_planner_example.gstdata'
     gst_circuits = ism.parse_gst_circuit_file(gst_circuit_filename)
 
     # 3. Specify the relationship between GST gate names (e.g. "Gxpi2") and your simulation name (e.g. "run_noisy_Xpi2_simulation()")
-    gate_mappings = { 'Gxpi2' : noisy_X_pi2, 'Gypi2' : noisy_Y_pi2, 'Idle' : idle_gate}
+    gate_mappings = { 'Gxpi2' : noisy_X_pi2, 'Gypi2' : noisy_Y_pi2, 'Idle' : idle_gate} # these could be python modules
 
     # 4. Loop over all circuits in the plan and run the corresponding simulations, recording circuit outcomes  
     outcomes = []
@@ -47,8 +47,9 @@ def main():
         # For each gate in the simulator, evolve the state forward according to the gate dynamics         
         for gate in circuit:
             gate_simulator = gate_mappings[gate.name]
-            # Run simulation of the gate 
-            rho = run_gate_dynamics( gate_simulator   )  # can be noisy or deterministic. If noisy, this is a trajectory-averaged state 
+
+            # Run IonSim simulation of the gate 
+            rho = gate_simulator(rho)   # can be noisy or deterministic. If noisy, this is a trajectory-averaged state 
 
         # Estimate and record circuit outcomes in a dictionary to create ParsedCircuit object: 
         outcome_probabilities = rho.compute_basis_state_probabilities() 

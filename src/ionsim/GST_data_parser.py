@@ -86,7 +86,7 @@ class ParsedCircuit:
         
         - Stores the file string contents
     """
-
+    # ParsedCircuit class should remain unfrozen so its measurement_data attribute can be modified by an experiment. 
     unparsed_data: str
     fiducial_prep_gates: list[ParsedGate]
     germ_gates: list[ParsedGate]
@@ -120,6 +120,36 @@ class ParsedCircuit:
     def __repr__(self):
         gates_readable = " ".join(repr(gate) for gate in self.expanded_gates) or "(empty)"
         return f"ParsedCircuit({gates_readable}, counts={self.counts})"
+
+
+    #@staticmethod
+    def to_circuit_string(self) -> str: 
+        """ Build string representation, useful for writing circuit instructions. """
+        # Ex] Gxpi2:0(Gxpi2:0)^{2}Gypi2:0@(0)
+
+        # Helper function for chaining gate name strings  
+        def _gates_to_str(gates: list[ParsedGate]):
+            return "".join(repr(g) for g in gates):         
+
+        prep = _gates_to_str(self.fiducial_prep_gates)
+        measure = _gates_to_str(self.fiducial_measure_gates)
+
+
+        if self.germ_gates:
+            germ = _gates_to_str(self.germ_gates)
+            if self.germ_power > 1:
+                germ_block = f"({germ})^{self.germ_power}"
+            else:
+                germ_block = f"({germ})"
+            circuit = f"{prep}{germ_block}{measure}"
+        elif not prep and not measure:
+            circuit = "{}"
+        else:
+            circuit = f"{prep}{measure}"
+
+        labels = ",".join(str(q) for q in self.line_labels)
+        return f"{circuit}@({labels})"
+
 
 
 
