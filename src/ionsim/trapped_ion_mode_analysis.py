@@ -7,27 +7,22 @@ from ionsim.custom_types import Matrix, Vector
 from ionsim.degree_of_freedom import AtomicSpin, MotionalMode
 from ionsim.basis import StandardBasis 
 
-########## List of substantive changes: 
-## 1. Made dimensionless variable function take in inputs so the user can choose the charge, mass, and trap freq scales to use.   
-## 2. Added a helper function to pack/unpack the ion coordinates to reduce code. 
-
-########## List of non-substantive changes: 
-## 1. Variable changes for readability (e.g. omega_x instead of wx) 
-## 2. Type-hinting in functions  
-## 3. Consolidated the functions for solving for ion positions equilibria 
-## 4. Moved eigenvector helper functions into the class. 
-## 5. Reduced number of matrices that we store as class attributes: Need to check whether we want to be storing those. 
-
 ########## Questions: 
 # -1. Should the branch sorting be the default option? This seems like what we would want to do for our problems  
 # 0. LD parameter matrix shape? 
-# 1. Is there a need for the "has run" boolean? e.g. is there a time where it stays False? Ah I think it refers to whether the eqb solver has been successfully executed. 
+# 1.  "has run" boolean? e.g. is there a time where it stays False? Ah I think it refers to whether the eqb solver has been successfully executed. 
 # 2. Should the dimensionless parameters have a naming convention, e.g. omega_x --> omega_x_ND 
-# 3. What sets the phases of the Lamb-Dicke parameters?  
-# 4. Does the LD calculation properly do k dot r?
-# 5. Can we vectorize this to convert loops into vector operations?  
-# 6. See TODO's 
 
+### 3. What sets the phases of the Lamb-Dicke parameters?  
+#       - need to define a convention and stick with it 
+
+### Notes:
+# - won't get orthonormal eigenvectors if there's degeneracies; the orthonormality is w.r.t the H matrix 
+
+
+## References: 
+# https://arxiv.org/abs/2007.12725
+# https://arxiv.org/abs/quant-ph/9702053 
 
 def characteristic_length(q: float, mass: float, omega: float) -> float:
     """ Computes characteristic length in trapped ion system """
@@ -78,6 +73,8 @@ class TrappedIonModeAnalysis:
 
             from omega_(secular, i) = sqrt(q_i V_0 / (2 m_i d^2) ) for the i'th ion. 
 
+            - An atom will experience a potentially different pseudopotential based on its mass and charge.
+            - This is a valid approach when micromotion is small compared to secular motion. 
         """ 
         # assume that the trapping frequency given corresponds to the first ion species 
         q0 = self.nuclear_charges[0] # charge of first ion 
@@ -98,7 +95,8 @@ class TrappedIonModeAnalysis:
 
     #def dimensionless_parameters(self):
     #def nondimensionalize_parameters(self):
-    def convert_parameters_to_dimensionless(self, charge_scale: float=1., mass_scale: float=1., trap_freq_scale: float=1.):
+    #def convert_parameters_to_dimensionless(self, charge_scale: float=1., mass_scale: float=1., trap_freq_scale: float=1.):
+    def set_up_dimensionless_parameeters(self, charge_scale: float=1., mass_scale: float=1., trap_freq_scale: float=1.):
         """ Compute dimensionless parameters, using first ion's properties and axial (z) trapping frequency. 
 
             - characteristic length
@@ -131,7 +129,6 @@ class TrappedIonModeAnalysis:
         self.wx = self.omega_x / self.trap_freq_scale  
         self.trap_frequencies_ND = [self.wx, self.wy, self.wz]
 
-        # TODO: Is hbar set to 1? Reconcile hbar somewhere  
         # Compute characteristic length, time, velocity, and energy scales and store in a dictionary  
         self.characteristic_parameters = {}
         self.characteristic_parameters['length'] = characteristic_length(self.charge_scale, self.mass_scale, self.trap_freq_scale)  
@@ -200,7 +197,8 @@ class TrappedIonModeAnalysis:
         """ Diagonalizes the Coulomb + harmonic trap Hamiltonian for a system of ions. """
         # Convert to dimensionless units using axial trap frequency and first ion's mass and charge  
         # TODO: take in input here or in class constructor for mass, charge, trap scales. 
-        self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
+        #self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
+        self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
         
         self.equilibrium_positions = self.solve_for_equilibrium_positions()
         self.reindex_ions()
@@ -220,6 +218,10 @@ class TrappedIonModeAnalysis:
         self.check_outer_relation(H_matrix)
         self.check_diagonalization(T_matrix, S_matrix, E_matrix)
         #self.hasrun = True  
+
+    @property
+    def normal_mode_frequencies(self):
+        return self.eigvals * self.trap_freq_scale 
 
 
     def normalize_eigenvectors(self, eigvecs, H: Matrix, eigenvalues: Vector | None=None): 
@@ -290,7 +292,6 @@ class TrappedIonModeAnalysis:
 
     def solve_for_equilibrium_positions(self, positions_guess: Vector | None=None):
         """ Solves for equilibrium position vector: u, which represents a flattened spatial grid. """
-        # TODO: option for an initial guess choice? 
         # Set the initial guess for the solver  
         if positions_guess == None:
             # Initialize a random guess  
@@ -498,14 +499,14 @@ class TrappedIonModeAnalysis:
 
             Mode participation factors (eta) take the following matrix form:
              
-            shape: (dimension, ion, mode), for N ions this is (3, N, N) 
+            shape: (dimension, ion, mode), for N ions this is (3, N, 3N). This is the most general case.  
             e.g. eta[1, 2, 3] is eta in the "y" direction, ion 1, and the 2nd mode. 
 
             For N ions, this form organizes the 3N modes into N modes per direction "d", where d = x, y, z. 
 
         """ 
 
-        # TODO: Question: shouldn't the shape be (d, N, N) for d dimensions (3), N ions, and N modes per direction. 
+        # TODO: For the linear case: the shape should be (d, N, N) for d dimensions (3), N ions, and N modes per direction. 
         eigvecs = self.eigvecs
         num_coords, num_modes = np.shape(eigvecs) 
         num_ions = num_modes // 3
@@ -518,6 +519,13 @@ class TrappedIonModeAnalysis:
                 zpm_dimensionful = np.sqrt(const.hbar / (2 * self.mass_scale * self.trap_freq_scale))
                 mode_participation_factors[direction_index, ion_index, mode_index] = zpm_dimensionful * prefactor * eigvecs[pos_coord, mode_index]
         return mode_participation_factors
+
+
+    # Can get lamb-dicke parameters from wavevctor \dot mode_participation_factors[:, i, m]
+    ### -- Coordinate systems must be the same / correspond. 
+
+
+
 
     # Derived properties 
     def compute_reference_single_ion_lamb_dicke_factors(self, wavenumber: float) -> (float, float, float):
@@ -555,6 +563,8 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
  
     def sort_by_branch(self, evals, evecs):
         """ Sorts the eigenvalues, eigenvectors by mode branch (radial x, radial y, axial (z)) """
+        # Hessian block diagonal H_xx, H_yy, H_zz non-zero for linear chain 
+        ## only makes sense for linear chain 
         classifier = self._xyz_classify_modes(evecs)
         # within each branch, sort by frequency
         N_ions = len(evals) // 3
@@ -594,12 +604,14 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
         self.omega_y = self.omega_y[idx]
         self.omega_z = self.omega_z[idx]
         # all ions are the same so this is safe. TODO: When does this change? 
-        self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
+        self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
  
     #def run(self):
+    #def run_normal_mode_analysis()
     def solve_ion_trap_equilibrium(self): 
         """ Diagonalizes the Coulomb + harmonic trap Hamiltonian for a system of ions. """
-        self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
+        #self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
+        self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
         
         self.equilibrium_positions = self.solve_for_equilibrium_positions()
         self.reindex_ions_by_z()
@@ -613,6 +625,7 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
         self.check_for_zero_modes()
         self.check_outer_relation(H_matrix)
 
+        # S matrix may be important; it's how you convert from x, p coordinates to normal mode coordinates 
         S_matrix = self.get_canonical_transformation(H_matrix, self.eigvecs, self.eigvals) 
         self.check_diagonalization(T_matrix, S_matrix, E_matrix)
         #self.hasrun = True  
@@ -637,11 +650,16 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
         # Construct the class 
         return cls(num_ions, omega_x, omega_y, omega_z, atomic_mass, atomic_number)
 
+
+    basis = StandardBasis([*spins])
+
     @classmethod
-    def from_atomic_spin_basis(cls, atomic_structure_basis: StandardBasis, omega_x: float, omega_y: float, omega_z: float): 
+    #def from_atomic_spin_basis(cls, atomic_structure_basis: StandardBasis, omega_x: float, omega_y: float, omega_z: float): 
+    def from_atomic_spin_basis(cls, spins: list[degree_of_freedom], omega_x: float, omega_y: float, omega_z: float): 
         """ Build the mode analysis class from a basis of AtomicSpin degrees of freedom under harmonic trapping. """ 
         # Extract number of ions and the mass and atomic number from the DOF in the basis 
-        DOFs = atomic_structure_basis.degrees_of_freedom
+        #DOFs = atomic_structure_basis.degrees_of_freedom
+        DOFs = spins 
         num_ions = len(DOFs)
         atomic_masses = []
         atomic_numbers = []
@@ -656,7 +674,7 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
 
 
 
-    def build_mode_DOFs(self, mode_indices: list[int], fock_dimensions: Vector | int) -> MotionalMode:
+    def build_mode_DOFs(self, mode_indices: list[int], fock_dimensions: Vector | int) -> list[MotionalMode]:
         """ Builds and returns an IonSim Motional Degree of Freedom.
 
             - Applies each fock dimension to each mode, or applies the same fock dimension to all the modes  
@@ -670,7 +688,8 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
 
         return modes 
 
- 
+
+
 #You could redefine the equilibrium finding function to assert that the equilibrium is linear. For example, make a wrapper inside the function for the potential, Jacobian, and Hessian that forces x_i and y_i = 0. 
  
 #This is the code for the Lamb-Dicke parameters: (not that overall phases don't matter here, but the relative phase does. We could pin down the phase with some convention like, "each mode's first non-negative LD value is defined positive." I also include some extra helper functions. 
