@@ -247,28 +247,3 @@ def parse_gst_circuit_file(filepath: str | Path) -> list[ParsedCircuit]:
             results.append(parse_circuit_line(stripped_line, outcome_labels))
 
     return results 
-
- # Moved to an example in \examples\gst\ ,ECM 03 April 2026
- #if __name__=="__main__":
- #    # Example usage 
- #
- #    fname = './gst_m12_m52_011.gstdata' 
- #
- #    # Run the main parsing function:  
- #    results = parse_gst_circuit_file(fname)
- #
- #    head = 540
- #    # Print circuit information: 
- #    for i, circ in enumerate(results):
- #        print(f"\n--- Experiment {i} ---")
- #        print(f"    Unparsed circuit line:  {circ.unparsed_data}")
- #        print(f"    Prep gates:    {circ.prep_gates}")
- #        print(f"    Germ gates:    {circ.germ_gates}")
- #        print(f"    Germ power:    {circ.germ_power}")
- #        print(f"    Measure gates:    {circ.measurement_gates}")
- #        print(f"    Measurement outcomes:    {circ.measurement_data.counts}")
- #        print(f"    Total shots:    {circ.total_counts}")
- #        print(f"    Circuit depth:    {circ.depth}")
- #        # Only print the first {head} 
- #        if i > head:
- #            break
