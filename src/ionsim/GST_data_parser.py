@@ -94,7 +94,7 @@ class ParsedCircuit:
     germ_power: int 
 
     line_labels: list[int]   # not as important, TODO: delete?   
-    measurement_data: CircuitData
+    measurement_data: CircuitData | None
 
     
     @property
@@ -122,8 +122,7 @@ class ParsedCircuit:
         return f"ParsedCircuit({gates_readable}, counts={self.counts})"
 
 
-    #@staticmethod
-    def to_circuit_string(self) -> str: 
+    def build_circuit_string(self) -> str: 
         """ Build string representation, useful for writing circuit instructions. """
         # Ex] Gxpi2:0(Gxpi2:0)^{2}Gypi2:0@(0)
 
@@ -150,6 +149,14 @@ class ParsedCircuit:
         labels = ",".join(str(q) for q in self.line_labels)
         return f"{circuit}@({labels})"
 
+
+    @staticmethod
+    def plan(prep_gates, germ_gates, germ_power, measure_gates, line_labels):
+        """ Constructs and returns a circuit that is planned - no measurement data exists yet. """ 
+        circ = ParsedCircuit("", prep_gates, germ_gates, measure_gates, germ_power, line_labels, measurement_data = None)
+
+        circ.unparsed_data = circ.build_circuit_string()
+        return circ  
 
 
 
