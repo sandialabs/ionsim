@@ -18,7 +18,7 @@ class CircuitData:
 
     @staticmethod
     def from_counts(counts):
-        return CircuitData(counts=counts, timestamped_shots =None)
+        return CircuitData(counts=counts, timestamped_shots = None)
         
 
     @staticmethod
