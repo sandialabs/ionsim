@@ -434,6 +434,7 @@ def _run_stochastic_trajectories_numba(
 
     noise_transformation_types = np.ascontiguousarray(component_data.noise_transformation_types, dtype=np.int32)
     noise_transformation_params = np.ascontiguousarray(component_data.noise_transformation_params, dtype=np.float64)
+    all_rates_zero = np.uint8(np.all(det_has_rate == 0) and np.all(stoch_has_rate == 0))
 
     if method == 'RK4':
         return _run_stochastic_trajectories_numba_RK4(
@@ -441,6 +442,7 @@ def _run_stochastic_trajectories_numba(
             initial_vec_c,
             time_grid_f64,
             H_det,
+            all_rates_zero,
             det_hints,
             det_rates,
             det_has_rate,
@@ -641,6 +643,13 @@ if _NUMBA_AVAILABLE:
         return -1j * H.dot(psi)
 
     @njit(cache=True)
+    def _numba_rhs_from_hamiltonian(
+        H: np.ndarray,
+        psi: np.ndarray,
+    ) -> np.ndarray:
+        return -1j * H.dot(psi)
+
+    @njit(cache=True)
     def _numba_rk4_step(
         t0: float,
         dt: float,
@@ -650,6 +659,7 @@ if _NUMBA_AVAILABLE:
         noise_array: np.ndarray,
         time_grid: np.ndarray,
         H_det: np.ndarray,
+        all_rates_zero: np.uint8,
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
@@ -662,6 +672,33 @@ if _NUMBA_AVAILABLE:
         noise_transformation_types: np.ndarray,
         noise_transformation_params: np.ndarray,
     ) -> np.ndarray:
+        if all_rates_zero != 0:
+            H_step = _numba_build_hamiltonian(
+                t0,
+                step,
+                traj_idx,
+                noise_array,
+                time_grid,
+                H_det,
+                det_hints,
+                det_rates,
+                det_has_rate,
+                stoch_hints,
+                stoch_rates,
+                stoch_has_rate,
+                noise_strengths,
+                noise_offsets,
+                noise_source_indices,
+                noise_transformation_types,
+                noise_transformation_params,
+                interpolate=False,
+            )
+            k1 = _numba_rhs_from_hamiltonian(H_step, psi)
+            k2 = _numba_rhs_from_hamiltonian(H_step, psi + 0.5 * dt * k1)
+            k3 = _numba_rhs_from_hamiltonian(H_step, psi + 0.5 * dt * k2)
+            k4 = _numba_rhs_from_hamiltonian(H_step, psi + dt * k3)
+            return psi + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
         k1 = _numba_rhs(
             t0,
             psi,
@@ -754,6 +791,7 @@ if _NUMBA_AVAILABLE:
         initial_vector: np.ndarray,
         time_grid: np.ndarray,
         H_det: np.ndarray,
+        all_rates_zero: np.uint8,
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
@@ -787,6 +825,7 @@ if _NUMBA_AVAILABLE:
                     noise_array,
                     time_grid,
                     H_det,
+                    all_rates_zero,
                     det_hints,
                     det_rates,
                     det_has_rate,
