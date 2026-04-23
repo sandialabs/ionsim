@@ -151,12 +151,12 @@ class ParsedCircuit:
 
 
     @staticmethod
-    def plan(prep_gates, germ_gates, germ_power, measure_gates, line_labels):
+    def plan(prep_gates: list[ParsedGate], germ_gates: list[ParsedGate], germ_power: int=1, measure_gates: list[ParsedGate], line_labels: list[int]):
         """ Constructs and returns a circuit that is planned - no measurement data exists yet. """ 
-        circ = ParsedCircuit("", prep_gates, germ_gates, measure_gates, germ_power, line_labels, measurement_data = None)
+        planned_circ = ParsedCircuit("", prep_gates, germ_gates, measure_gates, germ_power, line_labels, measurement_data = None)
 
-        circ.unparsed_data = circ.build_circuit_string()
-        return circ  
+        planned_circ.unparsed_data = planned_circ.build_circuit_string()
+        return planned_circ  
 
 
 
