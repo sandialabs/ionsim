@@ -13,11 +13,16 @@ import ionsim as ism
 def main():
 
     # 1. Given the gate set, run the GST circuit planner if it has not been ran yet.  
-    gate_set = ['idle', 'Gxpi2', 'Gypi2']
-    ism.gst_circuit_planner.generate_gst_circuit_instructions(gate_set, N_shots)
+    gate_names = ['idle', 'Gxpi2', 'Gypi2']
+    qubit_indices = [0] # index of each qubit  
+    num_qubits = len(qubit_indices)
+
+    gst_circuit_filename = 'circuit_planner_example.gstdata'
+    gst_circuit_planner = ism.GSTCircuitPlanner(gate_names, qubit_indices)
+    gst_circuit_planner.write_circuit_plan(gst_circuit_filename, num_qubits) # writes gst circuits to a file  
 
     # 2. Using the GST circuit list from a file, read those circuits in.  
-    gst_circuit_filename = 'circuit_planner_example.gstdata'
+    #gst_circuit_filename = 'circuit_planner_example.gstdata'
     gst_circuits = ism.parse_gst_circuit_file(gst_circuit_filename)
 
     # 3. Specify the relationship between GST gate names (e.g. "Gxpi2") and your simulation name (e.g. "run_noisy_Xpi2_simulation()")
@@ -28,7 +33,6 @@ def main():
     circuit_simulation_output_file = 'simulated_gst_experimental_data.gstdata'
 
     # For the IonSim simulations, set up the 1-qubit (1Q) basis and initial state.  
-    num_spins = 1
     spins = [sm.AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])]
     basis = sm.StandardBasis([*spins])
 
