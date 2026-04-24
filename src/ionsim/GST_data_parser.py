@@ -201,7 +201,7 @@ def parse_measurement_outcome_labels(header: str) -> list[str]:
 
 
 def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
-    """ Parse a GST circuit line, containing a sequence of gates and the measurement count outcomes. """ 
+    """ Parse a GST circuit line, containing a sequence of gates and possibly measurement count outcomes. """ 
     ## TODO: Add parsing functionality for t-dependent data. This is currently not handled 
     # For GST data files, this is of the format circuit list then measurement counts 
 
@@ -210,33 +210,40 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
 
     # Separate the circuit from the measurement outcomes
     match = re.match(r"^(.+?)@\(([^)]+)\)\s+(.+)$", line) 
-
-    if match:
-        
-
-    
-    else:
-        match = re.match(r"^(.+?)@\(([^)]+)\)\s*$", line) 
-        if not match:
-            raise ValueError(f"Cannot parse line: {line!r}")
+    if not match:
+        raise ValueError(f"Cannot parse line: {line!r}")
+ #    else:
+ #        match = re.match(r"^(.+?)@\(([^)]+)\)\s*$", line) 
+ #        if not match:
+ #            raise ValueError(f"Cannot parse line: {line!r}")
 
     # Match group 1 is the circuit sequence  
     # Match group 2 is the @(0) directive so it should be ignored  
     # Match group 3 is the measurement counts  
     circuit_sequence = match.group(1).strip() 
     line_labels = [int(q) for q in match.group(2).split(",")]
-    count_values = [int(x) for x in match.group(3).split()]
-    
-    if len(count_values) != len(outcome_labels):
-        raise ValueError(f"Expected {len(outcome_labels)} measurement outcomes but received {len(count_values)} on line: {line!r}")
-   
-    # Create a dictionary with measurement outcomes and corresponding counts for this line  
-    measurement_counts = dict(zip(outcome_labels, count_values)) 
+    count_info = match.group(3) # None if there's no measurement information  
 
+    # Handle cases where there is / isn't measurement data: 
+    if count_info is not None:
+        count_values = [int(x) for x in count_info.split()]
+
+        # Build CircuitData if there is measurement data  
+        if len(count_values) != len(outcome_labels):
+            raise ValueError(f"Expected {len(outcome_labels)} measurement outcomes but received {len(count_values)} on line: {line!r}")
+   
+        # Create a dictionary with measurement outcomes and corresponding counts for this line  
+        measurement_counts = dict(zip(outcome_labels, count_values)) 
+
+        parsed_measurement_data = CircuitData.from_counts(measurement_counts)
+    else:
+        parsed_measurement_data = None 
+    
     # Parse circuit sequence, starting with empty (do nothing -- prep then measure) string 
     if circuit_sequence == "{}":
         return ParsedCircuit(unparsed_data = line, fiducial_prep_gates=[], germ_gates = [], fiducial_measurement_gates = [],
-                            germ_power = 1, line_labels = line_labels, measurement_data = CircuitData.from_counts(measurement_counts)) 
+                            germ_power = 1, line_labels = line_labels, measurement_data = parsed_measurement_data) 
+                            #germ_power = 1, line_labels = line_labels, measurement_data = CircuitData.from_counts(measurement_counts)) 
 
 
     # Find the germ block if it exists  
@@ -260,7 +267,8 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
         germ_power = 1
         
     
-    return ParsedCircuit(line, prep_gates, germ_gates, measure_gates, germ_power, line_labels, CircuitData.from_counts(measurement_counts)) 
+    return ParsedCircuit(line, prep_gates, germ_gates, measure_gates, germ_power, line_labels, parsed_measurement_data) 
+    #return ParsedCircuit(line, prep_gates, germ_gates, measure_gates, germ_power, line_labels, CircuitData.from_counts(measurement_counts)) 
 
 
 
