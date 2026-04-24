@@ -210,9 +210,15 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
 
     # Separate the circuit from the measurement outcomes
     match = re.match(r"^(.+?)@\(([^)]+)\)\s+(.+)$", line) 
+
+    if match:
+        
+
     
-    if not match:
-        raise ValueError(f"Cannot parse line: {line!r}")
+    else:
+        match = re.match(r"^(.+?)@\(([^)]+)\)\s*$", line) 
+        if not match:
+            raise ValueError(f"Cannot parse line: {line!r}")
 
     # Match group 1 is the circuit sequence  
     # Match group 2 is the @(0) directive so it should be ignored  

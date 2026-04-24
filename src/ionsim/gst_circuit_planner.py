@@ -108,12 +108,36 @@ class GSTCircuitPlanner:
                 f.write(f"{circ.build_circuit_string()}\n")
                        
 
-    
+   
+    @staticmethod
+    def standard_1Q_fiducials() -> list:
+        """ For 1Q gates, the fiducial circuits are standardized for {X_pi/2, Y_pi/2} gates. 
+
+            - returns the prep and measure fiducials as lists of lists containing ParsedGate objects
+
+        """  
+        qubits = (0, )
+        X_pi2 = ParsedGate('Gxpi2', qubits)
+        Y_pi2 = ParsedGate('Gypi2', qubits)
 
 
+        fiducials = [ [], [X_pi2], [Y_pi2], [X_pi2, X_pi2], [Y_pi2, Y_pi2] ]
+        return fiducials, fiducials 
 
+    @staticmethod
+    def standard_1Q_germs() -> list:
+        """ For 1Q gates, the germs are the gates themselves and specific combinations of them. 
 
+            - returns the list of germs; each germ is a list of ParsedGate objects 
 
+        """  
+        qubits = (0, )
+        X_pi2 = ParsedGate('Gxpi2', qubits)
+        Y_pi2 = ParsedGate('Gypi2', qubits)
+        idle = ParsedGaet('[]', ()) # should it be qubits? 
+
+        germs = [ [X_pi2], [Y_pi2], [idle], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2] ]
+        return germs 
 
 
 
