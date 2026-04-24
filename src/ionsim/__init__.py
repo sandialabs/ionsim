@@ -34,3 +34,4 @@ from .gate_interpolant import GateInterpolant
 from .io import * 
 from .GST_data_parser import *
 from .gate_set_tomography import GateSetTomography 
+from .gst_circuit_planner import GSTCircuitPlanner 

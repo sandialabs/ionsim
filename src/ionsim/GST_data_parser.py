@@ -128,7 +128,7 @@ class ParsedCircuit:
 
         # Helper function for chaining gate name strings  
         def _gates_to_str(gates: list[ParsedGate]):
-            return "".join(repr(g) for g in gates):         
+            return "".join(repr(g) for g in gates)
 
         prep = _gates_to_str(self.fiducial_prep_gates)
         measure = _gates_to_str(self.fiducial_measure_gates)
@@ -151,7 +151,7 @@ class ParsedCircuit:
 
 
     @staticmethod
-    def plan(prep_gates: list[ParsedGate], germ_gates: list[ParsedGate], germ_power: int=1, measure_gates: list[ParsedGate], line_labels: list[int]):
+    def plan(prep_gates: list[ParsedGate], germ_gates: list[ParsedGate], germ_power: int, measure_gates: list[ParsedGate], line_labels: list[int]):
         """ Constructs and returns a circuit that is planned - no measurement data exists yet. """ 
         planned_circ = ParsedCircuit("", prep_gates, germ_gates, measure_gates, germ_power, line_labels, measurement_data = None)
 

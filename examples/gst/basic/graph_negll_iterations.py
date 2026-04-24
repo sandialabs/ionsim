@@ -8,7 +8,6 @@ style_path_data = '~/plot_style_data.txt'
 
 
 
-
 datafile = 'negative_log_likelihood.dat'  
 
 data = np.loadtxt(datafile,unpack=True)

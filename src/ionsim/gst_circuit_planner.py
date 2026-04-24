@@ -1,8 +1,7 @@
 import numpy as np
-from dataclasses import dataclass, field
 from pathlib import Path 
 import re
-
+from ionsim.GST_data_parser import ParsedCircuit, ParsedGate
 
 class GSTCircuitPlanner:
     def __init__(self, gate_names: list[str], qubit_labels, prep_fiducials = None, measure_fiducials = None, germs = None, germ_powers=[1,2,4,8,16]):
@@ -28,15 +27,13 @@ class GSTCircuitPlanner:
         self.prep_fiducials = prep_fiducials
         self.germs = germs 
         self.measure_fiducials = measure_fiducials
-        
 
 
-    def _construct_gate_name_to_object_mapping(self, gate_names: list[str], qubit_labels: list[str]) -> list[]
+    def _construct_gate_name_to_object_mapping(self, gate_names: list[str], qubit_labels: list[str]): 
         """ Set up the gate name -> ParsedGate look up dictionary """ 
         self.gate_lookup = {}
         for name in gate_names:
             self.gate_lookup[name] = ParsedGate(name, tuple(qubit_labels))
-
 
     def generate_gst_circuits(self):
         """ Generate the GST circuits to be ran in experiments. Avoid duplicates """ 
@@ -52,8 +49,6 @@ class GSTCircuitPlanner:
             
         self.gst_circuits = circuits
         return circuits 
-
-
 
     def _linear_gst_circuits(self):
         """ Linear GST circuits (no germ powers). Consists of two circuit sets:
@@ -78,7 +73,6 @@ class GSTCircuitPlanner:
 
         return circuits 
 
-
     def _long_gst_circuits(self):
         """ Long-form GST circuits: fiducial_prep + prep^{germ} + fiducial_measure """ 
         circuits = []
@@ -89,7 +83,6 @@ class GSTCircuitPlanner:
                         circuits.append( ParsedCircuit.plan(prep_fiducial, germ, power, measure_fiducial, self.qubit_labels)) 
 
         return circuits 
-
 
     def write_circuit_plan(self, filepath: str | Path, N_qubits:int = 1):
         """ Writes a gst data file compatible with the parser """ 
@@ -107,8 +100,6 @@ class GSTCircuitPlanner:
             for circ in self.gst_circuits:
                 f.write(f"{circ.build_circuit_string()}\n")
                        
-
-   
     @staticmethod
     def standard_1Q_fiducials() -> list:
         """ For 1Q gates, the fiducial circuits are standardized for {X_pi/2, Y_pi/2} gates. 
@@ -139,6 +130,3 @@ class GSTCircuitPlanner:
         germs = [ [X_pi2], [Y_pi2], [idle], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2] ]
         return germs 
 
-
-
- 
