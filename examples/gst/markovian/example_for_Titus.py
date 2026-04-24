@@ -10,6 +10,8 @@ import ionsim as ism
 
 """ Example script for running GST circuit planner, reading from it, running simulations to ``simulate'' the experiments based on its instructions, 
         and providing "measurement" info for the GST analysis.  """ 
+
+
 def main():
 
     # 1. Given the gate set, run the GST circuit planner if it has not been ran yet.  
@@ -20,6 +22,8 @@ def main():
     gst_circuit_filename = 'circuit_planner_example.gstdata'
     gst_circuit_planner = ism.GSTCircuitPlanner(gate_names, qubit_indices)
     gst_circuit_planner.write_circuit_plan(gst_circuit_filename, num_qubits) # writes gst circuits to a file  
+
+    sys.exit(0)
 
     # 2. Using the GST circuit list from a file, read those circuits in.  
     #gst_circuit_filename = 'circuit_planner_example.gstdata'
@@ -57,7 +61,7 @@ def main():
 
         # Estimate and record circuit outcomes in a dictionary to create ParsedCircuit object: 
         outcome_probabilities = rho.compute_basis_state_probabilities() 
-        estimated_outcome_counts = np.random.multinomial(N_shots, [outcome_probabilities[0], outcome_probabilities[1]) 
+        estimated_outcome_counts = np.random.multinomial(N_shots, [outcome_probabilities[0], outcome_probabilities[1]]) 
         
         outcome_info = {}
         for label, counts in zip(outcome_labels, estimated_outcome_counts):
