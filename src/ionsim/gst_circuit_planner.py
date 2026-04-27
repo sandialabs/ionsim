@@ -12,7 +12,6 @@ class GSTCircuitPlanner:
             - Can write the GST circuit sequences to a file.  
 
         """ 
-
         self.qubit_labels = qubit_labels
         self.gate_names = gate_names
         self.germ_powers = germ_powers
@@ -33,7 +32,6 @@ class GSTCircuitPlanner:
         self.prep_fiducials = prep_fiducials
         self.germs = germs 
         self.measure_fiducials = measure_fiducials
-
 
     def _construct_gate_name_to_object_mapping(self, gate_names: list[str], qubit_labels: list[str]): 
         """ Set up the gate name -> ParsedGate look up dictionary """ 
@@ -119,10 +117,10 @@ class GSTCircuitPlanner:
         qubits = (0, )
         X_pi2 = ParsedGate('Gxpi2', qubits)
         Y_pi2 = ParsedGate('Gypi2', qubits)
-        # include idle?
         #idle = ParsedGate('idle', ())
 
-        fiducials = [ [X_pi2], [Y_pi2], [X_pi2, X_pi2], [Y_pi2, Y_pi2] ]
+        # include empty list for "do nothing for no time" initial sequence 
+        fiducials = [[], [X_pi2], [Y_pi2], [X_pi2, X_pi2], [Y_pi2, Y_pi2] ]
         return fiducials, fiducials 
 
     @staticmethod
@@ -165,4 +163,3 @@ class GSTCircuitPlanner:
             # Write the header 
             columns = ", ".join(f"{outcome} count" for outcome in outcome_labels)
             f.write(f"## Columns = {columns}\n")
-
