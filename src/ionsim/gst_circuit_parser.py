@@ -98,7 +98,7 @@ class ParsedCircuit:
     line_labels: list[int]   # not as important, TODO: delete?   
     measurement_data: CircuitData | None
 
-    
+
     @property
     def expanded_gates(self) -> list[ParsedGate]:
         """ List of gates, expanded (no germ power included) """
@@ -121,7 +121,7 @@ class ParsedCircuit:
 
     def __repr__(self):
         gates_readable = " ".join(repr(gate) for gate in self.expanded_gates) or "(empty)"
-        return f"ParsedCircuit({gates_readable}, counts={self.counts})"
+        return f"ParsedCircuit({gates_readable}, data={self.measurement_data})"
 
 
     def build_circuit_string(self) -> str: 
@@ -159,7 +159,7 @@ class ParsedCircuit:
 
         # Check spacings to align with gstdata formatting from pygsti 
         counts_str = "  ".join(str(self.measurement_data.counts[k]) for k in sorted(self.measurement_data.counts.keys()))
-        return f"{circuit_str} {counts_str}"
+        return f"{circuit_str}  {counts_str}"
 
 
     @staticmethod
@@ -173,7 +173,7 @@ class ParsedCircuit:
     def append_to_file(self, filename):
         """ Appends circuit information to a gstdata type file"""
         with open(filename, 'a') as f:
-            f.write(self._format_circut_line() + "\n")
+            f.write(self._format_circuit_line() + "\n")
 
 
 def parse_circuit_string(circ: str) -> list[ParsedGate]:
@@ -225,7 +225,8 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
     line = line.strip()
 
     # Separate the circuit from the measurement outcomes
-    match = re.match(r"^(.+?)@\(([^)]+)\)\s+(.+)$", line) 
+    #match = re.match(r"^(.+?)@\(([^)]+)\)\s+(.+)$", line) 
+    match = re.match(r"^(.+?)@\(([^)]+)\)(?:\s+(.+))?$", line) 
     if not match:
         raise ValueError(f"Cannot parse line: {line!r}")
 

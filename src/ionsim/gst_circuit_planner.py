@@ -147,12 +147,12 @@ class GSTCircuitPlanner:
         d = 2**N_qubits # Hilbert space dimensionality 
         outcome_labels = [''.join(bits) for bits in product('01', repeat=N_qubits)] 
 
-        with open(filepath, 'w') as f:
+        with open(filename, 'w') as f:
             # Write the header 
             columns = ", ".join(f"{outcome} count" for outcome in outcome_labels)
             f.write(f"## Columns = {columns}\n")
 
-            for circ in self.gst_circuits:
+            for circ in circuits:
                 f.write(circ._format_circuit_line() + "\n")
 
     @staticmethod
@@ -161,7 +161,7 @@ class GSTCircuitPlanner:
         d = 2**N_qubits # Hilbert space dimensionality 
         outcome_labels = [''.join(bits) for bits in product('01', repeat=N_qubits)] 
 
-        with open(filepath, 'w') as f:
+        with open(filename, 'w') as f:
             # Write the header 
             columns = ", ".join(f"{outcome} count" for outcome in outcome_labels)
             f.write(f"## Columns = {columns}\n")
