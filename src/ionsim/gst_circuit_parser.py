@@ -82,11 +82,11 @@ class ParsedGate:
 
 @dataclass
 class ParsedCircuit:
-    """ Parsed circuit from GST file with measurement outcome in counts 
+    """ Parsed circuit from GST file, optionally with measurement outcomes 
 
         - follows convention of Prep gates --> {(Germ_gates)^germ_power} --> measure gates  
-        
         - Stores the file string contents
+
     """
     # ParsedCircuit class should remain unfrozen so its measurement_data attribute can be modified by an experiment. 
     unparsed_data: str
@@ -128,13 +128,12 @@ class ParsedCircuit:
         """ Build string representation, useful for writing circuit instructions. """
         # Ex] Gxpi2:0(Gxpi2:0)^{2}Gypi2:0@(0)
 
-        # Helper function for chaining gate name strings  
+        # Helper function for chaining gate names into a single string 
         def _gates_to_str(gates: list[ParsedGate]):
             return "".join(repr(g) for g in gates)
 
         prep = _gates_to_str(self.fiducial_prep_gates)
         measure = _gates_to_str(self.fiducial_measurement_gates)
-
 
         if self.germ_gates:
             germ = _gates_to_str(self.germ_gates)
@@ -214,10 +213,6 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
     match = re.match(r"^(.+?)@\(([^)]+)\)\s+(.+)$", line) 
     if not match:
         raise ValueError(f"Cannot parse line: {line!r}")
- #    else:
- #        match = re.match(r"^(.+?)@\(([^)]+)\)\s*$", line) 
- #        if not match:
- #            raise ValueError(f"Cannot parse line: {line!r}")
 
     # Match group 1 is the circuit sequence  
     # Match group 2 is the @(0) directive so it should be ignored  
@@ -245,8 +240,6 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
     if circuit_sequence == "{}":
         return ParsedCircuit(unparsed_data = line, fiducial_prep_gates=[], germ_gates = [], fiducial_measurement_gates = [],
                             germ_power = 1, line_labels = line_labels, measurement_data = parsed_measurement_data) 
-                            #germ_power = 1, line_labels = line_labels, measurement_data = CircuitData.from_counts(measurement_counts)) 
-
 
     # Find the germ block if it exists  
     germ_match = re.search(r"\(([^)]*)\)(?:\^(\d+))?", circuit_sequence)
@@ -268,10 +261,7 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
         measure_gates = []
         germ_power = 1
         
-    
     return ParsedCircuit(line, prep_gates, germ_gates, measure_gates, germ_power, line_labels, parsed_measurement_data) 
-    #return ParsedCircuit(line, prep_gates, germ_gates, measure_gates, germ_power, line_labels, CircuitData.from_counts(measurement_counts)) 
-
 
 
 def parse_gst_circuit_file(filepath: str | Path) -> list[ParsedCircuit]:

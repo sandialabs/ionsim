@@ -1,12 +1,17 @@
 import numpy as np
 from pathlib import Path 
 import re
-from ionsim.GST_data_parser import ParsedCircuit, ParsedGate
+from ionsim.gst_circuit_parser import ParsedCircuit, ParsedGate
 from itertools import product
 
 class GSTCircuitPlanner:
-    def __init__(self, gate_names: list[str], qubit_labels, prep_fiducials = None, measure_fiducials = None, germs = None, germ_powers=[1,2,4,8,16]):
-        """ Constructor for GST Circuit Planner class """ 
+    def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials = None, measure_fiducials = None, germs = None, germ_powers=[1,2,4,8,16]):
+        """ Constructor for GST Circuit Planner class. The user passes in the gate names and qubit labels at a minimum. 
+
+            - Sets up list of prep gates, measure gates, and germ gates. The class organizes GST circuits based on those gates requested germ powers. 
+            - Can write the GST circuit sequences to a file.  
+
+        """ 
 
         self.qubit_labels = qubit_labels
         self.gate_names = gate_names
@@ -16,15 +21,15 @@ class GSTCircuitPlanner:
         self._construct_gate_name_to_object_mapping(gate_names, qubit_labels) 
 
         # Set up prep/measure/germ circuits depending on user input. A default is used if none is supplied.  
-        if prep_fiducials is None and len(qubit_labels) == 1:
+        if prep_fiducials is None and measure_fiducials is None and len(qubit_labels) == 1:
             # Use standard 1Q GST fiducial choices 
             prep_fiducials, measure_fiducials = self.standard_1Q_fiducials()
-        elif prep_fiducials is None and len(qubit_labels) > 1:
+        elif prep_fiducials is None and measure_fiducials is None and len(qubit_labels) > 1:
             raise IonSimError(f"2-qubit GST circuit planning default options are currently not implemented in IonSim. Please specify a choice of fiducial prep circuits.")
         
         if germs is None and len(qubit_labels) == 1:
             germs = self.standard_1Q_germs()
-        
+
         self.prep_fiducials = prep_fiducials
         self.germs = germs 
         self.measure_fiducials = measure_fiducials
@@ -39,7 +44,7 @@ class GSTCircuitPlanner:
             else:
                 self.gate_lookup[name] = ParsedGate(name, tuple(qubit_labels))
 
-    def generate_gst_circuits(self):
+    def generate_gst_circuits(self) -> list:
         """ Generate the GST circuits to be ran in experiments. Avoid duplicates """ 
         gst_circuits = []
         unique = set() 
@@ -54,7 +59,7 @@ class GSTCircuitPlanner:
         self.gst_circuits = gst_circuits
         return gst_circuits 
 
-    def _linear_gst_circuits(self):
+    def _linear_gst_circuits(self) -> list:
         """ Linear GST circuits (no germ powers). Consists of two circuit sets:
 
             1. Fiducial prep & measure 
@@ -77,7 +82,7 @@ class GSTCircuitPlanner:
 
         return circuits 
 
-    def _long_gst_circuits(self):
+    def _long_gst_circuits(self) -> list:
         """ Long-form GST circuits: fiducial_prep + prep^{germ} + fiducial_measure """ 
         circuits = []
         for germ in self.germs:
@@ -114,9 +119,10 @@ class GSTCircuitPlanner:
         qubits = (0, )
         X_pi2 = ParsedGate('Gxpi2', qubits)
         Y_pi2 = ParsedGate('Gypi2', qubits)
+        # include idle?
+        #idle = ParsedGate('idle', ())
 
-
-        fiducials = [ [], [X_pi2], [Y_pi2], [X_pi2, X_pi2], [Y_pi2, Y_pi2] ]
+        fiducials = [ [X_pi2], [Y_pi2], [X_pi2, X_pi2], [Y_pi2, Y_pi2] ]
         return fiducials, fiducials 
 
     @staticmethod

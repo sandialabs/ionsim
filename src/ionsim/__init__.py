@@ -32,6 +32,6 @@ from .composite_operator import CompositeOperator
 from .dissipator import Dissipator, DissipatorSpontaneousEmission, Lindbladian 
 from .gate_interpolant import GateInterpolant 
 from .io import * 
-from .GST_data_parser import *
+from .gst_circuit_parser import *
 from .gate_set_tomography import GateSetTomography 
 from .gst_circuit_planner import GSTCircuitPlanner 
