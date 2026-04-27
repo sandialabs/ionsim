@@ -15,7 +15,8 @@ import ionsim as ism
 def main():
 
     # 1. Given the gate set, run the GST circuit planner if it has not been ran yet.  
-    gate_names = ['idle', 'Gxpi2', 'Gypi2']
+    #gate_names = ['idle', 'Gxpi2', 'Gypi2']
+    gate_names = ['Gxpi2', 'Gypi2', 'idle']
     qubit_indices = [0] # index of each qubit  
     num_qubits = len(qubit_indices)
 

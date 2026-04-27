@@ -2,6 +2,7 @@ import numpy as np
 from pathlib import Path 
 import re
 from ionsim.GST_data_parser import ParsedCircuit, ParsedGate
+from itertools import product
 
 class GSTCircuitPlanner:
     def __init__(self, gate_names: list[str], qubit_labels, prep_fiducials = None, measure_fiducials = None, germs = None, germ_powers=[1,2,4,8,16]):
@@ -33,7 +34,10 @@ class GSTCircuitPlanner:
         """ Set up the gate name -> ParsedGate look up dictionary """ 
         self.gate_lookup = {}
         for name in gate_names:
-            self.gate_lookup[name] = ParsedGate(name, tuple(qubit_labels))
+            if name == 'idle': # use empty qubit arguments 
+                self.gate_lookup[name] = ParsedGate(name, ())
+            else:
+                self.gate_lookup[name] = ParsedGate(name, tuple(qubit_labels))
 
     def generate_gst_circuits(self):
         """ Generate the GST circuits to be ran in experiments. Avoid duplicates """ 
@@ -44,11 +48,11 @@ class GSTCircuitPlanner:
         for circ in (self._linear_gst_circuits() + self._long_gst_circuits()):
             raw_circuit_name = circ.build_circuit_string()
             if raw_circuit_name not in unique:
-                seen.add(raw_circuit_name)
-                circuits.append(circ)
+                unique.add(raw_circuit_name)
+                gst_circuits.append(circ)
             
-        self.gst_circuits = circuits
-        return circuits 
+        self.gst_circuits = gst_circuits
+        return gst_circuits 
 
     def _linear_gst_circuits(self):
         """ Linear GST circuits (no germ powers). Consists of two circuit sets:
@@ -62,7 +66,7 @@ class GSTCircuitPlanner:
         # Group 1: Fiducial prep & measure 
         for prep_fiducial in self.prep_fiducials:
             for measure_fiducial in self.measure_fiducials:
-                circuits.append( ParsedCircuit.plan(prep_fiducial, germ, power, measure_fiducial, self.qubit_labels)) 
+                circuits.append( ParsedCircuit.plan(prep_fiducial, [], 1, measure_fiducial, self.qubit_labels)) 
 
         # Group 2: Fiducial prep, gate, and measure. For each gate, run the prep & measure circuits. 
         for gate_name in self.gate_names:
@@ -76,7 +80,7 @@ class GSTCircuitPlanner:
     def _long_gst_circuits(self):
         """ Long-form GST circuits: fiducial_prep + prep^{germ} + fiducial_measure """ 
         circuits = []
-        for germ in self.germ:
+        for germ in self.germs:
             for power in self.germ_powers:
                 for prep_fiducial in self.prep_fiducials:
                     for measure_fiducial in self.measure_fiducials:
@@ -125,7 +129,7 @@ class GSTCircuitPlanner:
         qubits = (0, )
         X_pi2 = ParsedGate('Gxpi2', qubits)
         Y_pi2 = ParsedGate('Gypi2', qubits)
-        idle = ParsedGaet('[]', ()) # should it be qubits? 
+        idle = ParsedGate('[]', ()) # should it be qubits? 
 
         germs = [ [X_pi2], [Y_pi2], [idle], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2] ]
         return germs 

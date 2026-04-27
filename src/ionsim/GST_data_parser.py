@@ -73,7 +73,9 @@ class ParsedGate:
 
     def __repr__(self):
         if (self.name == "idle") or (self.name == "I"):
-            return "idle"
+            return "[]"
+        if not self.qubits:
+            return self.name
         q = ",".join(str(q) for q in self.qubits)
         return f"{self.name}:{q}"
 
@@ -131,7 +133,7 @@ class ParsedCircuit:
             return "".join(repr(g) for g in gates)
 
         prep = _gates_to_str(self.fiducial_prep_gates)
-        measure = _gates_to_str(self.fiducial_measure_gates)
+        measure = _gates_to_str(self.fiducial_measurement_gates)
 
 
         if self.germ_gates:
