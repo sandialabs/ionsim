@@ -150,15 +150,30 @@ class ParsedCircuit:
         labels = ",".join(str(q) for q in self.line_labels)
         return f"{circuit}@({labels})"
 
+    def _format_circuit_line(self):
+        """ Formats the circuit string with measurement information. """
+        # TODO: Handle case where data is time-dependent 
+        circuit_str = self.build_circuit_string()
+        if self.measurement_data is None or self.measurement_data.counts is None: 
+            return circuit_str
+
+        # Check spacings to align with gstdata formatting from pygsti 
+        counts_str = "  ".join(str(self.measurement_data.counts[k]) for k in sorted(self.measurement_data.counts.keys()))
+        return f"{circuit_str} {counts_str}"
+
 
     @staticmethod
     def plan(prep_gates: list[ParsedGate], germ_gates: list[ParsedGate], germ_power: int, measure_gates: list[ParsedGate], line_labels: list[int]):
         """ Constructs and returns a circuit that is planned - no measurement data exists yet. """ 
         planned_circ = ParsedCircuit("", prep_gates, germ_gates, measure_gates, germ_power, line_labels, measurement_data = None)
-
         planned_circ.unparsed_data = planned_circ.build_circuit_string()
         return planned_circ  
 
+
+    def append_to_file(self, filename):
+        """ Appends circuit information to a gstdata type file"""
+        with open(filename, 'a') as f:
+            f.write(self._format_circut_line() + "\n")
 
 
 def parse_circuit_string(circ: str) -> list[ParsedGate]:

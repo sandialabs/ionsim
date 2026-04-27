@@ -12,7 +12,7 @@ import ionsim as ism
         and providing "measurement" info for the GST analysis.  """ 
 
 # example: from titus_gate_simulations import noisy_X_pi2
-
+#
 def main():
 
     # 1. Given the gate set, run the GST circuit planner if it has not been ran yet.  
@@ -74,10 +74,19 @@ def main():
         circuit.measurement_data = circuit_data
 
         # Option to overrwrite the original file at each line so that this information can be written?
-        # e.g. if there's a simulation error (e.g. numerical divergence) on circuit 200's X_pi gate, we should not need to redo teh previous 199 circuit simulations. 
+        # e.g. if there's a simulation error (e.g. numerical divergence) on circuit 200's X_pi gate, we should not need to redo the previous 199 circuit simulations. 
+        gst_circuit_planner.record_measurement_outcome(filename, circuit) 
+ #        with open(filepath, 'w') as f:
+ #            # Write the header 
+ #            columns = ", ".join(f"{outcome} count" for outcome in outcome_labels)
+ #            f.write(f"## Columns = {columns}\n")
+ #
+ #            for circ in self.gst_circuits:
+ #                f.write(f"{circ.build_circuit_string()}\n")
 
 
-    # 5. Write the parsed circuit info back to a file or pickle it & output it. The parsed_circuits list would be fed into GST analysis.  
+    # 5. Or, write the parsed circuit info back to a file or pickle it & output it. The parsed_circuits list would be fed into GST analysis.  
+
     sys.exit(0)
 
 
