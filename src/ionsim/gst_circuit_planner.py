@@ -140,3 +140,29 @@ class GSTCircuitPlanner:
         germs = [ [X_pi2], [Y_pi2], [idle], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2] ]
         return germs 
 
+
+    @staticmethod
+    def write_all_circuit_outcomes(filename: str, circuits: list[ParsedCircuit], N_qubits:int=1):
+        """ Writes all circuit information to a file """
+        d = 2**N_qubits # Hilbert space dimensionality 
+        outcome_labels = [''.join(bits) for bits in product('01', repeat=N_qubits)] 
+
+        with open(filepath, 'w') as f:
+            # Write the header 
+            columns = ", ".join(f"{outcome} count" for outcome in outcome_labels)
+            f.write(f"## Columns = {columns}\n")
+
+            for circ in self.gst_circuits:
+                f.write(circ._format_circuit_line() + "\n")
+
+    @staticmethod
+    def create_circuit_outcomes_file(filename: str, N_qubits:int=1):
+        """ Creates a GST circuit file with appropriate header """ 
+        d = 2**N_qubits # Hilbert space dimensionality 
+        outcome_labels = [''.join(bits) for bits in product('01', repeat=N_qubits)] 
+
+        with open(filepath, 'w') as f:
+            # Write the header 
+            columns = ", ".join(f"{outcome} count" for outcome in outcome_labels)
+            f.write(f"## Columns = {columns}\n")
+

@@ -49,6 +49,9 @@ def main():
 
     # Simulate each circuit's dynamics on the initial state and ``simulate'' the outcome  
     parsed_circuits = []
+
+    # Set up the file containing circuit measurement outcomes 
+    gst_circuit_planner.create_circuit_outcomes_file(circuit_simulation_output_file, 1)
     for circuit in gst_circuits:
         # Reinitialize the state: 
         rho = rho_0.copy() 
@@ -73,17 +76,8 @@ def main():
         circuit_data = ism.CircuitData.from_counts(outcome_info)
         circuit.measurement_data = circuit_data
 
-        # Option to overrwrite the original file at each line so that this information can be written?
         # e.g. if there's a simulation error (e.g. numerical divergence) on circuit 200's X_pi gate, we should not need to redo the previous 199 circuit simulations. 
-        gst_circuit_planner.record_measurement_outcome(filename, circuit) 
- #        with open(filepath, 'w') as f:
- #            # Write the header 
- #            columns = ", ".join(f"{outcome} count" for outcome in outcome_labels)
- #            f.write(f"## Columns = {columns}\n")
- #
- #            for circ in self.gst_circuits:
- #                f.write(f"{circ.build_circuit_string()}\n")
-
+        circuit.append_to_file(circuit_simulation_output_file) 
 
     # 5. Or, write the parsed circuit info back to a file or pickle it & output it. The parsed_circuits list would be fed into GST analysis.  
 
