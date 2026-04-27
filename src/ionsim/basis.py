@@ -345,7 +345,7 @@ class PauliProductBasis(Basis):
  #    @staticmethod
  #    def superoperator_to_pauli_transfer_matrix(self, superoperator: Matrix) -> Matrix:
     def superoperator_to_pauli_transfer_matrix(self, superoperator: Matrix, superoperator_basis: StandardBasis) -> Matrix:
-        """ Converts a superoperator to a Pauli Transfer Matrix via
+        """ Converts a superoperator to a Pauli Transfer Matrix via a change-of-basis unitary transformation:
 
             R = U S U^{dagger}
 
@@ -360,9 +360,9 @@ class PauliProductBasis(Basis):
         U = np.array(self.vectors).conj() 
 
         # If S represents a completely positive, trace-preserving (CPTP) map, R will be purely real. 
-        pauli_transfer_matrix = np.real(U @ superoperator @ (U.T).conj() )
+        pauli_transfer_matrix = U @ superoperator @ (U.T).conj()
+        #pauli_transfer_matrix = np.real(U @ superoperator @ (U.T).conj() ) 
 
-        # TODO: test and verify these formulae 
         return pauli_transfer_matrix 
 
     # TODO: Should this go here (in basis) or in the Process/Gate class? 
