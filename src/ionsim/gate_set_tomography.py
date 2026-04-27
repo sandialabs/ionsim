@@ -6,7 +6,6 @@ import scipy.optimize as opt
 from functools import cached_property
 from typing import Callable
 import inspect
-
 import sys
 
 from ionsim.process import Gate, Circuit
@@ -16,12 +15,6 @@ from ionsim.gst_circuit_parser  import *
 from ionsim.custom_math import matrix_AYB_multiply_to_superoperator 
 from ionsim.ionsim_error import IonSimError
 from ionsim.custom_types import Vector
-
-
-# Example Workflow: 
-# 1. GST_Data Class creation: User creates GST data class from experimental outcome data for various circuits. 
-# 2. GST Class creation: User specifies gate set, prep state, measurement operator, and GST measurement data
-# 3. GST Class: Solve for model parameters and return  
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     def __init__(self, basis: StandardBasis, prep_state_model: dict[Callable], POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
@@ -366,6 +359,25 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
     # TODO: 
     # - Write function to save parameters / other info to hdf5 file
     # - allow for variable number of shots per experiment. 
+
+
+
+
+ #    def estimate_parameter_uncertainties(self, theta: Vector | None=None) -> Vector:
+ #        """ Computes uncertainties of each parameter from the Hessian of the log-likelihood at the MLE solution."""
+ #        if theta is None:
+ #            theta = self.theta
+
+        
+    
+
+
+
+
+
+
+
+
 
 
 # Need functionality that generates gate set based on experimental input. 
