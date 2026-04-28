@@ -147,6 +147,9 @@ def main():
     print(f"Solver results: {solver_results}")
     GST_analyzer.print_parameters()
     GST_analyzer.print_state_and_POVMs()
+    uncertainties, covariance = GST_analyzer.estimate_parameter_uncertainties()
+    print(f"\nPrinting parameters as one vector: {GST_analyzer.gst_parameters}")
+    print(f"\nPrinting uncertainties in the parameters: {uncertainties}")
     sys.exit(0)
 
     # TODO: Either save gates evaluated at the parameter values or just the parameter values.  

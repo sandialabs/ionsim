@@ -86,6 +86,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         #TODO: Algorithm for optimizing stepwise by circuit depth.  
 
+        self.solver_result = None # initialize to None  
+
 
 
     def _initialize_gate_model_factory(self, gate_mappings: dict) -> Callable:
@@ -218,10 +220,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         mapped_state = quantum_map @ rho_supervector
 
         outcome_probabilities = {}
+        probability_TOL = 1E-12
         for label, E in M_effects.items():
-            outcome_probabilities[label] = np.real(E.dot(mapped_state)) 
+            outcome_probabilities[label] = np.real(E.dot(mapped_state))
+            outcome_probabilities[label] = np.clip(outcome_probabilities[label], probability_TOL, 1. - probability_TOL)             
+
         return outcome_probabilities
         
+
 
  #    def _build_process_matrix_cache(self, theta): 
  #        """ Evaluate each gate's process matrix function once"""
@@ -341,6 +347,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # TODO: Provide bounds for parameters if using interpolated gates 
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
             solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B') # TODO consider adding parameter bounds in any case  
+            self.solver_result = solver_result
             self.gst_parameters = solver_result.x
             #self.save_nll_data()
             #self.print_parameters()
@@ -361,29 +368,57 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
     # - allow for variable number of shots per experiment. 
 
 
+    def estimate_parameter_uncertainties(self, theta: Vector | None=None, method: str='bootstrap') -> Vector:
+        """ Computes uncertainties of each parameter from the Hessian of the log-likelihood at the MLE solution."""
+        if theta is None:
+            theta = self.gst_parameters 
 
+        if self.solver_result is None:
+            self.solve_for_gate_parameters()
 
- #    def estimate_parameter_uncertainties(self, theta: Vector | None=None) -> Vector:
- #        """ Computes uncertainties of each parameter from the Hessian of the log-likelihood at the MLE solution."""
- #        if theta is None:
- #            theta = self.theta
-
-        
+        if method == 'hessian':
+            # L-BFGS-B stores an approximation to the inverse Hessian -- we use this for convariance estimation 
+            covariance = np.array(self.solver_result.hess_inv.todense())
+            num_parameters = len(theta)
     
+            # Uncertainties are taken as diagonals of covariance matrix 
+            uncertainties = np.sqrt(np.abs(np.diag(covariance)))
+            return uncertainties, covariance 
+        else: # bootstrapping
+            return self.bootstrap_uncertainties()
 
+    def bootstrap_uncertainties(self, N_bootstrap=100):
+        """ Bootstrapping for parameter uncertainties: Sample data from the fitted model and re-fit, computing 
+                parameter spread. N_bootstrap is the number of resamplings. """
 
+        theta_best = self.gst_parameters.copy()
+        bootstrap_thetas = np.zeros((N_bootstrap, len(theta_best)))
 
+        circuit_probabilities = []
+        for circ in self.parsed_circuits:
+            probs = self._predict_probabilities(circ, theta_best)
+            counts = circ.measurement_data.total_counts     # TODO: generalize to t-dependent data 
+            circuit_probabilities.append((probs, counts))
+        
+        for b in range(N_bootstrap):
+            for circ, (probs, total_counts) in zip(self.parsed_circuits, circuit_probabilities):
+                outcomes = list(probs.keys()) 
+                outcome_probs = [probs[outcome] for outcome in outcomes]
+                outcome_counts = np.random.multinomial(total_counts, outcome_probs) 
+                circ.measurement_data = CircuitData.from_counts(dict(zip(outcomes, outcome_counts)))
+                
+            # Re-run the MLE analysis to find best fit:
+            self.gst_parameters = theta_best.copy()
+            self.solve_for_gate_parameters()   # sets self.gst_parameters to optimal  
+            bootstrap_thetas[b] = self.gst_parameters
 
-
-
-
-
-
-
-# Need functionality that generates gate set based on experimental input. 
-# Is the gate set just the minimal number of IC gates? like is it G = [I, Xpi, X_pi2, Y_pi, Y_pi2] or something like that? From which we can recover the experimentally executed circuits? 
-
-## TODO: Transpiler between QSCOUT and our naming gate convention 
+        # Restore original data/fit
+        self.gst_parameters = theta_best
+            
+        # Compute uncertainties as standard deviation of the best fits
+        uncertainties = np.std(bootstrap_thetas, axis=0) 
+        return uncertainties, bootstrap_thetas
+            
 
 # Could build a N-dimensional process matrix by running simulations for each of the N-dimensional parameters, store them. --> hdf5 files
     # - save the raw hdf5 simulation data (process matrix at each error parameter value) 
@@ -391,11 +426,5 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # - would need to load up one of these for each gate in the gate set
 
-    # Separate data file for X_pi, X_pi/2 , etc. 
-        # - each data structure (hdf5 -- file system, e.g. containing folders) contains simulations over many values of the error parameters  
-
     # - GST could make calls to other parts of IonSim to run needed simulations. For constructing the required process matrices to do GST. 
         # - if you gave it a gate set, the class could then do those simulations to generate the process matrices needed for GST.   
-
-# Other ideas: 
-# - helper functionality for choosing IC fiducial prep/measurement circuits. See Section D.1.1. of PyGST paper. 
