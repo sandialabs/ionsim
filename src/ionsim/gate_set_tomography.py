@@ -34,6 +34,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         print(f"\n\n --- Constructor for GateSetTomography Class IonSim --- ")
 
+        self.basis = basis 
         # Unpack |rho>> and <<E| or <<M| 
         self.prep_state_model = prep_state_model
         self.POVM_effect_models = POVM_effect_models 
@@ -398,17 +399,46 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if self.solver_result is None:
             self.solve_for_gate_parameters()
 
-        if theta is None:
-            theta = self.gst_parameters 
-
         # Estimate process fidelity for each gate 
+        gate_errors = {}
+        gate_infidelity = 0.
         for gate in self.gate_set:
-            ideal_gate = ideal_gate_set[gate.name]
-            
+            ideal_gate = ideal_gate_set[gate.name] # as a process matrix 
 
+            # Get process matrix from gate model at optimum 
+            gate_process_matrix_function = self.gate_models[gate.name]
+            parameter_values = self.gst_parameters[self.gst_parameter_indices[gate.name]] # names and values share same sorted order  
 
+            process_matrix = gate_process_matrix_function(*parameter_values)
+            gate_model = Gate(self.basis, process_matrix)
+            process_infidelity = 1. - gate_model.compute_process_fidelity(ideal_gate)
+            gate_errors[gate.name] = process_infidelity
+            gate_infidelity += process_infidelity
+                        
 
-        return infidelity 
+        # Compute least-square difference for SPAM
+        # prep state: 
+        ideal_prep_state = ideal_gate_set['prep'].supervector  
+        modeled_prep_state = self.get_prep_state(self.gst_parameters) 
+        # Trace distance: sqrt(sum([rho_ideal[i] - rho_actual[i]]^2))
+        prep_error = np.sqrt(np.sum((modeled_prep_state - ideal_prep_state)**2)) 
+
+        # POVMs 
+        ideal_POVMs = ideal_gate_set['POVM']  
+        POVMs = self.get_measurement_effects(self.gst_parameters)
+        POVM_errors = {}
+        measurement_error = 0. 
+        for outcome, POVM in ideal_POVMs.items():
+            ideal_POVM = POVM.superbra 
+            parametrized_POVM = POVMs[outcome] 
+            POVM_errors[outcome] = np.sqrt(np.sum((ideal_POVM - parametrized_POVM)**2)) 
+            measurement_error += POVM_errors[outcome] 
+
+        print(f"\nGate errors: {gate_errors}")
+        print(f"\nPrep error: {prep_error}")
+        print(f"\nPOVM errors: {POVM_errors}")
+        # TODO: Should we average over the gate infidelities? 
+        return gate_infidelity + measurement_error + prep_error 
 
 
     ### Functions for parameter uncertainty estimation ### 

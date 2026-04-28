@@ -151,15 +151,29 @@ def main():
     GST_analyzer.print_parameters()
     GST_analyzer.print_state_and_POVMs()
 
-    estimate_uncertainties = True
+    # Construct ideal gate set to compute error metric of GST analysis & gate modeling 
+    ideal_gate_set = {}
+    ideal_gate_set['prep'] = ideal_rho_prep 
+    ideal_gate_set['POVM'] = ideal_POVM_effects 
+    ideal_gate_set['Gxpi2'] = basis.compute_superoperator_from_unitary_operator(sm.Unitary.sqrtX) 
+    ideal_gate_set['Gypi2'] = basis.compute_superoperator_from_unitary_operator(sm.Unitary.sqrtY)
+    ideal_gate_set['idle'] = basis.compute_superoperator_from_unitary_operator(sm.Unitary.I)
+
+    gate_set_error = GST_analyzer.compute_gate_set_process_infidelity(ideal_gate_set)
+    print(f"\nGate set error: {gate_set_error}")
+
+    write_data_to_file = False 
+    estimate_uncertainties = False 
+    if write_data_to_file:
+        GST_analyzer.write_results_to_file()
+
     if estimate_uncertainties:
         print(f"\n\n -------- Estimating parameter uncertainties. ----------")
         uncertainties, covariance = GST_analyzer.estimate_parameter_uncertainties()
         print(f"\nPrinting parameters as one vector: {GST_analyzer.gst_parameters}")
         print(f"\nPrinting uncertainties in the parameters: {uncertainties}")
 
-
-    # TODO: Either save gates evaluated at the parameter values or just the parameter values.  
+    return gate_set_error
 
 if __name__ == '__main__':
     main()
