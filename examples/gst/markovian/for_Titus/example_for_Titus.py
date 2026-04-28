@@ -32,12 +32,10 @@ def main():
     #sys.exit(0)
 
     # 2. Using the GST circuit list from a file, read those circuits in.  
-    #gst_circuit_filename = 'circuit_planner_example.gstdata'
     gst_circuits = ism.parse_gst_circuit_file(gst_circuit_filename)
 
     # 3. Specify the relationship between GST gate names (e.g. "Gxpi2") and your simulation name (e.g. "run_noisy_Xpi2_simulation()")
-    ## The function should at minimum take in a state and return a state.  
-    #gate_mappings = { 'Gxpi2' : noisy_X_pi2, 'Gypi2' : noisy_Y_pi2, 'idle' : idle_gate} # these could be python modules
+    ## The functions should at minimum take in a state and return a state.  
     gate_mappings = { 'Gxpi2' : X_pi_2_state_propagator, 'Gypi2' : Y_pi_2_state_propagator, 'idle' : idle_state_propagator} # these could be python modules
 
     # 4. Loop over all circuits in the plan and run the corresponding simulations, recording circuit outcomes  
@@ -50,7 +48,6 @@ def main():
 
     # Construct initial state 
     rho_0 = ism.State.from_coefficients(basis, np.array([1., 0.])) # ket{0} state 
-
     outcome_labels = ['0', '1'] # for 1Q gates 
 
     # Simulate each circuit's dynamics on the initial state and ``simulate'' the outcome  
