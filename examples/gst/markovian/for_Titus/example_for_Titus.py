@@ -21,7 +21,7 @@ def main():
     qubit_indices = [0] # index of each qubit  
     num_qubits = len(qubit_indices)
 
-    gst_circuit_filename = './circuit_planner_example.gstdata'
+    gst_circuit_filename = './circuit_planner_example.gstdata' # or .circuitplannerdata
     if Path(gst_circuit_filename).exists():
         print(f"GST Circuit plan already exists.")
     else:
