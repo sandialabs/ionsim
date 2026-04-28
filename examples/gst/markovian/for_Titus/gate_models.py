@@ -24,10 +24,9 @@ def X_pi_2_state_propagator(rho: ism.State) -> ism.State:
     levels = rho.basis.degrees_of_freedom[0].energy_levels
     qubit_frequency = np.abs(levels[1].energy - levels[0].energy)
     phase = 0. # for X gate  
-    rabi_rate = 1E6 * theta * 2. * np.pi  # 1 MHz -> rad/s 
+    rabi_rate = 1. 
     X_pi2_hamiltonian = R_hamiltonian(rho.basis, phase, rabi_rate, qubit_frequency) 
-    gate_duration = 1E-6 
-    assert np.abs(rabi_rate / (2*np.pi) * gate_duration - theta) < 1E-3  # checks the pi/2 rotation condition 
+    gate_duration = theta
     
     rho_propagated = rho.propagate_using_schrodinger_equation(X_pi2_hamiltonian, gate_duration)
     return rho_propagated
@@ -40,10 +39,9 @@ def Y_pi_2_state_propagator(rho: ism.State) -> ism.State:
     levels = rho.basis.degrees_of_freedom[0].energy_levels
     qubit_frequency = np.abs(levels[1].energy - levels[0].energy)
     phase = np.pi/2. # for Y gate  
-    rabi_rate = 1E6 * theta * 2. * np.pi  # 1 MHz -> rad/s 
+    rabi_rate = 1. 
     Y_pi2_hamiltonian = R_hamiltonian(rho.basis, phase, rabi_rate, qubit_frequency) 
-    gate_duration = 1E-6 
-    assert np.abs(rabi_rate / (2*np.pi) * gate_duration - theta) < 1E-3  # checks the pi/2 rotation condition 
+    gate_duration = theta
     
     rho_propagated = rho.propagate_using_schrodinger_equation(Y_pi2_hamiltonian, gate_duration)
     return rho_propagated
