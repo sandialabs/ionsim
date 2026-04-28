@@ -326,7 +326,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         
 
 
-    def solve_for_gate_parameters(self, solver: str = 'MLE'): 
+    def solve_for_gate_parameters(self, parameters_guess: Vector | None=None, solver: str = 'MLE'): 
         """ Function to solve for the parametrization values of a particular gate. 
 
             - Default behavior is a maximum likelihood approach that finds parameters 
@@ -341,7 +341,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if solver == 'MLE':
             # Maximum likelihood estimation.
             # Specify initial guess. 
-            theta_0 = self.gst_parameters.copy() 
+            if parameters_guess is None:
+                theta_0 = self.gst_parameters.copy() 
+            else:
+                theta_0 = parameters_guess
             print(f"Initial parameters: {theta_0}")
 
             # TODO: Provide bounds for parameters if using interpolated gates 

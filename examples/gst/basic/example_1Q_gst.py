@@ -142,15 +142,22 @@ def main():
             return POVM_operator.superbra + effect_parameters 
         POVM_models[outcome] = effect_function
 
+    num_parameters = 12
+    theta_guess = np.ones(num_parameters)*1E-2
+
     GST_analyzer = sm.GateSetTomography(basis, prep_state_function, POVM_models, parsed_circuits, ism_gate_dictionary)
-    solver_results = GST_analyzer.solve_for_gate_parameters()
+    solver_results = GST_analyzer.solve_for_gate_parameters(theta_guess)
     print(f"Solver results: {solver_results}")
     GST_analyzer.print_parameters()
     GST_analyzer.print_state_and_POVMs()
-    uncertainties, covariance = GST_analyzer.estimate_parameter_uncertainties()
-    print(f"\nPrinting parameters as one vector: {GST_analyzer.gst_parameters}")
-    print(f"\nPrinting uncertainties in the parameters: {uncertainties}")
-    sys.exit(0)
+
+    estimate_uncertainties = True
+    if estimate_uncertainties:
+        print(f"\n\n -------- Estimating parameter uncertainties. ----------")
+        uncertainties, covariance = GST_analyzer.estimate_parameter_uncertainties()
+        print(f"\nPrinting parameters as one vector: {GST_analyzer.gst_parameters}")
+        print(f"\nPrinting uncertainties in the parameters: {uncertainties}")
+
 
     # TODO: Either save gates evaluated at the parameter values or just the parameter values.  
 
