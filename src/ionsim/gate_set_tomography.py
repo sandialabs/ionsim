@@ -15,6 +15,7 @@ from ionsim.gst_circuit_parser  import *
 from ionsim.custom_math import matrix_AYB_multiply_to_superoperator 
 from ionsim.ionsim_error import IonSimError
 from ionsim.custom_types import Vector
+from ionsim.io import *
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     def __init__(self, basis: StandardBasis, prep_state_model: dict[Callable], POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
@@ -366,18 +367,58 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             raise IonSimError('Invalid solver input.')
 
 
-    # TODO: 
-    # - Write function to save parameters / other info to hdf5 file
-    # - allow for variable number of shots per experiment. 
+
+    def write_results_to_file(self):
+        """ Writes results of GST analysis to disk. Convention is to write HDF5 file per gate. """ 
+
+        # Write results of each gate set to an hdf5 file
+        for gate in self.gate_set:
+            # Retrieve gate parameter names and values at optimimum; evaluate process matrix  
+            gate_model = self.gate_models[gate.name]
+            gate_model_sig = inspect.signature(gate_model)
+            parameter_names = list(gate_model_sig.parameters.keys())  
+            parameter_values = self.gst_parameters[self.gst_parameter_indices[gate.name]] # names and values share same sorted order  
+
+            process_matrix = gate_model(*parameter_values)
+            # Write parameter names, values, and process matrix evaluated at those parameter values.
+            results_to_write = dict(zip(parameter_names, parameter_values)) 
+            results_to_write[gate.name + '_process_matrix'] = process_matrix
+            write_results_to_file(gate.name + '.hdf5', results_to_write) 
+
+            
+    ### Functions for gate set error metrics ### 
+    def compute_gate_set_process_infidelity(self, ideal_gate_set: dict) -> float:
+        """ Estimate process infidelity of each gate in the gate set and compare to ideal, then average (or take a different norm?) over the gate set.
+
+            - takes in an input dictionary "ideal_gate_set" that contains process matrices for each gate in the gate set. 
+            - additionally, the ideal_gate_set input contains the ideal prep state and ideal POVM 
 
 
-    def estimate_parameter_uncertainties(self, theta: Vector | None=None, method: str='bootstrap') -> Vector:
-        """ Computes uncertainties of each parameter from the Hessian of the log-likelihood at the MLE solution."""
+        """ 
+        if self.solver_result is None:
+            self.solve_for_gate_parameters()
+
         if theta is None:
             theta = self.gst_parameters 
 
+        # Estimate process fidelity for each gate 
+        for gate in self.gate_set:
+            ideal_gate = ideal_gate_set[gate.name]
+            
+
+
+
+        return infidelity 
+
+
+    ### Functions for parameter uncertainty estimation ### 
+    def estimate_parameter_uncertainties(self, theta: Vector | None=None, method: str='bootstrap') -> Vector:
+        """ Computes uncertainties of each parameter from the Hessian of the log-likelihood at the MLE solution."""
         if self.solver_result is None:
             self.solve_for_gate_parameters()
+
+        if theta is None:
+            theta = self.gst_parameters 
 
         if method == 'hessian':
             # L-BFGS-B stores an approximation to the inverse Hessian -- we use this for convariance estimation 
@@ -393,6 +434,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
     def bootstrap_uncertainties(self, N_bootstrap=100):
         """ Bootstrapping for parameter uncertainties: Sample data from the fitted model and re-fit, computing 
                 parameter spread. N_bootstrap is the number of resamplings. """
+        if self.solver_result is None:
+            self.solve_for_gate_parameters()
 
         theta_best = self.gst_parameters.copy()
         bootstrap_thetas = np.zeros((N_bootstrap, len(theta_best)))

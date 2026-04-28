@@ -165,11 +165,17 @@ def main():
     end = time.perf_counter()
     print(f"Ran GST in {end - start} seconds")
     print(f"Solver results: {solver_results}\n")
-    uncertainties, covariance = GST_analyzer.estimate_parameter_uncertainties()
-    print(f"\nPrinting parameters as one vector: {GST_analyzer.gst_parameters}")
-    print(f"\nPrinting uncertainties in the parameters: {uncertainties}")
-    #GST_analyzer.print_parameters()
-    #GST_analyzer.print_state_and_POVMs()
+    GST_analyzer.print_parameters()
+    GST_analyzer.print_state_and_POVMs()
+    estimate_uncertainties = False 
+    write_data_to_file = False 
+    if write_data_to_file:
+        GST_analyzer.write_results_to_file()
+
+    if estimate_uncertainties:  
+        uncertainties, covariance = GST_analyzer.estimate_parameter_uncertainties()
+        print(f"\nPrinting parameters as one vector: {GST_analyzer.gst_parameters}")
+        print(f"\nPrinting uncertainties in the parameters: {uncertainties}")
     sys.exit(0)
 
     # TODO: Either save gates evaluated at the parameter values or just the parameter values.  
