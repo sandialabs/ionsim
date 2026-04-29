@@ -153,7 +153,7 @@ class Basis(ABC):
             raise IonSimError('The basis must have one degree of freeedom.')
 
     def _check_if_qubit_basis(self):
-        """Check if the basis has two atmoic internal energy levels in each degree of freedom."""
+        """Check if the basis has two atomic internal energy levels in each degree of freedom."""
         if all([len(dof.energy_levels) == 2 for dof in self.degrees_of_freedom]):
             if all([
                 all([isinstance(level, AtomicInternalEnergyLevel) for level in dof.energy_levels])
@@ -187,6 +187,13 @@ class StandardBasis(Basis):
     def vectors(self):
         """Basis-state vectors corresponding to the energy eigenstates."""
         return list(np.eye(len(self.states)))
+
+    @property
+    def spin_DOFs(self):
+        """ Returns list of spin degrees of freedom or empty list if none. """
+        spins = [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicSpin)]
+        return spins
+
 
 @dataclass(frozen=True, eq=False)
 class ZPauliBasis(StandardBasis):

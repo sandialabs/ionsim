@@ -1,6 +1,3 @@
-﻿from ionsim.custom_types import Vector
-from ionsim.ionsim_error import IonSimError
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import numpy as np
@@ -12,6 +9,8 @@ import multiprocessing as mp
 import os
 from scipy.integrate import odeint, solve_ivp, ode
 from scipy import sparse
+from scipy.sparse import csr_matrix
+from scipy.sparse import kron as skron
 
 try:
     from numba import njit, prange
@@ -20,6 +19,56 @@ except ImportError:  # pragma: no cover - optional dependency
     _NUMBA_AVAILABLE = False
 
 from icecream import ic
+
+from ionsim.custom_types import Vector, AnyMatrix
+from ionsim.ionsim_error import IonSimError
+
+def matrix_AYB_multiply_to_superoperator(A: AnyMatrix | None, B: AnyMatrix | None=None) -> AnyMatrix:
+    """Helper function to convert matrix multiplication to a superoperator form.
+        Matrix Y can be flattened column-wise, mapping to a vector "y".
+
+        Consider three-matrix product: A Y B ==> Oy
+
+        A is a matrix multiplying a matrix of interest on the left.
+        B is a matrix multiplying a matrix of interest on the right.
+
+        A, Y, B are each N x N matrices,
+            O is a N^2 x N^2 matrix,
+            y is a column vector with N^2 entries.
+
+        This function takes in A and B matrices and returns O.
+        To compute O, the general formula is:
+            A Y B --> (B^{T} kron A) y
+
+    """
+    #Note: np.kron silently fails for sparse matrix inputs; instead use kron from scipy.sparse
+    if A is None and B is None:
+        raise IonSimError('Input error: Specify either a left or right matrix A or B.')
+
+    if A is not None:
+        N = A.shape[0]
+
+    if B is not None:
+        N = B.shape[0]
+
+    if A is not None and B is not None:
+        assert N == A.shape[0]
+
+    # Default behavior: If one matrix input is none, assume it is the identity.
+    if A is None and B is not None:
+        result = skron(B.T, np.eye(N))
+    elif B is None and A is not None:
+        result = skron(np.eye(N), A)
+    elif A is not None and B is not None:
+        result = skron(B.T, A)
+    else:
+        assert False, "A and B should not be None here"
+
+    # If one or both matrices are sparse, return a sparse matrix
+    if sparse.issparse(A) or sparse.issparse(B):
+        return result
+    else:
+        return result.toarray()
 
 def solve_time_evolution_equation(interaction_function: Callable, initial_state_vector: Vector, duration: float,
     time_evals: Vector | None = None, ode_solver: str = 'odeintz', **kwargs):
@@ -188,7 +237,7 @@ class StochasticOdeSolver(OdeSolver):
             )
 
         if backend == "numba_rk4":
-            
+
             stacked_results = _run_stochastic_trajectories_numba(
                 noise_array,
                 np.asarray(self.initial_vector, dtype=np.complex128, order='C'),
@@ -197,7 +246,7 @@ class StochasticOdeSolver(OdeSolver):
                 method='RK4',
             )
         elif backend == "numba_rk5":
-            
+
             stacked_results = _run_stochastic_trajectories_numba(
                 noise_array,
                 np.asarray(self.initial_vector, dtype=np.complex128, order='C'),
@@ -206,7 +255,7 @@ class StochasticOdeSolver(OdeSolver):
                 method='RK5',
             )
         elif backend == "numba_general_propagator":
-            
+
             stacked_results = _run_stochastic_trajectories_numba(
                 noise_array,
                 np.asarray(self.initial_vector, dtype=np.complex128, order='C'),
@@ -462,7 +511,7 @@ if _NUMBA_AVAILABLE:
         if t1 == t0:
             return v1
         return v0 + (v1 - v0) * (t - t0) / (t1 - t0)
-    
+
     @njit(cache=True)
     def _get_diag_matrix(H):
         n = H.shape[0]
@@ -510,7 +559,7 @@ if _NUMBA_AVAILABLE:
                 noise_val = _numba_linear_interp(time_grid, noise_values, t) + noise_offsets[idx]
             else:
                 noise_val = noise_array[traj_idx, source_index, step] + noise_offsets[idx]
-            
+
             # Apply noise transformation
             trans_type = noise_transformation_types[idx]
             if trans_type == 0:  # linear
@@ -519,9 +568,9 @@ if _NUMBA_AVAILABLE:
                 noise_factor = np.exp(1j * noise_val * noise_transformation_params[idx])
             else:
                 noise_factor = noise_val  # default to linear
-            
+
             H += noise_strengths[idx] * noise_factor * template
-        
+
         # TODO mixed Hermitian: ensure the Hamiltonian is Hermitian by adding its conjugate transpose and removing double-counted diagonal
         # if hermicity == 1: # non-Hermitian
         #     H = H + H.conj().T
@@ -531,7 +580,7 @@ if _NUMBA_AVAILABLE:
         #     pass # hermicity == 0, assume H is already Hermitian and do nothing
 
         H = H + np.conj(H).T - _get_diag_matrix(H)
-        
+
         return H
 
     @njit(cache=True)
@@ -740,7 +789,7 @@ if _NUMBA_AVAILABLE:
                 result[traj_idx, step + 1, :] = psi
         return result
     # ============ End RK4 numba implementation ============
-    
+
     # ============ RK5 numba implementation ============
     @njit(cache=True)
     def _numba_rk5_step(
@@ -947,7 +996,7 @@ if _NUMBA_AVAILABLE:
                 result[traj_idx, step + 1, :] = psi
         return result
     # ============ End RK5 numba implementation ============
-    
+
     # ============ Single-qubit specialized evolution ============
     @njit(parallel=True, fastmath=True, cache=True)
     def evolve_batch_numba_general_single_qubit(noise_all, dt, base_pauli_coeffs, noise_pauli_coeffs, base_c, noise_c, psi_init, meas_obs):
@@ -1070,7 +1119,7 @@ if _NUMBA_AVAILABLE:
     #         psi_all[step, :] = psi
 
     #     return psi_all
-    
+
     @njit(parallel=True, cache=True)
     def _run_stochastic_trajectories_numba_general_propagator(
         noise_array: np.ndarray,
@@ -1102,7 +1151,7 @@ if _NUMBA_AVAILABLE:
             for step in range(n_time - 1):
                 t = time_grid[step]
                 dt_step = time_grid[step + 1] - time_grid[step]
-                
+
                 H = _numba_build_hamiltonian(
                     t,
                     step,
@@ -1126,18 +1175,18 @@ if _NUMBA_AVAILABLE:
 
                 # Diagonalize Hamiltonian
                 e, V = np.linalg.eigh(H)
-                
+
                 # Apply evolution: psi_new = V @ exp(-i e dt) @ V† @ psi
                 # Compute V† @ psi first
                 V_dag_psi = V.conj().T @ psi
-                
+
                 # Multiply by exp(-i e dt) element-wise
                 exp_e = np.exp(-1j * e * dt_step)
                 scaled = V_dag_psi * exp_e
-                
+
                 # Apply V
                 psi = V @ scaled
-                
+
                 result[traj_idx, step + 1, :] = psi
         return result
 

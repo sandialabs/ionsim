@@ -1,6 +1,7 @@
 ---
 species: '40Ca+'
 mass: 39.96259087
+Z: 20  # number of protons
 nuclear_spin: 0
 charge: 1.0
 magnetic_moment: null # 0? [1]

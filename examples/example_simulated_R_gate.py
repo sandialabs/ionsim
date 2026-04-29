@@ -1,10 +1,3 @@
-# from basis import StandardBasis, XPauliBasis, XPauliAndFockBasis
-# from degree_of_freedom import AtomicSpin, MotionalMode
-# from hamiltonian import Hamiltonian
-# from coupling import CouplingOperator
-# from state import State
-# from named_operators import Pauli, Fock
-
 from pathlib import Path
 
 import ionsim as sm
@@ -14,6 +7,7 @@ from scipy.sparse import kron as skron
 import h5py
 
 from icecream import ic
+import sys
 
 sparse = False
 
@@ -71,6 +65,7 @@ def main():
     # phi_noise = sm.Noise.from_named_pdf('dphi', 'gaussian', {'standard_deviation': np.pi/10}, dphis)
 
     def simulated_R(phi, theta, domega):
+        """ Builds R(phi, theta) Hamiltonian for a frequency change omega + domega, returns gate """ 
         tau = abs(theta)/rabi_rate
         hamiltonian = R_hamiltonian(basis, phi, rabi_rate, omega + domega, sparse=sparse, mod=amp_mod)
         start = time.perf_counter()
@@ -80,8 +75,9 @@ def main():
         return sm.Gate.from_hamiltonian(basis, hamiltonian, tau)
 
     def R(phi, theta, domega, half_box_width):
+        """ Builds a process matrix function, then a gate by adding optional noise to it """ 
         def process_matrix_function(domega):
-            gate = simulated_R(phi, theta, domega)
+            gate = simulated_R(phi, theta, domega) # builds Hamiltonian and returns gate 
             return gate.process_matrix
         if half_box_width == 0:
             omega_noise = None
@@ -89,8 +85,9 @@ def main():
             domegas = np.linspace(-half_box_width, half_box_width, 21)
             omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
         return sm.Gate.from_process_matrix_function(
-                basis, process_matrix_function, {'domega': domega}, spins, omega_noise,
+                basis, process_matrix_function, {'domega': domega}, omega_noise,
             )
+                #basis, process_matrix_function, {'domega': domega}, spins, omega_noise,
 
     def ideal_R(phi, theta):
         return sm.Gate.from_unitary(basis, sm.Unitary.R(phi, theta), target_spins)
@@ -166,6 +163,7 @@ def main():
         end = time.perf_counter()
         ic(f'Simulating process fidelity took {end - start} s.')
 
+    # Step 1: Set up a grid where you actually build the gates. 
     if compute_gate_on_grid:
 
         from itertools import product
@@ -173,9 +171,10 @@ def main():
         phi = 0
         theta = np.pi/2
 
-        # dphis = np.linspace(-np.pi/10, np.pi/10, 5)
-        # half_box_widths = np.linspace(0, np.pi/10, 3)
-
+        # Computing gate on a grid where x is a frequency offset from resonance 
+        #  and y is a noise width. 
+        #  Ex] So y = 0 corresponds to no noise. 
+        #  Ex] x = 0 corresponds to being on resonance with some noise (unless y=0). 
         domegas = np.linspace(-50 * 2*np.pi*1e3, 50 * 2*np.pi*1e3, 5) 
         half_box_widths = np.linspace(0, 50 * 2*np.pi*1e3, 3) 
 
@@ -184,46 +183,51 @@ def main():
 
         gate_name = 'sqrtX'
         dx_name = 'domega'
-        dy_name = 'half-box-width'
+        dy_name = 'half_box_width'
 
+        grid_axes = {dx_name : dxs, dy_name : dys} 
+
+        # Define a gate function to build the gate interpolant. 
+        def R_function(domega, half_box_width):
+            """ Gate function of the interpolation parameters; returns a Gate object """ 
+            return R(phi, theta, domega, half_box_width)
+
+        print("Building gate interoplant using process matrix function")
+        R_gate_interpolant = sm.GateInterpolant.from_gate_function(R_function, grid_axes, gate_name) 
+        grids = R_gate_interpolant.grids 
+        grid = R_gate_interpolant.grid
+        lens = R_gate_interpolant.grid_lengths 
+
+        # Set up comparisons of the parametrized gate to an ideal R gate 
         size = len(basis.states)**2
 
+        # Compute gate residuals using inverse of ideal R gate  
         chi_inv = np.linalg.inv(ideal_R(phi, theta).process_matrix)
-        def build_gate_data(val):
-            gate = R(phi, theta, *val)
+
+        # Define a functional of the gate to return the desired property  
+        def relative_err_gate_functional(gate):
             return gate.process_matrix.dot(chi_inv) - np.eye(size)
 
-        grids =[dxs, dys]
-        vals = list(product(*grids))
-        lens = [len(grid) for grid in grids]
+        gate_residual_data = R_gate_interpolant.compute_functional_of_gates(relative_err_gate_functional) 
 
-        start = time.perf_counter()
-        gate_data = np.array([build_gate_data(val) for val in vals])
-        end = time.perf_counter()
-        ic(f'Simulation took {end-start} s.')
+        ic(gate_residual_data)
 
-        ic(gate_data)
-
+        # Set up matrix-valued residuals as a function of the parameter grid  
         F_data = np.empty((size, size, *lens), dtype='complex')
         for i in range(size):
             for j in range(size):
-                F_data[i,j] = np.array([gd[i,j] for gd in gate_data]).reshape(*lens)
-        # ic(F_data)
-
+                F_data[i,j] = np.array([gd[i,j] for gd in gate_residual_data]).reshape(*lens)
         attributes = {
             'gate_name': gate_name,
             'dx_name': dx_name,
             'dy_name': dy_name,
         }
 
-        # Opening the file with 'w' allows reading and writing and
-        # truncates existing data. See
-        # https://docs.h5py.org/en/stable/high/file.html
-        with h5py.File(data_filename, 'w') as datafile:
-            save_matrix(datafile, dxs, 'dx', attributes)
-            save_matrix(datafile, dys, 'dy', attributes)
-            save_matrix(datafile, F_data, 'relative_error', attributes)
-
+        # Set up a dictionary of results and write to an hdf5 file  
+        results_dictionary = {'dx' : dxs, 'dy': dys, 'relative_error': F_data}
+        sm.io.write_results_to_file(data_filename, results_dictionary, attributes)
+                
+    # Step 2: Use the grid of gates to interpolate. 
     if compute_interpolated_gate:
         from csaps import NdGridCubicSmoothingSpline
 
@@ -232,47 +236,24 @@ def main():
 
         gate_name = 'sqrtX'
         dx_name = 'domega'
-        dy_name = 'half-box-width'
+        dy_name = 'half_box_width'
 
         size = len(basis.states)**2
 
-        # This time open the data file read-only
-        with h5py.File(data_filename, 'r') as datafile:
-            dxs, _ = load_matrix(datafile, 'dx')
-            dys, _ = load_matrix(datafile, 'dy')
-            F_data, _ = load_matrix(datafile, 'relative_error')
+        # Read results from file  
+        results_dictionary, _ = sm.io.read_results_from_file(data_filename)        
+        dxs = results_dictionary['dx']
+        dxy = results_dictionary['dy']
+        F_data = results_dictionary['relative_error']
 
-        # ic(dphi0s, half_box_widths)
-        # ic(F_data)
+        # F_data <==> Gate-valued (process matrix) residuals. For every x,y gate parameter, there's a d^2 x d^2 process matrix .
+        F_spline_reals, F_spline_imags = R_gate_interpolant.construct_spline_for_gate_derived_matrix_property(F_data, complex_data=True)
 
-        grids =[dxs, dys]
-
-        F_spline_reals = {}
-        F_spline_imags = {}
-        for i in range(size):
-            for j in range(size):
-                F_spline_reals[i,j] = NdGridCubicSmoothingSpline(grids, F_data[i,j].real, smooth=1)
-                F_spline_imags[i,j] = NdGridCubicSmoothingSpline(grids, F_data[i,j].imag, smooth=1)
-
-        # ic(
-        #     F_spline_reals[0,0]([0, np.pi/10]).item(),
-        #     F_spline_imags[0,0]([0, np.pi/10]).item()
-        # )
-
-        def F(dx, dy):
-            return np.array([
-                [
-                    F_spline_reals[i,j]([dx, dy]).item()
-                    + 1j * F_spline_imags[i,j]([dx, dy]).item()
-                    for j in range(size)
-                ]
-                for i in range(size)
-            ])
-
-        # ic(F(np.pi/10, np.pi/10))
+        # Using the interpolants, build a function to return F(x,y) for arbitary x,y pairs
+        F_function = R_gate_interpolant.interpolant_function_from_splines([F_spline_reals, F_spline_imags], 'relative_error')
 
         def interpolated_R(phi, theta, dx, dy):
-            return sm.Gate(basis, (F(dx, dy) + np.eye(size)).dot(ideal_R(phi, theta).process_matrix))
+            return sm.Gate(basis, (F_function(dx, dy) + np.eye(size)).dot(ideal_R(phi, theta).process_matrix))
 
         dxs2 = np.linspace(dxs[0], dxs[-1], (len(dxs)-1)*2 + 1)
         dy = dys[-1]
@@ -329,26 +310,6 @@ def main():
         plt.legend()
         plt.savefig(data_directory / f'infidelity_vs_{dy_name}.pdf', bbox_inches='tight')
         plt.show()
-
-
-def save_matrix(datafile, matrix, pathname, attributes=None):
-    """Save a matrix in as a dataset in an HDF5 file."""
-    dataset = datafile.require_dataset(pathname, shape=matrix.shape, dtype=matrix.dtype, data=matrix)
-    if attributes:
-        for name, value in attributes.items():
-            dataset.attrs[name] = value
-    return dataset
-
-
-def load_matrix(datafile, pathname):
-    """Load a matrix into a numpy array and return the attributes
-    associated with the HDF5 dataset."""
-    dataset = datafile[pathname]
-    arr = np.empty(dataset.shape, dtype=dataset.dtype)
-    dataset.read_direct(arr)
-    attributes = {name: value for name, value in dataset.attrs.items()}
-    return arr, attributes
-
 
 if __name__ == '__main__':
     main()
