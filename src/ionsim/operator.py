@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from scipy.sparse import csr_matrix, diags
 import numpy as np
-from typing import Callable
+from typing import Callable, Any
 
 from ionsim.ionsim_error import IonSimError
 from ionsim.basis import StandardBasis
@@ -170,6 +170,7 @@ class Operator(ABC):
 @dataclass(frozen=True, eq=False)   
 class EnergyShiftOperator(Operator):
     """A diagonal quantum operator in a basis of energy eigenstates, representing energy shifts."""
+    stochastic_info: dict[str, Any] | None = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -187,7 +188,8 @@ class EnergyShiftOperator(Operator):
 
     @classmethod
     def from_matrix(cls, basis: StandardBasis, static_matrix: Matrix, current_dofs: list[DegreeOfFreedom] | None = None, 
-                     modulation_function: list[Callable] | None = None):
+                     modulation_function: list[Callable] | None = None,
+                     stochastic_info: dict[str, Any] | None = None):
         """Build a diagonal operator from the matrix representation of a static operator acting on some DoFs in the basis."""
         matrix = csr_matrix(static_matrix) 
         if current_dofs is not None:
@@ -198,7 +200,8 @@ class EnergyShiftOperator(Operator):
         if not all(rows == cols):
             raise IonSimError('Error, cannot create Coupling (off-diagonal) element in EnergyShiftOperator class.') 
 
-        return cls.from_vector(basis, matrix.diagonal(), modulation_function)
+        energy_shift_elements = cls._energy_shifts_from_vector(basis, matrix.diagonal())
+        return cls(basis, energy_shift_elements, modulation_function, stochastic_info)
 
     @property
     def static_matrix(self):
@@ -220,6 +223,7 @@ class EnergyShiftOperator(Operator):
 @dataclass(frozen=True, eq=False)   
 class CouplingOperator(Operator):
     """An off-diagonal quantum operator in a basis of energy eigenstates."""
+    stochastic_info: dict[str, Any] | None = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -237,15 +241,33 @@ class CouplingOperator(Operator):
 
     @classmethod
     def from_matrix(cls, basis: StandardBasis, static_matrix: Matrix, oscillation_rate: float,
-            current_dofs: list[DegreeOfFreedom] | None = None, modulation_function: list[Callable] | None = None):
+            current_dofs: list[DegreeOfFreedom] | None = None, modulation_function: list[Callable] | None = None,
+            stochastic_info: dict[str, Any] | None = None):
         """Build a coupling operator from the matrix representation of an operator acting on some DoFs in the basis."""
+        matrix = csr_matrix(static_matrix)
+        rows, cols = matrix.nonzero()
+        if len(rows) > 0 and all(rows == cols):
+            if abs(oscillation_rate) > SMALLEST_ENERGY_SCALE:
+                raise IonSimError(
+                    'Diagonal matrix input cannot be used to build a CouplingOperator with a non-zero oscillation rate. '
+                    'Use EnergyShiftOperator.from_matrix(...) for diagonal operators.'
+                )
+            # Backward-compatible path for diagonal stochastic/static terms such as sigma_z noise.
+            return EnergyShiftOperator.from_matrix(
+                basis,
+                static_matrix,
+                current_dofs=current_dofs,
+                modulation_function=modulation_function,
+                stochastic_info=stochastic_info,
+            )
+
         coupling_matrix, rate = cls._create_sparse_static_coupling_matrix_and_rate_matrix(static_matrix, oscillation_rate)
         if current_dofs is not None:
             coupling_matrix, rate = basis.enlarge_matrix(coupling_matrix, current_dofs), basis.enlarge_matrix(rate, current_dofs)
 
         # Retrieve unique coupling matrix elements
         couplings = cls._couplings_from_coupling_matrix(basis, coupling_matrix, rate)
-        return cls(basis, couplings, modulation_function)
+        return cls(basis, couplings, modulation_function, stochastic_info)
 
     @property
     def rate_matrix(self):

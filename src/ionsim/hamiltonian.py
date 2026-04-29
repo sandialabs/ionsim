@@ -49,11 +49,11 @@ class Hamiltonian(CompositeOperator):
     @property
     def stochastic(self) -> bool:
         """
-        Returns True if any coupling operator has non-empty stochastic_param_info.
+        Returns True if any Hamiltonian operator has non-empty stochastic metadata.
         """
         return any(
             hasattr(op, 'stochastic_info') and op.stochastic_info not in (None, {})
-            for op in getattr(self, 'coupling_operators', [])
+            for op in [*getattr(self, 'coupling_operators', []), *getattr(self, 'energy_shift_operators', [])]
         )
 
     @property
@@ -294,9 +294,9 @@ class Hamiltonian(CompositeOperator):
         return _hamiltonian_function
 
     def _build_stochastic_component_data(self, n_noise_sources: int) -> StochasticHamiltonianComponentData:
-        """Extract dense component arrays describing deterministic and stochastic couplings.
+        """Extract dense component arrays describing deterministic and stochastic operator terms.
         Enables fast, vectorized evaluation of the Hamiltonian during stochastic propagation"""
-        sparse_H0, sparse_Hints, sparse_Rates = self.H0_Hints_and_Rates
+        sparse_H0, sparse_H0_shifts, sparse_Hints, sparse_Rates = self.H0_H0Shifts_Hints_and_Rates
         H0_dense = np.array(as_dense_matrix(sparse_H0, warn=False), copy=True).astype(np.complex128, copy=False)
 
         det_hints: list[np.ndarray] = []
@@ -312,8 +312,8 @@ class Hamiltonian(CompositeOperator):
         noise_transformation_types: list[int] = []
         noise_transformation_params: list[float] = []
 
-        for operator, hint_matrix, rate_matrix in zip(self.coupling_operators, sparse_Hints, sparse_Rates):
-            comp_hint = np.array(as_dense_matrix(hint_matrix, warn=False), copy=True).astype(np.complex128, copy=False)
+        def _append_component(operator, component_matrix, rate_matrix):
+            comp_hint = np.array(as_dense_matrix(component_matrix, warn=False), copy=True).astype(np.complex128, copy=False)
             # Ensure hermiticity once, here
             if not np.allclose(comp_hint, comp_hint.conj().T, atol=1e-10):
                 comp_hint = (comp_hint + comp_hint.conj().T) / 2
@@ -369,6 +369,15 @@ class Hamiltonian(CompositeOperator):
                 det_rates.append(comp_rate)
                 det_has_rate.append(has_rate)
 
+        for operator, hint_matrix, rate_matrix in zip(self.coupling_operators, sparse_Hints, sparse_Rates):
+            _append_component(operator, hint_matrix, rate_matrix)
+
+        zero_rate = csr_matrix(sparse_H0.shape, dtype=float)
+        for operator, shift_matrix in zip(self.energy_shift_operators, sparse_H0_shifts):
+            hint_matrix = shift_matrix
+            rate_matrix = zero_rate
+            _append_component(operator, hint_matrix, rate_matrix)
+
         dim = H0_dense.shape[0]
 
         def _stack_or_empty(items: list[np.ndarray], dtype: np.dtype) -> np.ndarray:
@@ -403,9 +412,9 @@ class Hamiltonian(CompositeOperator):
         """Build a stochastic Hamiltonian callable for a single noise trajectory with multiple noise sources."""
         # Require a single, trajectory noise matrix; orchestration layer (solver) handles batch formatting.
 
-        # Fast-fail if the Hamiltonian has no stochastic couplings configured
+        # Fast-fail if the Hamiltonian has no stochastic operators configured
         if not self.stochastic:
-            raise IonSimError('Hamiltonian is not set up for stochastic evolution (no stochastic coupling operators found).' )
+            raise IonSimError('Hamiltonian is not set up for stochastic evolution (no stochastic operators found).' )
 
         if trajectory_noise is None:
             raise IonSimError('trajectory_noise must be provided as a 2D array (n_sources, n_time).')
@@ -431,7 +440,7 @@ class Hamiltonian(CompositeOperator):
         if component_data.stochastic_hints.shape[0] == 0:
             raise IonSimError(
                 'Stochastic evolution requested, but no stochastic components were constructed for this trajectory.\n'
-                'Check coupling operator stochastic_info (channel mapping, strengths, thresholds).')
+                'Check operator stochastic_info (channel mapping, strengths, thresholds).')
 
         if return_component_data:
             # Provide dense arrays for backends that can operate without Python callables.
@@ -520,12 +529,12 @@ class Hamiltonian(CompositeOperator):
         start = time.perf_counter()
 
         if not self.stochastic:
-            raise IonSimError('Hamiltonian is not set up for stochastic evolution (no stochastic coupling operators found).')
+            raise IonSimError('Hamiltonian is not set up for stochastic evolution (no stochastic operators found).')
         if noisy_trajectories is None:
             raise IonSimError('No noisy trajectories provided for stochastic evolution.')
         if not self.stochastic:
             raise IonSimError(
-                "Hamiltonian is not set up for stochastic evolution: no stochastic coupling operator found (missing or empty stochastic_info). ")
+                "Hamiltonian is not set up for stochastic evolution: no stochastic operator found (missing or empty stochastic_info). ")
 
         # Validate time grid for solver
         if time_evals is None:
@@ -556,19 +565,3 @@ class Hamiltonian(CompositeOperator):
         ic(f'Evolving wavefunction took {end-start} seconds.')
 
         return times, trajectory_results
-
-    def evolve_supervector(self, initial_supervector: Vector, duration: float, time_evals: Vector | None = None,
-        dissipation_matrix: AnyMatrix | None = None, **kwargs):
-        """Evolve a supervector by solving the time-dependent Lindblad master equation."""
-        # TODO: add suport for sparse matrices
-        assert(self.size == np.sqrt(len(initial_supervector)))
-        dissipation_matrix = as_dense_matrix(dissipation_matrix)
-        super_ham = lambda t: (
-            np.kron(np.eye(self.size), self.hamiltonian_function(t))
-            - np.kron(self.hamiltonian_function(t).T, np.eye(self.size))
-            )
-        if dissipation_matrix is None:
-            lindbladian_function = super_ham
-        else:
-            lindbladian_function = lambda t: super_ham(t) + 1j*dissipation_matrix # TODO: verify this line and decide how to define disspation matrix. perhaps we should use a disspator class?
-        return solve_time_evolution_equation(lindbladian_function, initial_supervector, duration, time_evals, **kwargs)
