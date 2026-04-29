@@ -203,19 +203,19 @@ class Gate(Process):
 
         # Use general t-dependent, non-commutating Lindbladian method unless user specifies otherwise 
         if lindbladian_time_independent:
-            print(f"Lindbladian is time-independent. Simplifying computation of process matrix via direct matrix exponentiation.")
+            #print(f"Lindbladian is time-independent. Simplifying computation of process matrix via direct matrix exponentiation.")
             # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
             process_matrix = scipy.linalg.expm(lindbladian.matrix_function(0) * duration)
 
         elif lindbladian_commutes_at_later_times:
-            print(f"Lindbladian commutes at different times. Integrating Lindbladian directly in time.") 
+            #print(f"Lindbladian commutes at different times. Integrating Lindbladian directly in time.") 
             # Integrate each element of the lindbladian matrix forward in time from t = 0 to t = duration            
             L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
 
             process_matrix = scipy.linalg.expm(L_integral)
 
         else:
-            print(f"Default method for generating process matrix from generic time-dependent, non-commutating Lindbladian.")
+            #print(f"Default method for generating process matrix from generic time-dependent, non-commutating Lindbladian.")
             # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
             # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
             # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 
