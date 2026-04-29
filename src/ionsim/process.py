@@ -225,25 +225,21 @@ class Gate(Process):
                 # Projection does this redundantly by setting the appropriate parts to zero. But skipping t-evolution saves substantially on computation.
             for i, vector in enumerate(basis.vectors):
                 for j, vector_p in enumerate(basis.vectors):
-                    if projection_info and ((i in unwanted_state_indices) or (j in unwanted_state_indices)):
-                        # Skip pure non-computational basis states, e.g. Rydberg or Raman states  
-                        pass 
-                    else:
-                        # Necessary to do |vector_p > <vector| to get correct basis ordering after projection  
-                        initial_state = State.from_density_matrix(basis,  np.outer(vector_p, vector))
+                    # Necessary to do |vector_p > <vector| to get correct basis ordering after projection  
+                    initial_state = State.from_density_matrix(basis,  np.outer(vector_p, vector))
+        
+                    # TODO: Include tracing out DOF functionality 
+                    # Time-evolve with Lindbladian, this yields the ij'th column of the process matrix.
+         #            if dofs_to_trace_out is None:
+         #                initial_state = State.from_wavefunction(basis, vector)
+         #            else:
+         #                initial_state = State.from_wavefunction_with_new_component(
+         #                    basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
+         #                )
+                    final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
     
-                        # TODO: Include tracing out DOF functionality 
-                        # Time-evolve with Lindbladian, this yields the ij'th column of the process matrix.
-     #                    if dofs_to_trace_out is None:
-     #                        initial_state = State.from_wavefunction(basis, vector)
-     #                    else:
-     #                        initial_state = State.from_wavefunction_with_new_component(
-     #                            basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
-     #                        )
-                        final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
-
-                        # Supervector of final state gives you 1 column of the process matrix  
-                        process_matrix_columns.append(final_state.supervector) 
+                    # Supervector of final state gives you 1 column of the process matrix  
+                    process_matrix_columns.append(final_state.supervector) 
     
             process_matrix = np.array(process_matrix_columns).T # tranpose ensures column behavior  
 

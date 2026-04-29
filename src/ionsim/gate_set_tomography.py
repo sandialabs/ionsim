@@ -7,6 +7,7 @@ from functools import cached_property
 from typing import Callable
 import inspect
 import sys
+import math 
 
 from ionsim.process import Gate, Circuit
 from ionsim.basis import StandardBasis
@@ -38,8 +39,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Unpack |rho>> and <<E| or <<M| 
         self.prep_state_model = prep_state_model
         self.POVM_effect_models = POVM_effect_models 
-        #self.ideal_prep_state = prep_state 
-        #self.ideal_measurement_effects = POVM_effects 
 
         # Parse circuits list contanining GST circuit sequences and correpsonding data (observations) 
         self.parsed_circuits = parsed_circuits 
@@ -295,6 +294,23 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return l_likelihood
 
 
+    def depth_bin(depth):
+        """ Bins a circuit depth to the nearest power of 2 """
+        if depth <= 1:
+            return 1
+        return 2**(math.ceil(math.log2(depth)))
+
+    def _group_circuits_by_depth(self):
+        """ Groups the GST circuit by depth, required for staged MLE """ 
+        groups = {} # dictionary to store list of circuits at each depth L 
+        for circ in self.parsed_circuits:
+            L = depth_bin(circ.depth)
+            if L not in groups:
+                groups[L] = [] 
+            groups[L].append(circ)
+        return groups
+
+
     def save_nll_data(self):
         print(f"LL evals: {self.LL_eval}")
         print(f"len(nll_data): {len(self.nll_data)})")
@@ -306,7 +322,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
     def print_parameters(self):
         # Prep, measure, then gate parameters: 
-        print(" --- Printing parameter values --- ")
+        print("\n --- Printing parameter values --- ")
         prep_params = self.gst_parameters[self.gst_parameter_indices["prep"]] # d^2 - 1 column vector  
         print(f"Prep state parameters: {prep_params}")
 
