@@ -17,6 +17,12 @@ from ionsim.custom_math import matrix_AYB_multiply_to_superoperator
 from ionsim.ionsim_error import IonSimError
 from ionsim.custom_types import Vector
 from ionsim.io import *
+def depth_bin(depth):
+    """ Bins a circuit depth to the nearest power of 2 """
+    if depth <= 1:
+        return 1
+    return 2**(math.ceil(math.log2(depth)))
+
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     def __init__(self, basis: StandardBasis, prep_state_model: dict[Callable], POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
@@ -294,11 +300,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return l_likelihood
 
 
-    def depth_bin(depth):
-        """ Bins a circuit depth to the nearest power of 2 """
-        if depth <= 1:
-            return 1
-        return 2**(math.ceil(math.log2(depth)))
 
     def _group_circuits_by_depth(self):
         """ Groups the GST circuit by depth, required for staged MLE """ 
@@ -356,15 +357,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         """
         print(f"\n -- Solver for gate parameters in GST using {solver} --- ")
-        if solver == 'MLE':
-            # Maximum likelihood estimation.
-            # Specify initial guess. 
-            if parameters_guess is None:
-                theta_0 = self.gst_parameters.copy() 
-            else:
-                theta_0 = parameters_guess
-            print(f"Initial parameters: {theta_0}")
+        # Specify initial guess. 
+        if parameters_guess is None:
+            theta_0 = self.gst_parameters.copy() 
+        else:
+            theta_0 = parameters_guess
+        print(f"Initial parameters: {theta_0}")
 
+        if solver == 'MLE':
             # TODO: Provide bounds for parameters if using interpolated gates 
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
             solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B') # TODO consider adding parameter bounds in any case  
@@ -380,6 +380,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # Compute x = A \ b
             raise IonSimError('Linear GST is not yet programmed into IonSim.')
             return None 
+        elif solver == 'staged MLE':
+            # Do staged MLE --> MLE done in batches of increasing circuit depths. 
+            self.solver_result = self.staged_objective_minimization(method = 'L-BFGS-B', suppress_output = False) 
+            self.gst_parameters = self.solver_result.x
         else:
             raise IonSimError('Invalid solver input.')
 
@@ -401,6 +405,44 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             results_to_write = dict(zip(parameter_names, parameter_values)) 
             results_to_write[gate.name + '_process_matrix'] = process_matrix
             write_results_to_file(gate.name + '.hdf5', results_to_write) 
+
+
+    def staged_objective_minimization(self, method: str='L-BFGS-B', suppress_output: bool=True):
+        """ Iterative MLE through batches of data taken at increasing circuit depths """ 
+        circuit_groups = self._group_circuits_by_depth()
+        sorted_depths = sorted(circuit_groups.keys()) # keys are circuit depths 
+
+        if not suppress_output:
+            print(f"--- Staged MLE with depth bins: {sorted_depths} ") 
+            for L in sorted_depths:
+                print(f"    L={L}: {len(circuit_groups[L])} circuits ")
+
+
+        cumulative_circuits = []
+        for stage, L in enumerate(sorted_depths):
+            cumulative_circuits.extend(circuit_groups[L])
+
+            # Store a copy of the circuits so we can re-use internal functions that use parsed_circuits attribute  
+            original_circuits = self.parsed_circuits
+            self.parsed_circuits = cumulative_circuits 
+
+            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = self.gst_parameters.copy(), method=method)
+            self.gst_parameters = solver_result.x
+
+            if not suppress_output:
+                ll = self.log_likelihood(self.gst_parameters)
+                print(f"    Stage {stage + 1} (L <= {L}): ")
+                print(f"    {len(cumulative_circuits)} circuits ")
+                print(f"    LL = {ll:.3f} ") 
+                print(f"    Converged = {solver_result.success} ") 
+                        
+            # restore circuit information
+            self.parsed_circuits = original_circuits
+
+        # return final result, having used all circuits:
+        return solver_result
+
+        
 
             
     ### Functions for gate set error metrics ### 
