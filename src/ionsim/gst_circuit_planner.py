@@ -120,7 +120,7 @@ class GSTCircuitPlanner:
         #idle = ParsedGate('idle', ())
 
         # include empty list for "do nothing for no time" initial sequence 
-        fiducials = [[], [X_pi2], [Y_pi2], [X_pi2, X_pi2], [Y_pi2, Y_pi2] ]
+        fiducials = [[], [X_pi2], [Y_pi2], [X_pi2, X_pi2], [Y_pi2, Y_pi2], [X_pi2, X_pi2, X_pi2], [Y_pi2, Y_pi2, Y_pi2] ]
         return fiducials, fiducials 
 
     @staticmethod
