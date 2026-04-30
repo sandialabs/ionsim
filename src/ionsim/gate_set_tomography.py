@@ -25,7 +25,8 @@ def depth_bin(depth):
 
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
-    def __init__(self, basis: StandardBasis, prep_state_model: dict[Callable], POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], gate_mappings: dict[str, Callable]): 
+    def __init__(self, basis: StandardBasis, prep_state_model: dict[Callable], POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], 
+                     gate_mappings: dict[str, Callable], parameter_bounds: list[tuple] | None=None): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
     
             Member variables include:
@@ -81,6 +82,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # 4. Debugging / diagnostics 
         self.LL_eval = 0 
         self.nll_data = []
+
+        self.parameter_bounds = parameter_bounds 
 
         # Test model fxn evaluations 
  #        gate_model = list(self.gate_models.values())[1]
@@ -372,7 +375,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         
 
 
-    def solve_for_gate_parameters(self, parameters_guess: Vector | None=None, parameter_bounds: list | None=None, solver: str = 'MLE'): 
+    def solve_for_gate_parameters(self, parameters_guess: Vector | None=None, solver: str = 'MLE'): 
         """ Function to solve for the parametrization values of a particular gate. 
 
             - Default behavior is a maximum likelihood approach that finds parameters 
@@ -394,7 +397,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if solver == 'MLE':
             # TODO: Provide bounds for parameters if using interpolated gates 
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
-            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B', bounds = parameter_bounds) # TODO consider adding parameter bounds in any case  
+            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds) # TODO consider adding parameter bounds in any case  
             self.solver_result = solver_result
             self.gst_parameters = solver_result.x
             #self.save_nll_data()
@@ -409,7 +412,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             return None 
         elif solver == 'staged MLE':
             # Do staged MLE --> MLE done in batches of increasing circuit depths. 
-            self.solver_result = self.staged_objective_minimization(method = 'L-BFGS-B', bounds = parameter_bounds, suppress_output = False) 
+            self.solver_result = self.staged_objective_minimization(method = 'L-BFGS-B', bounds = self.parameter_bounds, suppress_output = False) 
             self.gst_parameters = self.solver_result.x
         else:
             raise IonSimError('Invalid solver input.')
@@ -535,11 +538,13 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
     ### Functions for parameter uncertainty estimation ### 
     def estimate_parameter_uncertainties(self, theta: Vector | None=None, method: str='bootstrap') -> Vector:
         """ Computes uncertainties of each parameter from the Hessian of the log-likelihood at the MLE solution."""
-        if self.solver_result is None:
+        if self.solver_result is None and theta is None:
             self.solve_for_gate_parameters()
 
         if theta is None:
             theta = self.gst_parameters 
+        else:
+            self.gst_parameters = theta
 
         if method == 'hessian':
             # L-BFGS-B stores an approximation to the inverse Hessian -- we use this for convariance estimation 
@@ -552,11 +557,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         else: # bootstrapping
             return self.bootstrap_uncertainties()
 
-    def bootstrap_uncertainties(self, N_bootstrap=100):
+    def bootstrap_uncertainties(self, N_bootstrap: int=100):
         """ Bootstrapping for parameter uncertainties: Sample data from the fitted model and re-fit, computing 
                 parameter spread. N_bootstrap is the number of resamplings. """
-        if self.solver_result is None:
-            self.solve_for_gate_parameters()
 
         theta_best = self.gst_parameters.copy()
         bootstrap_thetas = np.zeros((N_bootstrap, len(theta_best)))
