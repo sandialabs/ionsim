@@ -210,7 +210,7 @@ class Gate(Process):
 
         elif lindbladian_commutes_at_later_times:
             #print(f"Lindbladian commutes at different times. Integrating Lindbladian directly in time.") 
-            # Integrate each element of the lindbladian matrix forward in time from t = 0 to t = duration            
+            # Lindbladian is time dependent but commute with itself at later times: Integrate each element of the lindbladian matrix forward in time from t = 0 to t = duration            
             L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
 
             process_matrix = scipy.linalg.expm(L_integral)

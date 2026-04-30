@@ -431,7 +431,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # Write parameter names, values, and process matrix evaluated at those parameter values.
             results_to_write = dict(zip(parameter_names, parameter_values)) 
             results_to_write[gate.name + '_process_matrix'] = process_matrix
-            write_results_to_file(gate.name + '.hdf5', results_to_write) 
+            write_results_to_file('gst_optimal_' + gate.name + '.hdf5', results_to_write) 
 
 
     def staged_objective_minimization(self, method: str='L-BFGS-B', bounds: list | None=None, suppress_output: bool=True):
