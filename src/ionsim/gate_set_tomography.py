@@ -372,7 +372,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         
 
 
-    def solve_for_gate_parameters(self, parameters_guess: Vector | None=None, solver: str = 'MLE'): 
+    def solve_for_gate_parameters(self, parameters_guess: Vector | None=None, parameter_bounds: list | None=None, solver: str = 'MLE'): 
         """ Function to solve for the parametrization values of a particular gate. 
 
             - Default behavior is a maximum likelihood approach that finds parameters 
@@ -394,7 +394,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if solver == 'MLE':
             # TODO: Provide bounds for parameters if using interpolated gates 
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
-            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B') # TODO consider adding parameter bounds in any case  
+            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B', bounds = parameter_bounds) # TODO consider adding parameter bounds in any case  
             self.solver_result = solver_result
             self.gst_parameters = solver_result.x
             #self.save_nll_data()
@@ -409,7 +409,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             return None 
         elif solver == 'staged MLE':
             # Do staged MLE --> MLE done in batches of increasing circuit depths. 
-            self.solver_result = self.staged_objective_minimization(method = 'L-BFGS-B', suppress_output = False) 
+            self.solver_result = self.staged_objective_minimization(method = 'L-BFGS-B', bounds = parameter_bounds, suppress_output = False) 
             self.gst_parameters = self.solver_result.x
         else:
             raise IonSimError('Invalid solver input.')
@@ -434,7 +434,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             write_results_to_file(gate.name + '.hdf5', results_to_write) 
 
 
-    def staged_objective_minimization(self, method: str='L-BFGS-B', suppress_output: bool=True):
+    def staged_objective_minimization(self, method: str='L-BFGS-B', bounds: list | None=None, suppress_output: bool=True):
         """ Iterative MLE through batches of data taken at increasing circuit depths """ 
         circuit_groups = self._group_circuits_by_depth()
         sorted_depths = sorted(circuit_groups.keys()) # keys are circuit depths 
@@ -459,7 +459,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             else:
                 objective_function = lambda params: -1. * self.log_likelihood(params) 
 
-            solver_result = opt.minimize(fun = lambda params: objective_function(params), x0 = self.gst_parameters.copy(), method=method)
+            solver_result = opt.minimize(fun = lambda params: objective_function(params), x0 = self.gst_parameters.copy(), method=method, bounds = bounds)
             self.gst_parameters = solver_result.x
 
             if not suppress_output:

@@ -7,11 +7,12 @@ from ionsim.hamiltonian import Hamiltonian
 from ionsim.dissipator import Lindbladian 
 from ionsim.state import State
 
+
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Callable
 from abc import ABC
-
+import scipy 
 from icecream import ic
 
 @dataclass(frozen=True, eq=False)
@@ -248,7 +249,8 @@ class Gate(Process):
 
     @classmethod
     def from_lindbladian_function(cls, basis: StandardBasis, lindbladian_function: Callable, duration: float,  
-            parameters: dict[str, float], noise: Noise | None = None):
+            parameters: dict[str, float], noise: Noise | None = None, lindbladian_time_independent: bool=False, 
+            lindbladian_commutes_at_later_times: bool = False): 
         """ Build a gate from a hamiltonian function and its arguments."""
         parameter_names, arguments = list(parameters.keys()), list(parameters.values())
 
@@ -259,7 +261,8 @@ class Gate(Process):
 
         if noise is None or noise.parameter_name not in parameter_names:
             noisy_parameter_index = parameter_names.index(noise.parameter_name)
-            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index, 
+                lindbladian_time_independent = lindbladian_time_independent, lindbladian_commutes_at_later_times = lindbladian_commutes_at_later_times)
 
         return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
 
