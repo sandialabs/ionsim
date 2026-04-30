@@ -300,6 +300,33 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return l_likelihood
 
 
+    
+    def chi_squared(self, theta: Vector | None=None, theta_function=None) -> float:
+        """ chi^2 estimate for least-squares error between observed frequencies and circuit probabilities. """ 
+        chi_squared = 0.
+
+        if theta is None:
+            theta = self.gst_parameters
+
+        probability_TOL = 1E-4 # to regularize 
+
+        # Compute log likelihood for each GST circuit, accumulating over all GST circuits 
+        for circ in self.parsed_circuits:
+            #print(f"\nCircuit: {circ.unparsed_data}")
+            probabilities = self._predict_probabilities(circ, theta) # don't need the PM cache? 
+
+            if circ.measurement_data.counts is not None:
+                total_counts = circ.measurement_data.total_counts
+                for outcome, count in circ.measurement_data.counts.items(): 
+                    frequency = count / total_counts
+                    p = np.clip(probabilities[outcome], probability_TOL, 1. - probability_TOL)
+                    chi_squared += total_counts * ((p - frequency)**2)/p 
+            else:
+                raise IonSimError(f"Computing chi squared for time-series data is not yet programmed in IonSim.")
+
+        print(f"Chi squared: {chi_squared}")
+        return chi_squared
+
 
     def _group_circuits_by_depth(self):
         """ Groups the GST circuit by depth, required for staged MLE """ 
@@ -419,6 +446,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
 
         cumulative_circuits = []
+        num_stages = len(sorted_depths)
         for stage, L in enumerate(sorted_depths):
             cumulative_circuits.extend(circuit_groups[L])
 
@@ -426,7 +454,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             original_circuits = self.parsed_circuits
             self.parsed_circuits = cumulative_circuits 
 
-            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = self.gst_parameters.copy(), method=method)
+            if stage < (num_stages - 1):
+                objective_function = self.chi_squared 
+            else:
+                objective_function = lambda params: -1. * self.log_likelihood(params) 
+
+            solver_result = opt.minimize(fun = lambda params: objective_function(params), x0 = self.gst_parameters.copy(), method=method)
             self.gst_parameters = solver_result.x
 
             if not suppress_output:
