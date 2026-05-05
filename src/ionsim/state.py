@@ -116,7 +116,6 @@ class State:
             self.wavefunction,
             time_evals,
             noisy_trajectories=noisy_trajectories,
-            return_density_average=return_density_average,
             **kwargs,
         )
 
@@ -143,13 +142,48 @@ class State:
             # Only check norm error at the last time step for all trajectories, to avoid the overhead of repeated checks.
             _, error = zip(*[self.basis.compute_density_matrix_from_wavefunction(psi_trajs[k], return_error=True) 
                             for k in range(trajs)])
-            result = rhos_avg
             print(f"[DEBUG] Max norm error: {np.max(error):.3e}")
 
             return [State(self.basis, rho) for rho in rhos_avg]
         else:
             # Preserve trajectory structure: return raw trajectory results (n_traj, n_time, n_state)
             # Caller can compute density matrices vectorized if needed
+            return trajectory_results
+
+    def propagate_using_stochastic_liouvillian_equation(self, hamiltonian: 'Hamiltonian',
+                                                        noisy_trajectories: Any = None,
+                                                        time_evals: Vector | None = None,
+                                                        return_density_average: bool = True,
+                                                        **kwargs):
+        """
+        Propagate the state by solving the stochastic Liouville-von Neumann equation.
+        This evolves density matrices directly and is therefore suitable for mixed states.
+        """
+        times, trajectory_results = hamiltonian.evolve_stochastic_density_matrix(
+            self.supervector,
+            time_evals,
+            noisy_trajectories=noisy_trajectories,
+            **kwargs,
+        )
+
+        print(f"[INFO] Stochastic Liouville evolution completed. Processing results...")
+
+        if time_evals is None:
+            density_matrix = self.basis.compute_density_matrix_from_supervector(trajectory_results[-1])
+            return State(self.basis, density_matrix)
+
+        if return_density_average:
+            _, n_time, _ = trajectory_results.shape
+            averaged_states: list[State] = []
+
+            for ti in range(n_time):
+                average_supervector = np.mean(trajectory_results[:, ti, :], axis=0)
+                rho_avg = self.basis.compute_density_matrix_from_supervector(average_supervector)
+                averaged_states.append(State(self.basis, rho_avg))
+
+            return averaged_states
+        else:
+            # Preserve trajectory structure: return raw supervector trajectories (n_traj, n_time, n_supervector).
             return trajectory_results
         
 

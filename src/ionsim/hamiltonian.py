@@ -9,7 +9,7 @@ from ionsim.basis import StandardBasis
 from ionsim.operator import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
 from ionsim.custom_types import Vector, Matrix, SparseMatrix, as_dense_matrix
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, SMALLEST_ENERGY_SCALE
-from ionsim.custom_math import solve_time_evolution_equation
+from ionsim.custom_math import solve_time_evolution_equation, matrix_AYB_multiply_to_superoperator
 from ionsim.composite_operator import CompositeOperator
 from ionsim.ionsim_error import IonSimError
 
@@ -509,6 +509,87 @@ class Hamiltonian(CompositeOperator):
 
         return _stochastic_hamiltonian
 
+    def stochastic_liouvillian_function(self, time_evals: Vector, trajectory_noise: Matrix | None = None, **kwargs):
+        """Build a stochastic commutator superoperator callable for density-matrix evolution."""
+        if not self.stochastic:
+            raise IonSimError('Hamiltonian is not set up for stochastic evolution (no stochastic operators found).' )
+
+        if trajectory_noise is None:
+            raise IonSimError('trajectory_noise must be provided as a 2D array (n_sources, n_time).')
+        trajectory_noise = np.asarray(trajectory_noise)
+        if trajectory_noise.ndim != 2:
+            raise IonSimError('trajectory_noise must be a 2D array of shape (n_sources, n_time).')
+        trajectory_noise = np.asarray(trajectory_noise, dtype=float)
+
+        if time_evals is None:
+            raise IonSimError('time_evals must be provided for stochastic Liouvillian construction.')
+        time_evals = np.asarray(time_evals, dtype=float)
+
+        if trajectory_noise.shape[1] != time_evals.shape[0]:
+            raise IonSimError('Noise trajectory length does not match the supplied time grid.')
+
+        return_component_data = kwargs.pop('return_component_data', False)
+
+        component_data = self._build_stochastic_component_data(trajectory_noise.shape[0])
+        if component_data.stochastic_hints.shape[0] == 0:
+            raise IonSimError(
+                'Stochastic evolution requested, but no stochastic components were constructed for this trajectory.\n'
+                'Check operator stochastic_info (channel mapping, strengths, thresholds).')
+
+        if return_component_data:
+            return component_data
+
+        det_hints = component_data.deterministic_hints
+        det_rates = component_data.deterministic_rates
+        det_has_rate = component_data.deterministic_has_rate
+
+        stoch_hints = component_data.stochastic_hints
+        stoch_rates = component_data.stochastic_rates
+        stoch_has_rate = component_data.stochastic_has_rate
+        noise_strengths = component_data.noise_strengths
+        noise_offsets = component_data.noise_offsets
+        noise_sources = component_data.noise_source_indices
+
+        def _apply_phase(hint: np.ndarray, rate: np.ndarray, has_rate: int, t: float) -> np.ndarray:
+            if has_rate:
+                return hint * np.exp(-1j * rate * t)
+            return hint
+
+        def _deterministic_matrix(t: float) -> np.ndarray:
+            base = np.array(component_data.H_det, copy=True)
+            for idx in range(det_hints.shape[0]):
+                base += _apply_phase(det_hints[idx], det_rates[idx], det_has_rate[idx], t)
+            return base
+
+        def interpolate_noise(noise_source: int, t: float) -> float:
+            return float(np.interp(float(t), time_evals, trajectory_noise[noise_source]))
+
+        def _stochastic_liouvillian(t: float):
+            hamiltonian_matrix = _deterministic_matrix(t)
+            for idx in range(stoch_hints.shape[0]):
+                template = _apply_phase(stoch_hints[idx], stoch_rates[idx], stoch_has_rate[idx], t)
+                noise_value = interpolate_noise(int(noise_sources[idx]), t) + noise_offsets[idx]
+
+                trans_type = component_data.noise_transformation_types[idx]
+                if trans_type == 0:
+                    noise_factor = noise_value
+                elif trans_type == 1:
+                    noise_factor = np.exp(1j * noise_value * component_data.noise_transformation_params[idx])
+                else:
+                    noise_factor = noise_value
+
+                hamiltonian_matrix += noise_strengths[idx] * noise_factor * template
+
+            if not np.allclose(hamiltonian_matrix, hamiltonian_matrix.conj().T, atol=1e-10):
+                hamiltonian_matrix = (hamiltonian_matrix + hamiltonian_matrix.conj().T) / 2
+
+            return (
+                matrix_AYB_multiply_to_superoperator(A=hamiltonian_matrix, B=None)
+                - matrix_AYB_multiply_to_superoperator(A=None, B=hamiltonian_matrix)
+            )
+
+        return _stochastic_liouvillian
+
     def evolve_wavefunction(self, initial_wavefunction: Vector, duration: float, time_evals: Vector | None = None, **kwargs):
         """Evolve a wavefunction by solving the time-dependent Schrodinger equation."""
         assert(self.size == len(initial_wavefunction))
@@ -543,6 +624,7 @@ class Hamiltonian(CompositeOperator):
         if time_evals.ndim != 1:
             time_evals = time_evals.reshape(-1)
 
+        kwargs.pop('duration', None)
         trajectory_backend = kwargs.pop('trajectory_backend', 'python')
         base_solver = kwargs.pop('base_solver', 'odeintz')
         base_solver_kwargs = kwargs.pop('base_solver_kwargs', {})
@@ -563,5 +645,49 @@ class Hamiltonian(CompositeOperator):
 
         end = time.perf_counter()
         ic(f'Evolving wavefunction took {end-start} seconds.')
+
+        return times, trajectory_results
+
+    def evolve_stochastic_density_matrix(self, initial_supervector: Vector, time_evals: Vector | None = None,
+        noisy_trajectories: Any = None, **kwargs):
+        """Evolve a density-matrix supervector under a stochastic Hamiltonian."""
+        assert(self.size**2 == len(initial_supervector))
+        import time
+        from icecream import ic
+
+        start = time.perf_counter()
+
+        if not self.stochastic:
+            raise IonSimError('Hamiltonian is not set up for stochastic evolution (no stochastic operators found).')
+        if noisy_trajectories is None:
+            raise IonSimError('No noisy trajectories provided for stochastic evolution.')
+
+        if time_evals is None:
+            raise IonSimError('time_evals must be provided for stochastic evolution.')
+        time_evals = np.asarray(time_evals, dtype=float)
+        if time_evals.ndim != 1:
+            time_evals = time_evals.reshape(-1)
+
+        kwargs.pop('duration', None)
+        trajectory_backend = kwargs.pop('trajectory_backend', 'python')
+        base_solver = kwargs.pop('base_solver', 'odeintz')
+        base_solver_kwargs = kwargs.pop('base_solver_kwargs', {})
+        if kwargs:
+            base_solver_kwargs = {**base_solver_kwargs, **kwargs}
+
+        duration = float(time_evals[-1] - time_evals[0]) if len(time_evals) > 0 else 0.0
+        times, trajectory_results = solve_time_evolution_equation(
+            self.stochastic_liouvillian_function,
+            initial_supervector,
+            duration,
+            time_evals,
+            ode_solver='stochastic_liouville',
+            noisy_trajectories=noisy_trajectories,
+            base_solver=base_solver,
+            base_solver_kwargs=base_solver_kwargs,
+            trajectory_backend=trajectory_backend)
+
+        end = time.perf_counter()
+        ic(f'Evolving supervector took {end-start} seconds.')
 
         return times, trajectory_results

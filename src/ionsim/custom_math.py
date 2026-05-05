@@ -82,6 +82,8 @@ def solve_time_evolution_equation(interaction_function: Callable, initial_state_
         return ZVODE(interaction_function, initial_state_vector, duration, time_evals, **kwargs).solve()
     elif ode_solver == 'stochastic':
         return StochasticOdeSolver(interaction_function, initial_state_vector, duration, time_evals, **kwargs).solve()
+    elif ode_solver == 'stochastic_liouville':
+        return StochasticLiouvilleOdeSolver(interaction_function, initial_state_vector, duration, time_evals, **kwargs).solve()
     else:
         raise IonSimError(f'ODE solver {ode_solver} is not implemented.')
 
@@ -281,6 +283,198 @@ class StochasticOdeSolver(OdeSolver):
 
         return list(time_grid), stacked_results
 
+
+@dataclass(frozen=True, eq=False)
+class StochasticLiouvilleOdeSolver(OdeSolver):
+    """A numerical routine to solve stochastic density-matrix trajectories."""
+    noisy_trajectories: np.ndarray | None = None
+    base_solver: str = 'odeintz'
+    base_solver_kwargs: dict[str, Any] = field(default_factory=dict)
+    trajectory_backend: str = 'python'
+
+    def solve(self):
+        """Solve stochastic Liouville-von Neumann trajectories and return supervectors."""
+        noise_array = StochasticOdeSolver._shape_noise_to_trajectories(self.noisy_trajectories)
+        n_trajectories, _, n_time = noise_array.shape
+        if n_trajectories == 0:
+            raise IonSimError('noisy_trajectories must contain at least one trajectory.')
+
+        if self.base_solver in {'stochastic', 'stochastic_liouville'}:
+            raise IonSimError(
+                'base_solver for StochasticLiouvilleOdeSolver cannot be "stochastic" or "stochastic_liouville".'
+            )
+
+        if self.time_evals is None:
+            time_grid = np.linspace(0.0, self.duration, n_time)
+        else:
+            time_grid = np.asarray(self.time_evals, dtype=float)
+            if time_grid.shape[0] != n_time:
+                raise IonSimError('Length of time_evals must match the number of noise samples per trajectory.')
+
+        backend = self.trajectory_backend.lower()
+        if backend not in {"python", "numba_rk4", "numba_general_propagator"}:
+            raise IonSimError(
+                f'Unknown trajectory_backend "{self.trajectory_backend}"'
+            )
+
+        solver_kwargs = dict(self.base_solver_kwargs)
+
+        component_data = self.interaction_function(
+            initial_supervector=self.initial_vector,
+            duration=self.duration,
+            time_evals=time_grid,
+            trajectory_noise=noise_array[0],
+            noise_times=time_grid,
+            return_component_data=True,
+        )
+
+        if backend == "numba_rk4":
+            stacked_results = _run_stochastic_liouville_trajectories_numba(
+                noise_array,
+                np.asarray(self.initial_vector, dtype=np.complex128, order='C'),
+                time_grid,
+                component_data,
+                method='RK4',
+            )
+        elif backend == "numba_general_propagator":
+            stacked_results = _run_stochastic_liouville_trajectories_numba(
+                noise_array,
+                np.asarray(self.initial_vector, dtype=np.complex128, order='C'),
+                time_grid,
+                component_data,
+                method='general_propagator',
+            )
+        elif backend == 'python':
+            stacked_results = parallel_trajectory_liouville_solver(
+                n_trajectories,
+                solver_kwargs,
+                time_grid,
+                noise_array,
+                interaction_function=self.interaction_function,
+                initial_vector=self.initial_vector,
+                duration=self.duration,
+                base_solver=self.base_solver,
+            )
+        else:
+            raise IonSimError(f'Unknown trajectory_backend "{self.trajectory_backend}".')
+
+        return list(time_grid), stacked_results
+
+
+def parallel_trajectory_liouville_solver(
+        n_trajectories: int,
+        solver_kwargs: dict[str, Any],
+        time_grid: np.ndarray,
+        noise_array: np.ndarray,
+        interaction_function: Callable,
+        initial_vector: Vector,
+        duration: float,
+        base_solver: str,
+    ) -> np.ndarray:
+    """Solve stochastic supervector trajectories, optionally in parallel."""
+    if n_trajectories <= 0:
+        raise IonSimError('n_trajectories must be a positive integer.')
+
+    processes = os.cpu_count() or 1
+
+    work_items = [
+        (
+            noise_array[trajectory_index],
+            interaction_function,
+            initial_vector,
+            duration,
+            time_grid,
+            base_solver,
+            solver_kwargs,
+        )
+        for trajectory_index in range(n_trajectories)
+    ]
+
+    try:
+        with mp.Pool(processes=processes) as pool:
+            results = pool.starmap(_solve_single_stochastic_liouville_trajectory, work_items)
+        print("Using multiprocessing with", processes, "processes for stochastic density-matrix trajectories.")
+    except Exception as exc:
+        print(f"Multiprocessing failed ({type(exc).__name__}: {exc}); falling back to serial.")
+        return _serial_trajectory_liouville_solver(
+            n_trajectories,
+            solver_kwargs,
+            time_grid,
+            noise_array,
+            interaction_function,
+            initial_vector,
+            duration,
+            base_solver,
+        )
+
+    trajectory_vectors: list[np.ndarray] = []
+    for times, state_vectors in results:
+        if len(times) != len(time_grid) or not np.allclose(times, time_grid, atol=1e-12, rtol=1e-9):
+            raise IonSimError('All stochastic density-matrix trajectories must share the same integration time grid.')
+        trajectory_vectors.append(state_vectors)
+    return np.stack(trajectory_vectors, axis=0)
+
+
+def _serial_trajectory_liouville_solver(
+    n_trajectories: int,
+    solver_kwargs: dict[str, Any],
+    time_grid: np.ndarray,
+    noise_array: np.ndarray,
+    interaction_function: Callable,
+    initial_vector: Vector,
+    duration: float,
+    base_solver: str,
+) -> np.ndarray:
+    trajectory_vectors: list[np.ndarray] = []
+    for trajectory_index in range(n_trajectories):
+        trajectory_noise = noise_array[trajectory_index]
+        times, state_vectors = _solve_single_stochastic_liouville_trajectory(
+            trajectory_noise,
+            interaction_function,
+            initial_vector,
+            duration,
+            time_grid,
+            base_solver,
+            solver_kwargs,
+        )
+        if len(times) != len(time_grid) or not np.allclose(times, time_grid, atol=1e-12, rtol=1e-9):
+            raise IonSimError('All stochastic density-matrix trajectories must share the same integration time grid.')
+        trajectory_vectors.append(state_vectors)
+    return np.stack(trajectory_vectors, axis=0)
+
+
+def _solve_single_stochastic_liouville_trajectory(
+    trajectory_noise: np.ndarray,
+    interaction_function: Callable,
+    initial_vector: Vector,
+    duration: float,
+    time_grid: np.ndarray,
+    base_solver: str,
+    solver_kwargs: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Integrate a single stochastic density-matrix trajectory using the configured base solver."""
+    stochastic_builder = interaction_function(
+        initial_supervector=initial_vector,
+        duration=duration,
+        time_evals=time_grid,
+        trajectory_noise=trajectory_noise,
+        noise_times=time_grid,
+    )
+    inner_kwargs = dict(solver_kwargs)
+    times, state_vectors = solve_time_evolution_equation(
+        stochastic_builder,
+        initial_vector,
+        duration,
+        time_grid,
+        ode_solver=base_solver,
+        **inner_kwargs,
+    )
+    times_array = np.asarray(times, dtype=float)
+    if len(times_array) != len(time_grid) or not np.allclose(times_array, time_grid, atol=1e-12, rtol=1e-9):
+        raise IonSimError('All stochastic density-matrix trajectories must share the same integration time grid.')
+    stacked_states = np.stack(state_vectors, axis=0)
+    return times_array, stacked_states
+
 def parallel_trajectory_ode_solver(
         n_trajectories: int,
         solver_kwargs: dict[str, Any],
@@ -475,6 +669,85 @@ def _run_stochastic_trajectories_numba(
         return _run_stochastic_trajectories_numba_general_propagator(
             noise_array_f64,
             initial_vec_c,
+            time_grid_f64,
+            H_det,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_sources,
+            noise_transformation_types,
+            noise_transformation_params,
+        )
+    else:
+        raise IonSimError(f'Unknown numba integration method "{method}".')
+
+
+def _run_stochastic_liouville_trajectories_numba(
+    noise_array: np.ndarray,
+    initial_supervector: np.ndarray,
+    time_grid: np.ndarray,
+    component_data: Any,
+    method: str = 'RK4',
+) -> np.ndarray:
+    """Execute stochastic density-matrix trajectories using a fully nopython backend."""
+    if not _NUMBA_AVAILABLE:
+        raise IonSimError('trajectory_backend="numba" requested but Numba is not installed.')
+
+    noise_array_f64 = np.ascontiguousarray(noise_array, dtype=np.float64)
+    time_grid_f64 = np.ascontiguousarray(np.asarray(time_grid, dtype=np.float64))
+    initial_super_c = np.ascontiguousarray(initial_supervector, dtype=np.complex128)
+
+    H_det = np.ascontiguousarray(component_data.H_det, dtype=np.complex128)
+    det_hints = np.ascontiguousarray(component_data.deterministic_hints, dtype=np.complex128)
+    det_rates = np.ascontiguousarray(component_data.deterministic_rates, dtype=np.float64)
+    det_has_rate = np.ascontiguousarray(component_data.deterministic_has_rate, dtype=np.uint8)
+
+    stoch_hints = np.ascontiguousarray(component_data.stochastic_hints, dtype=np.complex128)
+    stoch_rates = np.ascontiguousarray(component_data.stochastic_rates, dtype=np.float64)
+    stoch_has_rate = np.ascontiguousarray(component_data.stochastic_has_rate, dtype=np.uint8)
+
+    noise_strengths = np.ascontiguousarray(component_data.noise_strengths, dtype=np.complex128)
+    noise_offsets = np.ascontiguousarray(component_data.noise_offsets, dtype=np.float64)
+    noise_sources = np.ascontiguousarray(component_data.noise_source_indices, dtype=np.int64)
+
+    noise_transformation_types = np.ascontiguousarray(component_data.noise_transformation_types, dtype=np.int32)
+    noise_transformation_params = np.ascontiguousarray(component_data.noise_transformation_params, dtype=np.float64)
+
+    if H_det.ndim != 2 or H_det.shape[0] != H_det.shape[1]:
+        raise IonSimError('Stochastic Liouville propagation requires square Hamiltonian components.')
+    dim = H_det.shape[0]
+    if initial_super_c.shape[0] != dim * dim:
+        raise IonSimError(
+            'Initial supervector size does not match the Hamiltonian dimension for stochastic density-matrix propagation.'
+        )
+
+    if method == 'RK4':
+        return _run_stochastic_liouville_trajectories_numba_RK4(
+            noise_array_f64,
+            initial_super_c,
+            time_grid_f64,
+            H_det,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_sources,
+            noise_transformation_types,
+            noise_transformation_params,
+        )
+    elif method == 'general_propagator':
+        return _run_stochastic_liouville_trajectories_numba_general_propagator(
+            noise_array_f64,
+            initial_super_c,
             time_grid_f64,
             H_det,
             det_hints,
@@ -1188,6 +1461,294 @@ if _NUMBA_AVAILABLE:
                 psi = V @ scaled
 
                 result[traj_idx, step + 1, :] = psi
+        return result
+
+    @njit(cache=True)
+    def _numba_supervector_to_density_matrix(supervector: np.ndarray, dim: int) -> np.ndarray:
+        rho = np.empty((dim, dim), dtype=np.complex128)
+        for row in range(dim):
+            for col in range(dim):
+                rho[row, col] = supervector[col * dim + row]
+        return rho
+
+    @njit(cache=True)
+    def _numba_density_matrix_to_supervector(rho: np.ndarray) -> np.ndarray:
+        dim = rho.shape[0]
+        supervector = np.empty(dim * dim, dtype=np.complex128)
+        for row in range(dim):
+            for col in range(dim):
+                supervector[col * dim + row] = rho[row, col]
+        return supervector
+
+    @njit(cache=True)
+    def _numba_liouville_rhs(
+        t: float,
+        rho: np.ndarray,
+        step: int,
+        traj_idx: int,
+        noise_array: np.ndarray,
+        time_grid: np.ndarray,
+        H_det: np.ndarray,
+        det_hints: np.ndarray,
+        det_rates: np.ndarray,
+        det_has_rate: np.ndarray,
+        stoch_hints: np.ndarray,
+        stoch_rates: np.ndarray,
+        stoch_has_rate: np.ndarray,
+        noise_strengths: np.ndarray,
+        noise_offsets: np.ndarray,
+        noise_source_indices: np.ndarray,
+        noise_transformation_types: np.ndarray,
+        noise_transformation_params: np.ndarray,
+        interpolate: bool = True,
+    ) -> np.ndarray:
+        H = _numba_build_hamiltonian(
+            t,
+            step,
+            traj_idx,
+            noise_array,
+            time_grid,
+            H_det,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
+            interpolate,
+        )
+        return -1j * (H @ rho - rho @ H)
+
+    @njit(cache=True)
+    def _numba_liouville_rk4_step(
+        t0: float,
+        dt: float,
+        step: int,
+        rho: np.ndarray,
+        traj_idx: int,
+        noise_array: np.ndarray,
+        time_grid: np.ndarray,
+        H_det: np.ndarray,
+        det_hints: np.ndarray,
+        det_rates: np.ndarray,
+        det_has_rate: np.ndarray,
+        stoch_hints: np.ndarray,
+        stoch_rates: np.ndarray,
+        stoch_has_rate: np.ndarray,
+        noise_strengths: np.ndarray,
+        noise_offsets: np.ndarray,
+        noise_source_indices: np.ndarray,
+        noise_transformation_types: np.ndarray,
+        noise_transformation_params: np.ndarray,
+    ) -> np.ndarray:
+        k1 = _numba_liouville_rhs(
+            t0,
+            rho,
+            step,
+            traj_idx,
+            noise_array,
+            time_grid,
+            H_det,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
+            interpolate=True,
+        )
+        k2 = _numba_liouville_rhs(
+            t0 + 0.5 * dt,
+            rho + 0.5 * dt * k1,
+            step,
+            traj_idx,
+            noise_array,
+            time_grid,
+            H_det,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
+            interpolate=True,
+        )
+        k3 = _numba_liouville_rhs(
+            t0 + 0.5 * dt,
+            rho + 0.5 * dt * k2,
+            step,
+            traj_idx,
+            noise_array,
+            time_grid,
+            H_det,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
+            interpolate=True,
+        )
+        k4 = _numba_liouville_rhs(
+            t0 + dt,
+            rho + dt * k3,
+            step,
+            traj_idx,
+            noise_array,
+            time_grid,
+            H_det,
+            det_hints,
+            det_rates,
+            det_has_rate,
+            stoch_hints,
+            stoch_rates,
+            stoch_has_rate,
+            noise_strengths,
+            noise_offsets,
+            noise_source_indices,
+            noise_transformation_types,
+            noise_transformation_params,
+            interpolate=True,
+        )
+        return rho + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+    @njit(parallel=True, cache=True)
+    def _run_stochastic_liouville_trajectories_numba_RK4(
+        noise_array: np.ndarray,
+        initial_supervector: np.ndarray,
+        time_grid: np.ndarray,
+        H_det: np.ndarray,
+        det_hints: np.ndarray,
+        det_rates: np.ndarray,
+        det_has_rate: np.ndarray,
+        stoch_hints: np.ndarray,
+        stoch_rates: np.ndarray,
+        stoch_has_rate: np.ndarray,
+        noise_strengths: np.ndarray,
+        noise_offsets: np.ndarray,
+        noise_source_indices: np.ndarray,
+        noise_transformation_types: np.ndarray,
+        noise_transformation_params: np.ndarray,
+    ) -> np.ndarray:
+        n_traj = noise_array.shape[0]
+        n_time = time_grid.shape[0]
+        n_state = initial_supervector.shape[0]
+        dim = H_det.shape[0]
+        result = np.empty((n_traj, n_time, n_state), dtype=np.complex128)
+
+        for traj_idx in prange(n_traj):
+            rho = _numba_supervector_to_density_matrix(initial_supervector, dim)
+            result[traj_idx, 0, :] = initial_supervector
+            for step in range(n_time - 1):
+                t0 = time_grid[step]
+                t1 = time_grid[step + 1]
+                dt = t1 - t0
+                rho = _numba_liouville_rk4_step(
+                    t0,
+                    dt,
+                    step,
+                    rho,
+                    traj_idx,
+                    noise_array,
+                    time_grid,
+                    H_det,
+                    det_hints,
+                    det_rates,
+                    det_has_rate,
+                    stoch_hints,
+                    stoch_rates,
+                    stoch_has_rate,
+                    noise_strengths,
+                    noise_offsets,
+                    noise_source_indices,
+                    noise_transformation_types,
+                    noise_transformation_params,
+                )
+                result[traj_idx, step + 1, :] = _numba_density_matrix_to_supervector(rho)
+        return result
+
+    @njit(parallel=True, cache=True)
+    def _run_stochastic_liouville_trajectories_numba_general_propagator(
+        noise_array: np.ndarray,
+        initial_supervector: np.ndarray,
+        time_grid: np.ndarray,
+        H_det: np.ndarray,
+        det_hints: np.ndarray,
+        det_rates: np.ndarray,
+        det_has_rate: np.ndarray,
+        stoch_hints: np.ndarray,
+        stoch_rates: np.ndarray,
+        stoch_has_rate: np.ndarray,
+        noise_strengths: np.ndarray,
+        noise_offsets: np.ndarray,
+        noise_source_indices: np.ndarray,
+        noise_transformation_types: np.ndarray,
+        noise_transformation_params: np.ndarray,
+    ) -> np.ndarray:
+        n_traj = noise_array.shape[0]
+        n_time = time_grid.shape[0]
+        n_state = initial_supervector.shape[0]
+        dim = H_det.shape[0]
+        result = np.empty((n_traj, n_time, n_state), dtype=np.complex128)
+
+        for traj_idx in prange(n_traj):
+            rho = _numba_supervector_to_density_matrix(initial_supervector, dim)
+            result[traj_idx, 0, :] = initial_supervector
+
+            for step in range(n_time - 1):
+                t = time_grid[step]
+                dt_step = time_grid[step + 1] - time_grid[step]
+
+                H = _numba_build_hamiltonian(
+                    t,
+                    step,
+                    traj_idx,
+                    noise_array,
+                    time_grid,
+                    H_det,
+                    det_hints,
+                    det_rates,
+                    det_has_rate,
+                    stoch_hints,
+                    stoch_rates,
+                    stoch_has_rate,
+                    noise_strengths,
+                    noise_offsets,
+                    noise_source_indices,
+                    noise_transformation_types,
+                    noise_transformation_params,
+                    interpolate=False,
+                )
+
+                e, V = np.linalg.eigh(H)
+                rho_eigen = V.conj().T @ rho @ V
+                exp_e = np.exp(-1j * e * dt_step)
+                for i in range(dim):
+                    for j in range(dim):
+                        rho_eigen[i, j] = rho_eigen[i, j] * exp_e[i] * np.conj(exp_e[j])
+                rho = V @ rho_eigen @ V.conj().T
+
+                result[traj_idx, step + 1, :] = _numba_density_matrix_to_supervector(rho)
         return result
 
 else:  # pragma: no cover - fallback when numba is missing
