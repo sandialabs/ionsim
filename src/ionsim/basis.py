@@ -244,7 +244,6 @@ class PauliProductBasis(Basis):
     def __post_init__(self):
         self._check_if_qubit_basis()
 
-
     # TODO: Consider cacheing these vectors to avoid building a list of d^2, dxd matrices every time you call this object.  
     # TODO: The memory cost of storing this will need to be weighed against the time computing these vectors.  
     @property
@@ -260,9 +259,6 @@ class PauliProductBasis(Basis):
         single_qubit_pauli_vector = ['I', 'X', 'Y', 'Z'] 
         N = len(self.degrees_of_freedom)
         pauli_op_labels  = ["".join(label) for label in product(single_qubit_pauli_vector, repeat = N)]
- #        for label in product(single_qubit_pauli_vector, repeat=N): 
- #            # operators are tuples containing the single-qubit Pauli matrices 
- #            pauli_op_labels.append("".join(label)) 
         return pauli_op_labels
 
 
@@ -279,6 +275,7 @@ class PauliProductBasis(Basis):
         a = [encoding[p][0] for p in pauli_label]
         b = [encoding[p][1] for p in pauli_label]
         return np.array(a + b, dtype=int)
+
 
     @property
     def walsh_hadamard_transformation_matrix(self, include_normalization: bool=True) -> Matrix:
@@ -358,10 +355,8 @@ class PauliProductBasis(Basis):
         assert superoperator.shape == (len(self.vectors), len(self.vectors))
         # Get change of basis matrix 
         U = np.array(self.vectors).conj() 
-
         # If S represents a completely positive, trace-preserving (CPTP) map, R will be purely real. 
         pauli_transfer_matrix = U @ superoperator @ (U.T).conj()
-        #pauli_transfer_matrix = np.real(U @ superoperator @ (U.T).conj() ) 
 
         return pauli_transfer_matrix 
 
@@ -380,6 +375,8 @@ class PauliProductBasis(Basis):
  #        else:
  #            pauli_transfer_matrix = self.superoperator_to_pauli_transfer_matrix(gate.process_matrix, gate.basis)
  #            return Gate(basis = self, process_matrix = pauli_transfer_matrix) 
+
+
 
 
 @dataclass(frozen=True, eq=False)

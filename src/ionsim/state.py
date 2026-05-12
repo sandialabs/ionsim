@@ -5,6 +5,7 @@ from ionsim.custom_types import Vector, Matrix
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.dissipator import Dissipator, Lindbladian
+from ionsim.named_operators import Pauli
 
 import numpy as np
 # from typing import Any
@@ -112,6 +113,28 @@ class State:
             return State(self.basis, density_matrix)
         rhos = [self.basis.compute_density_matrix_from_supervector(psi) for psi in supervectors]
         return [State(self.basis, rho) for rho in rhos]
+
+
+    def propagate_using_pauli_channel(self, Pauli_error_rates: dict):
+        """ Propagates a state under the action of a Pauli channel, specified by its error rates 
+
+            Pauli channel acting on a state rho: 
+                E[rho] = sum_{a} P_a rho P_a 
+                
+                - E is the channel
+                - P_a is a Pauli operator from the N-qubit Pauli group 
+                - rho is the input state's density matrix  
+                - E[rho] is the output state's density matrix  
+        """
+        d2 = len(Pauli_error_rates)
+        N_qubits = int(np.log2(d2))//2
+
+        propagated_density_matrix = np.zeros_like(self.density_matrix) 
+        for pauli_label, pauli_operator in zip(Pauli_error_rates.keys(), Pauli.product_operators(N_qubits)): 
+            propagated_density_matrix += Pauli_error_rates[pauli_label] * (pauli_operator @ self.density_matrix @ pauli_operator) 
+            
+        return State.from_density_matrix(self.basis, propagated_density_matrix) 
+    
 
     def get_wavefunction_in_new_basis(self, new_basis: Basis):
         """Get the wavefunction in a new basis."""
