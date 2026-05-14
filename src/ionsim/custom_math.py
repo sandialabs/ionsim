@@ -73,7 +73,7 @@ def matrix_AYB_multiply_to_superoperator(A: AnyMatrix | None, B: AnyMatrix | Non
 def solve_time_evolution_equation(interaction_function: Callable, initial_state_vector: Vector, duration: float,
     time_evals: Vector | None = None, ode_solver: str = 'odeintz', **kwargs):
     """Solve the time-dependent Schrodinger equation or the vectorized Lindblad master equation."""
-    print(f'Solving ODE with {ode_solver}.')
+    #print(f'Solving ODE with {ode_solver}.')
     if ode_solver == 'odeintz':
         return OdeIntz(interaction_function, initial_state_vector, duration, time_evals, **kwargs).solve()
     elif ode_solver == 'solve_ivp':

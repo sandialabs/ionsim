@@ -27,7 +27,7 @@ class GSTCircuitPlanner:
             raise IonSimError(f"2-qubit GST circuit planning default options are currently not implemented in IonSim. Please specify a choice of fiducial prep circuits.")
         
         if germs is None and len(qubit_labels) == 1:
-            germs = self.standard_1Q_germs()
+            germs = self.standard_1Q_germs(gate_names)
 
         self.prep_fiducials = prep_fiducials
         self.germs = germs 
@@ -120,11 +120,11 @@ class GSTCircuitPlanner:
         #idle = ParsedGate('idle', ())
 
         # include empty list for "do nothing for no time" initial sequence 
-        fiducials = [[], [X_pi2], [Y_pi2], [X_pi2, X_pi2], [Y_pi2, Y_pi2] ]
+        fiducials = [[], [X_pi2], [Y_pi2], [X_pi2, X_pi2], [Y_pi2, Y_pi2], [X_pi2, X_pi2, X_pi2], [Y_pi2, Y_pi2, Y_pi2] ]
         return fiducials, fiducials 
 
     @staticmethod
-    def standard_1Q_germs() -> list:
+    def standard_1Q_germs(gate_names: list[str]) -> list:
         """ For 1Q gates, the germs are the gates themselves and specific combinations of them. 
 
             - returns the list of germs; each germ is a list of ParsedGate objects 
@@ -135,7 +135,11 @@ class GSTCircuitPlanner:
         Y_pi2 = ParsedGate('Gypi2', qubits)
         idle = ParsedGate('[]', ()) # should it be qubits? 
 
-        germs = [ [X_pi2], [Y_pi2], [idle], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2] ]
+        if 'idle' in gate_names:
+            germs = [ [X_pi2], [Y_pi2], [idle], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2] ]
+        else:
+            germs = [ [X_pi2], [Y_pi2], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2] ]
+
         return germs 
 
 
