@@ -9,7 +9,7 @@ from ionsim.basis import StandardBasis
 from ionsim.operator import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
 from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix, as_dense_matrix
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, SMALLEST_ENERGY_SCALE
-from ionsim.custom_math import solve_time_evolution_equation
+from ionsim.custom_math import solve_time_evolution_equation, matrix_AYB_multiply_to_superoperator
 from ionsim.composite_operator import CompositeOperator
 from ionsim.ionsim_error import IonSimError
 
@@ -31,9 +31,11 @@ class StochasticHamiltonianComponentData:
     deterministic_hints: np.ndarray
     deterministic_rates: np.ndarray
     deterministic_has_rate: np.ndarray
+    deterministic_is_diagonal: np.ndarray
     stochastic_hints: np.ndarray
     stochastic_rates: np.ndarray
     stochastic_has_rate: np.ndarray
+    stochastic_is_diagonal: np.ndarray
     noise_strengths: np.ndarray
     noise_offsets: np.ndarray
     noise_source_indices: np.ndarray
@@ -49,11 +51,11 @@ class Hamiltonian(CompositeOperator):
     @property
     def stochastic(self) -> bool:
         """
-        Returns True if any coupling operator has non-empty stochastic_param_info.
+        Returns True if any Hamiltonian operator has non-empty stochastic metadata.
         """
         return any(
             hasattr(op, 'stochastic_info') and op.stochastic_info not in (None, {})
-            for op in getattr(self, 'coupling_operators', [])
+            for op in [*getattr(self, 'coupling_operators', []), *getattr(self, 'energy_shift_operators', [])]
         )
 
     @property
@@ -291,33 +293,31 @@ class Hamiltonian(CompositeOperator):
         return _hamiltonian_function
 
     def _build_stochastic_component_data(self, n_noise_sources: int) -> StochasticHamiltonianComponentData:
-        """Extract dense component arrays describing deterministic and stochastic couplings.
+        """Extract dense component arrays describing deterministic and stochastic operator terms.
         Enables fast, vectorized evaluation of the Hamiltonian during stochastic propagation"""
         sparse_H0, sparse_H0_shifts, sparse_Hints, sparse_Rates = self.H0_H0Shifts_Hints_and_Rates
         H0_dense = np.array(as_dense_matrix(sparse_H0, warn=False), copy=True).astype(np.complex128, copy=False)
-        for sparse_shift in sparse_H0_shifts:
-            H0_dense += np.array(as_dense_matrix(sparse_shift, warn=False), copy=False).astype(np.complex128, copy=False)
 
         det_hints: list[np.ndarray] = []
         det_rates: list[np.ndarray] = []
         det_has_rate: list[bool] = []
+        det_is_diagonal: list[bool] = []
 
         stoch_hints: list[np.ndarray] = []
         stoch_rates: list[np.ndarray] = []
         stoch_has_rate: list[bool] = []
+        stoch_is_diagonal: list[bool] = []
         noise_strengths: list[complex] = []
         noise_offsets: list[float] = []
         noise_source_indices: list[int] = []
         noise_transformation_types: list[int] = []
         noise_transformation_params: list[float] = []
 
-        for operator, hint_matrix, rate_matrix in zip(self.coupling_operators, sparse_Hints, sparse_Rates):
+        def _append_component(operator, component_matrix, rate_matrix):
             comp_hint = np.array(as_dense_matrix(hint_matrix, warn=False), copy=True).astype(np.complex128, copy=False)
-            # Ensure hermiticity once, here
-            if not np.allclose(comp_hint, comp_hint.conj().T, atol=1e-10):
-                comp_hint = (comp_hint + comp_hint.conj().T) / 2
             comp_rate = np.array(as_dense_matrix(rate_matrix, warn=False), copy=True).astype(float, copy=False)
             has_rate = bool(np.any(np.abs(comp_rate) > 0))
+            is_diagonal = bool(np.allclose(comp_hint, np.diag(np.diag(comp_hint)), atol=1e-10))
 
             stochastic_info = getattr(operator, 'stochastic_info', None) or {}
             if stochastic_info:
@@ -347,10 +347,11 @@ class Hamiltonian(CompositeOperator):
                 stoch_hints.append(comp_hint)
                 stoch_rates.append(comp_rate)
                 stoch_has_rate.append(has_rate)
+                stoch_is_diagonal.append(is_diagonal)
                 noise_strengths.append(complex(strength))
                 noise_offsets.append(float(offset))
                 noise_source_indices.append(noise_source)
-                
+
                 # Handle noise transformation
                 transformation = stochastic_info.get('transformation', 'linear')
                 if transformation == 'linear':
@@ -367,6 +368,14 @@ class Hamiltonian(CompositeOperator):
                 det_hints.append(comp_hint)
                 det_rates.append(comp_rate)
                 det_has_rate.append(has_rate)
+                det_is_diagonal.append(is_diagonal)
+
+        for operator, hint_matrix, rate_matrix in zip(self.coupling_operators, sparse_Hints, sparse_Rates):
+            _append_component(operator, hint_matrix, rate_matrix)
+
+        zero_rate = csr_matrix(sparse_H0.shape, dtype=float)
+        for operator, shift_matrix in zip(self.energy_shift_operators, sparse_H0_shifts):
+            _append_component(operator, shift_matrix, zero_rate)
 
         dim = H0_dense.shape[0]
 
@@ -378,19 +387,23 @@ class Hamiltonian(CompositeOperator):
         deterministic_hint_array = _stack_or_empty(det_hints, np.complex128)
         deterministic_rate_array = _stack_or_empty(det_rates, float)
         deterministic_has_rate_array = np.array(det_has_rate, dtype=np.uint8)
+        deterministic_is_diagonal_array = np.array(det_is_diagonal, dtype=np.uint8)
 
         stochastic_hint_array = _stack_or_empty(stoch_hints, np.complex128)
         stochastic_rate_array = _stack_or_empty(stoch_rates, float)
         stochastic_has_rate_array = np.array(stoch_has_rate, dtype=np.uint8)
+        stochastic_is_diagonal_array = np.array(stoch_is_diagonal, dtype=np.uint8)
 
         return StochasticHamiltonianComponentData(
             H_det=H0_dense,
             deterministic_hints=deterministic_hint_array,
             deterministic_rates=deterministic_rate_array,
             deterministic_has_rate=deterministic_has_rate_array,
+            deterministic_is_diagonal=deterministic_is_diagonal_array,
             stochastic_hints=stochastic_hint_array,
             stochastic_rates=stochastic_rate_array,
             stochastic_has_rate=stochastic_has_rate_array,
+            stochastic_is_diagonal=stochastic_is_diagonal_array,
             noise_strengths=np.array(noise_strengths, dtype=np.complex128),
             noise_offsets=np.array(noise_offsets, dtype=float),
             noise_source_indices=np.array(noise_source_indices, dtype=np.int64),
@@ -439,10 +452,12 @@ class Hamiltonian(CompositeOperator):
         det_hints = component_data.deterministic_hints
         det_rates = component_data.deterministic_rates
         det_has_rate = component_data.deterministic_has_rate
+        det_is_diagonal = component_data.deterministic_is_diagonal
 
         stoch_hints = component_data.stochastic_hints
         stoch_rates = component_data.stochastic_rates
         stoch_has_rate = component_data.stochastic_has_rate
+        stoch_is_diagonal = component_data.stochastic_is_diagonal
         noise_strengths = component_data.noise_strengths
         noise_offsets = component_data.noise_offsets
         noise_sources = component_data.noise_source_indices
@@ -453,9 +468,13 @@ class Hamiltonian(CompositeOperator):
             return hint
 
         def _deterministic_matrix(t: float) -> np.ndarray:
-            base = np.array(component_data.H0, copy=True)
+            base = np.array(component_data.H_det, copy=True)
             for idx in range(det_hints.shape[0]):
-                base += _apply_phase(det_hints[idx], det_rates[idx], det_has_rate[idx], t)
+                term = _apply_phase(det_hints[idx], det_rates[idx], det_has_rate[idx], t)
+                if det_is_diagonal[idx]:
+                    base += term
+                else:
+                    base += term + term.conj().T
             return base
 
         def interpolate_noise(noise_source: int, t: float) -> float:
@@ -477,7 +496,7 @@ class Hamiltonian(CompositeOperator):
             for idx in range(stoch_hints.shape[0]):
                 template = _apply_phase(stoch_hints[idx], stoch_rates[idx], stoch_has_rate[idx], t)
                 noise_value = interpolate_noise(int(noise_sources[idx]), t) + noise_offsets[idx]
-                
+
                 # Apply noise transformation
                 trans_type = component_data.noise_transformation_types[idx]
                 if trans_type == 0:  # linear
@@ -486,18 +505,109 @@ class Hamiltonian(CompositeOperator):
                     noise_factor = np.exp(1j * noise_value * component_data.noise_transformation_params[idx])
                 else:
                     noise_factor = noise_value  # default to linear
-                
-                base_matrix += noise_strengths[idx] * noise_factor * template
 
-            # Enforce hermiticity
-            if not np.allclose(base_matrix, base_matrix.conj().T, atol=1e-10):
-                base_matrix = (base_matrix + base_matrix.conj().T) / 2
+                term = noise_strengths[idx] * noise_factor * template
+                if stoch_is_diagonal[idx]:
+                    base_matrix += term
+                else:
+                    base_matrix += term + term.conj().T
 
             if self.sparse:
                 return csr_matrix(base_matrix)
             return base_matrix
 
         return _stochastic_hamiltonian
+
+    def stochastic_liouvillian_function(self, time_evals: Vector, trajectory_noise: Matrix | None = None, **kwargs):
+        """Build a stochastic commutator superoperator callable for density-matrix evolution."""
+        if not self.stochastic:
+            raise IonSimError('Hamiltonian is not set up for stochastic evolution (no stochastic operators found).' )
+
+        if trajectory_noise is None:
+            raise IonSimError('trajectory_noise must be provided as a 2D array (n_sources, n_time).')
+        trajectory_noise = np.asarray(trajectory_noise)
+        if trajectory_noise.ndim != 2:
+            raise IonSimError('trajectory_noise must be a 2D array of shape (n_sources, n_time).')
+        trajectory_noise = np.asarray(trajectory_noise, dtype=float)
+
+        if time_evals is None:
+            raise IonSimError('time_evals must be provided for stochastic Liouvillian construction.')
+        time_evals = np.asarray(time_evals, dtype=float)
+
+        if trajectory_noise.shape[1] != time_evals.shape[0]:
+            raise IonSimError('Noise trajectory length does not match the supplied time grid.')
+
+        return_component_data = kwargs.pop('return_component_data', False)
+
+        component_data = self._build_stochastic_component_data(trajectory_noise.shape[0])
+        if component_data.stochastic_hints.shape[0] == 0:
+            raise IonSimError(
+                'Stochastic evolution requested, but no stochastic components were constructed for this trajectory.\n'
+                'Check operator stochastic_info (channel mapping, strengths, thresholds).')
+
+        if return_component_data:
+            return component_data
+
+        det_hints = component_data.deterministic_hints
+        det_rates = component_data.deterministic_rates
+        det_has_rate = component_data.deterministic_has_rate
+        det_is_diagonal = component_data.deterministic_is_diagonal
+
+        stoch_hints = component_data.stochastic_hints
+        stoch_rates = component_data.stochastic_rates
+        stoch_has_rate = component_data.stochastic_has_rate
+        stoch_is_diagonal = component_data.stochastic_is_diagonal
+        noise_strengths = component_data.noise_strengths
+        noise_offsets = component_data.noise_offsets
+        noise_sources = component_data.noise_source_indices
+
+        def _apply_phase(hint: np.ndarray, rate: np.ndarray, has_rate: int, t: float) -> np.ndarray:
+            if has_rate:
+                return hint * np.exp(-1j * rate * t)
+            return hint
+
+        def _deterministic_matrix(t: float) -> np.ndarray:
+            base = np.array(component_data.H_det, copy=True)
+            for idx in range(det_hints.shape[0]):
+                term = _apply_phase(det_hints[idx], det_rates[idx], det_has_rate[idx], t)
+                if det_is_diagonal[idx]:
+                    base += term
+                else:
+                    base += term + term.conj().T
+            return base
+
+        def interpolate_noise(noise_source: int, t: float) -> float:
+            return float(np.interp(float(t), time_evals, trajectory_noise[noise_source]))
+
+        def _stochastic_liouvillian(t: float):
+            hamiltonian_matrix = _deterministic_matrix(t)
+            for idx in range(stoch_hints.shape[0]):
+                template = _apply_phase(stoch_hints[idx], stoch_rates[idx], stoch_has_rate[idx], t)
+                noise_value = interpolate_noise(int(noise_sources[idx]), t) + noise_offsets[idx]
+
+                trans_type = component_data.noise_transformation_types[idx]
+                if trans_type == 0:
+                    noise_factor = noise_value
+                elif trans_type == 1:
+                    noise_factor = np.exp(1j * noise_value * component_data.noise_transformation_params[idx])
+                else:
+                    noise_factor = noise_value
+
+                term = noise_strengths[idx] * noise_factor * template
+                if stoch_is_diagonal[idx]:
+                    hamiltonian_matrix += term
+                else:
+                    hamiltonian_matrix += term + term.conj().T
+
+            if not np.allclose(hamiltonian_matrix, hamiltonian_matrix.conj().T, atol=1e-10):
+                hamiltonian_matrix = (hamiltonian_matrix + hamiltonian_matrix.conj().T) / 2
+
+            return (
+                matrix_AYB_multiply_to_superoperator(A=hamiltonian_matrix, B=None)
+                - matrix_AYB_multiply_to_superoperator(A=None, B=hamiltonian_matrix)
+            )
+
+        return _stochastic_liouvillian
 
     def evolve_wavefunction(self, initial_wavefunction: Vector, duration: float, time_evals: Vector | None = None, **kwargs):
         """Evolve a wavefunction by solving the time-dependent Schrodinger equation."""
@@ -596,6 +706,50 @@ class Hamiltonian(CompositeOperator):
         )
 
         print(f"[INFO] Batched stochastic evolution with {trajectory_backend} backend completed. Processing results...")
+
+        return times, trajectory_results
+
+    def evolve_stochastic_density_matrix(self, initial_supervector: Vector, time_evals: Vector | None = None,
+        noisy_trajectories: Any = None, **kwargs):
+        """Evolve a density-matrix supervector under a stochastic Hamiltonian."""
+        assert(self.size**2 == len(initial_supervector))
+        import time
+        from icecream import ic
+
+        start = time.perf_counter()
+
+        if not self.stochastic:
+            raise IonSimError('Hamiltonian is not set up for stochastic evolution (no stochastic operators found).')
+        if noisy_trajectories is None:
+            raise IonSimError('No noisy trajectories provided for stochastic evolution.')
+
+        if time_evals is None:
+            raise IonSimError('time_evals must be provided for stochastic evolution.')
+        time_evals = np.asarray(time_evals, dtype=float)
+        if time_evals.ndim != 1:
+            time_evals = time_evals.reshape(-1)
+
+        kwargs.pop('duration', None)
+        trajectory_backend = kwargs.pop('trajectory_backend', 'python')
+        base_solver = kwargs.pop('base_solver', 'odeintz')
+        base_solver_kwargs = kwargs.pop('base_solver_kwargs', {})
+        if kwargs:
+            base_solver_kwargs = {**base_solver_kwargs, **kwargs}
+
+        duration = float(time_evals[-1] - time_evals[0]) if len(time_evals) > 0 else 0.0
+        times, trajectory_results = solve_time_evolution_equation(
+            self.stochastic_liouvillian_function,
+            initial_supervector,
+            duration,
+            time_evals,
+            ode_solver='stochastic_liouville',
+            noisy_trajectories=noisy_trajectories,
+            base_solver=base_solver,
+            base_solver_kwargs=base_solver_kwargs,
+            trajectory_backend=trajectory_backend)
+
+        end = time.perf_counter()
+        ic(f'Evolving supervector took {end-start} seconds.')
 
         return times, trajectory_results
 
