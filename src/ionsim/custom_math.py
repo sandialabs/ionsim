@@ -617,10 +617,12 @@ def _run_stochastic_trajectories_numba(
     det_hints = np.ascontiguousarray(component_data.deterministic_hints, dtype=np.complex128)
     det_rates = np.ascontiguousarray(component_data.deterministic_rates, dtype=np.float64)
     det_has_rate = np.ascontiguousarray(component_data.deterministic_has_rate, dtype=np.uint8)
+    det_is_diagonal = np.ascontiguousarray(component_data.deterministic_is_diagonal, dtype=np.uint8)
 
     stoch_hints = np.ascontiguousarray(component_data.stochastic_hints, dtype=np.complex128)
     stoch_rates = np.ascontiguousarray(component_data.stochastic_rates, dtype=np.float64)
     stoch_has_rate = np.ascontiguousarray(component_data.stochastic_has_rate, dtype=np.uint8)
+    stoch_is_diagonal = np.ascontiguousarray(component_data.stochastic_is_diagonal, dtype=np.uint8)
 
     noise_strengths = np.ascontiguousarray(component_data.noise_strengths, dtype=np.complex128)
     noise_offsets = np.ascontiguousarray(component_data.noise_offsets, dtype=np.float64)
@@ -638,9 +640,11 @@ def _run_stochastic_trajectories_numba(
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_sources,
@@ -656,9 +660,11 @@ def _run_stochastic_trajectories_numba(
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_sources,
@@ -674,9 +680,11 @@ def _run_stochastic_trajectories_numba(
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_sources,
@@ -706,10 +714,12 @@ def _run_stochastic_liouville_trajectories_numba(
     det_hints = np.ascontiguousarray(component_data.deterministic_hints, dtype=np.complex128)
     det_rates = np.ascontiguousarray(component_data.deterministic_rates, dtype=np.float64)
     det_has_rate = np.ascontiguousarray(component_data.deterministic_has_rate, dtype=np.uint8)
+    det_is_diagonal = np.ascontiguousarray(component_data.deterministic_is_diagonal, dtype=np.uint8)
 
     stoch_hints = np.ascontiguousarray(component_data.stochastic_hints, dtype=np.complex128)
     stoch_rates = np.ascontiguousarray(component_data.stochastic_rates, dtype=np.float64)
     stoch_has_rate = np.ascontiguousarray(component_data.stochastic_has_rate, dtype=np.uint8)
+    stoch_is_diagonal = np.ascontiguousarray(component_data.stochastic_is_diagonal, dtype=np.uint8)
 
     noise_strengths = np.ascontiguousarray(component_data.noise_strengths, dtype=np.complex128)
     noise_offsets = np.ascontiguousarray(component_data.noise_offsets, dtype=np.float64)
@@ -735,9 +745,11 @@ def _run_stochastic_liouville_trajectories_numba(
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_sources,
@@ -753,9 +765,11 @@ def _run_stochastic_liouville_trajectories_numba(
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_sources,
@@ -804,9 +818,11 @@ if _NUMBA_AVAILABLE:
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
+        det_is_diagonal: np.ndarray,
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
+        stoch_is_diagonal: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -817,10 +833,13 @@ if _NUMBA_AVAILABLE:
         H = H_det.copy()
         for idx in range(det_hints.shape[0]):
             if det_has_rate[idx] != 0:
-                herm = det_hints[idx] * np.exp(-1j * det_rates[idx] * t)
+                term = det_hints[idx] * np.exp(-1j * det_rates[idx] * t)
             else:
-                herm = det_hints[idx]
-            H += herm
+                term = det_hints[idx]
+            if det_is_diagonal[idx] != 0:
+                H += term
+            else:
+                H += term + np.conj(term).T
         for idx in range(stoch_hints.shape[0]):
             if stoch_has_rate[idx] != 0:
                 template = stoch_hints[idx] * np.exp(-1j * stoch_rates[idx] * t)
@@ -842,17 +861,11 @@ if _NUMBA_AVAILABLE:
             else:
                 noise_factor = noise_val  # default to linear
 
-            H += noise_strengths[idx] * noise_factor * template
-
-        # TODO mixed Hermitian: ensure the Hamiltonian is Hermitian by adding its conjugate transpose and removing double-counted diagonal
-        # if hermicity == 1: # non-Hermitian
-        #     H = H + H.conj().T
-        # elif hermicity == 2: # mixed Hermitian
-        #     H = H + H.conj().T - _get_diag_matrix(H)
-        # else:
-        #     pass # hermicity == 0, assume H is already Hermitian and do nothing
-
-        H = H + np.conj(H).T - _get_diag_matrix(H)
+            term = noise_strengths[idx] * noise_factor * template
+            if stoch_is_diagonal[idx] != 0:
+                H += term
+            else:
+                H += term + np.conj(term).T
 
         return H
 
@@ -868,9 +881,11 @@ if _NUMBA_AVAILABLE:
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
+        det_is_diagonal: np.ndarray,
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
+        stoch_is_diagonal: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -888,9 +903,11 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
@@ -913,9 +930,11 @@ if _NUMBA_AVAILABLE:
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
+        det_is_diagonal: np.ndarray,
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
+        stoch_is_diagonal: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -933,15 +952,17 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=True,
+            interpolate=False,
         )
         k2 = _numba_rhs(
             t0 + 0.5 * dt,
@@ -954,15 +975,17 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=True,
+            interpolate=False,
         )
         k3 = _numba_rhs(
             t0 + 0.5 * dt,
@@ -975,15 +998,17 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=True,
+            interpolate=False,
         )
         k4 = _numba_rhs(
             t0 + dt,
@@ -996,15 +1021,17 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=True,
+            interpolate=False,
         )
         return psi + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
@@ -1017,9 +1044,11 @@ if _NUMBA_AVAILABLE:
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
+        det_is_diagonal: np.ndarray,
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
+        stoch_is_diagonal: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -1050,9 +1079,11 @@ if _NUMBA_AVAILABLE:
                     det_hints,
                     det_rates,
                     det_has_rate,
+                    det_is_diagonal,
                     stoch_hints,
                     stoch_rates,
                     stoch_has_rate,
+                    stoch_is_diagonal,
                     noise_strengths,
                     noise_offsets,
                     noise_source_indices,
@@ -1077,9 +1108,11 @@ if _NUMBA_AVAILABLE:
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
+        det_is_diagonal: np.ndarray,
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
+        stoch_is_diagonal: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -1097,15 +1130,17 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=True,
+            interpolate=False,
         )
         k2 = _numba_rhs(
             t0 + dt / 5.0,
@@ -1118,15 +1153,17 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=True,
+            interpolate=False,
         )
         k3 = _numba_rhs(
             t0 + 3.0 * dt / 10.0,
@@ -1139,15 +1176,17 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=True,
+            interpolate=False,
         )
         k4 = _numba_rhs(
             t0 + 3.0 * dt / 5.0,
@@ -1160,15 +1199,17 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=True,
+            interpolate=False,
         )
         k5 = _numba_rhs(
             t0 + dt,
@@ -1181,15 +1222,17 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=True,
+            interpolate=False,
         )
         k6 = _numba_rhs(
             t0 + 7.0 * dt / 8.0,
@@ -1202,15 +1245,17 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=True,
+            interpolate=False,
         )
         # Cash-Karp 5th order weights
         return psi + dt * (37.0/378.0 * k1 + 250.0/621.0 * k3 + 125.0/594.0 * k4 + 512.0/1771.0 * k6)
@@ -1224,9 +1269,11 @@ if _NUMBA_AVAILABLE:
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
+        det_is_diagonal: np.ndarray,
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
+        stoch_is_diagonal: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -1257,9 +1304,11 @@ if _NUMBA_AVAILABLE:
                     det_hints,
                     det_rates,
                     det_has_rate,
+                    det_is_diagonal,
                     stoch_hints,
                     stoch_rates,
                     stoch_has_rate,
+                    stoch_is_diagonal,
                     noise_strengths,
                     noise_offsets,
                     noise_source_indices,
@@ -1402,9 +1451,11 @@ if _NUMBA_AVAILABLE:
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
+        det_is_diagonal: np.ndarray,
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
+        stoch_is_diagonal: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -1416,7 +1467,6 @@ if _NUMBA_AVAILABLE:
         n_state = initial_vector.shape[0]
         result = np.empty((n_traj, n_time, n_state), dtype=np.complex128)
 
-        dt = time_grid[1] - time_grid[0]
         for traj_idx in prange(n_traj):
             psi = initial_vector.copy()
             result[traj_idx, 0, :] = psi
@@ -1435,9 +1485,11 @@ if _NUMBA_AVAILABLE:
                     det_hints,
                     det_rates,
                     det_has_rate,
+                    det_is_diagonal,
                     stoch_hints,
                     stoch_rates,
                     stoch_has_rate,
+                    stoch_is_diagonal,
                     noise_strengths,
                     noise_offsets,
                     noise_source_indices,
@@ -1492,9 +1544,11 @@ if _NUMBA_AVAILABLE:
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
+        det_is_diagonal: np.ndarray,
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
+        stoch_is_diagonal: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -1512,9 +1566,11 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
@@ -1537,9 +1593,11 @@ if _NUMBA_AVAILABLE:
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
+        det_is_diagonal: np.ndarray,
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
+        stoch_is_diagonal: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -1557,15 +1615,17 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=True,
+            interpolate=False,
         )
         k2 = _numba_liouville_rhs(
             t0 + 0.5 * dt,
@@ -1578,15 +1638,17 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=True,
+            interpolate=False,
         )
         k3 = _numba_liouville_rhs(
             t0 + 0.5 * dt,
@@ -1599,15 +1661,17 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=True,
+            interpolate=False,
         )
         k4 = _numba_liouville_rhs(
             t0 + dt,
@@ -1620,15 +1684,17 @@ if _NUMBA_AVAILABLE:
             det_hints,
             det_rates,
             det_has_rate,
+            det_is_diagonal,
             stoch_hints,
             stoch_rates,
             stoch_has_rate,
+            stoch_is_diagonal,
             noise_strengths,
             noise_offsets,
             noise_source_indices,
             noise_transformation_types,
             noise_transformation_params,
-            interpolate=True,
+            interpolate=False,
         )
         return rho + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
@@ -1641,9 +1707,11 @@ if _NUMBA_AVAILABLE:
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
+        det_is_diagonal: np.ndarray,
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
+        stoch_is_diagonal: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -1675,9 +1743,11 @@ if _NUMBA_AVAILABLE:
                     det_hints,
                     det_rates,
                     det_has_rate,
+                    det_is_diagonal,
                     stoch_hints,
                     stoch_rates,
                     stoch_has_rate,
+                    stoch_is_diagonal,
                     noise_strengths,
                     noise_offsets,
                     noise_source_indices,
@@ -1696,9 +1766,11 @@ if _NUMBA_AVAILABLE:
         det_hints: np.ndarray,
         det_rates: np.ndarray,
         det_has_rate: np.ndarray,
+        det_is_diagonal: np.ndarray,
         stoch_hints: np.ndarray,
         stoch_rates: np.ndarray,
         stoch_has_rate: np.ndarray,
+        stoch_is_diagonal: np.ndarray,
         noise_strengths: np.ndarray,
         noise_offsets: np.ndarray,
         noise_source_indices: np.ndarray,
@@ -1729,9 +1801,11 @@ if _NUMBA_AVAILABLE:
                     det_hints,
                     det_rates,
                     det_has_rate,
+                    det_is_diagonal,
                     stoch_hints,
                     stoch_rates,
                     stoch_has_rate,
+                    stoch_is_diagonal,
                     noise_strengths,
                     noise_offsets,
                     noise_source_indices,

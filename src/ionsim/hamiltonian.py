@@ -31,9 +31,11 @@ class StochasticHamiltonianComponentData:
     deterministic_hints: np.ndarray
     deterministic_rates: np.ndarray
     deterministic_has_rate: np.ndarray
+    deterministic_is_diagonal: np.ndarray
     stochastic_hints: np.ndarray
     stochastic_rates: np.ndarray
     stochastic_has_rate: np.ndarray
+    stochastic_is_diagonal: np.ndarray
     noise_strengths: np.ndarray
     noise_offsets: np.ndarray
     noise_source_indices: np.ndarray
@@ -302,10 +304,12 @@ class Hamiltonian(CompositeOperator):
         det_hints: list[np.ndarray] = []
         det_rates: list[np.ndarray] = []
         det_has_rate: list[bool] = []
+        det_is_diagonal: list[bool] = []
 
         stoch_hints: list[np.ndarray] = []
         stoch_rates: list[np.ndarray] = []
         stoch_has_rate: list[bool] = []
+        stoch_is_diagonal: list[bool] = []
         noise_strengths: list[complex] = []
         noise_offsets: list[float] = []
         noise_source_indices: list[int] = []
@@ -314,11 +318,9 @@ class Hamiltonian(CompositeOperator):
 
         def _append_component(operator, component_matrix, rate_matrix):
             comp_hint = np.array(as_dense_matrix(component_matrix, warn=False), copy=True).astype(np.complex128, copy=False)
-            # Ensure hermiticity once, here
-            if not np.allclose(comp_hint, comp_hint.conj().T, atol=1e-10):
-                comp_hint = (comp_hint + comp_hint.conj().T) / 2
             comp_rate = np.array(as_dense_matrix(rate_matrix, warn=False), copy=True).astype(float, copy=False)
             has_rate = bool(np.any(np.abs(comp_rate) > 0))
+            is_diagonal = bool(np.allclose(comp_hint, np.diag(np.diag(comp_hint)), atol=1e-10))
 
             stochastic_info = getattr(operator, 'stochastic_info', None) or {}
             if stochastic_info:
@@ -348,6 +350,7 @@ class Hamiltonian(CompositeOperator):
                 stoch_hints.append(comp_hint)
                 stoch_rates.append(comp_rate)
                 stoch_has_rate.append(has_rate)
+                stoch_is_diagonal.append(is_diagonal)
                 noise_strengths.append(complex(strength))
                 noise_offsets.append(float(offset))
                 noise_source_indices.append(noise_source)
@@ -368,6 +371,7 @@ class Hamiltonian(CompositeOperator):
                 det_hints.append(comp_hint)
                 det_rates.append(comp_rate)
                 det_has_rate.append(has_rate)
+                det_is_diagonal.append(is_diagonal)
 
         for operator, hint_matrix, rate_matrix in zip(self.coupling_operators, sparse_Hints, sparse_Rates):
             _append_component(operator, hint_matrix, rate_matrix)
@@ -388,19 +392,23 @@ class Hamiltonian(CompositeOperator):
         deterministic_hint_array = _stack_or_empty(det_hints, np.complex128)
         deterministic_rate_array = _stack_or_empty(det_rates, float)
         deterministic_has_rate_array = np.array(det_has_rate, dtype=np.uint8)
+        deterministic_is_diagonal_array = np.array(det_is_diagonal, dtype=np.uint8)
 
         stochastic_hint_array = _stack_or_empty(stoch_hints, np.complex128)
         stochastic_rate_array = _stack_or_empty(stoch_rates, float)
         stochastic_has_rate_array = np.array(stoch_has_rate, dtype=np.uint8)
+        stochastic_is_diagonal_array = np.array(stoch_is_diagonal, dtype=np.uint8)
 
         return StochasticHamiltonianComponentData(
             H_det=H0_dense,
             deterministic_hints=deterministic_hint_array,
             deterministic_rates=deterministic_rate_array,
             deterministic_has_rate=deterministic_has_rate_array,
+            deterministic_is_diagonal=deterministic_is_diagonal_array,
             stochastic_hints=stochastic_hint_array,
             stochastic_rates=stochastic_rate_array,
             stochastic_has_rate=stochastic_has_rate_array,
+            stochastic_is_diagonal=stochastic_is_diagonal_array,
             noise_strengths=np.array(noise_strengths, dtype=np.complex128),
             noise_offsets=np.array(noise_offsets, dtype=float),
             noise_source_indices=np.array(noise_source_indices, dtype=np.int64),
@@ -449,10 +457,12 @@ class Hamiltonian(CompositeOperator):
         det_hints = component_data.deterministic_hints
         det_rates = component_data.deterministic_rates
         det_has_rate = component_data.deterministic_has_rate
+        det_is_diagonal = component_data.deterministic_is_diagonal
 
         stoch_hints = component_data.stochastic_hints
         stoch_rates = component_data.stochastic_rates
         stoch_has_rate = component_data.stochastic_has_rate
+        stoch_is_diagonal = component_data.stochastic_is_diagonal
         noise_strengths = component_data.noise_strengths
         noise_offsets = component_data.noise_offsets
         noise_sources = component_data.noise_source_indices
@@ -463,9 +473,13 @@ class Hamiltonian(CompositeOperator):
             return hint
 
         def _deterministic_matrix(t: float) -> np.ndarray:
-            base = np.array(component_data.H0, copy=True)
+            base = np.array(component_data.H_det, copy=True)
             for idx in range(det_hints.shape[0]):
-                base += _apply_phase(det_hints[idx], det_rates[idx], det_has_rate[idx], t)
+                term = _apply_phase(det_hints[idx], det_rates[idx], det_has_rate[idx], t)
+                if det_is_diagonal[idx]:
+                    base += term
+                else:
+                    base += term + term.conj().T
             return base
 
         def interpolate_noise(noise_source: int, t: float) -> float:
@@ -497,11 +511,11 @@ class Hamiltonian(CompositeOperator):
                 else:
                     noise_factor = noise_value  # default to linear
 
-                base_matrix += noise_strengths[idx] * noise_factor * template
-
-            # Enforce hermiticity
-            if not np.allclose(base_matrix, base_matrix.conj().T, atol=1e-10):
-                base_matrix = (base_matrix + base_matrix.conj().T) / 2
+                term = noise_strengths[idx] * noise_factor * template
+                if stoch_is_diagonal[idx]:
+                    base_matrix += term
+                else:
+                    base_matrix += term + term.conj().T
 
             if self.sparse:
                 return csr_matrix(base_matrix)
@@ -542,10 +556,12 @@ class Hamiltonian(CompositeOperator):
         det_hints = component_data.deterministic_hints
         det_rates = component_data.deterministic_rates
         det_has_rate = component_data.deterministic_has_rate
+        det_is_diagonal = component_data.deterministic_is_diagonal
 
         stoch_hints = component_data.stochastic_hints
         stoch_rates = component_data.stochastic_rates
         stoch_has_rate = component_data.stochastic_has_rate
+        stoch_is_diagonal = component_data.stochastic_is_diagonal
         noise_strengths = component_data.noise_strengths
         noise_offsets = component_data.noise_offsets
         noise_sources = component_data.noise_source_indices
@@ -558,7 +574,11 @@ class Hamiltonian(CompositeOperator):
         def _deterministic_matrix(t: float) -> np.ndarray:
             base = np.array(component_data.H_det, copy=True)
             for idx in range(det_hints.shape[0]):
-                base += _apply_phase(det_hints[idx], det_rates[idx], det_has_rate[idx], t)
+                term = _apply_phase(det_hints[idx], det_rates[idx], det_has_rate[idx], t)
+                if det_is_diagonal[idx]:
+                    base += term
+                else:
+                    base += term + term.conj().T
             return base
 
         def interpolate_noise(noise_source: int, t: float) -> float:
@@ -578,7 +598,11 @@ class Hamiltonian(CompositeOperator):
                 else:
                     noise_factor = noise_value
 
-                hamiltonian_matrix += noise_strengths[idx] * noise_factor * template
+                term = noise_strengths[idx] * noise_factor * template
+                if stoch_is_diagonal[idx]:
+                    hamiltonian_matrix += term
+                else:
+                    hamiltonian_matrix += term + term.conj().T
 
             if not np.allclose(hamiltonian_matrix, hamiltonian_matrix.conj().T, atol=1e-10):
                 hamiltonian_matrix = (hamiltonian_matrix + hamiltonian_matrix.conj().T) / 2
