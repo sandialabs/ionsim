@@ -247,7 +247,7 @@ class Gate(Process):
                 # Projection does this redundantly by setting the appropriate parts to zero. But skipping t-evolution saves substantially on computation.
             for i, vector in enumerate(basis.vectors):
                 for j, vector_p in enumerate(basis.vectors):
-                    if projection_info and ((i in unwanted_state_indices) or (j in unwanted_state_indices)):
+                    if projection_info is not None and ((i in unwanted_state_indices) or (j in unwanted_state_indices)):
                         # Skip pure non-computational basis states, e.g. Rydberg or Raman states  
                         pass 
                     else:
@@ -264,7 +264,7 @@ class Gate(Process):
      #                        )
                         final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
 
-                        if projection_info: 
+                        if projection_info is not None: 
                             final_state = final_state.project_out_states(projection_info['new basis'], projection_info['states to project out']) 
 
                         # Supervector of final state gives you 1 column of the process matrix  
