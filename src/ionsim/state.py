@@ -9,7 +9,6 @@ from ionsim.named_operators import Fock
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel 
 
 import numpy as np
-# from typing import Any
 from dataclasses import dataclass
 from numpy.linalg import multi_dot
 
@@ -30,8 +29,7 @@ class State:
     def motional_state(self):
         """ Motional portion of the state, if it exists. Returns None if no motional DOFs """ 
         if not self.basis.motional_modes: 
-            # Raise an error if there are no motional modes in the basis  
-            raise IonSimError("No motional modes present in the basis. Cannot compute quadratures.") 
+            return None 
 
         # Trace out spin DOFs to obtain a purely motional state  
         state = self
@@ -234,6 +232,7 @@ class State:
                 if i == j:
                     continue 
                 mode_state = mode_state.trace_out_degree_of_freedom(mode_j) 
+            assert mode_state is not None
             Fock_dim = len(mode_i.energy_levels) 
             # Compute expectation values: 
             x.append(mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim)))
@@ -264,6 +263,8 @@ class State:
                 raise IonSimError("Wigner distribution calculation assumes motional mode is in the Fock number state basis.")
 
             mode_state = self.motional_state # reset the state  
+            assert mode_state is not None
+
             for j, mode_j in enumerate(self.basis.motional_modes):
                 if i == j:
                     continue 
