@@ -55,8 +55,8 @@ class TestState(unittest.TestCase):
 
     def test_quadrature_computation(self):
         """ Yest computation of x, p, and x^2, and p^2 expectations """ 
-        include_variance = True
-        x, p, x2, p2 = self.spin_motion_state.compute_quadratures(include_variance)
+        include_squared_quantities = True
+        x, p, x2, p2 = self.spin_motion_state.compute_quadratures(include_squared_quantities)
 
         x_expected = 0.
         p_expected = 0.
