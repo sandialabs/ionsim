@@ -258,13 +258,6 @@ class State:
         from qutip import Qobj, wigner
         wigner_distributions = []
 
-        # Retrieve and trace out spin DOFs from the density matrix 
- #        spin_DOFs = self.basis.spin_DOFs
- #
- #        motional_state = self  
- #        for spin in spin_DOFs:
- #            motional_state = motional_state.trace_out_degree_of_freedom(spin)            
-
         # For each mode, trace out all other modes  
         for i, mode_i in enumerate(self.basis.motional_modes):
             if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
