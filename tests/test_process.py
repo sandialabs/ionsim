@@ -59,5 +59,16 @@ class TestProcess(unittest.TestCase):
         fidelity = ramsey.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
         self.assertAlmostEqual(fidelity, 0.9306176541502548, places=14)
 
+    def test_pauli_transfer_matrix_computations(self):
+        noisy_gate = self.noisy_phi_gate
+        #ideal.compute_process_fidelity(self.Sx.process_matrix)
+        noisy_gate_pauli = noisy_gate.convert_to_pauli_basis()
+        Sx_pauli = self.Sx.convert_to_pauli_basis()
+
+        fidelity = noisy_gate_pauli.compute_process_fidelity(Sx_pauli.process_matrix)
+        print(f"Fidelity: {fidelity}")
+        self.assertAlmostEqual(fidelity, 0.9535335189419549, places=14)
+
+
 if __name__ == '__main__':
     unittest.main()

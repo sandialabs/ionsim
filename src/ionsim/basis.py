@@ -1,7 +1,7 @@
 import numpy as np
 from numpy.linalg import multi_dot
 from typing import Callable
-from functools import wraps # do I need this?
+from functools import wraps 
 from scipy.sparse import csr_matrix
 from scipy.sparse import kron as skron
 from itertools import product

@@ -1,3 +1,13 @@
+from scipy.integrate import quad_vec
+from functools import wraps 
+import scipy
+import numpy as np
+from dataclasses import dataclass, field
+from typing import Callable
+from abc import ABC
+
+from icecream import ic
+
 from ionsim.custom_math import trapz_for_matrix
 from ionsim.custom_types import Vector, Matrix
 from ionsim.energy_level import EnergyEigenstate
@@ -9,14 +19,6 @@ from ionsim.hamiltonian import Hamiltonian
 from ionsim.dissipator import Lindbladian 
 from ionsim.state import State
 
-from scipy.integrate import quad_vec
-import scipy
-import numpy as np
-from dataclasses import dataclass, field
-from typing import Callable
-from abc import ABC
-
-from icecream import ic
 
 @dataclass(frozen=True, eq=False)
 class Process(ABC): 
@@ -296,8 +298,8 @@ class Gate(Process):
             if pauli_twirled_approximation:
                pauli_transfer_matrix = np.diag(pauli_transfer_matrix)      
  
-        # Extract error channel rate from Pauli transfer matrix for each pauli group operator  
-        # Walsh-Hadamard transform relates eigenvalues of PTM to to error rates in Pauli channel representation  
+        # Extract error channel rate from Pauli transfer matrix for each pauli group operator. 
+        # Walsh-Hadamard transform relates eigenvalues of PTM to to error rates in Pauli channel representation. 
         error_rates = pauli_group_basis.walsh_hadamard_transformation_matrix @ np.diag(pauli_transfer_matrix)
 
         return dict(zip(pauli_group_basis.vector_labels, error_rates)) 
@@ -305,20 +307,24 @@ class Gate(Process):
     # Putting this method here (in process.py) instead of basis.py avoids circular import issue  
     def convert_to_pauli_basis(self) -> Gate:
         """ Converts a Gate object to the Pauli Product basis """ 
-        if isinstance(gate.basis, PauliProductBasis):
+        if isinstance(self.basis, PauliProductBasis):
             return self
 
-        if not isinstance(gate.basis, StandardBasis):
+        if not isinstance(self.basis, StandardBasis):
             raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
 
-        if gate.process_matrix_function:
-            @wraps(gate.process_matrix_function)
+        # Create a PauliProductbasis 
+        spins = self.basis.degrees_of_freedom 
+        pauli_basis = PauliProductBasis(spins) # will automatically check that DOFs are qubits only 
+
+        if self.process_matrix_function:
+            @wraps(self.process_matrix_function)
             def ptm_function(*args, **kwargs):
-                return self.superoperator_to_pauli_transfer_matrix(gate.process_matrix_function(*args, **kwargs), gate.basis)
-            return Gate.from_process_matrix_function(basis = self, process_matrix_function = ptm_function, parameters = gate.parameters) 
+                return pauli_basis.superoperator_to_pauli_transfer_matrix(self.process_matrix_function(*args, **kwargs), self.basis)
+            return Gate.from_process_matrix_function(basis = pauli_basis, process_matrix_function = ptm_function, parameters = self.parameters) 
         else:
-            pauli_transfer_matrix = self.superoperator_to_pauli_transfer_matrix(gate.process_matrix, gate.basis)
-            return Gate(basis = self, process_matrix = pauli_transfer_matrix) 
+            pauli_transfer_matrix = pauli_basis.superoperator_to_pauli_transfer_matrix(self.process_matrix, self.basis)
+            return Gate(basis = pauli_basis, process_matrix = pauli_transfer_matrix) 
 
 
 # @dataclass(frozen=True, eq=False)
