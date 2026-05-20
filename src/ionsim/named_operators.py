@@ -49,6 +49,14 @@ class Fock:
     def number(cls, fock_dimension: int):
         return np.diag(np.arange(fock_dimension))
 
+    @classmethod # or "x" or "X"?
+    def position(cls, fock_dimension: int):
+        return np.sqrt(0.5)*(cls.raising(fock_dimension) + cls.lowering(fock_dimension))
+        
+    @classmethod # or "p" or "P"?
+    def momentum(cls, fock_dimension: int):
+        return 1j*np.sqrt(0.5)*(cls.raising(fock_dimension) - cls.lowering(fock_dimension))
+
     @staticmethod
     def debye_waller_lowering(fock_dimension: int, lamb_dicke_parameter: float):
         """The lowering operator for a harmonic oscillator."""

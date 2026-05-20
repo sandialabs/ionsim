@@ -169,6 +169,54 @@ class State:
             diplacements.append(displacement)
         return diplacements
 
+
+    @property
+    def motional_state(self):
+        """ Motional portion of the state, if it exists. Returns None if no motional DOFs """ 
+        if not self.basis.motional_modes: 
+            # Raise an error if there are no motional modes in the basis  
+            raise IonSimError("No motional modes present in the basis. Cannot compute quadratures.") 
+
+        # Trace out spin DOFs to obtain a purely motional state  
+        motional_state = self
+        for spin in self.basis.spin_DOFs:
+            motional_state = motional_state.trace_out_degree_of_freedom(spin)            
+             
+        return motional_state 
+
+    def compute_quadratures(self):
+        """ Returns quadrature expectation values <x> and <p> for each motional mode in the state. 
+            - fails if there are no motional DOFs 
+            - returns lists of <x> and <p>; each list element corresponds to 1 motional mode 
+            - list order matches DOF order in the state's basis 
+        """ 
+
+ #        if not self.basis.motional_modes: 
+ #            # Raise an error if there are no motional modes in the basis  
+ #            raise IonSimError("No motional modes present in the basis. Cannot compute quadratures.") 
+ #
+ #        # Trace out spin DOFs if present 
+ #        motional_state = self  
+ #        for spin in self.basis.spin_DOFs:
+ #            motional_state = motional_state.trace_out_degree_of_freedom(spin)            
+
+        x = []        
+        p = []        
+        for i, mode_i in enumerate(self.basis.motional_modes):
+            if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
+                raise IonSimError("Quadrature calculation assumes motional mode is in the Fock number state basis.")
+        
+            mode_state = self.motional_state # reset the state  
+            # Trace out other modes 
+            for j, mode_j in enumerate(self.basis.motional_modes):
+                if i == j:
+                    continue 
+                mode_state = motional_state.trace_out_degree_of_freedom(mode_j) 
+            
+
+        
+
+
     def compute_wigner_distribution(self, x_grid: Vector, p_grid: Vector): 
         """ Computes W(x,p) the Wigner distribution for each motional mode in the basis; assumes a Fock basis for each mode.
             - requires a specification of the x and p grids as 1-dimensional arrays, determines resolution of Wigner distributions. 
@@ -180,18 +228,18 @@ class State:
         wigner_distributions = []
 
         # Retrieve and trace out spin DOFs from the density matrix 
-        spin_DOFs = self.basis.spin_DOFs
-
-        motional_state = self  
-        for spin in spin_DOFs:
-            motional_state = motional_state.trace_out_degree_of_freedom(spin)            
+ #        spin_DOFs = self.basis.spin_DOFs
+ #
+ #        motional_state = self  
+ #        for spin in spin_DOFs:
+ #            motional_state = motional_state.trace_out_degree_of_freedom(spin)            
 
         # For each mode, trace out all other modes  
         for i, mode_i in enumerate(self.basis.motional_modes):
             if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
                 raise IonSimError("Wigner distribution calculation assumes motional mode is in the Fock number state basis.")
 
-            mode_state = motional_state # reset the state  
+            mode_state = self.motional_state # reset the state  
             for j, mode_j in enumerate(self.basis.motional_modes):
                 if i == j:
                     continue 
