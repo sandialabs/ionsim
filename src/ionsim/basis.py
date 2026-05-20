@@ -316,12 +316,12 @@ class PauliProductBasis(Basis):
             U is a unitary change-of-basis matrix ,defined as U_(mu, :) = vec(P_{mu})*  
             S is the input superoperator 
         """
+        if isinstance(superoperator_basis, PauliProductBasis):
+            return superoperator 
+
         if not isinstance(superoperator_basis, StandardBasis):
             raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
         assert superoperator.shape == (len(self.vectors), len(self.vectors))
-
-        if isinstance(superoperator_basis, PauliProductBasis):
-            return superoperator 
 
         # Get change of basis matrix 
         U = np.array(self.vectors).conj() 

@@ -278,7 +278,6 @@ class Gate(Process):
 
     def compute_pauli_error_rates(self, pauli_twirled_approximation: bool=False) -> dict[str, float]:
         """ Computes Pauli channel error rates, returned in a dictionary with entries (channel name, error rate) """ 
-
         # Basis safety checks:  
         basis = self.basis
         if not isinstance(basis, PauliProductBasis):
@@ -303,22 +302,24 @@ class Gate(Process):
 
         return dict(zip(pauli_group_basis.vector_labels, error_rates)) 
  
+    # Putting this method here (in process.py) instead of basis.py avoids circular import issue  
+    def convert_to_pauli_basis(self) -> Gate:
+        """ Converts a Gate object to the Pauli Product basis """ 
+        if isinstance(gate.basis, PauliProductBasis):
+            return self
 
-    # TODO: Should this go here (in basis) or in the Process/Gate class? 
-    # This should go in Gate to avoid circular import  
- #    def convert_gate_to_pauli_basis(self, gate: Gate) -> Gate:
- #        """ Converts a Gate object to the Pauli product basis """ 
- #        if not isinstance(gate.basis, StandardBasis):
- #            raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
- #
- #        if gate.process_matrix_function:
- #            @wraps(gate.process_matrix_function)
- #            def ptm_function(*args, **kwargs):
- #                return self.superoperator_to_pauli_transfer_matrix(gate.process_matrix_function(*args, **kwargs), gate.basis)
- #            return Gate.from_process_matrix_function(basis = self, process_matrix_function = ptm_function, parameters = gate.parameters) 
- #        else:
- #            pauli_transfer_matrix = self.superoperator_to_pauli_transfer_matrix(gate.process_matrix, gate.basis)
- #            return Gate(basis = self, process_matrix = pauli_transfer_matrix) 
+        if not isinstance(gate.basis, StandardBasis):
+            raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
+
+        if gate.process_matrix_function:
+            @wraps(gate.process_matrix_function)
+            def ptm_function(*args, **kwargs):
+                return self.superoperator_to_pauli_transfer_matrix(gate.process_matrix_function(*args, **kwargs), gate.basis)
+            return Gate.from_process_matrix_function(basis = self, process_matrix_function = ptm_function, parameters = gate.parameters) 
+        else:
+            pauli_transfer_matrix = self.superoperator_to_pauli_transfer_matrix(gate.process_matrix, gate.basis)
+            return Gate(basis = self, process_matrix = pauli_transfer_matrix) 
+
 
 # @dataclass(frozen=True, eq=False)
 # class PauliGate(Gate):
