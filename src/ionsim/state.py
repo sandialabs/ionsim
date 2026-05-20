@@ -33,11 +33,11 @@ class State:
             raise IonSimError("No motional modes present in the basis. Cannot compute quadratures.") 
 
         # Trace out spin DOFs to obtain a purely motional state  
-        motional_state = self
+        state = self
         for spin in self.basis.spin_DOFs:
-            motional_state = motional_state.trace_out_degree_of_freedom(spin)            
+            state = state.trace_out_degree_of_freedom(spin)            
              
-        return motional_state 
+        return state 
 
     @classmethod
     def from_coefficients(cls, basis: Basis, coefficients: list[float]): 
@@ -206,7 +206,7 @@ class State:
 
         """
         # Check that observable and density matrix are compatible 
-        if isinstance(observable_operator, CouplingOperator) and observable_operator.oscillation_rate != 0.):
+        if isinstance(observable_operator, CouplingOperator) and observable_operator.oscillation_rate != 0.:
             raise IonSimeError(f"Observable operator must be a static operator, but oscillation rate is {observable_operator.oscillation_rate}.")
 
         return self.compute_matrix_observable_expectation(observable_operator.static_matrix) 
@@ -232,14 +232,14 @@ class State:
             for j, mode_j in enumerate(self.basis.motional_modes):
                 if i == j:
                     continue 
-                mode_state = motional_state.trace_out_degree_of_freedom(mode_j) 
+                mode_state = mode_state.trace_out_degree_of_freedom(mode_j) 
             Fock_dim = len(mode_i.energy_levels) 
             # Compute expectation values: 
-            x[i] = mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim))
-            p[i] = mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim))
+            x.append(mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim)))
+            p.append(mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim)))
             if include_variance:
-                x2[i] = mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim) @ Fock.position(Fock_dim))
-                p2[i] = mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim) @ Fock.momentum(Fock_dim))
+                x2.append(mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim) @ Fock.position(Fock_dim)))
+                p2.append(mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim) @ Fock.momentum(Fock_dim)))
 
         if include_variance:
             return x, p, x2, p2
@@ -273,7 +273,7 @@ class State:
             for j, mode_j in enumerate(self.basis.motional_modes):
                 if i == j:
                     continue 
-                mode_state = motional_state.trace_out_degree_of_freedom(mode_j) 
+                mode_state = mode_state.trace_out_degree_of_freedom(mode_j) 
             N_fock = len(mode_i.energy_levels) 
             wigner_distributions.append(wigner(Qobj(mode_state.density_matrix, dims=[[N_fock], [N_fock]]), x_grid, p_grid))
 
