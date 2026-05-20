@@ -25,6 +25,20 @@ class State:
     def supervector(self) -> Vector:
         return self.basis.compute_supervector_from_density_matrix(self.density_matrix)
 
+    @property
+    def motional_state(self):
+        """ Motional portion of the state, if it exists. Returns None if no motional DOFs """ 
+        if not self.basis.motional_modes: 
+            # Raise an error if there are no motional modes in the basis  
+            raise IonSimError("No motional modes present in the basis. Cannot compute quadratures.") 
+
+        # Trace out spin DOFs to obtain a purely motional state  
+        motional_state = self
+        for spin in self.basis.spin_DOFs:
+            motional_state = motional_state.trace_out_degree_of_freedom(spin)            
+             
+        return motional_state 
+
     @classmethod
     def from_coefficients(cls, basis: Basis, coefficients: list[float]): 
         """Build a state from a list of basis-state coefficients."""
@@ -169,39 +183,46 @@ class State:
             diplacements.append(displacement)
         return diplacements
 
+    ### Added methods by ECM in this branch:### 
+    def compute_matrix_observable_expectation(self, observable_operator: Matrix) -> Matrix:
+        """ Compute the expectation value of an operator observable, represented by <O>. 
 
-    @property
-    def motional_state(self):
-        """ Motional portion of the state, if it exists. Returns None if no motional DOFs """ 
-        if not self.basis.motional_modes: 
-            # Raise an error if there are no motional modes in the basis  
-            raise IonSimError("No motional modes present in the basis. Cannot compute quadratures.") 
+            - Computes via Tr[O rho], where rho is the density matrix. 
+            - O and rho must be in compatable bases.
 
-        # Trace out spin DOFs to obtain a purely motional state  
-        motional_state = self
-        for spin in self.basis.spin_DOFs:
-            motional_state = motional_state.trace_out_degree_of_freedom(spin)            
-             
-        return motional_state 
+        """
+        # Check that observable and density matrix are compatible 
+        basis_size = len(self.basis.vectors)
+        if observable_operator.shape != (basis_size, basis_size):
+            raise IonSimError("Observable operator must correspond with a matrix of shape: {(basis_size, basis_size)}.")
 
-    def compute_quadratures(self):
+        return np.trace(observable_operator.dot(self.density_matrix))
+
+    def compute_operator_observable_expectation(self, observable_operator: Operator) -> Matrix:
+        """ Compute the expectation value of an operator observable, represented by <O>. 
+
+            - Computes via Tr[O rho], where rho is the density matrix. 
+            - O and rho must be in compatable bases.
+
+        """
+        # Check that observable and density matrix are compatible 
+        if isinstance(observable_operator, CouplingOperator) and observable_operator.oscillation_rate != 0.):
+            raise IonSimeError(f"Observable operator must be a static operator, but oscillation rate is {observable_operator.oscillation_rate}.")
+
+        return self.compute_matrix_observable_expectation(observable_operator.static_matrix) 
+
+    def compute_quadratures(self, include_variance: bool=False):
         """ Returns quadrature expectation values <x> and <p> for each motional mode in the state. 
             - fails if there are no motional DOFs 
             - returns lists of <x> and <p>; each list element corresponds to 1 motional mode 
             - list order matches DOF order in the state's basis 
         """ 
-
- #        if not self.basis.motional_modes: 
- #            # Raise an error if there are no motional modes in the basis  
- #            raise IonSimError("No motional modes present in the basis. Cannot compute quadratures.") 
- #
- #        # Trace out spin DOFs if present 
- #        motional_state = self  
- #        for spin in self.basis.spin_DOFs:
- #            motional_state = motional_state.trace_out_degree_of_freedom(spin)            
-
         x = []        
         p = []        
+        if include_variance:
+            x2 = []        
+            p2 = []        
+
         for i, mode_i in enumerate(self.basis.motional_modes):
             if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
                 raise IonSimError("Quadrature calculation assumes motional mode is in the Fock number state basis.")
@@ -212,10 +233,19 @@ class State:
                 if i == j:
                     continue 
                 mode_state = motional_state.trace_out_degree_of_freedom(mode_j) 
-            
+            Fock_dim = len(mode_i.energy_levels) 
+            # Compute expectation values: 
+            x[i] = mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim))
+            p[i] = mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim))
+            if include_variance:
+                x2[i] = mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim) @ Fock.position(Fock_dim))
+                p2[i] = mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim) @ Fock.momentum(Fock_dim))
 
-        
-
+        if include_variance:
+            return x, p, x2, p2
+        else:
+            return x, p
+                            
 
     def compute_wigner_distribution(self, x_grid: Vector, p_grid: Vector): 
         """ Computes W(x,p) the Wigner distribution for each motional mode in the basis; assumes a Fock basis for each mode.
