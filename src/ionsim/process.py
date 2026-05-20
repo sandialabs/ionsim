@@ -65,9 +65,8 @@ class Gate(Process):
 
     @classmethod
     def from_process_matrix_function(cls, basis: Basis, process_matrix_function: Callable,
-            parameters: dict[str, float], target_dofs: list[DegreeOfFreedom], noise: Noise | None = None):
+            parameters: dict[str, float], noise: Noise | None = None):
         """Build a gate from a process-matrix function and its arguments."""
-        # TODO: It looks like this function doesn't use the target_dofs input parameter. Should it?
         parameter_names, arguments = list(parameters.keys()), list(parameters.values())
         if noise is None or noise.parameter_name not in parameter_names:
             return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
