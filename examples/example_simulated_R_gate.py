@@ -89,7 +89,7 @@ def main():
             domegas = np.linspace(-half_box_width, half_box_width, 21)
             omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
         return sm.Gate.from_process_matrix_function(
-                basis, process_matrix_function, {'domega': domega}, spins, omega_noise,
+                basis, process_matrix_function, {'domega': domega}, omega_noise,
             )
 
     def ideal_R(phi, theta):

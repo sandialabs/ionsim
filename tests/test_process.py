@@ -42,7 +42,8 @@ class TestProcess(unittest.TestCase):
     def test_extra_noisy_gate_process_fidelity(self):
         """Test the process fidelity of the extra noisy gate."""
         extra_noisy_gate = Gate.from_process_matrix_function(
-            self.basis, self.noisy_phi_gate.process_matrix_function, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.theta_noise,
+            self.basis, self.noisy_phi_gate.process_matrix_function, {'phi': 0, 'theta': np.pi/2}, self.theta_noise,
+            #self.basis, self.noisy_phi_gate.process_matrix_function, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.theta_noise,
         )
         fidelity = extra_noisy_gate.compute_process_fidelity(self.Sx.process_matrix)
         self.assertAlmostEqual(fidelity, 0.9306176541502549, places=14)
@@ -66,9 +67,7 @@ class TestProcess(unittest.TestCase):
         Sx_pauli = self.Sx.convert_to_pauli_basis()
 
         fidelity = noisy_gate_pauli.compute_process_fidelity(Sx_pauli.process_matrix)
-        print(f"Fidelity: {fidelity}")
         self.assertAlmostEqual(fidelity, 0.9535335189419549, places=14)
-
 
 if __name__ == '__main__':
     unittest.main()
