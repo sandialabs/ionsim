@@ -261,12 +261,10 @@ class PauliProductBasis(Basis):
         pauli_op_labels  = ["".join(label) for label in product(single_qubit_pauli_vector, repeat = N)]
         return pauli_op_labels
 
-
     @staticmethod
     def label_of_pauli_transfer_matrix_element(self, i: int, j: int):
         """ Returns Pauli operator label corresponding to the R[i,j] for a Pauli transfer matrix R """ 
         return self.vector_labels[i], self.vector_labels[j]
-
 
     @staticmethod
     def pauli_to_symplectic(pauli_label: str):
@@ -275,7 +273,6 @@ class PauliProductBasis(Basis):
         a = [encoding[p][0] for p in pauli_label]
         b = [encoding[p][1] for p in pauli_label]
         return np.array(a + b, dtype=int)
-
 
     @property
     def walsh_hadamard_transformation_matrix(self, include_normalization: bool=True) -> Matrix:
@@ -294,12 +291,6 @@ class PauliProductBasis(Basis):
         size = len(self.vector_labels) # d^2        
         W = np.zeros((size, size))
  
- #        for m, Pm in enumerate(self.vectors):
- #            for n, Pn in enumerate(self.vectors):
- #                # Expensive approach: phi(m,n) computed by trace operation 
- #                W[m,n] = (-1)**self.symplectic_inner_product(Pm, Pn) 
- #                #W[m,n] = np.real( np.trace(Pm @ Pn @ Pm @ Pn) ) # always either +1 or -1  
-
         # Convert pauli labels to binary representation 
         symplectic_encodings = np.array([self.pauli_to_symplectic(label) for label in self.vector_labels])
         N = len(self.degrees_of_freedom)
@@ -316,31 +307,6 @@ class PauliProductBasis(Basis):
 
         return W 
 
-
- #    def compute_basis_coefficients(self, superoperator: Matrix) -> list[float]:
- #        """ Computes Pauli-product basis coefficient for an input superoperator via c_i = Tr[P_{i} A ]. 
- #            - P_{i} represents the normalized i'th basis vector of the Pauli product basis.  
- #            - A is the input superoperator  
- #            - Basis coefficients are defined via A = sum_{i} c_i P_i over all d^2 Pauli operators.
- #        """  
- #        # TODO: add this computation 
- #        assert superoperator.shape = (len(vectors), len(vectors))
- #        return [np.trace(Pauli_operator @ superoperator for Pauli_operator in self.vectors) ]
- #
- #    def build_superoperator_from_coefficients(self, coefficients: list[float] | Vector[float] ):
- #        """ Computes a superoperator from its pauli-product operator expansion coefficients: A = sum_{i} c_i P_i  
- #            - P_{i} represents the i'th basis vector of the Pauli product basis.  
- #            - A is the input superoperator with basis coefficients {c_i}  
- #            - Basis coefficients are defined via A = sum_{i} c_i P_i over all d^2 Pauli operators.
- #        """  
- #        # TODO: add this computation 
- #        assert len(coefficients) == len(vectors) # d^2 necessary coefficients 
- #        superoperator = np.zeros((len(coefficients), len(coefficients), dtype=complex) # should it be real floats only? 
- #        #for 
- #        return [np.trace(Pauli_operator @ superoperator for Pauli_operator in self.vectors) ]
-
- #    @staticmethod
- #    def superoperator_to_pauli_transfer_matrix(self, superoperator: Matrix) -> Matrix:
     def superoperator_to_pauli_transfer_matrix(self, superoperator: Matrix, superoperator_basis: StandardBasis) -> Matrix:
         """ Converts a superoperator to a Pauli Transfer Matrix via a change-of-basis unitary transformation:
 
@@ -353,30 +319,16 @@ class PauliProductBasis(Basis):
         if not isinstance(superoperator_basis, StandardBasis):
             raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
         assert superoperator.shape == (len(self.vectors), len(self.vectors))
+
+        if isinstance(superoperator_basis, PauliProductBasis):
+            return superoperator 
+
         # Get change of basis matrix 
         U = np.array(self.vectors).conj() 
         # If S represents a completely positive, trace-preserving (CPTP) map, R will be purely real. 
         pauli_transfer_matrix = U @ superoperator @ (U.T).conj()
 
         return pauli_transfer_matrix 
-
-    # TODO: Should this go here (in basis) or in the Process/Gate class? 
-    # This should go in Gate to avoid circular import  
- #    def convert_gate_to_pauli_basis(self, gate: Gate) -> Gate:
- #        """ Converts a Gate object to the Pauli product basis """ 
- #        if not isinstance(gate.basis, StandardBasis):
- #            raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
- #
- #        if gate.process_matrix_function:
- #            @wraps(gate.process_matrix_function)
- #            def ptm_function(*args, **kwargs):
- #                return self.superoperator_to_pauli_transfer_matrix(gate.process_matrix_function(*args, **kwargs), gate.basis)
- #            return Gate.from_process_matrix_function(basis = self, process_matrix_function = ptm_function, parameters = gate.parameters) 
- #        else:
- #            pauli_transfer_matrix = self.superoperator_to_pauli_transfer_matrix(gate.process_matrix, gate.basis)
- #            return Gate(basis = self, process_matrix = pauli_transfer_matrix) 
-
-
 
 
 @dataclass(frozen=True, eq=False)

@@ -293,9 +293,9 @@ class Gate(Process):
         else:
             pauli_group_basis = self.basis 
             pauli_transfer_matrix = self.process_matrix # pointer assigment  
- #
- #        if pauli_twirled_approximation:
- #            pauli_transfer_matrix = np.diag(pauli_transfer_matrix)      
+
+            if pauli_twirled_approximation:
+               pauli_transfer_matrix = np.diag(pauli_transfer_matrix)      
  
         # Extract error channel rate from Pauli transfer matrix for each pauli group operator  
         # Walsh-Hadamard transform relates eigenvalues of PTM to to error rates in Pauli channel representation  
@@ -304,6 +304,21 @@ class Gate(Process):
         return dict(zip(pauli_group_basis.vector_labels, error_rates)) 
  
 
+    # TODO: Should this go here (in basis) or in the Process/Gate class? 
+    # This should go in Gate to avoid circular import  
+ #    def convert_gate_to_pauli_basis(self, gate: Gate) -> Gate:
+ #        """ Converts a Gate object to the Pauli product basis """ 
+ #        if not isinstance(gate.basis, StandardBasis):
+ #            raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
+ #
+ #        if gate.process_matrix_function:
+ #            @wraps(gate.process_matrix_function)
+ #            def ptm_function(*args, **kwargs):
+ #                return self.superoperator_to_pauli_transfer_matrix(gate.process_matrix_function(*args, **kwargs), gate.basis)
+ #            return Gate.from_process_matrix_function(basis = self, process_matrix_function = ptm_function, parameters = gate.parameters) 
+ #        else:
+ #            pauli_transfer_matrix = self.superoperator_to_pauli_transfer_matrix(gate.process_matrix, gate.basis)
+ #            return Gate(basis = self, process_matrix = pauli_transfer_matrix) 
 
 # @dataclass(frozen=True, eq=False)
 # class PauliGate(Gate):
