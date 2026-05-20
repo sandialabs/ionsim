@@ -210,15 +210,16 @@ class State:
 
         return self.compute_matrix_observable_expectation(observable_operator.static_matrix) 
 
-    def compute_quadratures(self, include_variance: bool=False):
+    def compute_quadratures(self, enable_squared_quadratures: bool=False):
         """ Returns quadrature expectation values <x> and <p> for each motional mode in the state. 
             - fails if there are no motional DOFs 
             - returns lists of <x> and <p>; each list element corresponds to 1 motional mode 
             - list order matches DOF order in the state's basis 
+            - option to return <x^2> and <p^2>, the expectation of the squared quadrature operators.
         """ 
         x = []        
         p = []        
-        if include_variance:
+        if enable_squared_quadratures:
             x2 = []        
             p2 = []        
 
@@ -237,11 +238,11 @@ class State:
             # Compute expectation values: 
             x.append(mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim)))
             p.append(mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim)))
-            if include_variance:
+            if enable_squared_quadratures:
                 x2.append(mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim) @ Fock.position(Fock_dim)))
                 p2.append(mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim) @ Fock.momentum(Fock_dim)))
 
-        if include_variance:
+        if enable_squared_quadratures:
             return x, p, x2, p2
         else:
             return x, p
