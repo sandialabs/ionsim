@@ -53,5 +53,19 @@ class TestState(unittest.TestCase):
         assert_array_close(W_distribution[slice_indx, 0:13], W_expected_at_slice, rtol=1e-04, atol=1E-7) 
 
 
+    def test_quadrature_computation(self):
+        """ Yest computation of x, p, and x^2, and p^2 expectations """ 
+        include_variance = True
+        x, p, x2, p2 = self.spin_motion_state.compute_quadratures(include_variance)
+
+        x_expected = 0.
+        p_expected = 0.
+        x2_expected = 0.5
+        p2_expected = 0.5
+        self.assertAlmostEqual(x[0].real, x_expected, places=6) 
+        self.assertAlmostEqual(p[0].real, p_expected, places=6) 
+        self.assertAlmostEqual(x2[0].real, x2_expected, places=6) 
+        self.assertAlmostEqual(p2[0].real, p2_expected, places=6) 
+
 if __name__ == '__main__':
     unittest.main()
