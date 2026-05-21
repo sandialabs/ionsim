@@ -223,6 +223,7 @@ class State:
             x2 = []        
             p2 = []        
 
+        # TODO: Check this: Wes says its cheaper to compute observable in the full space; 
         for i, mode_i in enumerate(self.basis.motional_modes):
             if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
                 raise IonSimError("Quadrature calculation assumes motional mode is in the Fock number state basis.")
