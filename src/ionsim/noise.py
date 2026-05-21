@@ -79,7 +79,8 @@ class StochasticNoise:
         time_evals: Vector | None = None,
         same_psd: bool = False,
         dt_step: float | None = None,
-        remove_mean: bool = False
+        remove_mean: bool = False,
+        mean: float = 0.0,
     ) -> np.ndarray:
         """
         Generate white noise samples with the correct power spectral density (PSD).
@@ -118,12 +119,12 @@ class StochasticNoise:
             noise_all[:, 0] = first_time_step_all_trajectories
 
             noise_all[:, 1:] = rng.normal(
-                0.0,
+                mean,
                 np.sqrt(psd * 1/(2 * dt)),
                 size=(n_trajectories, N - 1),
             )
         else:
-            noise_all = rng.normal(0.0, np.sqrt(psd * 1/(2 * dt)), size=(n_trajectories, N))
+            noise_all = rng.normal(mean, np.sqrt(psd * 1/(2 * dt)), size=(n_trajectories, N))
         if remove_mean:
             noise_all = noise_all - np.mean(noise_all, axis=1, keepdims=True)
         return noise_all
@@ -162,11 +163,11 @@ class StochasticNoise:
         phi = np.exp(-dt / tau_c)
         sd = np.sqrt(var * (1.0 - phi * phi))
         x = np.empty((n_trajectories, N), float)
-        x[:, 0] = rng.normal(0.0, np.sqrt(var), size=n_trajectories)
+        x[:, 0] = rng.normal(mean, np.sqrt(var), size=n_trajectories)
         if first_time_step_all_trajectories is not None:
             x[:, 0] = first_time_step_all_trajectories
         else:
-            x[:, 0] = rng.normal(0.0, np.sqrt(var), size=n_trajectories)
+            x[:, 0] = rng.normal(mean, np.sqrt(var), size=n_trajectories)
         # Pre-generate all innovations in one batch call to avoid N separate
         # RNG dispatches inside the loop.
         xi = rng.standard_normal((n_trajectories, N))
@@ -174,8 +175,7 @@ class StochasticNoise:
             x[:, n] = phi * x[:, n - 1] + sd * xi[:, n]
         if remove_mean:
             x = x - np.mean(x, axis=1, keepdims=True)
-        if mean != 0.0:
-            x = x + mean
+            
         return x
 
 
