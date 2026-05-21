@@ -78,7 +78,8 @@ class StochasticNoise:
         time_evals: Vector | None = None,
         same_psd: bool = False,
         dt_step: float | None = None,
-        remove_mean: bool = False
+        remove_mean: bool = False,
+        mean: float = 0.0
     ) -> np.ndarray:
         """
         Generate white noise samples with the correct power spectral density (PSD).
@@ -107,7 +108,7 @@ class StochasticNoise:
         else:
             f_nye = 1 / (2 * dt)
         psd = target_variance / f_nye  # (rad/s)^2/Hz
-        noise_all = rng.normal(0.0, np.sqrt(psd * 1/(2 * dt)), size=(n_trajectories, N))
+        noise_all = rng.normal(mean, np.sqrt(psd * 1/(2 * dt)), size=(n_trajectories, N))
         if remove_mean:
             noise_all = noise_all - np.mean(noise_all, axis=1, keepdims=True)
         return noise_all
@@ -142,11 +143,11 @@ class StochasticNoise:
         phi = np.exp(-dt / tau_c)
         sd = np.sqrt(target_variance * (1.0 - phi * phi))
         x = np.empty((n_trajectories, N), float)
-        x[:, 0] = rng.normal(0.0, np.sqrt(target_variance), size=n_trajectories)
+        x[:, 0] = rng.normal(mean, np.sqrt(target_variance), size=n_trajectories)
         if first_time_step_all_trajectories is not None:
             x[:, 0] = first_time_step_all_trajectories
         else:
-            x[:, 0] = rng.normal(0.0, np.sqrt(target_variance), size=n_trajectories)
+            x[:, 0] = rng.normal(mean, np.sqrt(target_variance), size=n_trajectories)
 
         for n in range(1, N):
             x[:, n] = phi * x[:, n - 1] + sd * rng.standard_normal(size=n_trajectories)
