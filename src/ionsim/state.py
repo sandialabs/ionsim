@@ -223,26 +223,58 @@ class State:
             x2 = []        
             p2 = []        
 
-        # TODO: Check this: Wes says its cheaper to compute observable in the full space; 
-        for i, mode_i in enumerate(self.basis.motional_modes):
-            if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
-                raise IonSimError("Quadrature calculation assumes motional mode is in the Fock number state basis.")
-        
-            mode_state = self.motional_state # reset the state  
-            # Trace out other modes 
-            for j, mode_j in enumerate(self.basis.motional_modes):
-                if i == j:
-                    continue 
-                mode_state = mode_state.trace_out_degree_of_freedom(mode_j) 
-            assert mode_state is not None
-            Fock_dim = len(mode_i.energy_levels) 
-            # Compute expectation values: 
-            x.append(mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim)))
-            p.append(mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim)))
-            if enable_squared_quadratures:
-                x2.append(mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim) @ Fock.position(Fock_dim)))
-                p2.append(mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim) @ Fock.momentum(Fock_dim)))
 
+        use_partial_trace = False 
+        #import time
+        #start = time.perf_counter()
+        # Either compute partial trace on the density matrix or elevate observable to full space 
+        # It may be cheaper to compute the expectation value in the full space 
+        if not use_partial_trace :
+            full_basis = self.basis
+
+            # For each mode, build the full-space raising and lowering operators  
+            for i, mode_i in enumerate(self.basis.motional_modes):
+                if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
+                    raise IonSimError("Quadrature calculation assumes motional mode is in the Fock number state basis.")
+
+                # Enlarge the x and p operators for the current mode 
+                Fock_dim = len(mode_i.energy_levels) 
+                x_enlarged = full_basis.enlarge_one_dof_matrix(Fock.position(Fock_dim), mode_i) 
+                p_enlarged = full_basis.enlarge_one_dof_matrix(Fock.momentum(Fock_dim), mode_i) 
+
+                # Compute expectation values: 
+                x.append(self.compute_matrix_observable_expectation(x_enlarged))
+                p.append(self.compute_matrix_observable_expectation(p_enlarged))
+                if enable_squared_quadratures:
+                    x2.append(self.compute_matrix_observable_expectation(x_enlarged @ x_enlarged)) 
+                    p2.append(self.compute_matrix_observable_expectation(p_enlarged @ p_enlarged))
+
+        else:
+            for i, mode_i in enumerate(self.basis.motional_modes):
+                if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
+                    raise IonSimError("Quadrature calculation assumes motional mode is in the Fock number state basis.")
+            
+                mode_state = self.motional_state # reset the state  
+                # Trace out other modes 
+                for j, mode_j in enumerate(self.basis.motional_modes):
+                    if i == j:
+                        continue 
+                    mode_state = mode_state.trace_out_degree_of_freedom(mode_j) 
+                assert mode_state is not None
+                Fock_dim = len(mode_i.energy_levels) 
+                # Compute expectation values: 
+                x.append(mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim)))
+                p.append(mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim)))
+                if enable_squared_quadratures:
+                    x2.append(mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim) @ Fock.position(Fock_dim)))
+                    p2.append(mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim) @ Fock.momentum(Fock_dim)))
+
+        #end = time.perf_counter()
+ #        if not use_partial_trace :
+ #            print(f"Promoting observable to full space")
+ #        else:
+ #            print(f"Using partial traces")
+ #        print(f"Computing x,p took: {end-start} [s]")
         if enable_squared_quadratures:
             return x, p, x2, p2
         else:
