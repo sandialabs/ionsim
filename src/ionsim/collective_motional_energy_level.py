@@ -11,6 +11,7 @@ class CollectiveMotionalEnergyLevel(EnergyLevel):
     """An energy level of a normal mode of motion of an ion chain."""
     mode_frequency: float
     fock_number: float # TODO: someday we'll need to make a motional basis of coherent states
+    alias: str | None=None
 
     @property
     def energy(self):
