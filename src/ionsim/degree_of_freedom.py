@@ -42,7 +42,7 @@ class AtomicSpin(DegreeOfFreedom):
             levels_data = cls.select_some_data(term_symbols, levels_data)
 
         if level_aliases:
-            assert len(level_aliases) == len(level_names), 'Error: User should specify level aliases for each level in the atomic structure.'
+            assert len(level_aliases) == len(level_names), 'Error: User should specify a level alias for each level in the atomic structure.'
 
         levels = []
         for level_data in levels_data:
@@ -97,7 +97,6 @@ class AtomicSpin(DegreeOfFreedom):
                             level_name_index = level_names.index(level.name)
                             level_alias = level_aliases[level_name_index]
                             # Overwrite the level to include its alias
-                            #level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy, alias = level_alias) 
                             level = replace(level, alias = level_alias)
                         levels.append(level)
             else:
@@ -116,7 +115,6 @@ class AtomicSpin(DegreeOfFreedom):
                                 level_name_index = level_names.index(level.name)
                                 level_alias = level_aliases[level_name_index]
                                 # Overwrite the level to include its alias
-                                #level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy, alias = level_alias) 
                                 level = replace(level, alias = level_alias)
                             levels.append(level)
         return cls(levels, name)
