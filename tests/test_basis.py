@@ -29,6 +29,7 @@ class TestBasis(unittest.TestCase):
         expected_aliases = ['00', '01', '10', '11']
         actual_aliases = [state.alias() for state in spin_basis.states]
 
+        # Test aliases for spin basis states 
         self.assertEqual(expected_aliases, actual_aliases)
 
     def test_motional_basis_states(self):
@@ -45,13 +46,8 @@ class TestBasis(unittest.TestCase):
         actual_states = [state.name for state in motional_basis.states]
         self.assertEqual(actual_states, expected_states)
 
- #        mode_prefixes = ['Mode 0', 'Mode 1']
- #        expected_aliases = []
- #        actual_aliases = [state.alias for ] 
- #        for mode, prefix in zip(motional_basis.degrees_of_freedom, mode_prefixes):
- #            expected_aliases.append([prefix + ', n = ' + str(n) for n in range(len(motional_basis.degrees_of_freedom[0].energy_levels))] 
-            #self.assertEqual(actual_states, expected_states)
-
+        # Test alias for motional basis state 
+        self.assertEqual(motional_basis.states[4].alias('; '), 'Mode 0, n = 2; Mode 1, n = 0') 
 
     def test_full_basis_states(self):
         """Test the states of the full basis."""
@@ -84,6 +80,8 @@ class TestBasis(unittest.TestCase):
         ]
         actual_states = [state.name for state in full_basis.states]
         self.assertEqual(actual_states, expected_states)
+        # Test alias for full basis state 
+        self.assertEqual(full_basis.states[3].alias('; '), '0; 0; Mode 0, n = 1; Mode 1, n = 1') 
 
     def test_z_pauli_basis_vectors(self):
         """Test the vectors of the Z Pauli basis."""
