@@ -225,8 +225,6 @@ class State:
 
 
         use_partial_trace = False 
-        #import time
-        #start = time.perf_counter()
         # Either compute partial trace on the density matrix or elevate observable to full space 
         # It may be cheaper to compute the expectation value in the full space 
         if not use_partial_trace :
@@ -269,12 +267,6 @@ class State:
                     x2.append(mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim) @ Fock.position(Fock_dim)))
                     p2.append(mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim) @ Fock.momentum(Fock_dim)))
 
-        #end = time.perf_counter()
- #        if not use_partial_trace :
- #            print(f"Promoting observable to full space")
- #        else:
- #            print(f"Using partial traces")
- #        print(f"Computing x,p took: {end-start} [s]")
         if enable_squared_quadratures:
             return x, p, x2, p2
         else:
