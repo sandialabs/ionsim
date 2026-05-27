@@ -85,6 +85,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         self.parameter_bounds = parameter_bounds 
 
+        # Set up cached parameters and process matrices 
+        self.cached_theta = None 
+        self.process_matrix_cache = None 
+
         # Test model fxn evaluations 
  #        gate_model = list(self.gate_models.values())[1]
  #
@@ -211,7 +215,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         M_effects[last_label] = constrained_effect
         return M_effects 
 
-    def _predict_probabilities(self, circ: ParsedCircuit, theta: Vector, process_matrix_cache: dict) -> Vector: 
+    def _predict_probabilities(self, circ: ParsedCircuit, theta: Vector) -> Vector: 
         """ Predicts outcome probabilities for a GST circuit with gates parametrized by theta """
         rho_supervector = self.get_prep_state(theta)
         M_effects = self.get_measurement_effects(theta)
@@ -221,7 +225,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Retrieve a gate model for each gate and its parameter values  
         for gate in circ.expanded_gates:
-            gate_process_matrix = process_matrix_cache[gate.name]
+            gate_process_matrix = self.process_matrix_cache[gate.name]
             # Accumulate the map:
             quantum_map = gate_process_matrix @ quantum_map 
 
@@ -240,15 +244,22 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         outcome_probabilities = dict(zip(outcome_labels, probability_values))
         return outcome_probabilities
         
-    def _build_gate_process_matrix_cache(self, theta): 
+    def _refresh_gate_process_matrix_cache(self, theta): 
         """ Evaluate each gate's process matrix function once"""
-        process_matrix_cache = {} 
-        for gate_name, gate_model in self.gate_models.items():
-            # Retrieve parameters for the gate model 
-            gate_parameters = theta[self.gst_parameter_indices[gate_name]]
-            # Evaluate gate model at those parameter values and store in the PM cache 
-            process_matrix_cache[gate_name] = gate_model(*gate_parameters) # gate model returns a process matrix  
-        return process_matrix_cache 
+
+        if (self.cached_theta is None or self.cached_theta.shape != theta.shape 
+            or not np.array_equal(self.cached_theta, theta)):
+            process_matrix_cache = {} 
+            for gate_name, gate_model in self.gate_models.items():
+                # Retrieve parameters for the gate model 
+                gate_parameters = theta[self.gst_parameter_indices[gate_name]]
+                # Evaluate gate model at those parameter values and store in the PM cache 
+                process_matrix_cache[gate_name] = gate_model(*gate_parameters) # gate model returns a process matrix  
+
+            self.cached_theta = theta
+            self.process_matrix_cache = process_matrix_cache
+
+        return self.process_matrix_cache 
 
 
 
@@ -283,11 +294,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         probability_TOL = 1E-12
 
         # Improve speed by building gate process matrices once 
-        process_matrix_cache = self._build_gate_process_matrix_cache(theta)
+        #process_matrix_cache = self._build_gate_process_matrix_cache(theta)
+        self._refresh_gate_process_matrix_cache(theta)
 
         # Compute log likelihood for each GST circuit, accumulating over all GST circuits 
         for circ in self.parsed_circuits:
-            probabilities = self._predict_probabilities(circ, theta, process_matrix_cache) 
+            probabilities = self._predict_probabilities(circ, theta) 
 
             if circ.measurement_data.counts is not None:
                 for outcome, count in circ.measurement_data.counts.items(): 
@@ -317,12 +329,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         probability_TOL = 1E-4 # to regularize 
 
         # Improve speed by building gate process matrices once 
-        process_matrix_cache = self._build_gate_process_matrix_cache(theta)
+        self._refresh_gate_process_matrix_cache(theta)
 
         # Compute log likelihood for each GST circuit, accumulating over all GST circuits 
         for circ in self.parsed_circuits:
             #print(f"\nCircuit: {circ.unparsed_data}")
-            probabilities = self._predict_probabilities(circ, theta, process_matrix_cache) 
+            probabilities = self._predict_probabilities(circ, theta) 
 
             if circ.measurement_data.counts is not None:
                 total_counts = circ.measurement_data.total_counts
