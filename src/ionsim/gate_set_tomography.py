@@ -227,12 +227,17 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         mapped_state = quantum_map @ rho_supervector
 
-        outcome_probabilities = {}
-        probability_TOL = 1E-12
-        for label, E in M_effects.items():
-            outcome_probabilities[label] = np.real(E.dot(mapped_state))
-            outcome_probabilities[label] = np.clip(outcome_probabilities[label], probability_TOL, 1. - probability_TOL)             
+        outcome_labels = list(M_effects.keys())
+        # Compile effects into a matrix to exploit matrix-vector multiplication  
+        effect_matrix = np.vstack([
+            np.asarray(M_effects[label]).reshape(-1) for label in outcome_labels
+        ])
+        mapped_state_vector = np.asarray(mapped_state).reshape(-1)
 
+        probability_TOL = 1E-12
+        probability_values = np.real(effect_matrix @ mapped_state_vector)
+        probability_values = np.clip(probability_values, probability_TOL, 1. - probability_TOL)
+        outcome_probabilities = dict(zip(outcome_labels, probability_values))
         return outcome_probabilities
         
     def _build_gate_process_matrix_cache(self, theta): 
