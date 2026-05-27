@@ -122,7 +122,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return gate_factory 
 
 
-    def _build_parameter_organization(self) -> (dict[str, slice], int):
+    def _build_parameter_organization(self) -> tuple[dict[str, slice], int]:
         """ Builds and organizes the independent parameters for GST. This organizes parameters based on:
             1) Prep state 
             2) Each Gate model, for all gates in the set  
