@@ -218,16 +218,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Build a composition (chain) of gate process matrices: 
         quantum_map = np.eye(self.d2, dtype=complex) # handles case for initial gst circuit: do-nothing for no time (null) gate 
-        # Gate model is a callable that takes in the parameter vector and returns a process matrix  
 
         # Retrieve a gate model for each gate and its parameter values  
         for gate in circ.expanded_gates:
-            #gate_model = self.gate_models[gate.name]
-            #gate_parameters = theta[self.gst_parameter_indices[gate.name]]
             gate_process_matrix = process_matrix_cache[gate.name]
             # Accumulate the map:
             quantum_map = gate_process_matrix @ quantum_map 
-            #quantum_map = gate_model(*gate_parameters) @ quantum_map 
 
         mapped_state = quantum_map @ rho_supervector
 
@@ -286,7 +282,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Compute log likelihood for each GST circuit, accumulating over all GST circuits 
         for circ in self.parsed_circuits:
-            #print(f"\nCircuit: {circ.unparsed_data}")
             probabilities = self._predict_probabilities(circ, theta, process_matrix_cache) 
 
             if circ.measurement_data.counts is not None:
@@ -405,7 +400,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if solver == 'MLE':
             # TODO: Provide bounds for parameters if using interpolated gates 
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
-            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds) # TODO consider adding parameter bounds in any case  
+            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds) 
             self.solver_result = solver_result
             self.gst_parameters = solver_result.x
             #self.save_nll_data()
