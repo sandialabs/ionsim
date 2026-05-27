@@ -85,6 +85,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         self.parameter_bounds = parameter_bounds 
 
+        # Set up cached parameters and process matrices 
+        self.cached_theta = None 
+        self.process_matrix_cache = None 
+
         # Test model fxn evaluations 
  #        gate_model = list(self.gate_models.values())[1]
  #
@@ -122,7 +126,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return gate_factory 
 
 
-    def _build_parameter_organization(self) -> (dict[str, slice], int):
+    def _build_parameter_organization(self) -> tuple[dict[str, slice], int]:
         """ Builds and organizes the independent parameters for GST. This organizes parameters based on:
             1) Prep state 
             2) Each Gate model, for all gates in the set  
@@ -218,36 +222,45 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Build a composition (chain) of gate process matrices: 
         quantum_map = np.eye(self.d2, dtype=complex) # handles case for initial gst circuit: do-nothing for no time (null) gate 
-        # Gate model is a callable that takes in the parameter vector and returns a process matrix  
 
         # Retrieve a gate model for each gate and its parameter values  
         for gate in circ.expanded_gates:
-            gate_model = self.gate_models[gate.name]
-            gate_parameters = theta[self.gst_parameter_indices[gate.name]]
+            gate_process_matrix = self.process_matrix_cache[gate.name]
             # Accumulate the map:
-            quantum_map = gate_model(*gate_parameters) @ quantum_map 
+            quantum_map = gate_process_matrix @ quantum_map 
 
         mapped_state = quantum_map @ rho_supervector
 
-        outcome_probabilities = {}
-        probability_TOL = 1E-12
-        for label, E in M_effects.items():
-            outcome_probabilities[label] = np.real(E.dot(mapped_state))
-            outcome_probabilities[label] = np.clip(outcome_probabilities[label], probability_TOL, 1. - probability_TOL)             
+        outcome_labels = list(M_effects.keys())
+        # Compile effects into a matrix to exploit matrix-vector multiplication  
+        effect_matrix = np.vstack([
+            np.asarray(M_effects[label]).reshape(-1) for label in outcome_labels
+        ])
+        mapped_state_vector = np.asarray(mapped_state).reshape(-1)
 
+        probability_TOL = 1E-12
+        probability_values = np.real(effect_matrix @ mapped_state_vector)
+        probability_values = np.clip(probability_values, probability_TOL, 1. - probability_TOL)
+        outcome_probabilities = dict(zip(outcome_labels, probability_values))
         return outcome_probabilities
         
+    def _refresh_gate_process_matrix_cache(self, theta): 
+        """ Evaluate each gate's process matrix function once"""
 
+        if (self.cached_theta is None or self.cached_theta.shape != theta.shape 
+            or not np.array_equal(self.cached_theta, theta)):
+            process_matrix_cache = {} 
+            for gate_name, gate_model in self.gate_models.items():
+                # Retrieve parameters for the gate model 
+                gate_parameters = theta[self.gst_parameter_indices[gate_name]]
+                # Evaluate gate model at those parameter values and store in the PM cache 
+                process_matrix_cache[gate_name] = gate_model(*gate_parameters) # gate model returns a process matrix  
 
- #    def _build_process_matrix_cache(self, theta): 
- #        """ Evaluate each gate's process matrix function once"""
- #        process_matrix_cache = {} 
- #        # TODO: finalize gate_model data structure (DS) and values. 
- #        for gate_model in self.gate_models.values():
- #            gate_parameters = theta[self.gst_parameter_indices[gate_model.name]]
- #            process_matrix_cache[gate_model.name] = gate_model.process_matrix_function(gate_parameters) 
- #        return process_matrix_cache 
- #
+            self.cached_theta = theta
+            self.process_matrix_cache = process_matrix_cache
+
+        return self.process_matrix_cache 
+
 
 
     def log_likelihood(self, theta: Vector | None=None, theta_function=None) -> float:
@@ -278,13 +291,15 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if theta_function is not None:
             t_independent_gates = False 
 
-        #self._build_process_matrix_cache()
         probability_TOL = 1E-12
+
+        # Improve speed by building gate process matrices once 
+        #process_matrix_cache = self._build_gate_process_matrix_cache(theta)
+        self._refresh_gate_process_matrix_cache(theta)
 
         # Compute log likelihood for each GST circuit, accumulating over all GST circuits 
         for circ in self.parsed_circuits:
-            #print(f"\nCircuit: {circ.unparsed_data}")
-            probabilities = self._predict_probabilities(circ, theta) # don't need the PM cache? 
+            probabilities = self._predict_probabilities(circ, theta) 
 
             if circ.measurement_data.counts is not None:
                 for outcome, count in circ.measurement_data.counts.items(): 
@@ -313,10 +328,13 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         probability_TOL = 1E-4 # to regularize 
 
+        # Improve speed by building gate process matrices once 
+        self._refresh_gate_process_matrix_cache(theta)
+
         # Compute log likelihood for each GST circuit, accumulating over all GST circuits 
         for circ in self.parsed_circuits:
             #print(f"\nCircuit: {circ.unparsed_data}")
-            probabilities = self._predict_probabilities(circ, theta) # don't need the PM cache? 
+            probabilities = self._predict_probabilities(circ, theta) 
 
             if circ.measurement_data.counts is not None:
                 total_counts = circ.measurement_data.total_counts
@@ -361,8 +379,16 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         print(f"\nMeasurement effect parameters: {measurement_params}")
 
         for gate in self.gate_set:
-            gate_parameters = self.gst_parameters[self.gst_parameter_indices[gate.name]]
-            print(f"\n Gate {gate.name} parameters: {gate_parameters}")
+            gate_model = self.gate_models[gate.name]
+            gate_model_sig = inspect.signature(gate_model)
+            parameter_names = list(gate_model_sig.parameters.keys())  
+            parameter_values = self.gst_parameters[self.gst_parameter_indices[gate.name]] # names and values share same sorted order  
+
+            # Package parameter names, values 
+            gate_results = dict(zip(parameter_names, parameter_values)) 
+            print(f"\n Gate {gate.name} parameters: {gate_results}")
+
+        return self.gst_parameters 
 
     def print_state_and_POVMs(self):
         """ Output state supervector and measurement effects """ 
@@ -372,8 +398,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         print(f"\nPrep state supervector: {rho}")
         for label, effect in M_effects.items():
             print(f"\nMeasurement effect {label} vectors: {effect}")
-        
-
 
     def solve_for_gate_parameters(self, parameters_guess: Vector | None=None, solver: str = 'MLE'): 
         """ Function to solve for the parametrization values of a particular gate. 
@@ -397,7 +421,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if solver == 'MLE':
             # TODO: Provide bounds for parameters if using interpolated gates 
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
-            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds) # TODO consider adding parameter bounds in any case  
+            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds) 
             self.solver_result = solver_result
             self.gst_parameters = solver_result.x
             #self.save_nll_data()
@@ -412,8 +436,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             return None 
         elif solver == 'staged MLE':
             # Do staged MLE --> MLE done in batches of increasing circuit depths. 
-            self.solver_result = self.staged_objective_minimization(method = 'L-BFGS-B', bounds = self.parameter_bounds, suppress_output = False) 
+            self.solver_result, results_by_stage = self.staged_objective_minimization(method = 'L-BFGS-B', bounds = self.parameter_bounds, suppress_output = False) 
             self.gst_parameters = self.solver_result.x
+            return self.solver_result, results_by_stage
         else:
             raise IonSimError('Invalid solver input.')
 
@@ -441,12 +466,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         """ Iterative MLE through batches of data taken at increasing circuit depths """ 
         circuit_groups = self._group_circuits_by_depth()
         sorted_depths = sorted(circuit_groups.keys()) # keys are circuit depths 
+        solver_results = {} # stores results of parameter estimation at each stage 
 
         if not suppress_output:
             print(f"--- Staged MLE with depth bins: {sorted_depths} ") 
             for L in sorted_depths:
                 print(f"    L={L}: {len(circuit_groups[L])} circuits ")
-
 
         cumulative_circuits = []
         num_stages = len(sorted_depths)
@@ -457,13 +482,19 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             original_circuits = self.parsed_circuits
             self.parsed_circuits = cumulative_circuits 
 
-            if stage < (num_stages - 1):
-                objective_function = self.chi_squared 
-            else:
-                objective_function = lambda params: -1. * self.log_likelihood(params) 
+ #            if stage < (num_stages - 1):
+ #                objective_function = self.chi_squared 
+ #            else:
+ #                objective_function = lambda params: -1. * self.log_likelihood(params) 
+            objective_function = lambda params: -1. * self.log_likelihood(params) 
 
-            solver_result = opt.minimize(fun = lambda params: objective_function(params), x0 = self.gst_parameters.copy(), method=method, bounds = bounds)
+            solver_result = opt.minimize(fun = lambda params: objective_function(params), x0 = np.ones(self.num_gst_parameters)*1E-4, method=method, bounds = bounds)
+            #solver_result = opt.minimize(fun = lambda params: objective_function(params),  x0 = self.gst_parameters.copy(), method=method, bounds = bounds)
+            self.solver_result = solver_result
             self.gst_parameters = solver_result.x
+
+            # Record solver parameter estimation results at each circuit depth group  
+            solver_results[L] = solver_result.x 
 
             if not suppress_output:
                 ll = self.log_likelihood(self.gst_parameters)
@@ -476,13 +507,13 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             self.parsed_circuits = original_circuits
 
         # return final result, having used all circuits:
-        return solver_result
+        return solver_result, solver_results
 
         
 
             
     ### Functions for gate set error metrics ### 
-    def compute_gate_set_process_infidelity(self, ideal_gate_set: dict) -> float:
+    def compute_gate_set_process_infidelity(self, gst_parameters: Vector, ideal_gate_set: dict) -> float:
         """ Estimate process infidelity of each gate in the gate set and compare to ideal, then average (or take a different norm?) over the gate set.
 
             - takes in an input dictionary "ideal_gate_set" that contains process matrices for each gate in the gate set. 
@@ -501,7 +532,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
             # Get process matrix from gate model at optimum 
             gate_process_matrix_function = self.gate_models[gate.name]
-            parameter_values = self.gst_parameters[self.gst_parameter_indices[gate.name]] # names and values share same sorted order  
+            parameter_values = gst_parameters[self.gst_parameter_indices[gate.name]] # names and values share same sorted order  
 
             process_matrix = gate_process_matrix_function(*parameter_values)
             gate_model = Gate(self.basis, process_matrix)
@@ -513,13 +544,13 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Compute least-square difference for SPAM
         # prep state: 
         ideal_prep_state = ideal_gate_set['prep'].supervector  
-        modeled_prep_state = self.get_prep_state(self.gst_parameters) 
+        modeled_prep_state = self.get_prep_state(gst_parameters) 
         # Trace distance: sqrt(sum([rho_ideal[i] - rho_actual[i]]^2))
         prep_error = np.sqrt(np.sum((modeled_prep_state - ideal_prep_state)**2)) 
 
         # POVMs 
         ideal_POVMs = ideal_gate_set['POVM']  
-        POVMs = self.get_measurement_effects(self.gst_parameters)
+        POVMs = self.get_measurement_effects(gst_parameters)
         POVM_errors = {}
         measurement_error = 0. 
         for outcome, POVM in ideal_POVMs.items():
@@ -557,7 +588,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         else: # bootstrapping
             return self.bootstrap_uncertainties()
 
-    def bootstrap_uncertainties(self, N_bootstrap: int=100):
+    def bootstrap_uncertainties(self, N_bootstrap: int=50):
         """ Bootstrapping for parameter uncertainties: Sample data from the fitted model and re-fit, computing 
                 parameter spread. N_bootstrap is the number of resamplings. """
 
@@ -579,7 +610,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 
             # Re-run the MLE analysis to find best fit:
             self.gst_parameters = theta_best.copy()
-            self.solve_for_gate_parameters()   # sets self.gst_parameters to optimal  
+            self.solve_for_gate_parameters(parameters_guess = theta_best.copy())   # sets self.gst_parameters to optimal  
             bootstrap_thetas[b] = self.gst_parameters
 
         # Restore original data/fit
@@ -593,8 +624,4 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 # Could build a N-dimensional process matrix by running simulations for each of the N-dimensional parameters, store them. --> hdf5 files
     # - save the raw hdf5 simulation data (process matrix at each error parameter value) 
     # - GST will load the process matrix data, interpolate with it using MLE. cref. one of the examples  
-
         # - would need to load up one of these for each gate in the gate set
-
-    # - GST could make calls to other parts of IonSim to run needed simulations. For constructing the required process matrices to do GST. 
-        # - if you gave it a gate set, the class could then do those simulations to generate the process matrices needed for GST.   

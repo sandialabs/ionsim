@@ -4,11 +4,13 @@ import h5py
 import sys
 import time
 from scipy.sparse import kron as skron
+import matplotlib
 from matplotlib import pyplot as plt
 from icecream import ic
 from typing import Callable
-
 import ionsim as sm
+matplotlib.rcParams['text.usetex']=True 
+style_path_data = '~/plot_style_data.txt'
 
 """ ################ Single qubit GST Example ################## """ 
 def main():
@@ -19,6 +21,7 @@ def main():
     parsed_circuits = sm.parse_gst_circuit_file(fname)
 
     print_head = False 
+    #head = 780
     head = 20
     if print_head:
         # Optional print out of first _ lines to check functionality  
@@ -165,7 +168,7 @@ def main():
     end = time.perf_counter()
     print(f"Ran GST in {end - start} seconds")
     print(f"Solver results: {solver_results}\n")
-    GST_analyzer.print_parameters()
+    gst_parameters = GST_analyzer.print_parameters()
     GST_analyzer.print_state_and_POVMs()
 
     # Construct ideal gate set to compute error metric of GST analysis & gate modeling 
@@ -174,10 +177,11 @@ def main():
     ideal_gate_set['POVM'] = ideal_POVM_effects 
     ideal_gate_set['Gxpi2'] = basis.compute_superoperator_from_unitary_operator(sm.Unitary.sqrtX) 
     ideal_gate_set['Gypi2'] = basis.compute_superoperator_from_unitary_operator(sm.Unitary.sqrtY)
+    ideal_gate_set['idle'] = basis.compute_superoperator_from_unitary_operator(sm.Unitary.I)
 
     print(f"\n\n")
     print(f" --- Estimating gate set error compared to ideal gate set ---")
-    gate_set_error = GST_analyzer.compute_gate_set_process_infidelity(ideal_gate_set)
+    gate_set_error = GST_analyzer.compute_gate_set_process_infidelity(gst_parameters, ideal_gate_set)
     print(f"\nGate set error: {gate_set_error}")
 
     estimate_uncertainties = False 
@@ -190,7 +194,32 @@ def main():
         print(f"\nPrinting parameters as one vector: {GST_analyzer.gst_parameters}")
         print(f"\nPrinting uncertainties in the parameters: {uncertainties}")
 
-    return gate_set_error 
+
+ #    print(f"\n\n ---------- Testing staged MLE functionality ------------ \n")
+ #    start = time.perf_counter()
+ #    solver_results, results_by_stage = GST_analyzer.solve_for_gate_parameters(solver='staged MLE')
+ #    end = time.perf_counter()
+ #    print(f"Ran staged GST in {end - start} seconds")
+ #    print(f"Solver results: {solver_results}\n")
+ #    circuit_depths = results_by_stage.keys()
+ #    error_metric = {}
+ #    for L in circuit_depths:
+ #        error_metric[L] = GST_analyzer.compute_gate_set_process_infidelity(results_by_stage[L], ideal_gate_set)    
+ #
+ #    plt.style.use(style_path_data) 
+ #    plt.figure(figsize = (4,4))
+ #    plt.plot(circuit_depths, error_metric.values(), marker = 'o', color = 'k', label='GST')
+ #    plt.title(r'Gate Set Error vs. Circuit Depth', fontsize = 14)
+ #    plt.xlabel(r'Circuit depth $L$', fontsize = 20)
+ #    plt.ylabel(r'$\epsilon$', fontsize = 24, rotation = 0, labelpad = 25)
+ #    plt.xticks(fontsize = 12)
+ #    plt.legend()
+ #    plt.xscale('log')
+ #    plt.yscale('log')
+ #    #plt.savefig(data_directory / f'infidelity_vs_{dx_name}.pdf', bbox_inches='tight')
+ #    plt.show()
+
+    #return gate_set_error 
 
 if __name__ == '__main__':
     main()
