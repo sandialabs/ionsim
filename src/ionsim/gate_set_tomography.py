@@ -223,10 +223,11 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Retrieve a gate model for each gate and its parameter values  
         for gate in circ.expanded_gates:
             #gate_model = self.gate_models[gate.name]
-            gate_model = self.process_matirx_cache[gate.name]
-            gate_parameters = theta[self.gst_parameter_indices[gate.name]]
+            #gate_parameters = theta[self.gst_parameter_indices[gate.name]]
+            gate_process_matrix = process_matrix_cache[gate.name]
             # Accumulate the map:
-            quantum_map = gate_model(*gate_parameters) @ quantum_map 
+            quantum_map = gate_process_matrix @ quantum_map 
+            #quantum_map = gate_model(*gate_parameters) @ quantum_map 
 
         mapped_state = quantum_map @ rho_supervector
 
@@ -245,7 +246,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # Retrieve parameters for the gate model 
             gate_parameters = theta[self.gst_parameter_indices[gate_name]]
             # Evaluate gate model at those parameter values and store in the PM cache 
-            process_matrix_cache[gate_name] = gate_model(gate_parameters) # gate model returns a process matrix  
+            process_matrix_cache[gate_name] = gate_model(*gate_parameters) # gate model returns a process matrix  
         return process_matrix_cache 
 
 
