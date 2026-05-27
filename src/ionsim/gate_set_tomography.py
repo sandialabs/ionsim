@@ -379,8 +379,18 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         print(f"\nMeasurement effect parameters: {measurement_params}")
 
         for gate in self.gate_set:
-            gate_parameters = self.gst_parameters[self.gst_parameter_indices[gate.name]]
-            print(f"\n Gate {gate.name} parameters: {gate_parameters}")
+ #            gate_parameter_values = self.gst_parameters[self.gst_parameter_indices[gate.name]]
+ #            # Package the parameters into a dictionary with parameter_name : value pairs 
+ #            gate_parameter_names = self.
+            gate_model = self.gate_models[gate.name]
+            gate_model_sig = inspect.signature(gate_model)
+            parameter_names = list(gate_model_sig.parameters.keys())  
+            parameter_values = self.gst_parameters[self.gst_parameter_indices[gate.name]] # names and values share same sorted order  
+
+            # Write parameter names, values, and process matrix evaluated at those parameter values.
+            gate_results = dict(zip(parameter_names, parameter_values)) 
+            
+            print(f"\n Gate {gate.name} parameters: {gate_results}")
 
         return self.gst_parameters 
 
