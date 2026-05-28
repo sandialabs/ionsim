@@ -17,11 +17,12 @@ from ionsim.custom_math import matrix_AYB_multiply_to_superoperator
 from ionsim.ionsim_error import IonSimError
 from ionsim.custom_types import Vector
 from ionsim.io import *
+
 def depth_bin(depth):
     """ Bins a circuit depth to the nearest power of 2 """
     if depth <= 1:
         return 1
-    return 2**(math.ceil(math.log2(depth)))
+    return 2**(math.floor(math.log2(depth)))
 
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
@@ -89,17 +90,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self.cached_theta = None 
         self.process_matrix_cache = None 
 
-        # Test model fxn evaluations 
- #        gate_model = list(self.gate_models.values())[1]
- #
- #        print(list(self.gate_models.keys())[1])
- #        print(gate_model(0.1, 0.25))
- #        print()
- #        print(gate_model(0.33, 0.50))
-        #sys.exit(0)
-
         #TODO: Algorithm for optimizing stepwise by circuit depth.  
-
         self.solver_result = None # initialize to None  
 
 
@@ -359,6 +350,15 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             groups[L].append(circ)
         return groups
 
+    def _group_circuits_by_germ_power(self):
+        """ Groups the GST circuit by depth, required for staged MLE """ 
+        groups = {} # dictionary to store list of circuits at each depth L 
+        for circ in self.parsed_circuits:
+            p = circ.germ_power 
+            if p not in groups:
+                groups[p] = [] 
+            groups[p].append(circ)
+        return groups
 
     def save_nll_data(self):
         print(f"LL evals: {self.LL_eval}")
@@ -462,17 +462,26 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             write_results_to_file('gst_optimal_' + gate.name + '.hdf5', results_to_write) 
 
 
-    def staged_objective_minimization(self, method: str='L-BFGS-B', bounds: list | None=None, suppress_output: bool=True):
+    def staged_objective_minimization(self, method: str='L-BFGS-B', bounds: list | None=None, suppress_output: bool=True, organize_circuits_by_germ_power: bool=True ):
         """ Iterative MLE through batches of data taken at increasing circuit depths """ 
-        circuit_groups = self._group_circuits_by_depth()
+        if organize_circuits_by_germ_power: 
+            circuit_groups = self._group_circuits_by_germ_power()
+        else:
+            circuit_groups = self._group_circuits_by_depth()
+
         sorted_depths = sorted(circuit_groups.keys()) # keys are circuit depths 
         solver_results = {} # stores results of parameter estimation at each stage 
-
         if not suppress_output:
-            print(f"--- Staged MLE with depth bins: {sorted_depths} ") 
-            for L in sorted_depths:
-                print(f"    L={L}: {len(circuit_groups[L])} circuits ")
+            if organize_circuits_by_germ_power: 
+                print(f"--- Staged MLE with bins by germ powers (p): {sorted_depths} ") 
+                for p in sorted_depths:
+                    print(f"    p={p}: {len(circuit_groups[p])} circuits ")
+            else:
+                print(f"--- Staged MLE with bins by circuit depth (L): {sorted_depths} ") 
+                for L in sorted_depths:
+                    print(f"    L={L}: {len(circuit_groups[L])} circuits ")
 
+        #sys.exit(0)
         cumulative_circuits = []
         num_stages = len(sorted_depths)
         for stage, L in enumerate(sorted_depths):
@@ -481,14 +490,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # Store a copy of the circuits so we can re-use internal functions that use parsed_circuits attribute  
             original_circuits = self.parsed_circuits
             self.parsed_circuits = cumulative_circuits 
-
+ #
  #            if stage < (num_stages - 1):
  #                objective_function = self.chi_squared 
  #            else:
  #                objective_function = lambda params: -1. * self.log_likelihood(params) 
-            objective_function = lambda params: -1. * self.log_likelihood(params) 
+            #objective_function = lambda params: -1. * self.log_likelihood(params) 
 
-            solver_result = opt.minimize(fun = lambda params: objective_function(params), x0 = np.ones(self.num_gst_parameters)*1E-4, method=method, bounds = bounds)
+            solver_result = opt.minimize(fun = lambda params: objective_function(params), x0 = np.ones(self.num_gst_parameters)*1E-2, method=method, bounds = bounds)
             #solver_result = opt.minimize(fun = lambda params: objective_function(params),  x0 = self.gst_parameters.copy(), method=method, bounds = bounds)
             self.solver_result = solver_result
             self.gst_parameters = solver_result.x
