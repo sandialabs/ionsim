@@ -15,7 +15,7 @@ from ionsim.named_operators import Pauli, Unitary
 from ionsim.gst_circuit_parser  import *
 from ionsim.custom_math import matrix_AYB_multiply_to_superoperator 
 from ionsim.ionsim_error import IonSimError
-from ionsim.custom_types import Vector
+from ionsim.custom_types import Vector, Matrix
 from ionsim.io import *
 
 def depth_bin(depth):
