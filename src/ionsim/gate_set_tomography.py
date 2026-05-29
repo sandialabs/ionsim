@@ -91,7 +91,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self.process_matrix_cache = None 
 
         #TODO: Algorithm for optimizing stepwise by circuit depth.  
-        self.solver_result = None # initialize to None  
+        # initialize GST results to None 
+        self.lgst_results = None   
+        self.solver_result = None 
+
+        # Organize a lookup table for fiducial prep/measure circuits; needed for linear GST 
+        self._index_fiducials()
 
 
 
@@ -155,6 +160,32 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return parameter_indices, i 
 
 
+    def _index_fiducials(self):
+        """ Identify unique prep/measure fiducials and build lookup to get observed probabilities"""
+
+        prep_fiducials = set()
+        measure_fiducials = set()
+
+        # Fiducial prep/measure circuits are stored as lists of gates. Lists are not hashable and 
+        #  must be converted to tuples to enable lookup. A "ParsedGate" object is immutable, so tuples of it are hashable.  
+        for circ in self.parsed_circuits:
+            prep_fiducials.add(tuple(circ.fiducial_prep_gates))
+            measure_fiducials.add(tuple(circ.fiducial_measurement_gates))
+
+        # Sort by string representation (uses __repr__ in ParsedGate) 
+        self.prep_fiducials = sorted(prep_fiducials, key=str)
+        self.measure_fiducials = sorted(measure_fiducials, key=str)
+
+        self.circuit_lookup = {}
+        for circ in self.parsed_circuits:
+            key = (tuple(circ.fiducial_prep_gates), 
+                    tuple(circ.germ_gates), circ.germ_power,
+                    tuple(circ.fiducial_measurement_gates))
+
+            counts = circ.measurement_data.to_counts()
+
+            total_counts = circ.measurement_data.total_counts
+            self.circuit_lookup[key] = {outcome: count / total_counts for outcome, count in counts.items()}
 
     def get_prep_state(self, theta) -> Vector:
         """ Returns prep state supervector (d^2 x 1) given the parameter values theta.
@@ -418,6 +449,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             theta_0 = parameters_guess
         print(f"Initial parameters: {theta_0}")
 
+        # TODO: Standardize output; This function has heterogeneous output, depending on which case is called. 
         if solver == 'MLE':
             # TODO: Provide bounds for parameters if using interpolated gates 
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
@@ -429,11 +461,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             return solver_result
             
         elif solver == 'linear':
-            # Solve matrix Ax = b problem: Frequencies = A_matrix @ Gate_parameters  
-            # Check that gram matrix A_{m,s} = <M | C_{m} C_{s} | rho> is invertible.            
-            # Compute x = A \ b
-            raise IonSimError('Linear GST is not yet programmed into IonSim.')
-            return None 
+            #raise IonSimError('Linear GST is not yet programmed into IonSim.')
+            self.run_linear_gst()
+            self.parameters_from_lgst_results()
+            return self.gst_parameters 
         elif solver == 'staged MLE':
             # Do staged MLE --> MLE done in batches of increasing circuit depths. 
             self.solver_result, results_by_stage = self.staged_objective_minimization(method = 'L-BFGS-B', bounds = self.parameter_bounds, suppress_output = False) 
@@ -442,6 +473,118 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         else:
             raise IonSimError('Invalid solver input.')
 
+
+    def _build_probability_matrix(self, target_gate: ParsedGate | None, outcome: str='0'):
+        """ Builds the d^2 x d^2 matrix of observed probabilities 
+            for a gate or empty gate (corresponding to the Gram Matrix).
+
+            M[i,j] = p(outcome | measure_fid_i x gate x prep_fid_j ) 
+        """
+        N_prep_circuits = len(self.prep_fiducials)
+        N_measure_circuits = len(self.measure_fiducials)
+
+        # Construct matrix using lookup table of circuit outcomes for LGST 
+        M = np.zeros((N_measure_circuits, N_prep_circuits))
+
+        if target_gate is None:
+            gate = tuple()
+        else:
+            gate = tuple(target_gate)
+
+        for j, prep_fid in enumerate(self.prep_fidicuals):
+            for i, measure_fid in enumerate(self.measure_fiducials):
+                key = (prep_fid, gate, 1, measure_fiducials)
+                if key in self.circuit_lookup:
+                    M[i,j] = self.circuit_lookup[key].get(outcome, 0.)
+                else:
+                    raise ValueError(f"Missing LGST circuit: prep = {prep_fid}, ",
+                        f"gate = {gate}, measure = {measure_fid}")
+        return M
+        
+        
+    def run_linear_gst(self):
+        """ Function to estimate gate set parameters using linear matrix inversion """
+        # 1. Build the Gram matrix: <<F_i|F_j>>
+        gram_matrix = self._build_probability_matrix(target_gate = None)
+
+        # TODO: Check that gram matrix A_{m,s} = <M | C_{m} C_{s} | rho> is invertible.            
+        # Invert via pseudoinverse for numerical stability 
+        gram_inv = np.linalg(pinv(gram_matrix))
+        
+        # 2. Identify the unique gates from the gate set that are germs  
+ #        linear_gst_gates = set()
+ #        for circ in self.parsed_circuits:
+ #            if circ.germ_power == 1 and len(circ.germ_gates) == 1:
+ #                linear_gst_gates.add(circ.germ_gates[0])
+
+        # 3. Estimate each gate using the pseudo-inverse
+        gate_estimates = {}
+        #for gate in linear_gst_gates:
+        for gate in self.gate_set:
+            M_gate = self._build_probability_matrix(target_gate = gate)
+            gate_estimates[gate.name] = gram_inv @ M_gate
+
+        # 4. Extract SPAM parameter estimates from Gram SVD 
+        U, S, V = np.linalg(svd(gram_matrix))
+
+        # Get the first "k" singular values           
+        k = self.d2
+        sqrt_S = np.diag(np.sqrt(S[:k]))
+        measurement_effects = sqrt_S @ U[:, :k].T
+
+        prep_state = V[:k, :] @ sqrt_S
+
+        self.lgst_results = {'gate_estimates' : gate_estimates, 'gram_matrix' : gram_matrix, 
+                        'prep_state' : prep_state, 'measurement_effects' : measurement_effects}
+        return self.lgst_results 
+
+
+    def parameters_from_lgst_results(self):
+        """ Extracts the parameters vector from linear GST results """
+
+        if not hasattr(self, 'lgst_results'):
+            self.run_linear_gst()
+
+        # Initialize theta 
+        theta = self.gst_parameters
+
+        # Extract gate parameters 
+        for gate_name, lgst_gate_matrix in self.lgst_results['gate_estimates'].items():
+            # Compute the fit parameters for each gate model 
+            model = self.gate_models[gate_name]
+            fit_parameters = self._fit_gate_model_to_lgst_estimate(model, lgst_gate_matrix)    
+            theta[self.gst_parameter_indices[gate_name]] = fit_parameters 
+
+        # Extract SPAM parameters
+
+
+        
+        # Set gst parameters attribute to extracted parameters 
+        self.gst_parameters = theta
+        return theta
+
+
+    def _fit_gate_model_to_lgst_estimate(self, gate_model: Callable, target_gate_matrix: Matrix):
+        """ Fits a gate model's parameters given process matrix data (target_gate_matrix).
+
+            - gate_model is as Callable that returns a process matrix  
+            - uses the Frobenius norm of the process matrix difference as the cost function
+
+        """
+
+
+        def cost(theta: Vector) -> float:
+            # Frobenius norm of the process matrix difference bt. model and LGST-predicted
+            M = gate_model(*theta)
+            return np.linalg.norm(M - target_gate_matrix, 'fro')**2
+
+        gate_model_sig = inspect.signature(gate_model)
+        N_parameters = len(gate_model_sig.parameters)
+        p0 = np.zeros(N_parameters,dtype=complex) 
+
+        # TODO: Check that this choice of p0 does not result in singular / ill-posedness  
+        result = minimize(cost, p0, method='Nelder-Mead')
+        return result.x
 
 
     def write_results_to_file(self):
