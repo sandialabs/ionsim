@@ -3,7 +3,7 @@ from functools import wraps
 import scipy
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Self
 from abc import ABC
 
 from icecream import ic
@@ -304,7 +304,7 @@ class Gate(Process):
         return dict(zip(pauli_group_basis.vector_labels, error_rates)) 
  
     # Putting this method here (in process.py) instead of basis.py avoids circular import issue  
-    def convert_to_pauli_basis(self) -> Gate:
+    def convert_to_pauli_basis(self) -> Self:
         """ Converts a Gate object to the Pauli Product basis """ 
         if isinstance(self.basis, PauliProductBasis):
             return self
