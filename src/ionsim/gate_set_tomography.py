@@ -26,7 +26,7 @@ def depth_bin(depth):
 
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
-    def __init__(self, basis: StandardBasis, prep_state_model: dict[Callable], POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], 
+    def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], 
                      gate_mappings: dict[str, Callable], parameter_bounds: list[tuple] | None=None): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
     
@@ -453,7 +453,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - Default behavior is a maximum likelihood approach that finds parameters 
                 that maximize the likelihood of the gate given the data, i.e. solving: 
 
-                max[ Likelihood( {G} | data) ] over parameter set Theta.
+                max[ Likelihood( {G} | data) ] over parameter set theta.
 
             - Returns either a dictionary of parameters (name, value) or a 1D array of values.
 
@@ -547,12 +547,24 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Get the first "k" singular values           
         k = self.d2
         sqrt_S = np.diag(np.sqrt(S[:k]))
-        measurement_effects = sqrt_S @ U[:, :k].T
 
-        prep_state = V[:k, :] @ sqrt_S
+        # Find which fiducial index is the empty circuit, corresponding to native prep and measure 
+        empty_fid = tuple()
+        prep_idx = self.prep_fiducials.index(empty_fid)
+        measure_idx = self.measure_fiducials.index(empty_fid)
+
+        # Extract native prep rho_0:
+        prep_states = V[:k, :] @ sqrt_S # d^2 x d^2 
+        estimated_rho = rho_matrix[:, prep_idx]
+
+        # Extract effects:
+        measurement_effects = sqrt_S @ U[:, :k].T
+        estimated_effect = measurement_effects[measure_idx, :]  # 1 x d^2
+
 
         self.lgst_results = {'gate_estimates' : gate_estimates, 'gram_matrix' : gram_matrix, 
-                        'prep_state' : prep_state, 'measurement_effects' : measurement_effects}
+                        'native_prep_state' : estimated_rho, 'estimated_effects' : estimated_effect, 
+                        'prep_states' : prep_states, 'measurement_effects' : measurement_effects}
         return self.lgst_results 
 
 
@@ -735,7 +747,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return gate_infidelity + measurement_error + prep_error 
 
 
-    ### Functions for parameter uncertainty estimation ### 
     def estimate_parameter_uncertainties(self, theta: Vector | None=None, method: str='bootstrap') -> Vector:
         """ Computes uncertainties of each parameter from the Hessian of the log-likelihood at the MLE solution."""
         if self.solver_result is None and theta is None:
@@ -746,6 +757,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         else:
             self.gst_parameters = theta
 
+        uncertainties = np.zeros_like(theta)
         if method == 'hessian':
             # L-BFGS-B stores an approximation to the inverse Hessian -- we use this for convariance estimation 
             covariance = np.array(self.solver_result.hess_inv.todense())
@@ -753,9 +765,39 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
     
             # Uncertainties are taken as diagonals of covariance matrix 
             uncertainties = np.sqrt(np.abs(np.diag(covariance)))
-            return uncertainties, covariance 
-        else: # bootstrapping
-            return self.bootstrap_uncertainties()
+            #return uncertainties, covariance 
+        else: 
+            uncertainties, bootstrapped_thetas = self.bootstrap_uncertainties()
+
+        # Return a dictionary containing a dictionary for each model (prep, gate 1, gate 2, etc. , measure) 
+        uncertainty_results = {}
+        # For gates: 
+        for gate in self.gate_set:
+            gate_model = self.gate_models[gate.name]
+            gate_model_sig = inspect.signature(gate_model)
+            parameter_names = list(gate_model_sig.parameters.keys())  
+            parameter_uncertainties = uncertainties[self.gst_parameter_indices[gate.name]]
+            # Package up parameter names and uncertainty values: 
+            uncertainty_results[gate.name] = dict(zip(parameter_names, parameter_uncertainties)) 
+
+        # For SPAM: 
+        prep_model = self.prep_state_model
+        prep_model_sig = inspect.signature(prep_model)
+        parameter_names = list(prep_model_sig.parameters.keys())
+        prep_param_values = uncertainties[self.gst_parameter_indices['prep']]
+        uncertainty_results['Prep'] = dict(zip(parameter_names, prep_param_values)) 
+
+        # Currently only the independent measurement parameters are returned; TODO: generalize as much as possible  
+        #model_sig = inspect.signature(model)
+        #parameter_names = ['Measurement'] 
+        meas_param_values = uncertainties[self.gst_parameter_indices['measurement']]
+        #uncertainty_results['Measurement'] = dict(zip(['measure'], meas_param_values)) 
+        uncertainty_results['Measurement'] = meas_param_values 
+
+        return uncertainty_results              
+
+
+
 
     def bootstrap_uncertainties(self, N_bootstrap: int=50):
         """ Bootstrapping for parameter uncertainties: Sample data from the fitted model and re-fit, computing 
