@@ -400,6 +400,23 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             raise ValueError(f"No log likelihood data is stored.")
 
 
+    def get_parameter_value_by_name(self, gate_name: str, parameter_name: str) -> float:
+        """ Return the parameter value for a requested parameter in a gate model"""
+
+        gate_model = self.gate_models[gate_name]
+        gate_model_sig = inspect.signature(gate_model)
+        parameter_names = list(gate_model_sig.parameters.keys())  
+        indx = parameter_names.index(parameter_name)
+        parameter_values = self.gst_parameters[self.gst_parameter_indices[gate_name]] # names and values share same sorted order  
+        return parameter_values[indx]
+        
+    def get_parameter_values_by_name(self, gate_name: str, parameter_names: list[str]) -> dict:
+        """ Return the parameter value for a requested parameter in a gate model"""
+        requested_params = {}
+        for name in parameter_names:
+            requested_params[name] = self.get_parameter_value_by_name(gate_name, name) 
+        return requested_params 
+
     def print_parameters(self):
         # Prep, measure, then gate parameters: 
         print("\n --- Printing parameter values --- ")
