@@ -118,7 +118,6 @@ class ParsedCircuit:
         return len(self.expanded_gates)
 
 
-
     def __repr__(self):
         gates_readable = " ".join(repr(gate) for gate in self.expanded_gates) or "(empty)"
         return f"ParsedCircuit({gates_readable}, data={self.measurement_data})"

@@ -3,6 +3,7 @@ from pathlib import Path
 import re
 from ionsim.gst_circuit_parser import ParsedCircuit, ParsedGate
 from itertools import product
+import json 
 
 class GSTCircuitPlanner:
     def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials = None, measure_fiducials = None, germs = None, germ_powers=[1,2,4,8,16]):
@@ -167,3 +168,60 @@ class GSTCircuitPlanner:
             # Write the header 
             columns = ", ".join(f"{outcome} count" for outcome in outcome_labels)
             f.write(f"## Columns = {columns}\n")
+
+    def write_circuit_design(eslf, filepath: Path | str = './'):
+        """ Writes a design json file with circuit design information """
+        filename = 'GST_circuit_design.json'  
+
+        def gate_list_to_json(gate_list):
+            """ Convert list of Gate objects to a JSON-format """ 
+            return [{'name'} : g.name, 'qubits' : list(g.qubits)} for g in gate_list]
+
+
+        def fiducials_to_json(fiducials):            
+            """ Convert list of fiducial sequences (list of ParsedGates) to json."""
+            return [gate_list_to_json(fid) for fid in fiducials]
+
+
+        design = {
+            'gate_names' : self.gate_names,
+            'qubit_labels' : self.qubit_labels,
+            'prep_fiducials' : fiducials_to_json(self.prep_fiducials), 
+            'measure_fiducials' : fiducials_to_json(self.measure_fiducials),
+            'germs': fiducials_to_json(self.germs),
+            'germ_powers' : self.germ_powers 
+        }
+
+        with open(filename, 'w') as f:
+            json.dump(design, f, indent=2)
+    
+
+
+    @classmethod
+    def load_design(cls, filepath):
+        """ Load an experimental design from a JSON file, returns the planner class instance """ 
+
+        def json_to_gate_list(json_list):
+            """ Converts json list of gates to a list of ParsedGates """ 
+            return [ParsedGate(name=g['name'], qubits = tuple(q['qubits']))
+                for g in json_list]
+        
+
+        def json_to_fiducials(json_fiducials):
+            """ Converts json list of fiducials to list of ParsedGates """ 
+            return [json_to_gate_list(fid) for fid in json_fiducials]
+            
+
+        with open(filepath. 'r') as f:
+            design = json.load(f)
+
+        planner = cls(gate_names = design['gate_names'], qubit_labels = design['qubit_labels'],
+                    prep_fiducials = json_to_fiducials(design['prep_fiducials']), 
+                    measure_fiducials = json_to_fiducials(design['measure_fiducials']), 
+                    germs = json_to_fiducials(design['germs']), germ_powers = design['germ_powers'] )
+
+        return planner 
+
+
+
+

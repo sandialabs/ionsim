@@ -92,12 +92,18 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         #TODO: Algorithm for optimizing stepwise by circuit depth.  
         # initialize GST results to None 
+        self.prep_fiducials = None  
+        self.measure_fiducials = None 
         self.lgst_results = None   
         self.solver_result = None 
 
         # Organize a lookup table for fiducial prep/measure circuits; needed for linear GST 
         self._index_fiducials()
-
+        #print(f"\n\n Circuit lookup:")
+        #print(self.circuit_lookup)
+        # Test: 
+        #print(f"\n\n Test :")
+        #print(self.circuit_lookup[((), (), 1, ())])
 
 
     def _initialize_gate_model_factory(self, gate_mappings: dict) -> Callable:
@@ -161,7 +167,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
 
     def _index_fiducials(self):
-        """ Identify unique prep/measure fiducials and build lookup to get observed probabilities"""
+        """ Identify unique prep/measure fiducials and build lookup to get observed probabilities. """
 
         prep_fiducials = set()
         measure_fiducials = set()
@@ -176,16 +182,28 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self.prep_fiducials = sorted(prep_fiducials, key=str)
         self.measure_fiducials = sorted(measure_fiducials, key=str)
 
-        self.circuit_lookup = {}
+        combined_counts = {}
+        # Create keys by full circuit representation and average over duplicates (TODO: Update/change for non-Markovian GST)
         for circ in self.parsed_circuits:
-            key = (tuple(circ.fiducial_prep_gates), 
-                    tuple(circ.germ_gates), circ.germ_power,
-                    tuple(circ.fiducial_measurement_gates))
-
+            #key = (tuple(circ.fiducial_prep_gates), tuple(circ.germ_gates), circ.germ_power, tuple(circ.fiducial_measurement_gates))
+            if circ.germ_power != 1:
+                continue  
+            key = tuple(circ.expanded_gates)
             counts = circ.measurement_data.to_counts()
 
-            total_counts = circ.measurement_data.total_counts
+            if key in combined_counts:
+                for label, n in counts.items():
+                    combined_counts[key][label] = combined_counts[key].get(label, 0) + n
+            else:
+                combined_counts[key] = counts 
+                #combined_counts[key] = dict(counts)
+
+        # Set up circuit -> probability dictionary 
+        self.circuit_lookup = {}
+        for key, counts in combined_counts.items(): 
+            total_counts = sum(counts.values())
             self.circuit_lookup[key] = {outcome: count / total_counts for outcome, count in counts.items()}
+            #total_counts = circ.measurement_data.total_counts
 
     def get_prep_state(self, theta) -> Vector:
         """ Returns prep state supervector (d^2 x 1) given the parameter values theta.
@@ -491,7 +509,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             raise IonSimError('Invalid solver input.')
 
 
-    def _build_probability_matrix(self, target_gate: ParsedGate | None, outcome: str='0'):
+    def _build_probability_matrix(self, target_gate: ParsedGate | None=None, outcome: str='0'):
         """ Builds the d^2 x d^2 matrix of observed probabilities 
             for a gate or empty gate (corresponding to the Gram Matrix).
 
@@ -503,30 +521,36 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Construct matrix using lookup table of circuit outcomes for LGST 
         M = np.zeros((N_measure_circuits, N_prep_circuits))
 
-        if target_gate is None:
-            gate = tuple()
-        else:
-            gate = tuple(target_gate)
+        target_list = [target_gate] if target_gate else []
+ #        if target_gate is None:
+ #            gate = tuple()
+ #        else:
+ #            gate = tuple(target_gate)
 
-        for j, prep_fid in enumerate(self.prep_fidicuals):
+        for j, prep_fid in enumerate(self.prep_fiducials):
             for i, measure_fid in enumerate(self.measure_fiducials):
-                key = (prep_fid, gate, 1, measure_fiducials)
+                #key = (prep_fid, gate, 1, measure_fid)
+                key = tuple(list(prep_fid) + target_list + list(measure_fid)) 
                 if key in self.circuit_lookup:
                     M[i,j] = self.circuit_lookup[key].get(outcome, 0.)
                 else:
-                    raise ValueError(f"Missing LGST circuit: prep = {prep_fid}, ",
-                        f"gate = {gate}, measure = {measure_fid}")
+                    print(f"Attempted key: {key}")
+                    raise ValueError(f"Missing LGST circuit: prep = {prep_fid}" + 
+                        f", gate = {target_list}, measure = {measure_fid}")
         return M
         
         
     def run_linear_gst(self):
         """ Function to estimate gate set parameters using linear matrix inversion """
         # 1. Build the Gram matrix: <<F_i|F_j>>
+        print(f"\n Attempting to build the gram matrix")
         gram_matrix = self._build_probability_matrix(target_gate = None)
+        print(f"\n Successfully built the gram matrix")
 
         # TODO: Check that gram matrix A_{m,s} = <M | C_{m} C_{s} | rho> is invertible.            
         # Invert via pseudoinverse for numerical stability 
         gram_inv = np.linalg(pinv(gram_matrix))
+        print(f"\n Successfully inverted the gram matrix")
         
         # 2. Identify the unique gates from the gate set that are germs  
  #        linear_gst_gates = set()
@@ -537,7 +561,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # 3. Estimate each gate using the pseudo-inverse
         gate_estimates = {}
         #for gate in linear_gst_gates:
+        print(f"\n Building probability matrix for each gate ")
         for gate in self.gate_set:
+            print(f"\n Building probability matrix for gate: {gate.name} ")
             M_gate = self._build_probability_matrix(target_gate = gate)
             gate_estimates[gate.name] = gram_inv @ M_gate
 
@@ -795,9 +821,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         uncertainty_results['Measurement'] = meas_param_values 
 
         return uncertainty_results              
-
-
-
 
     def bootstrap_uncertainties(self, N_bootstrap: int=50):
         """ Bootstrapping for parameter uncertainties: Sample data from the fitted model and re-fit, computing 
