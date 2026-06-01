@@ -16,6 +16,7 @@ from ionsim.gst_circuit_parser  import *
 from ionsim.custom_math import matrix_AYB_multiply_to_superoperator 
 from ionsim.ionsim_error import IonSimError
 from ionsim.custom_types import Vector, Matrix
+from ionsim.gst_circuit_planner import GSTCircuitPlanner
 from ionsim.io import *
 
 def depth_bin(depth):
@@ -24,10 +25,9 @@ def depth_bin(depth):
         return 1
     return 2**(math.floor(math.log2(depth)))
 
-
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], 
-                     gate_mappings: dict[str, Callable], parameter_bounds: list[tuple] | None=None): 
+                     gate_mappings: dict[str, Callable], parameter_bounds: list[tuple] | None=None, circuit_design: GSTCircuitPlanner | None=None): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
     
             Member variables include:
@@ -38,6 +38,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 #- gate model factory is a function that takes a gate name and qubit tuple and returns an IonSim Gate object, which holds a process matrix (gate) function. 
                 - gate_mappings represents a dictionary that maps GST gate names to IonSim model names, specified by the user.  
                 - gst_parameters: a 1D numpy array of gate parameters.  
+            
+            Optional arguments:
+                - circuit design as a circuit planner object. This is not required for doing MLE but is required for linear GST. 
+                - parameter bounds on the model parameters, used in MLE.
     
         """ 
 
@@ -92,8 +96,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         #TODO: Algorithm for optimizing stepwise by circuit depth.  
         # initialize GST results to None 
-        self.prep_fiducials = None  
-        self.measure_fiducials = None 
+        if circuit_design :
+            # Use a list of tuples instead of list of gates for compatibility with dictionaries 
+            self.prep_fiducials = [tuple(prep_fid) for prep_fid in circuit_design.prep_fiducials]
+            self.measure_fiducials = [tuple(meas_fid) for meas_fid in circuit_design.measure_fiducials]
+        else:
+            self.prep_fiducials = None  
+            self.measure_fiducials = None 
+
         self.lgst_results = None   
         self.solver_result = None 
 
@@ -169,25 +179,25 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
     def _index_fiducials(self):
         """ Identify unique prep/measure fiducials and build lookup to get observed probabilities. """
 
-        prep_fiducials = set()
-        measure_fiducials = set()
-
-        # Fiducial prep/measure circuits are stored as lists of gates. Lists are not hashable and 
-        #  must be converted to tuples to enable lookup. A "ParsedGate" object is immutable, so tuples of it are hashable.  
-        for circ in self.parsed_circuits:
-            prep_fiducials.add(tuple(circ.fiducial_prep_gates))
-            measure_fiducials.add(tuple(circ.fiducial_measurement_gates))
-
-        # Sort by string representation (uses __repr__ in ParsedGate) 
-        self.prep_fiducials = sorted(prep_fiducials, key=str)
-        self.measure_fiducials = sorted(measure_fiducials, key=str)
+ #        prep_fiducials = set()
+ #        measure_fiducials = set()
+ #
+ #        # Fiducial prep/measure circuits are stored as lists of gates. Lists are not hashable and 
+ #        #  must be converted to tuples to enable lookup. A "ParsedGate" object is immutable, so tuples of it are hashable.  
+ #        for circ in self.parsed_circuits:
+ #            prep_fiducials.add(tuple(circ.fiducial_prep_gates))
+ #            measure_fiducials.add(tuple(circ.fiducial_measurement_gates))
+ #
+ #        # Sort by string representation (uses __repr__ in ParsedGate) 
+ #        self.prep_fiducials = sorted(prep_fiducials, key=str)
+ #        self.measure_fiducials = sorted(measure_fiducials, key=str)
 
         combined_counts = {}
         # Create keys by full circuit representation and average over duplicates (TODO: Update/change for non-Markovian GST)
         for circ in self.parsed_circuits:
             #key = (tuple(circ.fiducial_prep_gates), tuple(circ.germ_gates), circ.germ_power, tuple(circ.fiducial_measurement_gates))
-            if circ.germ_power != 1:
-                continue  
+            #if circ.germ_power != 1:
+            #    continue  
             key = tuple(circ.expanded_gates)
             counts = circ.measurement_data.to_counts()
 

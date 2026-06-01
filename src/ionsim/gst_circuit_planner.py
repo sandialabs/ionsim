@@ -140,7 +140,8 @@ class GSTCircuitPlanner:
         if 'idle' in gate_names:
             germs = [ [X_pi2], [Y_pi2], [idle], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2] ]
         else:
-            germs = [ [X_pi2], [Y_pi2], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2], [X_pi2, X_pi2, X_pi2], [Y_pi2, Y_pi2, Y_pi2] ]
+            germs = [ [X_pi2], [Y_pi2], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2]]
+            #germs = [ [X_pi2], [Y_pi2], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2], [X_pi2, X_pi2, X_pi2], [Y_pi2, Y_pi2, Y_pi2] ]
 
         return germs 
 
@@ -170,7 +171,7 @@ class GSTCircuitPlanner:
             columns = ", ".join(f"{outcome} count" for outcome in outcome_labels)
             f.write(f"## Columns = {columns}\n")
 
-    def write_circuit_design(eslf, filepath):
+    def write_circuit_design(self, filepath):
         """ Writes a design yaml file with circuit design information """
         #filename = 'GST_circuit_design.yaml'  
 
@@ -195,10 +196,8 @@ class GSTCircuitPlanner:
 
         with open(filepath, 'w') as f:
             yaml.dump(design, f, default_flow_style=False, sort_keys=False) 
-            #yaml.dump(design, f, indent=2)
+
     
-
-
     @classmethod
     def load_design(cls, filepath):
         """ Load an experimental design from a YAML file, returns the planner class instance """ 
