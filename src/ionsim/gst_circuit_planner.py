@@ -1,9 +1,10 @@
 import numpy as np
-from pathlib import Path 
 import re
-from ionsim.gst_circuit_parser import ParsedCircuit, ParsedGate
+import yaml 
+from pathlib import Path 
 from itertools import product
-import json 
+
+from ionsim.gst_circuit_parser import ParsedCircuit, ParsedGate
 
 class GSTCircuitPlanner:
     def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials = None, measure_fiducials = None, germs = None, germ_powers=[1,2,4,8,16]):
@@ -169,59 +170,58 @@ class GSTCircuitPlanner:
             columns = ", ".join(f"{outcome} count" for outcome in outcome_labels)
             f.write(f"## Columns = {columns}\n")
 
-    def write_circuit_design(eslf, filepath: Path | str = './'):
-        """ Writes a design json file with circuit design information """
-        filename = 'GST_circuit_design.json'  
+    def write_circuit_design(eslf, filepath):
+        """ Writes a design yaml file with circuit design information """
+        #filename = 'GST_circuit_design.yaml'  
 
-        def gate_list_to_json(gate_list):
+        def gate_list_to_dict(gate_list):
             """ Convert list of Gate objects to a JSON-format """ 
             return [{'name'} : g.name, 'qubits' : list(g.qubits)} for g in gate_list]
 
 
-        def fiducials_to_json(fiducials):            
-            """ Convert list of fiducial sequences (list of ParsedGates) to json."""
-            return [gate_list_to_json(fid) for fid in fiducials]
+        def fiducials_to_dict(fiducials):            
+            """ Convert list of fiducial sequences (list of ParsedGates) to dictionary."""
+            return [gate_list_to_dict(fid) for fid in fiducials]
 
 
         design = {
             'gate_names' : self.gate_names,
             'qubit_labels' : self.qubit_labels,
-            'prep_fiducials' : fiducials_to_json(self.prep_fiducials), 
-            'measure_fiducials' : fiducials_to_json(self.measure_fiducials),
-            'germs': fiducials_to_json(self.germs),
+            'prep_fiducials' : fiducials_to_dict(self.prep_fiducials), 
+            'measure_fiducials' : fiducials_to_dict(self.measure_fiducials),
+            'germs': fiducials_to_dict(self.germs),
             'germ_powers' : self.germ_powers 
         }
 
-        with open(filename, 'w') as f:
-            json.dump(design, f, indent=2)
+        with open(filepath, 'w') as f:
+            yaml.dump(design, f, default_flow_style=False, sort_keys=False) 
+            #yaml.dump(design, f, indent=2)
     
 
 
     @classmethod
     def load_design(cls, filepath):
-        """ Load an experimental design from a JSON file, returns the planner class instance """ 
+        """ Load an experimental design from a YAML file, returns the planner class instance """ 
 
-        def json_to_gate_list(json_list):
-            """ Converts json list of gates to a list of ParsedGates """ 
+        def dict_to_gate_list(dict_list):
+            """ Converts dictionary list of gates to a list of ParsedGates """ 
             return [ParsedGate(name=g['name'], qubits = tuple(q['qubits']))
-                for g in json_list]
+                for g in dict_list]
         
 
-        def json_to_fiducials(json_fiducials):
-            """ Converts json list of fiducials to list of ParsedGates """ 
-            return [json_to_gate_list(fid) for fid in json_fiducials]
+        def dict_to_fiducials(fid_list):
+            """ Converts dictionary list of fiducials to list of ParsedGates """ 
+            return [dict_to_gate_list(fid) for fid in fid_list]
             
 
         with open(filepath. 'r') as f:
-            design = json.load(f)
+            design = yaml.safe_load(f)
 
         planner = cls(gate_names = design['gate_names'], qubit_labels = design['qubit_labels'],
-                    prep_fiducials = json_to_fiducials(design['prep_fiducials']), 
-                    measure_fiducials = json_to_fiducials(design['measure_fiducials']), 
-                    germs = json_to_fiducials(design['germs']), germ_powers = design['germ_powers'] )
+                    prep_fiducials = dict_to_fiducials(design['prep_fiducials']), 
+                    measure_fiducials = dict_to_fiducials(design['measure_fiducials']), 
+                    germs = dict_to_fiducials(design['germs']), germ_powers = design['germ_powers'] )
 
         return planner 
-
-
 
 
