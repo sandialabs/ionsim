@@ -204,7 +204,7 @@ class GSTCircuitPlanner:
 
         def dict_to_gate_list(dict_list):
             """ Converts dictionary list of gates to a list of ParsedGates """ 
-            return [ParsedGate(name=g['name'], qubits = tuple(q['qubits']))
+            return [ParsedGate(name=g['name'], qubits = tuple(g['qubits']))
                 for g in dict_list]
         
 
