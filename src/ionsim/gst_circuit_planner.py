@@ -214,7 +214,7 @@ class GSTCircuitPlanner:
             return [dict_to_gate_list(fid) for fid in fid_list]
             
 
-        with open(filepath. 'r') as f:
+        with open(filepath, 'r') as f:
             design = yaml.safe_load(f)
 
         planner = cls(gate_names = design['gate_names'], qubit_labels = design['qubit_labels'],
