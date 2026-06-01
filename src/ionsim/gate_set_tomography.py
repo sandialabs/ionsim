@@ -553,36 +553,24 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
     def run_linear_gst(self):
         """ Function to estimate gate set parameters using linear matrix inversion """
         # 1. Build the Gram matrix: <<F_i|F_j>>
-        print(f"\n Attempting to build the gram matrix")
+        print(f"\n --- Running linear GST ---")
         gram_matrix = self._build_probability_matrix(target_gate = None)
-        print(f"\n Successfully built the gram matrix")
 
         # TODO: Check that gram matrix A_{m,s} = <M | C_{m} C_{s} | rho> is invertible.            
         # Invert via pseudoinverse for numerical stability 
-        gram_inv = np.linalg(pinv(gram_matrix))
-        print(f"\n Successfully inverted the gram matrix")
+        print(f"Determinant of gram matrix: {np.linalg.det(gram_matrix)}")
+        gram_inv = np.linalg.pinv(gram_matrix)
         
-        # 2. Identify the unique gates from the gate set that are germs  
- #        linear_gst_gates = set()
- #        for circ in self.parsed_circuits:
- #            if circ.germ_power == 1 and len(circ.germ_gates) == 1:
- #                linear_gst_gates.add(circ.germ_gates[0])
+        # #####2. Estimate each gate using the pseudo-inverse
+        # 3. Extract SPAM parameter estimates from Gram SVD 
+        U, S, V = np.linalg.svd(gram_matrix)
 
-        # 3. Estimate each gate using the pseudo-inverse
-        gate_estimates = {}
-        #for gate in linear_gst_gates:
-        print(f"\n Building probability matrix for each gate ")
-        for gate in self.gate_set:
-            print(f"\n Building probability matrix for gate: {gate.name} ")
-            M_gate = self._build_probability_matrix(target_gate = gate)
-            gate_estimates[gate.name] = gram_inv @ M_gate
-
-        # 4. Extract SPAM parameter estimates from Gram SVD 
-        U, S, V = np.linalg(svd(gram_matrix))
-
+        print(f"S shape: {S.shape}")
+        print(f"gram matrix shape: {gram_matrix.shape}")
         # Get the first "k" singular values           
         k = self.d2
         sqrt_S = np.diag(np.sqrt(S[:k]))
+        sqrt_S_inv = np.diag(1./np.sqrt(S[:k]))
 
         # Find which fiducial index is the empty circuit, corresponding to native prep and measure 
         empty_fid = tuple()
@@ -590,12 +578,23 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         measure_idx = self.measure_fiducials.index(empty_fid)
 
         # Extract native prep rho_0:
-        prep_states = V[:k, :] @ sqrt_S # d^2 x d^2 
-        estimated_rho = rho_matrix[:, prep_idx]
+        print(f"root(S) shape: {sqrt_S.shape}")
+        print(f"V shape: {V.shape}")
+        prep_states = sqrt_S @ V[:k, :]  # d^2 x d^2 
+        estimated_rho = prep_states[:, prep_idx]
+        rho_pinv = V[:k,:].T @ sqrt_S_inv
 
         # Extract effects:
-        measurement_effects = sqrt_S @ U[:, :k].T
+        measurement_effects = U[:, :k] @ sqrt_S
+        measurement_effects_inv = sqrt_S_inv @ U[:, :k].T
         estimated_effect = measurement_effects[measure_idx, :]  # 1 x d^2
+
+        gate_estimates = {}
+        for gate in self.gate_set:
+            M_gate = self._build_probability_matrix(target_gate = gate)
+            gate_estimates[gate.name] = measurement_effects_inv @ M_gate @ rho_pinv
+            #gate_estimates[gate.name] = gram_inv @ M_gate
+            print(f"Gate shape: {gate_estimates[gate.name].shape}")
 
 
         self.lgst_results = {'gate_estimates' : gate_estimates, 'gram_matrix' : gram_matrix, 
@@ -648,7 +647,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         p0 = np.zeros(N_parameters,dtype=complex) 
 
         # TODO: Check that this choice of p0 does not result in singular / ill-posedness  
-        result = minimize(cost, p0, method='Nelder-Mead')
+        result = opt.minimize(cost, p0, method='Nelder-Mead')
         return result.x
 
 
