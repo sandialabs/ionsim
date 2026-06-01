@@ -175,8 +175,8 @@ class GSTCircuitPlanner:
         #filename = 'GST_circuit_design.yaml'  
 
         def gate_list_to_dict(gate_list):
-            """ Convert list of Gate objects to a JSON-format """ 
-            return [{'name'} : g.name, 'qubits' : list(g.qubits)} for g in gate_list]
+            """ Convert list of Gate objects to a dictionary format """ 
+            return [{'name' : g.name, 'qubits' : list(g.qubits)} for g in gate_list]
 
 
         def fiducials_to_dict(fiducials):            
