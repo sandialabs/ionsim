@@ -17,6 +17,7 @@ from ionsim.custom_math import matrix_AYB_multiply_to_superoperator
 from ionsim.ionsim_error import IonSimError
 from ionsim.custom_types import Vector, Matrix
 from ionsim.gst_circuit_planner import GSTCircuitPlanner
+from ionsim.state import State
 from ionsim.io import *
 
 def depth_bin(depth):
@@ -490,7 +491,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for label, effect in M_effects.items():
             print(f"\nMeasurement effect {label} vectors: {effect}")
 
-    def solve_for_gate_parameters(self, parameters_guess: Vector | None=None, solver: str = 'MLE'): 
+    def solve_for_gate_parameters(self, parameters_guess: Vector | None=None, solver: str = 'MLE', 
+                                    ideal_gate_set: dict | None=None, target_rho: State | None=None):
         """ Function to solve for the parametrization values of a particular gate. 
 
             - Default behavior is a maximum likelihood approach that finds parameters 
@@ -522,7 +524,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             
         elif solver == 'linear':
             #raise IonSimError('Linear GST is not yet programmed into IonSim.')
-            self.run_linear_gst()
+            self.run_linear_gst(ideal_gate_set, target_rho)
             self.parameters_from_lgst_results()
             return self.gst_parameters 
         elif solver == 'staged MLE':
@@ -565,8 +567,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return M
         
         
-    def run_linear_gst(self):
+    def run_linear_gst(self, ideal_gate_set: dict | None=None, target_rho: State | None=None):
         """ Function to estimate gate set parameters using linear matrix inversion """
+        # TODO: add Neilsen "Gate Set Tomography" citation  
         # 1. Build the Gram matrix: <<F_i|F_j>>
         print(f"\n --- Running linear GST ---")
         gram_matrix = self._build_probability_matrix(target_gate = None)
@@ -574,28 +577,71 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # TODO: Check that gram matrix A_{m,s} = <M | C_{m} C_{s} | rho> is invertible.            
         # Invert via pseudoinverse for numerical stability 
         print(f"Determinant of gram matrix: {np.linalg.det(gram_matrix)}")
-        gram_inv = np.linalg.pinv(gram_matrix)
+        #gram_inv = np.linalg.pinv(gram_matrix)
         
         # #####2. Estimate each gate using the pseudo-inverse
         # 3. Extract SPAM parameter estimates from Gram SVD 
         U, S, Vh = np.linalg.svd(gram_matrix)
 
-        print(f"S shape: {S.shape}")
-        print(f"gram matrix shape: {gram_matrix.shape}")
+        # Projector onto k = d^2 top right singular vectors  
+        k = self.d2
+        Pi = Vh[:k, :]
+
+        # Gram = AB (fiducial measure @ fiducial prep); decompose B = B_0 Pi, B_0 ideal gauge  
+        if ideal_gate_set is not None and target_rho is not None:
+            N_prep = len(self.prep_fiducials)
+            B_ideal = np.zeros((k, N_prep), dtype=complex)
+            
+            for j, prep_fid in enumerate(self.prep_fiducials):
+                state = target_rho.supervector.copy()
+                for gate in prep_fid:
+                    state = ideal_gate_set[gate.name] @ state
+                B_ideal[:, j] = state
+
+            # Project onto Pi subspace, Pi Pi^T is identity since rows of Pi are orthonormal 
+            B0 = B_ideal @ Pi.conj().T
+ #            if target_effect is not None:
+ #                N_meas = len(self.measure_fiducials)
+ #                A_ideal = n
+        else:
+            B0 = np.eye(k, dtype=complex)
+
+        # Compute gate process matrix estimates via the following formula (Nielsen, 2021):
+        # G_k = B0 (Pi Gram^T Gram Pi^T)^{-1} (Pi Gram^T P_k Pi^T) B0^{-1}
+        # Key: "G" = gram matrix, "T" = transpose, "P" = Pi matrix
+        PGT = Pi @ gram_matrix.T
+        inv_PGTGPT = np.linalg.inv(PGT @ gram_matrix @ Pi.T)
+        B0_inv = np.linalg.inv(B0)
+        matrix_prefactor = B0 @ inv_PGTGPT @ PGT 
+        matrix_postfactor = Pi.T @ B0_inv
+
+        gate_estimates = {}
+        for gate in self.gate_set:
+            # Compute gate process matrix by inversion: probabilities P = A G_gate B 
+            P_gate = self._build_probability_matrix(target_gate = gate)
+            gate_estimates[gate.name] = matrix_prefactor @ P_gate @ matrix_postfactor 
+            #gate_estimates[gate.name] = A_inv @ P_gate @ B_inv 
+            #gate_estimates[gate.name] = measurement_effects_inv @ P_gate @ rho_pinv
+            #gate_estimates[gate.name] = gram_inv @ P_gate
+            print(f"Gate shape: {gate_estimates[gate.name].shape}")
+
+        #print(f"S shape: {S.shape}")
+        #print(f"gram matrix shape: {gram_matrix.shape}")
 
         # Decomposition of Gram matrix = AB, where A is measurement matrix and B is prep matrix 
         # See Section 3. of "Gate Set Tomography" published in Quantum 
         # Gram matrix = U S V^T = U sqrt(S) sqrt(S) V^T = AB 
-        sqrt_S = np.diag(np.sqrt(S))
-        sqrt_S_inv = np.diag(1./np.sqrt(S))
+        #print(f" S matrix diagonals: {S}")
+        #sqrt_S = np.diag(np.sqrt(S))
+        #sqrt_S_inv = np.diag(1./np.sqrt(S))
 
         # Identify A = U sqrt(S)
-        A = U @ sqrt_S
+        #A = U @ sqrt_S
         # Identify B = sqrt(S) V^{T}
-        B = sqrt_S @ Vh
+        #B = sqrt_S @ Vh
 
-        A_inv = np.linalg.pinv(A) # left pseudo-inverse 
-        B_inv = np.linalg.pinv(B) # right pseudo-inverse 
+        #A_inv = np.linalg.pinv(A) # left pseudo-inverse 
+        #B_inv = np.linalg.pinv(B) # right pseudo-inverse 
 
         # Get the first "k" singular values           
         #k = self.d2
@@ -608,25 +654,29 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         measure_idx = self.measure_fiducials.index(empty_fid)
 
         # Extract native prep rho_0:
-        print(f"root(S) shape: {sqrt_S.shape}")
-        print(f"V shape: {Vh.shape}")
-        prep_states = sqrt_S @ Vh[:k, :]  # d^2 x d^2 
+        #print(f"root(S) shape: {sqrt_S.shape}")
+        #print(f"V shape: {Vh.shape}")
+        # Prep state matrix B = B0 Pi 
+        prep_states = B0 @ Pi 
+        #prep_states = sqrt_S @ Vh[:k, :]  # d^2 x d^2 
         estimated_rho = prep_states[:, prep_idx]
-        rho_pinv = Vh[:k,:].T @ sqrt_S_inv
+        #rho_pinv = Vh[:k,:].T @ sqrt_S_inv
 
         # Extract effects:
-        measurement_effects = U[:, :k] @ sqrt_S
-        measurement_effects_inv = sqrt_S_inv @ U[:, :k].T
+        # Measurement effect matrix A = Gram B+ (right pseudoinverse of B)
+        measurement_effects = gram_matrix @ np.linalg.pinv(prep_states)
+        #measurement_effects = U[:, :k] @ sqrt_S
+        #measurement_effects_inv = sqrt_S_inv @ U[:, :k].T
         estimated_effect = measurement_effects[measure_idx, :]  # 1 x d^2
 
-        gate_estimates = {}
-        for gate in self.gate_set:
-            # Compute gate process matrix by inversion: probabilities P = A G_gate B 
-            P_gate = self._build_probability_matrix(target_gate = gate)
-            gate_estimates[gate.name] = A_inv @ P_gate @ B_inv 
-            #gate_estimates[gate.name] = measurement_effects_inv @ P_gate @ rho_pinv
-            #gate_estimates[gate.name] = gram_inv @ P_gate
-            print(f"Gate shape: {gate_estimates[gate.name].shape}")
+ #        gate_estimates = {}
+ #        for gate in self.gate_set:
+ #            # Compute gate process matrix by inversion: probabilities P = A G_gate B 
+ #            P_gate = self._build_probability_matrix(target_gate = gate)
+ #            gate_estimates[gate.name] = A_inv @ P_gate @ B_inv 
+ #            #gate_estimates[gate.name] = measurement_effects_inv @ P_gate @ rho_pinv
+ #            #gate_estimates[gate.name] = gram_inv @ P_gate
+ #            print(f"Gate shape: {gate_estimates[gate.name].shape}")
 
         self.lgst_results = {'gate_estimates' : gate_estimates, 'gram_matrix' : gram_matrix, 
                         'native_prep_state' : estimated_rho, 'estimated_effects' : estimated_effect, 

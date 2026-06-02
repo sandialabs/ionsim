@@ -31,10 +31,11 @@ class GSTCircuitPlanner:
         if germs is None and len(qubit_labels) == 1:
             germs = self.standard_1Q_germs(gate_names)
 
+        # Ensure consistency in inputs: 
         # Convert all string-based fiducials/germs to ParsedGate objects
-        self.prep_fiducials = [self.to_parsed_seq(fid) for fid in self.prep_fiducials]
-        self.measure_fiducials = [self.to_parsed_seq(fid) for fid in self.measure_fiducials]
-        self.germs = [self.to_parsed_seq(germ) for germ in self.germs]
+        self.prep_fiducials = [self.to_parsed_seq(fid) for fid in prep_fiducials]
+        self.measure_fiducials = [self.to_parsed_seq(fid) for fid in measure_fiducials]
+        self.germs = [self.to_parsed_seq(germ) for germ in germs]
 
     def _construct_gate_name_to_object_mapping(self, gate_names: list[str], qubit_labels: list[str]): 
         """ Set up the gate name -> ParsedGate look up dictionary """ 
