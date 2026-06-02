@@ -571,8 +571,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # TODO: Check that gram matrix is invertible.            
         # Invert via pseudoinverse for numerical stability 
-        print(f"Determinant of gram matrix: {np.linalg.det(gram_matrix)}")
-        #gram_inv = np.linalg.pinv(gram_matrix)
+        gram_matrix_det = np.linalg.det(gram_matrix)
+        if np.abs(gram_matrix_det) < 1E-12:
+            ValueError(f"Gram matrix is not invertible, determinant = {gram_matrix_det}") 
         
         # #####2. Estimate each gate using the pseudo-inverse
         # 3. Extract SPAM parameter estimates from Gram SVD 
@@ -595,9 +596,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
             # Project onto Pi subspace, Pi Pi^T is identity since rows of Pi are orthonormal 
             B0 = B_ideal @ Pi.conj().T
- #            if target_effect is not None:
- #                N_meas = len(self.measure_fiducials)
- #                A_ideal = n
         else:
             B0 = np.eye(k, dtype=complex)
 
@@ -615,67 +613,25 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # Compute gate process matrix by inversion: probabilities P = A G_gate B 
             P_gate = self._build_probability_matrix(target_gate = gate)
             gate_estimates[gate.name] = matrix_prefactor @ P_gate @ matrix_postfactor 
-            #gate_estimates[gate.name] = A_inv @ P_gate @ B_inv 
-            #gate_estimates[gate.name] = measurement_effects_inv @ P_gate @ rho_pinv
-            #gate_estimates[gate.name] = gram_inv @ P_gate
-            #print(f"Gate shape: {gate_estimates[gate.name].shape}")
-
-        #print(f"S shape: {S.shape}")
-        #print(f"gram matrix shape: {gram_matrix.shape}")
 
         # Decomposition of Gram matrix = AB, where A is measurement matrix and B is prep matrix 
-        # See Section 3. of "Gate Set Tomography" published in Quantum 
+        # See Section 3. of "Gate Set Tomography" published in Quantum, 2021. 
         # Gram matrix = U S V^T = U sqrt(S) sqrt(S) V^T = AB 
-        #print(f" S matrix diagonals: {S}")
-        #sqrt_S = np.diag(np.sqrt(S))
-        #sqrt_S_inv = np.diag(1./np.sqrt(S))
-
-        # Identify A = U sqrt(S)
-        #A = U @ sqrt_S
-        # Identify B = sqrt(S) V^{T}
-        #B = sqrt_S @ Vh
-
-        #A_inv = np.linalg.pinv(A) # left pseudo-inverse 
-        #B_inv = np.linalg.pinv(B) # right pseudo-inverse 
-
-        # Get the first "k" singular values           
-        #k = self.d2
-        #sqrt_S = np.diag(np.sqrt(S[:k]))
-        #sqrt_S_inv = np.diag(1./np.sqrt(S[:k]))
 
         # Find which fiducial index is the empty circuit, corresponding to native prep and measure 
         empty_fid = tuple()
         prep_idx = self.prep_fiducials.index(empty_fid)
         measure_idx = self.measure_fiducials.index(empty_fid)
 
-        # Extract native prep rho_0:
-        #print(f"root(S) shape: {sqrt_S.shape}")
-        #print(f"V shape: {Vh.shape}")
         # Prep state matrix B = B0 Pi 
         prep_states = B0 @ Pi 
-        #print(f"Prep states: {prep_states}\n\n")
-        #print(f"My prep state: {prep_states[:, 0]}")
-        #prep_states = sqrt_S @ Vh[:k, :]  # d^2 x d^2 
+        # Extract native prep rho_0:
         estimated_rho = prep_states[:, prep_idx]
-        #rho_pinv = Vh[:k,:].T @ sqrt_S_inv
 
         # Extract effects:
         # Measurement effect matrix A = Gram B+ (right pseudoinverse of B)
         measurement_effects = gram_matrix @ np.linalg.pinv(prep_states)
-        #print(f"Measurement effects: {measurement_effects}")
-        #print(f"My measurement effect: {measurement_effects[0, :]}")
-        #measurement_effects = U[:, :k] @ sqrt_S
-        #measurement_effects_inv = sqrt_S_inv @ U[:, :k].T
         estimated_effect = measurement_effects[measure_idx, :]  # 1 x d^2
-
- #        gate_estimates = {}
- #        for gate in self.gate_set:
- #            # Compute gate process matrix by inversion: probabilities P = A G_gate B 
- #            P_gate = self._build_probability_matrix(target_gate = gate)
- #            gate_estimates[gate.name] = A_inv @ P_gate @ B_inv 
- #            #gate_estimates[gate.name] = measurement_effects_inv @ P_gate @ rho_pinv
- #            #gate_estimates[gate.name] = gram_inv @ P_gate
- #            print(f"Gate shape: {gate_estimates[gate.name].shape}")
 
         self.lgst_results = {'gate_estimates' : gate_estimates, 'gram_matrix' : gram_matrix, 
                         'native_prep_state' : estimated_rho, 'estimated_effect' : estimated_effect, 
