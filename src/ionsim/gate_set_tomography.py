@@ -28,7 +28,7 @@ def depth_bin(depth):
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], 
-                     gate_mappings: dict[str, Callable], parameter_bounds: list[tuple] | None=None, circuit_design: GSTCircuitPlanner | None=None): 
+                     gate_mappings: dict[str, Callable], parameter_bounds: list[tuple] | None=None, circuit_design: GSTCircuitPlanner | None=None, verbose: bool=False): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
     
             Member variables include:
@@ -103,7 +103,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self._likelihood_circuit_cache = {}
 
         # Verbose logging in objective functions is expensive in iterative solvers.
-        self.verbose = False
+        self.verbose = verbose 
 
         #TODO: Algorithm for optimizing stepwise by circuit depth.  
         # initialize GST results to None 
