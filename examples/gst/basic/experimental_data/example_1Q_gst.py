@@ -145,7 +145,7 @@ def main():
     num_parameters = 12
     theta_guess = np.ones(num_parameters)*1E-2
 
-    GST_analyzer = sm.GateSetTomography(basis, prep_state_function, POVM_models, parsed_circuits, ism_gate_dictionary)
+    GST_analyzer = sm.GateSetTomography(basis, prep_state_function, POVM_models, parsed_circuits, ism_gate_dictionary, verbose= True)
     solver_results = GST_analyzer.solve_for_gate_parameters(theta_guess)
     print(f"Solver results: {solver_results}")
     GST_analyzer.print_parameters()
@@ -159,7 +159,7 @@ def main():
     ideal_gate_set['Gypi2'] = basis.compute_superoperator_from_unitary_operator(sm.Unitary.sqrtY)
     ideal_gate_set['idle'] = basis.compute_superoperator_from_unitary_operator(sm.Unitary.I)
 
-    gate_set_error = GST_analyzer.compute_gate_set_process_infidelity(ideal_gate_set)
+    gate_set_error = GST_analyzer.compute_gate_set_process_infidelity(solver_results.x, ideal_gate_set)
     print(f"\nGate set error: {gate_set_error}")
 
     write_data_to_file = False 
@@ -173,7 +173,7 @@ def main():
         print(f"\nPrinting parameters as one vector: {GST_analyzer.gst_parameters}")
         print(f"\nPrinting uncertainties in the parameters: {uncertainties}")
 
-    return gate_set_error
+    #return gate_set_error
 
 if __name__ == '__main__':
     main()

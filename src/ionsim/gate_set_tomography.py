@@ -128,8 +128,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - gate name (str) 
             - involved qubits as a tuple of qubit indices, ranging from 0 to N_qubits - 1 
         """
-        # TODO: Revise/finalize with 2Q examples 
-
         def gate_factory(gate_name: str, qubits: tuple[int, ...]) -> Callable:
             """ Function to map a gate name & qubit arguments to a gate function """ 
             if gate_name == 'idle':
@@ -186,25 +184,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
     def _index_fiducials(self):
         """ Identify unique prep/measure fiducials and build lookup to get observed probabilities. """
 
- #        prep_fiducials = set()
- #        measure_fiducials = set()
- #
- #        # Fiducial prep/measure circuits are stored as lists of gates. Lists are not hashable and 
- #        #  must be converted to tuples to enable lookup. A "ParsedGate" object is immutable, so tuples of it are hashable.  
- #        for circ in self.parsed_circuits:
- #            prep_fiducials.add(tuple(circ.fiducial_prep_gates))
- #            measure_fiducials.add(tuple(circ.fiducial_measurement_gates))
- #
- #        # Sort by string representation (uses __repr__ in ParsedGate) 
- #        self.prep_fiducials = sorted(prep_fiducials, key=str)
- #        self.measure_fiducials = sorted(measure_fiducials, key=str)
-
         combined_counts = {}
         # Create keys by full circuit representation and average over duplicates (TODO: Update/change for non-Markovian GST)
         for circ in self.parsed_circuits:
-            #key = (tuple(circ.fiducial_prep_gates), tuple(circ.germ_gates), circ.germ_power, tuple(circ.fiducial_measurement_gates))
-            #if circ.germ_power != 1:
-            #    continue  
             key = tuple(circ.expanded_gates)
             counts = circ.measurement_data.to_counts()
 
@@ -213,7 +195,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                     combined_counts[key][label] = combined_counts[key].get(label, 0) + n
             else:
                 combined_counts[key] = counts 
-                #combined_counts[key] = dict(counts)
 
         # Set up circuit -> probability dictionary 
         self.circuit_lookup = {}
@@ -673,7 +654,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             return self.gst_parameters 
         elif solver == 'staged MLE':
             # Do staged MLE --> MLE done in batches of increasing circuit depths. 
-            self.solver_result, results_by_stage = self.staged_objective_minimization(method = 'L-BFGS-B', bounds = self.parameter_bounds, suppress_output = False) 
+            self.solver_result, results_by_stage = self.staged_objective_minimization(method = 'L-BFGS-B', bounds = self.parameter_bounds) 
             self.gst_parameters = self.solver_result.x
             return self.solver_result, results_by_stage
         else:
@@ -693,11 +674,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         M = np.zeros((N_measure_circuits, N_prep_circuits))
 
         target_list = [target_gate] if target_gate else []
- #        if target_gate is None:
- #            gate = tuple()
- #        else:
- #            gate = tuple(target_gate)
-
         for j, prep_fid in enumerate(self.prep_fiducials):
             for i, measure_fid in enumerate(self.measure_fiducials):
                 #key = (prep_fid, gate, 1, measure_fid)
@@ -900,7 +876,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             write_results_to_file('gst_optimal_' + gate.name + '.hdf5', results_to_write) 
 
 
-    def staged_objective_minimization(self, method: str='L-BFGS-B', bounds: list | None=None, suppress_output: bool=True, organize_circuits_by_germ_power: bool=False):
+    def staged_objective_minimization(self, method: str='L-BFGS-B', bounds: list | None=None, organize_circuits_by_germ_power: bool=False):
         """ Iterative MLE through batches of data taken at increasing circuit depths """ 
         if organize_circuits_by_germ_power: 
             circuit_groups = self._group_circuits_by_germ_power()
@@ -910,7 +886,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         sorted_depths = sorted(circuit_groups.keys()) # keys are circuit depths 
         solver_results = {} # stores results of parameter estimation at each stage 
-        if not suppress_output:
+        if self.verbose: 
             if organize_circuits_by_germ_power: 
                 print(f"--- Staged MLE with bins by germ powers (p): {sorted_depths} ") 
                 for p in sorted_depths:
@@ -944,8 +920,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # Record solver parameter estimation results at each circuit depth group  
             solver_results[L] = solver_result.x 
 
-            if not suppress_output:
+            if self.verbose: 
                 ll = self.log_likelihood(self.gst_parameters)
+                print()
                 print(f"    Stage {stage + 1} (L <= {L}): ")
                 print(f"    {len(cumulative_circuits)} circuits ")
                 print(f"    LL = {ll:.3f} ") 
