@@ -564,25 +564,24 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         
     def run_linear_gst(self, ideal_gate_set: dict | None=None, target_rho: State | None=None):
         """ Function to estimate gate set parameters using linear matrix inversion """
-        # TODO: add Neilsen "Gate Set Tomography" citation  
+        # Method follows approach from Neilsen et al. "Gate Set Tomography", Quantum 2021. 
         # 1. Build the Gram matrix: <<F_i|F_j>>
         print(f"\n --- Running linear GST ---")
         gram_matrix = self._build_probability_matrix(target_gate = None)
 
-        # TODO: Check that gram matrix is invertible.            
-        # Invert via pseudoinverse for numerical stability 
         gram_matrix_det = np.linalg.det(gram_matrix)
         if np.abs(gram_matrix_det) < 1E-12:
             ValueError(f"Gram matrix is not invertible, determinant = {gram_matrix_det}") 
         
-        # #####2. Estimate each gate using the pseudo-inverse
-        # 3. Extract SPAM parameter estimates from Gram SVD 
+        # 2. Compute SVD to get projector to linear-independent subspace  
         U, S, Vh = np.linalg.svd(gram_matrix)
 
         # Projector onto k = d^2 top right singular vectors  
         k = self.d2
         Pi = Vh[:k, :]
 
+        # Decomposition of Gram matrix = AB, where A is measurement matrix and B is prep matrix 
+        # See Section 3. of "Gate Set Tomography" published in Quantum, 2021. 
         # Gram = AB (fiducial measure @ fiducial prep); decompose B = B_0 Pi, B_0 ideal gauge  
         if ideal_gate_set is not None and target_rho is not None:
             N_prep = len(self.prep_fiducials)
@@ -599,7 +598,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         else:
             B0 = np.eye(k, dtype=complex)
 
-        # Compute gate process matrix estimates via the following formula (Nielsen, 2021):
+        # Compute gate process matrix estimates via the following formula (Neilsen, 2021):
         # G_k = B0 (Pi Gram^T Gram Pi^T)^{-1} (Pi Gram^T P_k Pi^T) B0^{-1}
         # Key: "G" = gram matrix, "T" = transpose, "P" = Pi matrix
         PGT = Pi @ gram_matrix.T
@@ -613,10 +612,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # Compute gate process matrix by inversion: probabilities P = A G_gate B 
             P_gate = self._build_probability_matrix(target_gate = gate)
             gate_estimates[gate.name] = matrix_prefactor @ P_gate @ matrix_postfactor 
-
-        # Decomposition of Gram matrix = AB, where A is measurement matrix and B is prep matrix 
-        # See Section 3. of "Gate Set Tomography" published in Quantum, 2021. 
-        # Gram matrix = U S V^T = U sqrt(S) sqrt(S) V^T = AB 
 
         # Find which fiducial index is the empty circuit, corresponding to native prep and measure 
         empty_fid = tuple()
