@@ -118,7 +118,6 @@ class ParsedCircuit:
         return len(self.expanded_gates)
 
 
-
     def __repr__(self):
         gates_readable = " ".join(repr(gate) for gate in self.expanded_gates) or "(empty)"
         return f"ParsedCircuit({gates_readable}, data={self.measurement_data})"
@@ -187,7 +186,7 @@ def parse_circuit_string(circ: str) -> list[ParsedGate]:
 
     gates = []
 
-    pattern = r"([A-Za-z]\w*):(\d+(?::\d+)*)|\[\]"
+    pattern = r"([A-Za-z][A-Za-z0-9_+\-]*):(\d+(?::\d+)*)|\[\]"
 
     # Find matches for the pattern and build a ParsedGate object for each match 
     for m in re.finditer(pattern, circ):

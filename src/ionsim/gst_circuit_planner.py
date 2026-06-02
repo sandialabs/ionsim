@@ -1,8 +1,10 @@
 import numpy as np
-from pathlib import Path 
 import re
-from ionsim.gst_circuit_parser import ParsedCircuit, ParsedGate
+import yaml 
+from pathlib import Path 
 from itertools import product
+
+from ionsim.gst_circuit_parser import ParsedCircuit, ParsedGate
 
 class GSTCircuitPlanner:
     def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials = None, measure_fiducials = None, germs = None, germ_powers=[1,2,4,8,16]):
@@ -138,7 +140,8 @@ class GSTCircuitPlanner:
         if 'idle' in gate_names:
             germs = [ [X_pi2], [Y_pi2], [idle], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2] ]
         else:
-            germs = [ [X_pi2], [Y_pi2], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2] ]
+            germs = [ [X_pi2], [Y_pi2], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2]]
+            #germs = [ [X_pi2], [Y_pi2], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2], [X_pi2, X_pi2, X_pi2], [Y_pi2, Y_pi2, Y_pi2] ]
 
         return germs 
 
@@ -167,3 +170,57 @@ class GSTCircuitPlanner:
             # Write the header 
             columns = ", ".join(f"{outcome} count" for outcome in outcome_labels)
             f.write(f"## Columns = {columns}\n")
+
+    def write_circuit_design(self, filepath):
+        """ Writes a design yaml file with circuit design information """
+        #filename = 'GST_circuit_design.yaml'  
+
+        def gate_list_to_dict(gate_list):
+            """ Convert list of Gate objects to a dictionary format """ 
+            return [{'name' : g.name, 'qubits' : list(g.qubits)} for g in gate_list]
+
+
+        def fiducials_to_dict(fiducials):            
+            """ Convert list of fiducial sequences (list of ParsedGates) to dictionary."""
+            return [gate_list_to_dict(fid) for fid in fiducials]
+
+
+        design = {
+            'gate_names' : self.gate_names,
+            'qubit_labels' : self.qubit_labels,
+            'prep_fiducials' : fiducials_to_dict(self.prep_fiducials), 
+            'measure_fiducials' : fiducials_to_dict(self.measure_fiducials),
+            'germs': fiducials_to_dict(self.germs),
+            'germ_powers' : self.germ_powers 
+        }
+
+        with open(filepath, 'w') as f:
+            yaml.dump(design, f, default_flow_style=False, sort_keys=False) 
+
+    
+    @classmethod
+    def load_design(cls, filepath):
+        """ Load an experimental design from a YAML file, returns the planner class instance """ 
+
+        def dict_to_gate_list(dict_list):
+            """ Converts dictionary list of gates to a list of ParsedGates """ 
+            return [ParsedGate(name=g['name'], qubits = tuple(g['qubits']))
+                for g in dict_list]
+        
+
+        def dict_to_fiducials(fid_list):
+            """ Converts dictionary list of fiducials to list of ParsedGates """ 
+            return [dict_to_gate_list(fid) for fid in fid_list]
+            
+
+        with open(filepath, 'r') as f:
+            design = yaml.safe_load(f)
+
+        planner = cls(gate_names = design['gate_names'], qubit_labels = design['qubit_labels'],
+                    prep_fiducials = dict_to_fiducials(design['prep_fiducials']), 
+                    measure_fiducials = dict_to_fiducials(design['measure_fiducials']), 
+                    germs = dict_to_fiducials(design['germs']), germ_powers = design['germ_powers'] )
+
+        return planner 
+
+
