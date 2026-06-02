@@ -31,9 +31,11 @@ class GSTCircuitPlanner:
         if germs is None and len(qubit_labels) == 1:
             germs = self.standard_1Q_germs(gate_names)
 
-        self.prep_fiducials = prep_fiducials
-        self.germs = germs 
-        self.measure_fiducials = measure_fiducials
+        # Ensure consistency in inputs: 
+        # Convert all string-based fiducials/germs to ParsedGate objects
+        self.prep_fiducials = [self.to_parsed_seq(fid) for fid in prep_fiducials]
+        self.measure_fiducials = [self.to_parsed_seq(fid) for fid in measure_fiducials]
+        self.germs = [self.to_parsed_seq(germ) for germ in germs]
 
     def _construct_gate_name_to_object_mapping(self, gate_names: list[str], qubit_labels: list[str]): 
         """ Set up the gate name -> ParsedGate look up dictionary """ 
@@ -45,19 +47,20 @@ class GSTCircuitPlanner:
                 self.gate_lookup[name] = ParsedGate(name, tuple(qubit_labels))
 
     def generate_gst_circuits(self) -> list:
-        """ Generate the GST circuits to be ran in experiments. Avoid duplicates """ 
-        gst_circuits = []
-        unique = set() 
+        """Generate GST circuits. Convert string gates to ParsedGate and avoid duplicates."""
 
-        # Combine circuits from linear GST (no germ power) with long-form GST:     
-        for circ in (self._linear_gst_circuits() + self._long_gst_circuits()):
-            raw_circuit_name = circ.build_circuit_string()
-            if raw_circuit_name not in unique:
-                unique.add(raw_circuit_name)
+        gst_circuits = []
+        unique = set()
+
+        for circ in self._linear_gst_circuits() + self._long_gst_circuits():
+            key = circ.build_circuit_string()
+
+            if key not in unique:
+                unique.add(key)
                 gst_circuits.append(circ)
-            
+
         self.gst_circuits = gst_circuits
-        return gst_circuits 
+        return gst_circuits
 
     def _linear_gst_circuits(self) -> list:
         """ Linear GST circuits (no germ powers). Consists of two circuit sets:
@@ -171,6 +174,19 @@ class GSTCircuitPlanner:
             columns = ", ".join(f"{outcome} count" for outcome in outcome_labels)
             f.write(f"## Columns = {columns}\n")
 
+    def to_parsed_gate(self, g):
+            if isinstance(g, ParsedGate):
+                return g
+            if isinstance(g, str):
+                if g in self.gate_lookup:
+                    return self.gate_lookup[g]
+                raise ValueError(f"Unknown gate name: {g}")
+            raise TypeError(f"Bad gate type: {type(g)} -> {g}")
+
+    def to_parsed_seq(self, seq):
+        return [self.to_parsed_gate(g) for g in seq]
+
+    
     def write_circuit_design(self, filepath):
         """ Writes a design yaml file with circuit design information """
         #filename = 'GST_circuit_design.yaml'  
