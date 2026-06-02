@@ -110,11 +110,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Organize a lookup table for fiducial prep/measure circuits; needed for linear GST 
         self._index_fiducials()
-        #print(f"\n\n Circuit lookup:")
-        #print(self.circuit_lookup)
-        # Test: 
-        #print(f"\n\n Test :")
-        #print(self.circuit_lookup[((), (), 1, ())])
 
 
     def _initialize_gate_model_factory(self, gate_mappings: dict) -> Callable:
@@ -252,7 +247,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # 2. Determine Final effect, constrained to be E_last = I - sum(E) over all other effects E 
         last_label = list(self.POVM_effect_models.keys())[-1]
-        constrained_effect = np.eye(self.d).flatten()
+        constrained_effect = np.eye(self.d, dtype=complex).flatten()
         assert last_label not in list(M_effects.keys()) 
         assert self.POVM_effect_models[last_label] == None 
         # TODO: Instead of having the last effect be None by arbitrary convention, have this code find which effect is constrained by checking if its function is None.
@@ -524,7 +519,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             
         elif solver == 'linear':
             #raise IonSimError('Linear GST is not yet programmed into IonSim.')
-            self.run_linear_gst(ideal_gate_set, target_rho)
+            self.solver_result = self.run_linear_gst(ideal_gate_set, target_rho)
             self.parameters_from_lgst_results()
             return self.gst_parameters 
         elif solver == 'staged MLE':
@@ -574,7 +569,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         print(f"\n --- Running linear GST ---")
         gram_matrix = self._build_probability_matrix(target_gate = None)
 
-        # TODO: Check that gram matrix A_{m,s} = <M | C_{m} C_{s} | rho> is invertible.            
+        # TODO: Check that gram matrix is invertible.            
         # Invert via pseudoinverse for numerical stability 
         print(f"Determinant of gram matrix: {np.linalg.det(gram_matrix)}")
         #gram_inv = np.linalg.pinv(gram_matrix)
@@ -623,7 +618,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             #gate_estimates[gate.name] = A_inv @ P_gate @ B_inv 
             #gate_estimates[gate.name] = measurement_effects_inv @ P_gate @ rho_pinv
             #gate_estimates[gate.name] = gram_inv @ P_gate
-            print(f"Gate shape: {gate_estimates[gate.name].shape}")
+            #print(f"Gate shape: {gate_estimates[gate.name].shape}")
 
         #print(f"S shape: {S.shape}")
         #print(f"gram matrix shape: {gram_matrix.shape}")
@@ -658,6 +653,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         #print(f"V shape: {Vh.shape}")
         # Prep state matrix B = B0 Pi 
         prep_states = B0 @ Pi 
+        #print(f"Prep states: {prep_states}\n\n")
+        #print(f"My prep state: {prep_states[:, 0]}")
         #prep_states = sqrt_S @ Vh[:k, :]  # d^2 x d^2 
         estimated_rho = prep_states[:, prep_idx]
         #rho_pinv = Vh[:k,:].T @ sqrt_S_inv
@@ -665,6 +662,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Extract effects:
         # Measurement effect matrix A = Gram B+ (right pseudoinverse of B)
         measurement_effects = gram_matrix @ np.linalg.pinv(prep_states)
+        #print(f"Measurement effects: {measurement_effects}")
+        #print(f"My measurement effect: {measurement_effects[0, :]}")
         #measurement_effects = U[:, :k] @ sqrt_S
         #measurement_effects_inv = sqrt_S_inv @ U[:, :k].T
         estimated_effect = measurement_effects[measure_idx, :]  # 1 x d^2
@@ -679,7 +678,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
  #            print(f"Gate shape: {gate_estimates[gate.name].shape}")
 
         self.lgst_results = {'gate_estimates' : gate_estimates, 'gram_matrix' : gram_matrix, 
-                        'native_prep_state' : estimated_rho, 'estimated_effects' : estimated_effect, 
+                        'native_prep_state' : estimated_rho, 'estimated_effect' : estimated_effect, 
                         'prep_states' : prep_states, 'measurement_effects' : measurement_effects}
         return self.lgst_results 
 
@@ -696,27 +695,76 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Extract gate parameters 
         for gate_name, lgst_gate_matrix in self.lgst_results['gate_estimates'].items():
             # Compute the fit parameters for each gate model 
-            model = self.gate_models[gate_name]
-            fit_parameters = self._fit_gate_model_to_lgst_estimate(model, lgst_gate_matrix)    
+            fit_parameters = self._fit_gate_model_to_lgst_estimate(gate_name, lgst_gate_matrix)    
             theta[self.gst_parameter_indices[gate_name]] = fit_parameters 
 
-        # Extract SPAM parameters
+        # Extract SPAM parameters:
+        # Native prep state         
+        prep_fit_parameters = self._fit_prep_model_to_lgst_estimate(self.lgst_results['native_prep_state'])
+        theta[self.gst_parameter_indices['prep']] = prep_fit_parameters
 
+        # Native measurement effects  
+        # TODO: Generalize for 2Q+ GST         
+        # Need to choose the particular effect that corresponds with LGST's estimated effect   
+        effect_label = '0'
+        effect_model = lambda theta: self.get_measurement_effects(theta)[effect_label] 
+        measurement_parameters = self._fit_measurement_effect_model_to_lgst_estimate(effect_model, self.lgst_results['estimated_effect'])
+        theta[self.gst_parameter_indices['measurement']] = measurement_parameters 
 
-        
         # Set gst parameters attribute to extracted parameters 
         self.gst_parameters = theta
         return theta
 
+    ## TODO: Consolidate / factor into a single "fit model to lgst" function if possible  
+    def _fit_prep_model_to_lgst_estimate(self, lgst_native_prep: Vector) -> Vector:
+        """ Fits a prep state model's parameters given the lgst results for the prep state. """
 
-    def _fit_gate_model_to_lgst_estimate(self, gate_model: Callable, target_gate_matrix: Matrix):
+        prep_indices = self.gst_parameter_indices['prep']
+        def cost(theta: Vector) -> float:
+            # Frobenius norm of the process matrix difference bt. model and LGST-predicted
+            #M = self.get_prep_state(*theta)
+            prep_state = self.prep_state_model(theta)
+            return np.linalg.norm(prep_state - lgst_native_prep)**2
+
+        N_parameters = len(self.gst_parameters[prep_indices]) 
+        #N_parameters = len(self.gst_parameters) 
+        p0 = np.zeros(N_parameters, dtype=complex) 
+        model_bounds = self.parameter_bounds[prep_indices]
+        #model_bounds = self.parameter_bounds
+
+        result = opt.minimize(cost, p0, method='Nelder-Mead', bounds = model_bounds) 
+        return result.x
+
+    def _fit_measurement_effect_model_to_lgst_estimate(self, measurement_effect_model, lgst_native_measurement: Vector) -> Vector:
+        """ Fits a measurement effect's model's parameters given the lgst results for the prep state. """
+
+        def cost(theta: Vector) -> float:
+            # Frobenius norm of the process matrix difference bt. model and LGST-predicted
+            modeled_effect = measurement_effect_model(theta)
+            return np.linalg.norm(modeled_effect - lgst_native_measurement)**2
+
+        measurement_indices = self.gst_parameter_indices["measurement"] 
+        N_parameters = len(self.gst_parameters[measurement_indices]) 
+        p0 = np.zeros(N_parameters, dtype=complex) 
+        model_bounds = self.parameter_bounds[measurement_indices]
+
+        result = opt.minimize(cost, p0, method='Nelder-Mead', bounds = model_bounds) 
+        return result.x
+
+
+    def _fit_gate_model_to_lgst_estimate(self, gate_name: str, target_gate_matrix: Matrix) -> Vector:
         """ Fits a gate model's parameters given process matrix data (target_gate_matrix).
 
             - gate_model is as Callable that returns a process matrix  
             - uses the Frobenius norm of the process matrix difference as the cost function
 
         """
-
+        gate_model = self.gate_models[gate_name]
+        gate_indices = self.gst_parameter_indices[gate_name]
+        def matrix_residuals(theta: Vector) -> Vector:
+            # Frobenius norm of the process matrix difference bt. model and LGST-predicted
+            M = gate_model(*theta)
+            return (M - target_gate_matrix).flatten()
 
         def cost(theta: Vector) -> float:
             # Frobenius norm of the process matrix difference bt. model and LGST-predicted
@@ -725,10 +773,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         gate_model_sig = inspect.signature(gate_model)
         N_parameters = len(gate_model_sig.parameters)
-        p0 = np.zeros(N_parameters,dtype=complex) 
+        p0 = np.zeros(N_parameters, dtype=complex) # zero often corresponds to ideal gate conditions 
+        gate_parameter_bounds = self.parameter_bounds[gate_indices]
 
-        # TODO: Check that this choice of p0 does not result in singular / ill-posedness  
-        result = opt.minimize(cost, p0, method='Nelder-Mead')
+        #result = opt.least_squares(matrix_residuals, p0, bounds = gate_parameter_bounds) 
+        #result = opt.minimize(cost, p0, method='L-BFGS-B', bounds = gate_parameter_bounds) # not so good  
+        result = opt.minimize(cost, p0, method='Nelder-Mead', bounds = gate_parameter_bounds) 
         return result.x
 
 
