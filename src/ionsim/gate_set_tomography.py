@@ -21,9 +21,9 @@ from ionsim.io import *
 
 def depth_bin(depth):
     """ Bins a circuit depth to the nearest power of 2 """
-    if depth <= 1:
+    if depth <= 1.:
         return 1
-    return 2**(math.floor(math.log2(depth)))
+    return int(2**(np.ceil(np.log2(depth))))
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], 
@@ -399,6 +399,21 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return chi_squared
 
 
+    def _group_circuits_by_base_depth(self):
+        """ Groups the GST circuit by depth, required for staged MLE """ 
+        groups = {} # dictionary to store list of circuits at each depth L 
+        for circ in self.parsed_circuits:
+            germ_length = len(circ.germ_gates)
+            base_depth = germ_length*(circ.germ_power)
+            if germ_length == 0: 
+                L = 1
+            else:        
+                L = depth_bin(float(base_depth))
+            if L not in groups:
+                groups[L] = [] 
+            groups[L].append(circ)
+        return groups
+
     def _group_circuits_by_depth(self):
         """ Groups the GST circuit by depth, required for staged MLE """ 
         groups = {} # dictionary to store list of circuits at each depth L 
@@ -563,14 +578,29 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         
         # #####2. Estimate each gate using the pseudo-inverse
         # 3. Extract SPAM parameter estimates from Gram SVD 
-        U, S, V = np.linalg.svd(gram_matrix)
+        U, S, Vh = np.linalg.svd(gram_matrix)
 
         print(f"S shape: {S.shape}")
         print(f"gram matrix shape: {gram_matrix.shape}")
+
+        # Decomposition of Gram matrix = AB, where A is measurement matrix and B is prep matrix 
+        # See Section 3. of "Gate Set Tomography" published in Quantum 
+        # Gram matrix = U S V^T = U sqrt(S) sqrt(S) V^T = AB 
+        sqrt_S = np.diag(np.sqrt(S))
+        sqrt_S_inv = np.diag(1./np.sqrt(S))
+
+        # Identify A = U sqrt(S)
+        A = U @ sqrt_S
+        # Identify B = sqrt(S) V^{T}
+        B = sqrt_S @ Vh
+
+        A_inv = np.linalg.pinv(A) # left pseudo-inverse 
+        B_inv = np.linalg.pinv(B) # right pseudo-inverse 
+
         # Get the first "k" singular values           
-        k = self.d2
-        sqrt_S = np.diag(np.sqrt(S[:k]))
-        sqrt_S_inv = np.diag(1./np.sqrt(S[:k]))
+        #k = self.d2
+        #sqrt_S = np.diag(np.sqrt(S[:k]))
+        #sqrt_S_inv = np.diag(1./np.sqrt(S[:k]))
 
         # Find which fiducial index is the empty circuit, corresponding to native prep and measure 
         empty_fid = tuple()
@@ -579,10 +609,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Extract native prep rho_0:
         print(f"root(S) shape: {sqrt_S.shape}")
-        print(f"V shape: {V.shape}")
-        prep_states = sqrt_S @ V[:k, :]  # d^2 x d^2 
+        print(f"V shape: {Vh.shape}")
+        prep_states = sqrt_S @ Vh[:k, :]  # d^2 x d^2 
         estimated_rho = prep_states[:, prep_idx]
-        rho_pinv = V[:k,:].T @ sqrt_S_inv
+        rho_pinv = Vh[:k,:].T @ sqrt_S_inv
 
         # Extract effects:
         measurement_effects = U[:, :k] @ sqrt_S
@@ -591,11 +621,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         gate_estimates = {}
         for gate in self.gate_set:
-            M_gate = self._build_probability_matrix(target_gate = gate)
-            gate_estimates[gate.name] = measurement_effects_inv @ M_gate @ rho_pinv
-            #gate_estimates[gate.name] = gram_inv @ M_gate
+            # Compute gate process matrix by inversion: probabilities P = A G_gate B 
+            P_gate = self._build_probability_matrix(target_gate = gate)
+            gate_estimates[gate.name] = A_inv @ P_gate @ B_inv 
+            #gate_estimates[gate.name] = measurement_effects_inv @ P_gate @ rho_pinv
+            #gate_estimates[gate.name] = gram_inv @ P_gate
             print(f"Gate shape: {gate_estimates[gate.name].shape}")
-
 
         self.lgst_results = {'gate_estimates' : gate_estimates, 'gram_matrix' : gram_matrix, 
                         'native_prep_state' : estimated_rho, 'estimated_effects' : estimated_effect, 
@@ -669,12 +700,13 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             write_results_to_file('gst_optimal_' + gate.name + '.hdf5', results_to_write) 
 
 
-    def staged_objective_minimization(self, method: str='L-BFGS-B', bounds: list | None=None, suppress_output: bool=True, organize_circuits_by_germ_power: bool=True ):
+    def staged_objective_minimization(self, method: str='L-BFGS-B', bounds: list | None=None, suppress_output: bool=True, organize_circuits_by_germ_power: bool=False):
         """ Iterative MLE through batches of data taken at increasing circuit depths """ 
         if organize_circuits_by_germ_power: 
             circuit_groups = self._group_circuits_by_germ_power()
         else:
-            circuit_groups = self._group_circuits_by_depth()
+            circuit_groups = self._group_circuits_by_base_depth()
+            #circuit_groups = self._group_circuits_by_depth()
 
         sorted_depths = sorted(circuit_groups.keys()) # keys are circuit depths 
         solver_results = {} # stores results of parameter estimation at each stage 
@@ -702,7 +734,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
  #                objective_function = self.chi_squared 
  #            else:
  #                objective_function = lambda params: -1. * self.log_likelihood(params) 
-            #objective_function = lambda params: -1. * self.log_likelihood(params) 
+            objective_function = lambda params: -1. * self.log_likelihood(params) 
 
             solver_result = opt.minimize(fun = lambda params: objective_function(params), x0 = np.ones(self.num_gst_parameters)*1E-2, method=method, bounds = bounds)
             #solver_result = opt.minimize(fun = lambda params: objective_function(params),  x0 = self.gst_parameters.copy(), method=method, bounds = bounds)
@@ -729,7 +761,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
             
     ### Functions for gate set error metrics ### 
-    def compute_gate_set_process_infidelity(self, gst_parameters: Vector, ideal_gate_set: dict) -> float:
+    def compute_gate_set_process_infidelity(self, gst_parameters: Vector, ideal_gate_set: dict, include_SPAM_error: bool=False) -> float:
         """ Estimate process infidelity of each gate in the gate set and compare to ideal, then average (or take a different norm?) over the gate set.
 
             - takes in an input dictionary "ideal_gate_set" that contains process matrices for each gate in the gate set. 
@@ -755,8 +787,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             process_infidelity = 1. - gate_model.compute_process_fidelity(ideal_gate)
             gate_errors[gate.name] = process_infidelity
             gate_infidelity += process_infidelity
-                        
 
+        gate_infidelity /= len(self.gate_set)   # Average gate error  
         # Compute least-square difference for SPAM
         # prep state: 
         ideal_prep_state = ideal_gate_set['prep'].supervector  
@@ -779,7 +811,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         print(f"\nPrep error: {prep_error}")
         print(f"\nPOVM errors: {POVM_errors}")
         # TODO: Should we average over the gate infidelities? 
-        return gate_infidelity + measurement_error + prep_error 
+        if include_SPAM_error:
+            return gate_infidelity + measurement_error + prep_error 
+        else:
+            return gate_infidelity 
 
 
     def estimate_parameter_uncertainties(self, theta: Vector | None=None, method: str='bootstrap') -> Vector:
@@ -863,8 +898,3 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         uncertainties = np.std(bootstrap_thetas, axis=0) 
         return uncertainties, bootstrap_thetas
             
-
-# Could build a N-dimensional process matrix by running simulations for each of the N-dimensional parameters, store them. --> hdf5 files
-    # - save the raw hdf5 simulation data (process matrix at each error parameter value) 
-    # - GST will load the process matrix data, interpolate with it using MLE. cref. one of the examples  
-        # - would need to load up one of these for each gate in the gate set
