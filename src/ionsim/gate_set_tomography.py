@@ -1049,7 +1049,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
     def bootstrap_uncertainties(self, N_bootstrap: int=50):
         """ Bootstrapping for parameter uncertainties: Sample data from the fitted model and re-fit, computing 
                 parameter spread. N_bootstrap is the number of resamplings. """
-
+        if self.verbose:
+            print(f"Bootstrapping the uncertainties")
         theta_best = self.gst_parameters.copy()
         bootstrap_thetas = np.zeros((N_bootstrap, len(theta_best)))
 
