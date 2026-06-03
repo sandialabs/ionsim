@@ -628,17 +628,18 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - Returns either a dictionary of parameters (name, value) or a 1D array of values.
 
         """
-        print(f"\n -- Solver for gate parameters in GST using {solver} --- ")
         # Specify initial guess. 
         if parameters_guess is None:
             theta_0 = self.gst_parameters.copy() 
         else:
             theta_0 = parameters_guess
-        print(f"Initial parameters: {theta_0}")
+
+        if self.verbose: 
+            print(f"\n -- Solver for gate parameters in GST using {solver} --- ")
+            print(f"Initial parameters: {theta_0}")
 
         # TODO: Standardize output; This function has heterogeneous output, depending on which case is called. 
         if solver == 'MLE':
-            # TODO: Provide bounds for parameters if using interpolated gates 
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
             solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds) 
             self.solver_result = solver_result
@@ -648,7 +649,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             return solver_result
             
         elif solver == 'linear':
-            #raise IonSimError('Linear GST is not yet programmed into IonSim.')
             self.solver_result = self.run_linear_gst(ideal_gate_set, target_rho)
             self.parameters_from_lgst_results()
             return self.gst_parameters 
@@ -966,28 +966,31 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             gate_infidelity += process_infidelity
 
         gate_infidelity /= len(self.gate_set)   # Average gate error  
-        # Compute least-square difference for SPAM
-        # prep state: 
-        ideal_prep_state = ideal_gate_set['prep'].supervector  
-        modeled_prep_state = self.get_prep_state(gst_parameters) 
-        # Trace distance: sqrt(sum([rho_ideal[i] - rho_actual[i]]^2))
-        prep_error = np.sqrt(np.sum((modeled_prep_state - ideal_prep_state)**2)) 
+        if self.verbose:
+            print(f"\nGate errors: {gate_errors}")
 
-        # POVMs 
-        ideal_POVMs = ideal_gate_set['POVM']  
-        POVMs = self.get_measurement_effects(gst_parameters)
-        POVM_errors = {}
-        measurement_error = 0. 
-        for outcome, POVM in ideal_POVMs.items():
-            ideal_POVM = POVM.superbra 
-            parametrized_POVM = POVMs[outcome] 
-            POVM_errors[outcome] = np.sqrt(np.sum((ideal_POVM - parametrized_POVM)**2)) 
-            measurement_error += POVM_errors[outcome] 
+        if include_SPAM_error:
+            # Compute least-square difference for SPAM
+            # prep state: 
+            ideal_prep_state = ideal_gate_set['prep'].supervector  
+            modeled_prep_state = self.get_prep_state(gst_parameters) 
+            # Trace distance: sqrt(sum([rho_ideal[i] - rho_actual[i]]^2))
+            prep_error = np.sqrt(np.sum((modeled_prep_state - ideal_prep_state)**2)) 
+    
+            # POVMs 
+            ideal_POVMs = ideal_gate_set['POVM']  
+            POVMs = self.get_measurement_effects(gst_parameters)
+            POVM_errors = {}
+            measurement_error = 0. 
+            for outcome, POVM in ideal_POVMs.items():
+                ideal_POVM = POVM.superbra 
+                parametrized_POVM = POVMs[outcome] 
+                POVM_errors[outcome] = np.sqrt(np.sum((ideal_POVM - parametrized_POVM)**2)) 
+                measurement_error += POVM_errors[outcome] 
+            if self.verbose:
+                print(f"\nPrep error: {prep_error}")
+                print(f"\nPOVM errors: {POVM_errors}")
 
-        print(f"\nGate errors: {gate_errors}")
-        print(f"\nPrep error: {prep_error}")
-        print(f"\nPOVM errors: {POVM_errors}")
-        # TODO: Should we average over the gate infidelities? 
         if include_SPAM_error:
             return gate_infidelity + measurement_error + prep_error 
         else:
