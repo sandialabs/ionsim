@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 
 from ionsim.state import State
-from ionsim.degree_of_freedom import AtomicSpin
+from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis, XPauliBasis
 from ionsim.named_operators import Pauli
 from ionsim.testing import assert_array_close
@@ -12,8 +12,8 @@ class TestState(unittest.TestCase):
 
     def setUp(self):
         """Set up the necessary objects for testing."""
-        self.spin_a = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        self.spin_b = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.basis = StandardBasis([self.spin_a, self.spin_b])
         self.basis_x = XPauliBasis([self.spin_a, self.spin_b])
         self.eig_x = np.array([[1, 0], [0, -1]])

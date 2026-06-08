@@ -5,7 +5,7 @@ from typing import Callable
 from functools import cached_property
 
 from ionsim.basis import StandardBasis
-from ionsim.degree_of_freedom import AtomicSpin 
+from ionsim.degree_of_freedom import AtomicStructure 
 from ionsim.operator import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
 from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix, as_dense_matrix
 from ionsim.custom_math import matrix_AYB_multiply_to_superoperator, solve_time_evolution_equation
@@ -123,7 +123,7 @@ class DissipatorSpontaneousEmission(Dissipator):
     """Subclass for including spontaneous emission dynamics for a known atomic structure."""
 
     @classmethod
-    def from_atomic_structure_data(cls, basis: StandardBasis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], frame_energies: list[float] | None=None, sparse: bool=False, all_spins_are_same: bool = True, select_DOFs: list[AtomicSpin] | None = None):
+    def from_atomic_structure_data(cls, basis: StandardBasis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], frame_energies: list[float] | None=None, sparse: bool=False, all_spins_are_same: bool = True, select_DOFs: list[AtomicStructure] | None = None):
         """ Builds dissipator for spontaneous emission from a user-specified list of excited and ground levels.  
             
 
@@ -137,10 +137,10 @@ class DissipatorSpontaneousEmission(Dissipator):
 
         lindblad_operators = []
 
-        # Loop over each (spin) DOF and create a lindblad operator in that DOF's Hilbert space.
+        # Loop over each Atomic Structure DOF and create a lindblad operator in that DOF's Hilbert space.
             # Then, enlarge that lindblad operator to the system basis which contains the whole Hilbert space.  
         for DOF in DOF_list: 
-            if isinstance(DOF, AtomicSpin):
+            if isinstance(DOF, AtomicStructure):
                 # For each excited level, loop through ground levels it can decay to  
                 for e_level in excited_levels:
 
@@ -190,7 +190,7 @@ class DissipatorSpontaneousEmission(Dissipator):
                             for decay_operator in decay_operators:
                                 lindblad_operators.append(CouplingOperator.from_matrix(basis, decay_operator, 0.))
 
-            # Break from the loop if all the AtomicSpin DOFs are the same 
+            # Break from the loop if all the AtomicStructure DOFs are the same 
             if all_spins_are_same:
                 break 
 

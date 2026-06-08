@@ -16,7 +16,7 @@ num_spins = 2
 num_modes = 1
 
 spins = [
-    ism.AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+    ism.AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
     for _ in range(num_spins)
 ]
 spin_basis = ism.StandardBasis([*spins])

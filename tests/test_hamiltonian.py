@@ -3,7 +3,7 @@ import numpy as np
 from ionsim.basis import StandardBasis
 from ionsim.operator import CouplingOperator
 from ionsim.named_operators import Pauli
-from ionsim.degree_of_freedom import AtomicSpin
+from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.testing import assert_array_close
 
@@ -11,8 +11,8 @@ class TestHamiltonian(unittest.TestCase):
 
     def setUp(self):
         # Set up the basis and coupling operators for the tests
-        spin_a = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        spin_b = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.basis = StandardBasis([spin_a, spin_b])  # 00, 01, 10, 11 
 
         rabi_rate = 100e3 * 2 * np.pi  # rad./s
