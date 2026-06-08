@@ -239,3 +239,30 @@ class GSTCircuitPlanner:
         return planner 
 
 
+
+### Function that checks if a gate model is amplified by certain germs? 
+
+ #    def compute_gate_model_sensitivity_to_germs(self, gate_model: Callable): 
+ #        """ Function to check whether a gate model's parameter is sensitive to the germs in the planner. """ 
+ #
+ #        if self.germs is None:
+ #            ValueError(f"Germs must be specified.")
+
+
+        # Check sensitivies via ||d (germ process matrix) / d theta ||
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
