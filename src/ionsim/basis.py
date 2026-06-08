@@ -192,6 +192,9 @@ class StandardBasis(Basis):
         spins = [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicSpin)]
         return spins
 
+    @property
+    def motional_modes(self):
+        return [dof for dof in self.degrees_of_freedom if dof not in self.spin_DOFs]
 
 @dataclass(frozen=True, eq=False)
 class ZPauliBasis(StandardBasis):
@@ -221,6 +224,11 @@ class XPauliBasis(Basis):
         pairs = list(itertools.product(*[[plus, minus] for dof in self.degrees_of_freedom]))
         return [np.kron(*pair) for pair in pairs]
 
+    @property
+    def spin_DOFs(self):
+        """ Returns list of spin degrees of freedom """ 
+        return self.degrees_of_freedom 
+
 @dataclass(frozen=True, eq=False)
 class YPauliBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix."""
@@ -243,11 +251,16 @@ class YPauliBasis(Basis):
 @dataclass(frozen=True, eq=False)
 class XPauliAndFockBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix and Fock states."""
-    atomic_spins: list[AtomicSpin]
+
+    @property
+    def spin_DOFs(self):
+        """ Returns list of spin degrees of freedom or empty list if none. """
+        spins = [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicSpin)]
+        return spins 
 
     @property
     def motional_modes(self):
-        return [dof for dof in self.degrees_of_freedom if dof not in self.atomic_spins]
+        return [dof for dof in self.degrees_of_freedom if dof not in self.spin_DOFs]
 
     @property
     def vectors(self):
@@ -256,9 +269,10 @@ class XPauliAndFockBasis(Basis):
         minus = 1/np.sqrt(2)*np.array([1, -1])
         groups = list(itertools.product(
             *[
-                [plus, minus] if dof in self.atomic_spins else
+                [plus, minus] if dof in self.spin_DOFs else
                 [np.eye(len(dof.energy_levels))[i] for i in range(len(dof.energy_levels))]
                 for dof in self.degrees_of_freedom
             ]
         ))
         return [ft.reduce(np.kron, group) for group in groups]
+

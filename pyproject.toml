@@ -17,7 +17,8 @@ dependencies = [
     "icecream",
     "pyyaml",
     "pint",
-    "sympy"
+    "sympy",
+    "qutip"
 ]
 classifiers = [
     "Development Status :: 2 - Beta",
