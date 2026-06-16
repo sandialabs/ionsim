@@ -2,7 +2,7 @@ import numpy as np
 from numpy.typing import NDArray
 import scipy.constants as const
 import warnings
-import scipy.optimize as opt    
+import scipy.optimize as opt
 from ionsim.custom_types import Matrix, Vector
 from ionsim.degree_of_freedom import AtomicSpin, MotionalMode
 from ionsim.basis import StandardBasis 
@@ -692,36 +692,453 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
 
 #You could redefine the equilibrium finding function to assert that the equilibrium is linear. For example, make a wrapper inside the function for the potential, Jacobian, and Hessian that forces x_i and y_i = 0. 
  
-#This is the code for the Lamb-Dicke parameters: (not that overall phases don't matter here, but the relative phase does. We could pin down the phase with some convention like, "each mode's first non-negative LD value is defined positive." I also include some extra helper functions. 
-def two_central_ion_separation(wz_Hz, l_2_cent):
-    mass_yb_amu = 170.936 # TODO: hardcoded for now
-    four_ion_analysis = GeneralizedModeAnalysisWithBranchSortedModes(num_ions=4, omega_x=2*np.pi*11e6, omega_y=2*np.pi*10e6, omega_z=2*np.pi*wz_Hz, atomic_masses=mass_yb_amu, atomic_numbers = 70)
-    four_ion_analysis.solve_ion_trap_equilibrium()
-    positions_z = four_ion_analysis.equilibrium_positions[2*4:] * four_ion_analysis.characteristic_parameters['length']
-    central_ions = np.argsort(np.abs(positions_z))[:2]
-    dl = np.abs(positions_z[central_ions[0]] - positions_z[central_ions[1]])
-    return dl - l_2_cent
-    
-def find_wz_for_desired_central_ion_separation(l_2_cent, bounds=(0.1e6, 0.5e6)):
-    result = root_scalar(two_central_ion_separation, args=(l_2_cent,), bracket=bounds, method='bisect')
-    if not result.converged:
-        raise ValueError("Root finding did not converge. Try adjusting the bounds or check the function behavior.")
-    return result.root
-    
+#This is the code for the Lamb-Dicke parameters: (not that overall phases don't matter here, but the relative phase does. We could pin down the phase with some convention like, "each mode's first non-negative LD value is defined positive.")
+        
  
-def calc_mode_energies(res, Fock_cutoffs):
-    energies_m1 = np.empty(len(res.states))
-    energies_m2 = np.empty(len(res.states))
-    N_op = qt.num(Fock_cutoffs[0])
-    eye = qt.qeye(Fock_cutoffs[0])
-    spin_eye = qt.qeye(2)
-    E1_op = qt.tensor([spin_eye, N_op, eye])
-    E2_op = qt.tensor([spin_eye, eye, N_op])
-    for k, state in enumerate(res.states):
-        energies_m1[k] = qt.expect(E1_op, state)
-        energies_m2[k] = qt.expect(E2_op, state)
-    return energies_m1, energies_m2
 
 
-if __name__ == '__main__':
-    print(two_central_ion_separation(10. * 1E6 * 2*np.pi, 0.05)) 
+class LinearIonChainAnalysis(GeneralizedModeAnalysisWithBranchSortedModes):
+    """
+    Subclass for setting up and analyzing linear ion chains.
+
+    In a linear ion chain, ions are typically aligned along the z-axis (axial direction),
+    with minimal displacement in the x and y directions (radial directions).
+
+    This class extends GeneralizedModeAnalysisWithBranchSortedModes to:
+    1. Enforce linear chain configuration
+    2. Provide specialized methods for linear chain analysis
+    3. Offer convenience methods for common linear chain scenarios
+    """
+
+    def __init__(self, num_ions: int, omega_x: float, omega_y: float, omega_z: float,
+                 atomic_masses: np.ndarray | float, atomic_numbers: np.ndarray | int):
+        """
+        Initialize a linear ion chain analysis.
+
+        Parameters:
+        -----------
+        num_ions : int
+            Number of ions in the chain
+        omega_x, omega_y, omega_z : float
+            Trap frequencies in x, y, and z directions (rad/s)
+        atomic_masses : array or float
+            Atomic masses in amu (atomic mass units)
+        atomic_numbers : array or int
+            Atomic numbers (number of protons)
+        """
+        super().__init__(num_ions, omega_x, omega_y, omega_z, atomic_masses, atomic_numbers)
+
+    def solve_ion_trap_equilibrium(self):
+        """
+        Solve for equilibrium positions and analyze normal modes for a linear chain.
+
+        This method:
+        1. Sets up dimensionless parameters
+        2. Solves for equilibrium positions
+        3. Reindexes ions by their z-position (closest to center first)
+        4. Computes normal modes with branch sorting
+        5. Performs validation checks
+        """
+        # Set up dimensionless parameters using first ion's properties and axial trap frequency
+        self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
+
+        # Solve for equilibrium positions
+        self.equilibrium_positions = self.solve_for_equilibrium_positions()
+
+        # Reindex ions by their z-position (important for linear chains)
+        self.reindex_ions_by_z()
+
+        # Build necessary matrices
+        mass_matrix = self.build_mass_matrix(self.m)
+        E_matrix = self.build_E_matrix(self.equilibrium_positions, mass_matrix)
+        T_matrix = self.build_momentum_transform_matrix(mass_matrix)
+        H_matrix = self.compute_H_matrix(T_matrix, E_matrix)
+
+        # Calculate normal modes with branch sorting (x, y, z branches)
+        self.eigvals, self.eigvecs = self.calculate_normal_modes(H_matrix)
+        self.eigvecs_vel = self.get_eigenvectors_xv_coords(T_matrix, self.eigvecs)
+
+        # Validate results
+        self.check_for_zero_modes()
+        self.check_outer_relation(H_matrix)
+
+        # Compute canonical transformation matrix
+        S_matrix = self.get_canonical_transformation(H_matrix, self.eigvecs, self.eigvals)
+        self.check_diagonalization(T_matrix, S_matrix, E_matrix)
+
+    def get_axial_modes(self):
+        """
+        Get the axial (z-direction) normal modes.
+
+        Returns:
+        --------
+        tuple
+            (axial_eigenvalues, axial_eigenvectors) for the axial modes
+        """
+        # Axial modes are the last third of the modes (after branch sorting)
+        n_modes_per_branch = self.num_ions
+        axial_start = 2 * n_modes_per_branch
+        axial_end = 3 * n_modes_per_branch
+
+        axial_eigvals = self.eigvals[axial_start:axial_end]
+        axial_eigvecs = self.eigvecs[:, axial_start:axial_end]
+
+        return axial_eigvals, axial_eigvecs
+
+    def get_radial_modes(self, direction='x'):
+        """
+        Get the radial normal modes in the specified direction.
+
+        Parameters:
+        -----------
+        direction : str
+            'x' or 'y' for radial direction
+
+        Returns:
+        --------
+        tuple
+            (radial_eigenvalues, radial_eigenvectors) for the specified radial modes
+        """
+        if direction not in ['x', 'y']:
+            raise ValueError("Direction must be 'x' or 'y'")
+
+        n_modes_per_branch = self.num_ions
+        if direction == 'x':
+            start_idx = 0
+        else:  # direction == 'y'
+            start_idx = n_modes_per_branch
+
+        end_idx = start_idx + n_modes_per_branch
+
+        radial_eigvals = self.eigvals[start_idx:end_idx]
+        radial_eigvecs = self.eigvecs[:, start_idx:end_idx]
+
+        return radial_eigvals, radial_eigvecs
+
+    def get_ion_spacing(self):
+        """
+        Get the spacing between consecutive ions along the z-axis.
+
+        Returns:
+        --------
+        np.ndarray
+            Array of distances between consecutive ions (in meters)
+        """
+        # Get z positions (dimensionful)
+        x, y, z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
+        z_dimensionful = z * self.characteristic_parameters['length']
+
+        # Sort positions and calculate spacing
+        sorted_z = np.sort(z_dimensionful)
+        ion_spacing = np.diff(sorted_z)
+
+        return ion_spacing
+
+    def get_center_of_mass_position(self):
+        """
+        Get the center of mass position of the ion chain.
+
+        Returns:
+        --------
+        tuple
+            (com_x, com_y, com_z) center of mass coordinates in meters
+        """
+        # Get positions (dimensionful)
+        x, y, z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
+        x_dim = x * self.characteristic_parameters['length']
+        y_dim = y * self.characteristic_parameters['length']
+        z_dim = z * self.characteristic_parameters['length']
+
+        # Calculate center of mass
+        total_mass = np.sum(self.atomic_masses)
+        com_x = np.sum(x_dim * self.atomic_masses) / total_mass
+        com_y = np.sum(y_dim * self.atomic_masses) / total_mass
+        com_z = np.sum(z_dim * self.atomic_masses) / total_mass
+
+        return com_x, com_y, com_z
+
+    def get_axial_mode_frequencies(self):
+        """
+        Get the frequencies of the axial modes.
+
+        Returns:
+        --------
+        np.ndarray
+            Array of axial mode frequencies in rad/s
+        """
+        axial_eigvals, _ = self.get_axial_modes()
+        return axial_eigvals * self.trap_freq_scale
+
+    def get_radial_mode_frequencies(self, direction='x'):
+        """
+        Get the frequencies of the radial modes in the specified direction.
+
+        Parameters:
+        -----------
+        direction : str
+            'x' or 'y' for radial direction
+
+        Returns:
+        --------
+        np.ndarray
+            Array of radial mode frequencies in rad/s
+        """
+        radial_eigvals, _ = self.get_radial_modes(direction)
+        return radial_eigvals * self.trap_freq_scale
+
+    def get_mode_participation_factors_by_branch(self):
+        """
+        Get mode participation factors organized by branch (x, y, z).
+
+        Returns:
+        --------
+        dict
+            Dictionary with keys 'x', 'y', 'z' containing mode participation factors
+            for each branch. Each value is a 2D array of shape (num_ions, num_modes_per_branch)
+        """
+        # Get full mode participation factors
+        mode_pf = self.calculate_mode_participation_factors()
+
+        # Organize by branch
+        n_modes_per_branch = self.num_ions
+
+        result = {
+            'x': mode_pf[0, :, :n_modes_per_branch],
+            'y': mode_pf[1, :, n_modes_per_branch:2*n_modes_per_branch],
+            'z': mode_pf[2, :, 2*n_modes_per_branch:3*n_modes_per_branch]
+        }
+
+        return result
+
+    def calculate_lamb_dicke_parameters(self, wavevector: np.ndarray | float) -> dict:
+        """
+        Calculate Lamb-Dicke parameters for all ions and modes, organized by branch.
+
+        The Lamb-Dicke parameter η = k · Δr_0 represents the ratio of the spatial
+        extent of the ion's zero-point motion to the wavelength of the laser.
+
+        Parameters:
+        -----------
+        wavevector : np.ndarray or float
+            - If array: Full wavevector (kx, ky, kz) as a 3-element array in units of 1/m
+            - If float: Magnitude of the laser wavevector |k| in units of 1/m (for backward compatibility)
+
+        Returns:
+        --------
+        dict
+            Dictionary with keys 'x', 'y', 'z' containing Lamb-Dicke parameters
+            for each branch. Each value is a 2D array of shape (num_ions, num_modes_per_branch)
+            representing η_{direction}[ion_index, mode_index]
+        """
+        # Get mode participation factors (which are proportional to zero-point motion)
+        mode_pf_by_branch = self.get_mode_participation_factors_by_branch()
+
+        # Handle both full wavevector (preferred) and scalar wavenumber (backward compatibility)
+        if isinstance(wavevector, (float, int)):
+            # Scalar case: multiply each component by the same wavenumber
+            # This assumes the laser is equally coupled to all directions
+            lamb_dicke_parameters = {}
+            for direction in ['x', 'y', 'z']:
+                lamb_dicke_parameters[direction] = wavevector * mode_pf_by_branch[direction]
+        else:
+            # Vector case: compute dot product k · Δr_0 for proper directionality
+            wavevector = np.asarray(wavevector)
+            if wavevector.shape != (3,):
+                raise ValueError("Wavevector must be a 3-element array (kx, ky, kz)")
+
+            # Get full mode participation factors
+            full_mode_pf = self.calculate_mode_participation_factors()
+
+            # Compute Lamb-Dicke parameters as dot product: η = k · Δr_0
+            # This gives us shape (num_ions, num_modes) for the total LD parameter
+            num_ions = self.num_ions
+            num_modes = 3 * num_ions
+
+            # Reshape for dot product: (3, num_ions, num_modes) · (3,) -> (num_ions, num_modes)
+            total_ld_params = np.zeros((num_ions, num_modes), dtype=complex)
+            for i in range(3):
+                total_ld_params += wavevector[i] * full_mode_pf[i, :, :]
+
+            # Organize by branch for consistency with scalar case
+            n_modes_per_branch = num_ions
+            lamb_dicke_parameters = {
+                'x': total_ld_params[:, :n_modes_per_branch],
+                'y': total_ld_params[:, n_modes_per_branch:2*n_modes_per_branch],
+                'z': total_ld_params[:, 2*n_modes_per_branch:3*n_modes_per_branch]
+            }
+
+        return lamb_dicke_parameters
+
+    def calculate_lamb_dicke_parameters_full(self, wavevector: np.ndarray | float) -> np.ndarray:
+        """
+        Calculate full Lamb-Dicke parameter matrix.
+
+        Parameters:
+        -----------
+        wavevector : np.ndarray or float
+            - If array: Full wavevector (kx, ky, kz) as a 3-element array in units of 1/m
+            - If float: Magnitude of the laser wavevector |k| in units of 1/m (for backward compatibility)
+
+        Returns:
+        --------
+        np.ndarray
+            - If scalar wavevector: Full matrix of shape (3, num_ions, num_modes)
+              where eta[direction, ion, mode] gives the component-wise LD parameter
+            - If vector wavevector: Total LD parameter matrix of shape (num_ions, num_modes)
+              where eta[ion, mode] gives the total LD parameter k · Δr_0
+        """
+        # Get full mode participation factors
+        mode_pf = self.calculate_mode_participation_factors()
+
+        if isinstance(wavevector, (float, int)):
+            # Scalar case: component-wise multiplication (backward compatibility)
+            return wavevector * mode_pf
+        else:
+            # Vector case: compute dot product k · Δr_0 (physically accurate)
+            wavevector = np.asarray(wavevector)
+            if wavevector.shape != (3,):
+                raise ValueError("Wavevector must be a 3-element array (kx, ky, kz)")
+
+            # Compute total Lamb-Dicke parameter as dot product
+            # Shape: (3, num_ions, num_modes) · (3,) -> (num_ions, num_modes)
+            num_ions = self.num_ions
+            num_modes = 3 * num_ions
+            total_ld_params = np.zeros((num_ions, num_modes), dtype=complex)
+
+            for i in range(3):
+                total_ld_params += wavevector[i] * mode_pf[i, :, :]
+
+            return total_ld_params
+
+    def get_axial_lamb_dicke_parameters(self, wavevector: np.ndarray | float) -> np.ndarray:
+        """
+        Get Lamb-Dicke parameters for axial (z) modes only.
+
+        Parameters:
+        -----------
+        wavevector : np.ndarray or float
+            - If array: Full wavevector (kx, ky, kz) as a 3-element array in units of 1/m
+            - If float: Magnitude of the laser wavevector |k| in units of 1/m (for backward compatibility)
+
+        Returns:
+        --------
+        np.ndarray
+            Lamb-Dicke parameters for axial modes, shape (num_ions, num_axial_modes)
+        """
+        lamb_dicke_by_branch = self.calculate_lamb_dicke_parameters(wavevector)
+        return lamb_dicke_by_branch['z']
+
+    def get_radial_lamb_dicke_parameters(self, wavevector: np.ndarray | float, direction: str = 'x') -> np.ndarray:
+        """
+        Get Lamb-Dicke parameters for radial modes in specified direction.
+
+        Parameters:
+        -----------
+        wavevector : np.ndarray or float
+            - If array: Full wavevector (kx, ky, kz) as a 3-element array in units of 1/m
+            - If float: Magnitude of the laser wavevector |k| in units of 1/m (for backward compatibility)
+        direction : str
+            'x' or 'y' for radial direction
+
+        Returns:
+        --------
+        np.ndarray
+            Lamb-Dicke parameters for radial modes, shape (num_ions, num_radial_modes)
+        """
+        if direction not in ['x', 'y']:
+            raise ValueError("Direction must be 'x' or 'y'")
+
+        lamb_dicke_by_branch = self.calculate_lamb_dicke_parameters(wavevector)
+        return lamb_dicke_by_branch[direction]
+
+    def get_two_central_ion_separation(self) -> float:
+        """
+        Calculate the separation between the two central ions in the chain.
+
+        Returns:
+        --------
+        float
+            Distance between the two central ions in meters
+        """
+        # Get z positions (dimensionful)
+        x, y, z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
+        z_dimensionful = z * self.characteristic_parameters['length']
+
+        # Find the two central ions (closest to the center)
+        central_ions = np.argsort(np.abs(z_dimensionful))[:2]
+
+        # Calculate separation
+        dl = np.abs(z_dimensionful[central_ions[0]] - z_dimensionful[central_ions[1]])
+        return dl
+
+    def find_axial_frequency_for_desired_central_ion_separation(self, target_separation: float,
+                                                               bounds: tuple = (0.1e6, 0.5e6)) -> float:
+        """
+        Find the axial frequency (wz) required to achieve a desired separation between central ions.
+
+        Parameters:
+        -----------
+        target_separation : float
+            Desired separation between central ions in meters
+        bounds : tuple
+            Tuple of (min_freq, max_freq) in Hz for the root finding algorithm
+
+        Returns:
+        --------
+        float
+            Axial frequency in rad/s that achieves the target separation
+        """
+        from scipy.optimize import root_scalar
+
+        def separation_error(wz_Hz):
+            # Create a temporary analysis object with the current wz
+            temp_analysis = GeneralizedModeAnalysisWithBranchSortedModes(
+                num_ions=self.num_ions,
+                omega_x=self.omega_x[0],
+                omega_y=self.omega_y[0],
+                omega_z=2*np.pi*wz_Hz,
+                atomic_masses=self.atomic_masses[0],
+                atomic_numbers=self.atomic_numbers[0]
+            )
+            temp_analysis.solve_ion_trap_equilibrium()
+            current_separation = temp_analysis.get_two_central_ion_separation()
+            return current_separation - target_separation
+
+        # Convert bounds from Hz to rad/s for the root finding
+        bounds_rad_s = (2*np.pi*bounds[0], 2*np.pi*bounds[1])
+
+        result = root_scalar(separation_error, bracket=bounds_rad_s, method='bisect')
+        if not result.converged:
+            raise ValueError("Root finding did not converge. Try adjusting the bounds or check the function behavior.")
+
+        return result.root
+
+    def print_chain_summary(self):
+        """
+        Print a summary of the linear ion chain configuration.
+        """
+        print(f"Linear Ion Chain Analysis Summary")
+        print(f"Number of ions: {self.num_ions}")
+        print(f"Trap frequencies: x={self.omega_x[0]/(2*np.pi)/1e6:.2f} MHz, "
+              f"y={self.omega_y[0]/(2*np.pi)/1e6:.2f} MHz, "
+              f"z={self.omega_z[0]/(2*np.pi)/1e6:.2f} MHz")
+
+        # Get ion spacing
+        spacing = self.get_ion_spacing()
+        print(f"Ion spacing (z-axis): {spacing*1e6:.2f} µm")
+
+        # Get COM position
+        com_x, com_y, com_z = self.get_center_of_mass_position()
+        print(f"Center of mass position: ({com_x*1e6:.2f} µm, {com_y*1e6:.2f} µm, {com_z*1e6:.2f} µm)")
+
+        # Get mode frequencies
+        axial_freqs = self.get_axial_mode_frequencies()
+        radial_x_freqs = self.get_radial_mode_frequencies('x')
+        radial_y_freqs = self.get_radial_mode_frequencies('y')
+
+        print(f"\nAxial mode frequencies: {axial_freqs/(2*np.pi)/1e6:.2f} MHz")
+        print(f"Radial X mode frequencies: {radial_x_freqs/(2*np.pi)/1e6:.2f} MHz")
+        print(f"Radial Y mode frequencies: {radial_y_freqs/(2*np.pi)/1e6:.2f} MHz")
+
+
+ 
