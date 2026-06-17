@@ -84,11 +84,7 @@ def define_gate_models(basis):
 
         return process_matrix
 
-    return {
-        'Gxpi2': X_pi2_process_matrix,
-        'Gypi2': Y_pi2_process_matrix,
-        'idle': idle
-    }
+    return {'Gxpi2': X_pi2_process_matrix, 'Gypi2': Y_pi2_process_matrix, 'idle': idle}
 
 
 def run_standard_planning(gate_names, qubit_labels, output_file):
@@ -100,14 +96,10 @@ def run_standard_planning(gate_names, qubit_labels, output_file):
     start_time = time.perf_counter()
 
     # Create standard planner without gate models
-    standard_planner = ism.GSTCircuitPlanner(
-        gate_names=gate_names,
-        qubit_labels=qubit_labels,
-        germ_powers=[1, 2, 4, 8, 16]
-    )
+    standard_planner = ism.GSTCircuitPlanner(gate_names=gate_names, qubit_labels=qubit_labels, germ_powers=[1, 2, 4, 8, 16])
 
     # Generate and write circuits
-    standard_planner.write_circuit_plan(output_file, num_qubits=1)
+    standard_planner.write_circuit_plan(output_file, 1)
     standard_planner.write_circuit_design(output_file.replace('.gstdata', '_design.yml'))
 
     end_time = time.perf_counter()
@@ -132,12 +124,7 @@ def run_optimized_planning(gate_names, qubit_labels, gate_models, output_file):
     start_time = time.perf_counter()
 
     # Create optimized planner with gate models
-    optimized_planner = ism.GSTCircuitPlanner(
-        gate_names=gate_names,
-        qubit_labels=qubit_labels,
-        germ_powers=[1, 2, 4, 8, 16],
-        gate_models=gate_models
-    )
+    optimized_planner = ism.GSTCircuitPlanner(gate_names=gate_names, qubit_labels=qubit_labels, germ_powers=[1, 2, 4, 8, 16], gate_models=gate_models)
 
     # Generate and write circuits
     optimized_planner.write_circuit_plan(output_file, num_qubits=1)

@@ -127,7 +127,7 @@ class GSTCircuitPlanner:
 
         return circuits 
 
-    def write_circuit_plan(self, filepath: str | Path, N_qubits:int = 1):
+    def write_circuit_plan(self, filepath: str | Path, N_qubits: int = 1):
         """ Writes a gst data file compatible with the parser """ 
         if not hasattr(self, 'circuits'):
             self.generate_gst_circuits() 
@@ -274,28 +274,33 @@ class GSTCircuitPlanner:
 
         for gate in germ:
             # Get the gate model function for this gate
-            gate_func = self.gate_models[gate.name]
+            # Convention is for idle gate to be named '[]'; however, gate models generally use "idle" instead. 
+            if gate.name == '[]':
+                gate_func = self.gate_models['idle']
+            else:
+                gate_func = self.gate_models[gate.name]
+
             # Evaluate at current parameters
             gate_matrix = gate_func(*theta)
             germ_process_matrix = gate_matrix @ germ_process_matrix
 
         return germ_process_matrix 
 
-    def compute_gate_model_sensitivity_to_germs(self, gate_model: Callable, max_power: int=16) 
+    def compute_gate_model_sensitivity_to_germs(self, gate_model: Callable, germs: list[list[ParsedGate]], max_power: int=16): 
         """ Compute sensitivity of gate model parameters to germ sequences.
 
             gate_model: Callable that returns a process matrix as function of parameters
             max_power: Maximum germ power to consider
 
-        Returns:
+            Returns:
             Dictionary: {germ: sensitivity_matrix} where sensitivity_matrix[param_idx, power-1]
             represents the sensitivity of parameter param_idx to germ^power.
         """
         import inspect
 
         # Validate inputs
-        if self.germs is None:
-            raise ValueError("Germs must be specified for sensitivity analysis.")
+ #        if self.germs is None:
+ #            raise ValueError("Germs must be specified for sensitivity analysis.")
         if self.gate_models is None:
             raise ValueError("Gate models must be provided for sensitivity analysis.")
 
@@ -312,7 +317,14 @@ class GSTCircuitPlanner:
 
         sensitivity_results = {}
 
-        for germ in self.germs:
+        for germ in germs:
+            germ_name = ''
+
+            for gate in germ:
+                germ_name += gate.name
+
+            print(f" - Looking at sensitivity for germ {germ_name}")
+
             # Initialize sensitivity matrix: params x powers
             germ_sensitivity = np.zeros((n_params, max_power))
             germ_process_matrix = self._compute_germ_process_matrix(germ, theta_nominal) 
@@ -339,7 +351,7 @@ class GSTCircuitPlanner:
 
                     germ_sensitivity[param_idx, power-1] = sensitivity
 
-            sensitivity_results[germ] = germ_sensitivity
+            sensitivity_results[germ_name] = germ_sensitivity
 
         return sensitivity_results
 
@@ -389,7 +401,7 @@ class GSTCircuitPlanner:
         # Compute sensitivity for all gates and germs
         sensitivity_data = {}
         for gate_name, gate_model in self.gate_models.items():
-            sensitivity_data[gate_name] = self.compute_gate_model_sensitivity_to_germs(gate_model)
+            sensitivity_data[gate_name] = self.compute_gate_model_sensitivity_to_germs(gate_model, germs_to_consider)
 
         # Select germs based on sensitivity
         selected_germs = self._select_germs_based_on_sensitivity(sensitivity_data)
