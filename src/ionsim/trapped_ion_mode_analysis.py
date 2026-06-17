@@ -32,19 +32,32 @@ def characteristic_length(q: float, mass: float, omega: float) -> float:
 
 
 class TrappedIonModeAnalysis:
-    def __init__(self, num_ions: int, omega_x: float, omega_y: float, omega_z: float, atomic_masses: Vector | float, atomic_numbers: Vector | int): 
+    def __init__(self, num_ions: int, omega_x: float, omega_y: float, omega_z: float, atomic_masses: Vector | float, atomic_numbers: Vector | int,
+                 mode_organization: str = 'frequency_only', reindexing_strategy: str = 'distance'):
         """ Class for determining properties of trapped-ion phonon modes, requiring the following system parameters:
 
             - num_ions: the number of ions
-            - omega_x: harmonic trap frequency in the x direction in units of rad/s. 
-            - omega_y: harmonic trap frequency in the y direction in units of rad/s. 
-            - omega_z: harmonic trap frequency in the z direction. This is the "axial" direction used for 1D chains.  
-            - atomic masses: array of atomic masses or a single number => same mass for each ion. Units are amu (atomic mass units) 
-            - atomic numbers: array of (Z) atomic numbers (# of protons of an element) or a single number => all ions are the same.  
+            - omega_x: harmonic trap frequency in the x direction in units of rad/s.
+            - omega_y: harmonic trap frequency in the y direction in units of rad/s.
+            - omega_z: harmonic trap frequency in the z direction. This is the "axial" direction used for 1D chains.
+            - atomic masses: array of atomic masses or a single number => same mass for each ion. Units are amu (atomic mass units)
+            - atomic numbers: array of (Z) atomic numbers (# of protons of an element) or a single number => all ions are the same.
+            - mode_organization: strategy for organizing modes ('frequency_only' or 'branch_sorted')
+            - reindexing_strategy: strategy for reindexing ions ('distance' or 'z_axis')
 
-        """ 
-        # TODO: Decide how to handle units and how much of pint we should use.  
+        """
+        # TODO: Decide how to handle units and how much of pint we should use.
         self.num_ions = num_ions
+
+        # Store configuration strategies
+        self.mode_organization = mode_organization
+        self.reindexing_strategy = reindexing_strategy
+
+        # Validate configuration
+        if mode_organization not in ['frequency_only', 'branch_sorted']:
+            raise ValueError(f"Invalid mode_organization: {mode_organization}. Must be 'frequency_only' or 'branch_sorted'")
+        if reindexing_strategy not in ['distance', 'z_axis']:
+            raise ValueError(f"Invalid reindexing_strategy: {reindexing_strategy}. Must be 'distance' or 'z_axis'")
 
         self.atomic_masses = self.convert_to_array(atomic_masses) * const.u # kg from amu 
         self.atomic_numbers = self.convert_to_array(atomic_numbers)
@@ -191,30 +204,33 @@ class TrappedIonModeAnalysis:
             warnings.warn("Diagnolization check failed")    
             print("has duplicate eigenvalues: ", has_duplicate_eigvals)
 
-    #def run(self):
-
-    def solve_ion_trap_equilibrium(self): 
+    def solve_ion_trap_equilibrium(self):
         """ Diagonalizes the Coulomb + harmonic trap Hamiltonian for a system of ions. """
-        # Convert to dimensionless units using axial trap frequency and first ion's mass and charge  
-        # TODO: take in input here or in class constructor for mass, charge, trap scales. 
+        # Convert to dimensionless units using axial trap frequency and first ion's mass and charge
+        # TODO: take in input here or in class constructor for mass, charge, trap scales.
         #self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
         self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
-        
-        self.equilibrium_positions = self.solve_for_equilibrium_positions()
-        self.reindex_ions()
 
-        # Compute helper matrices for computing normal mode properties 
-        mass_matrix = self.build_mass_matrix(self.m)  
-        E_matrix = self.build_E_matrix(self.equilibrium_positions, mass_matrix)  
+        self.equilibrium_positions = self.solve_for_equilibrium_positions()
+
+        # Use configurable reindexing strategy
+        if self.reindexing_strategy == 'z_axis':
+            self.reindex_ions_by_z()
+        else:  # 'distance'
+            self.reindex_ions()
+
+        # Compute helper matrices for computing normal mode properties
+        mass_matrix = self.build_mass_matrix(self.m)
+        E_matrix = self.build_E_matrix(self.equilibrium_positions, mass_matrix)
         T_matrix = self.build_momentum_transform_matrix(mass_matrix)
-        H_matrix = self.compute_H_matrix(T_matrix, E_matrix)   
+        H_matrix = self.compute_H_matrix(T_matrix, E_matrix)
 
         self.eigvals, self.eigvecs = self.calculate_normal_modes(H_matrix)
-        self.eigvecs_vel = self.get_eigenvectors_xv_coords(T_matrix, self.eigvecs)    
-        self.check_for_zero_modes() 
-        S_matrix = self.get_canonical_transformation(H_matrix, self.eigvecs, self.eigvals) 
+        self.eigvecs_vel = self.get_eigenvectors_xv_coords(T_matrix, self.eigvecs)
+        self.check_for_zero_modes()
+        S_matrix = self.get_canonical_transformation(H_matrix, self.eigvecs, self.eigvals)
 
-        # Perform checks 
+        # Perform checks
         self.check_outer_relation(H_matrix)
         self.check_diagonalization(T_matrix, S_matrix, E_matrix)
         #self.hasrun = True  
@@ -274,20 +290,41 @@ class TrappedIonModeAnalysis:
         return x, y, z 
         
 
-    def reindex_ions(self):  
-        """ Re-indexes the ions to order based on the distance from the center of the trap, where smallest index is closest to the center """
-        # TODO: How are even/odd cases is handled? 
+    def reindex_ions(self):
+        """Re-indexes the ions to order based on the distance from the center of the trap, where smallest index is closest to the center."""
+        # TODO: How are even/odd cases is handled?
         x,y,z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
         r = np.sqrt(x**2 + y**2 + z**2)
         idx = np.argsort(r)
 
         reindexed_positions = np.hstack((x[idx], y[idx], z[idx]))
-        self.equilibrium_positions = reindexed_positions 
+        self.equilibrium_positions = reindexed_positions
         self.m = self.m[idx]
         self.q = self.q[idx]
         self.atomic_masses = self.atomic_masses[idx]
         self.nuclear_charges = self.nuclear_charges[idx]
         self.atomic_numbers = self.atomic_numbers[idx]
+
+    def reindex_ions_by_z(self):
+        """Re-indexes ions based on their position along the z-axis, with the ion closest to the center having index 0."""
+        x,y,z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
+        idx = np.argsort(z)
+
+        self.equilibrium_positions = np.hstack((x[idx], y[idx], z[idx]))
+
+        # Reindex all other arrays accordingly
+        self.m = self.m[idx]
+        self.q = self.q[idx]
+        self.atomic_masses = self.atomic_masses[idx]
+        self.nuclear_charges = self.nuclear_charges[idx]
+        self.atomic_numbers = self.atomic_numbers[idx]
+
+        # trapping frequencies
+        self.omega_x = self.omega_x[idx]
+        self.omega_y = self.omega_y[idx]
+        self.omega_z = self.omega_z[idx]
+        # all ions are the same so this is safe. TODO: When does this change?
+        self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
 
 
     def solve_for_equilibrium_positions(self, positions_guess: Vector | None=None):
@@ -488,10 +525,49 @@ class TrappedIonModeAnalysis:
        return eigvals, eigvecs
     
 
-    def organize_modes(self, eigvals, eigvecs):  
-        eigvals, eigvecs = self.sort_modes(eigvals, eigvecs)    
+    def organize_modes(self, eigvals, eigvecs):
+        eigvals, eigvecs = self.sort_modes(eigvals, eigvecs)
         eigvals, eigvecs = self.split_modes(eigvals, eigvecs)
-        return eigvals, eigvecs 
+
+        # Apply branch sorting if configured
+        if self.mode_organization == 'branch_sorted':
+            eigvals, eigvecs = self.sort_by_branch(eigvals, eigvecs)
+
+        return eigvals, eigvecs
+
+    def _xyz_classify_modes(self, evecs):
+        """Classify modes by their dominant spatial direction (x, y, z)."""
+        N_coords, N_modes = np.shape(evecs)
+        N_ions = N_coords // 6
+        classifier = np.zeros(N_modes, dtype=int)
+        for mode_index in range(N_modes):
+            x_score = np.sum(np.abs(evecs[0:N_ions, mode_index])) + np.sum(np.abs(evecs[3*N_ions:4*N_ions, mode_index]))
+            y_score = np.sum(np.abs(evecs[N_ions:2*N_ions, mode_index])) + np.sum(np.abs(evecs[4*N_ions:5*N_ions, mode_index]))
+            z_score = np.sum(np.abs(evecs[2*N_ions:3*N_ions, mode_index])) + np.sum(np.abs(evecs[5*N_ions:6*N_ions, mode_index]))
+            scores = [x_score, y_score, z_score]
+            max_index = np.argmax(scores)
+            classifier[mode_index] = max_index
+        for direction in range(3):
+            count = np.sum(classifier == direction)
+            assert count == N_modes // 3, f"Classification error: direction {direction} has {count} modes, expected {N_modes // 3}"
+        return classifier
+
+    def sort_by_branch(self, evals, evecs):
+        """Sorts the eigenvalues, eigenvectors by mode branch (radial x, radial y, axial (z)).
+
+        Only makes sense for linear chain configurations where Hessian is block diagonal.
+        """
+        classifier = self._xyz_classify_modes(evecs)
+        # within each branch, sort by frequency
+        N_ions = len(evals) // 3
+        sorted_by_branch_evals = np.zeros_like(evals)
+        sorted_by_branch_evecs = np.zeros_like(evecs)
+        for direction in range(3):
+            direction_indices = np.where(classifier == direction)[0]
+            # they are already sorted by frequency from the original mode analysis code, so we can just take them in order
+            sorted_by_branch_evals[direction*N_ions:(direction+1)*N_ions] = evals[direction_indices]
+            sorted_by_branch_evecs[:, direction*N_ions:(direction+1)*N_ions] = evecs[:, direction_indices]
+        return sorted_by_branch_evals, sorted_by_branch_evecs 
 
 
     def calculate_mode_participation_factors(self) -> Matrix:
@@ -524,9 +600,6 @@ class TrappedIonModeAnalysis:
     # Can get lamb-dicke parameters from wavevctor \dot mode_participation_factors[:, i, m]
     ### -- Coordinate systems must be the same / correspond. 
 
-
-
-
     # Derived properties 
     def compute_reference_single_ion_lamb_dicke_factors(self, wavenumber: float) -> (float, float, float):
         """ Computes analytical Lamb-Dicke parameter by eta = k * sqrt(hbar / m omega) for an ion in a light-field with wavevector |k| 
@@ -540,121 +613,25 @@ class TrappedIonModeAnalysis:
         mass = self.atomic_masses[0] 
         eta_x, eta_y, eta_z = wavenumber * np.sqrt(const.hbar / (2 * mass * trap_frequencies))
         return eta_x, eta_y, eta_z    # ignore the phase
- 
-    
-#classes
-class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
- 
-    def _xyz_classify_modes(self, evecs):
-        N_coords, N_modes = np.shape(evecs)
-        N_ions = N_coords // 6
-        classifier = np.zeros(N_modes, dtype=int)
-        for mode_index in range(N_modes):
-            x_score = np.sum(np.abs(evecs[0:N_ions, mode_index])) + np.sum(np.abs(evecs[3*N_ions:4*N_ions, mode_index]))
-            y_score = np.sum(np.abs(evecs[N_ions:2*N_ions, mode_index])) + np.sum(np.abs(evecs[4*N_ions:5*N_ions, mode_index]))
-            z_score = np.sum(np.abs(evecs[2*N_ions:3*N_ions, mode_index])) + np.sum(np.abs(evecs[5*N_ions:6*N_ions, mode_index]))
-            scores = [x_score, y_score, z_score]
-            max_index = np.argmax(scores)
-            classifier[mode_index] = max_index
-        for direction in range(3):
-            count = np.sum(classifier == direction)
-            assert count == N_modes // 3, f"Classification error: direction {direction} has {count} modes, expected {N_modes // 3}"
-        return classifier
- 
-    def sort_by_branch(self, evals, evecs):
-        """ Sorts the eigenvalues, eigenvectors by mode branch (radial x, radial y, axial (z)) """
-        # Hessian block diagonal H_xx, H_yy, H_zz non-zero for linear chain 
-        ## only makes sense for linear chain 
-        classifier = self._xyz_classify_modes(evecs)
-        # within each branch, sort by frequency
-        N_ions = len(evals) // 3
-        sorted_by_branch_evals = np.zeros_like(evals)
-        sorted_by_branch_evecs = np.zeros_like(evecs)
-        for direction in range(3):
-            direction_indices = np.where(classifier == direction)[0]
-            # they are already sorted by frequency from the original mode analysis code, so we can just take them in order
-            sorted_by_branch_evals[direction*N_ions:(direction+1)*N_ions] = evals[direction_indices]
-            sorted_by_branch_evecs[:, direction*N_ions:(direction+1)*N_ions] = evecs[:, direction_indices]
-        return sorted_by_branch_evals, sorted_by_branch_evecs
 
-    # Override from parent  
-    def organize_modes(self, eigvals, eigvecs):        
-        eigvals, eigvecs = self.sort_modes(eigvals, eigvecs)
-        eigvals, eigvecs = self.split_modes(eigvals, eigvecs)
-        eigvals, eigvecs = self.sort_by_branch(eigvals, eigvecs)
-        return eigvals, eigvecs
- 
- 
-    def reindex_ions_by_z(self): 
-        # based on the position along z, lowest i, is 0, up to N - 1
-        x,y,z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
- 
-        idx = np.argsort(z)
-        self.equilibrium_positions = np.hstack((x[idx], y[idx], z[idx]))
- 
-        # Reindex all other arrays accordingly
-        self.m = self.m[idx]
-        self.q = self.q[idx]
-        self.atomic_masses = self.atomic_masses[idx]
-        self.nuclear_charges = self.nuclear_charges[idx]
-        self.atomic_numbers = self.atomic_numbers[idx]
-
-        # trapping frequencies
-        self.omega_x = self.omega_x[idx]
-        self.omega_y = self.omega_y[idx]
-        self.omega_z = self.omega_z[idx]
-        # all ions are the same so this is safe. TODO: When does this change? 
-        self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
- 
-    #def run(self):
-    #def run_normal_mode_analysis()
-    def solve_ion_trap_equilibrium(self): 
-        """ Diagonalizes the Coulomb + harmonic trap Hamiltonian for a system of ions. """
-        #self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
-        self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
-        
-        self.equilibrium_positions = self.solve_for_equilibrium_positions()
-        self.reindex_ions_by_z()
-        mass_matrix = self.build_mass_matrix(self.m)  
-        E_matrix = self.build_E_matrix(self.equilibrium_positions, mass_matrix)  
-        T_matrix = self.build_momentum_transform_matrix(mass_matrix)
-        H_matrix = self.compute_H_matrix(T_matrix, E_matrix)   
-
-        self.eigvals, self.eigvecs = self.calculate_normal_modes(H_matrix)
-        self.eigvecs_vel = self.get_eigenvectors_xv_coords(T_matrix, self.eigvecs)    
-        self.check_for_zero_modes()
-        self.check_outer_relation(H_matrix)
-
-        # S matrix may be important; it's how you convert from x, p coordinates to normal mode coordinates 
-        S_matrix = self.get_canonical_transformation(H_matrix, self.eigvecs, self.eigvals) 
-        self.check_diagonalization(T_matrix, S_matrix, E_matrix)
-        #self.hasrun = True  
-
-
-# Extra methods?
     def return_equilibrium_positions(self, dimensionless: bool) -> Vector:
-        """ Return equilibrium positions in either dimensionless or SI units (inverse meters) """
+        """Return equilibrium positions in either dimensionless or SI units (inverse meters)."""
         if dimensionless:
             return self.equilibrium_positions
         else:
             return self.equilibrium_positions * self.characteristic_parameters['length']
 
-
     @classmethod
-    def from_species(cls, species_name: str, num_ions: int, omega_x: float, omega_y: float, omega_z: float): 
-        """ Build the mode analysis class from a species name, corresponding to a system of N ions under harmonic trapping. """ 
-        # Import necessary data for the species 
+    def from_species(cls, species_name: str, num_ions: int, omega_x: float, omega_y: float, omega_z: float):
+        """Build the mode analysis class from a species name, corresponding to a system of N ions under harmonic trapping."""
+        # Import necessary data for the species
         species_data = AtomicSpin.get_config_data(species_name)
         atomic_mass = species_data['mass']
         atomic_number = species_data['Z']
-        # Construct the class 
+        # Construct the class
         return cls(num_ions, omega_x, omega_y, omega_z, atomic_mass, atomic_number)
 
-
-    basis = StandardBasis([*spins])
-
     @classmethod
-    #def from_atomic_spin_basis(cls, atomic_structure_basis: StandardBasis, omega_x: float, omega_y: float, omega_z: float): 
     def from_atomic_spin_basis(cls, spins: list[degree_of_freedom], omega_x: float, omega_y: float, omega_z: float): 
         """ Build the mode analysis class from a basis of AtomicSpin degrees of freedom under harmonic trapping. """ 
         # Extract number of ions and the mass and atomic number from the DOF in the basis 
@@ -675,69 +652,188 @@ class GeneralizedModeAnalysisWithBranchSortedModes(TrappedIonModeAnalysis):
 
 
     def build_mode_DOFs(self, mode_indices: list[int], fock_dimensions: Vector | int) -> list[MotionalMode]:
-        """ Builds and returns an IonSim Motional Degree of Freedom.
+        """Builds and returns an IonSim Motional Degree of Freedom.
 
-            - Applies each fock dimension to each mode, or applies the same fock dimension to all the modes  
+            - Applies each fock dimension to each mode, or applies the same fock dimension to all the modes
         """
         modes = []
-        # Convert list of Fock dimensions to an array if it's not already an array 
+        # Convert list of Fock dimensions to an array if it's not already an array
         fock_dimensions = self.convert_to_array(fock_dimensions).astype(int)
         for idx, fock_dim in zip(mode_indices, fock_dimensions):
-            mode_index = idx # or some function of this index 
+            mode_index = idx # or some function of this index
             modes.append(MotionalMode.from_frequency(self.eigvals[mode_index], fock_dim))
 
-        return modes 
+        return modes
 
+    
+#classes
+# GeneralizedModeAnalysisWithBranchSortedModes has been consolidated into TrappedIonModeAnalysis
+# with configurable mode_organization and reindexing_strategy parameters.
+
+ #class LinearIonChainAnalysis(TrappedIonModeAnalysis):
+ # 
+ #    def _xyz_classify_modes(self, evecs):
+ #        N_coords, N_modes = np.shape(evecs)
+ #        N_ions = N_coords // 6
+ #        classifier = np.zeros(N_modes, dtype=int)
+ #        for mode_index in range(N_modes):
+ #            x_score = np.sum(np.abs(evecs[0:N_ions, mode_index])) + np.sum(np.abs(evecs[3*N_ions:4*N_ions, mode_index]))
+ #            y_score = np.sum(np.abs(evecs[N_ions:2*N_ions, mode_index])) + np.sum(np.abs(evecs[4*N_ions:5*N_ions, mode_index]))
+ #            z_score = np.sum(np.abs(evecs[2*N_ions:3*N_ions, mode_index])) + np.sum(np.abs(evecs[5*N_ions:6*N_ions, mode_index]))
+ #            scores = [x_score, y_score, z_score]
+ #            max_index = np.argmax(scores)
+ #            classifier[mode_index] = max_index
+ #        for direction in range(3):
+ #            count = np.sum(classifier == direction)
+ #            assert count == N_modes // 3, f"Classification error: direction {direction} has {count} modes, expected {N_modes // 3}"
+ #        return classifier
+ #
+ #    def sort_by_branch(self, evals, evecs):
+ #        """ Sorts the eigenvalues, eigenvectors by mode branch (radial x, radial y, axial (z)) """
+ #        # Hessian block diagonal H_xx, H_yy, H_zz non-zero for linear chain 
+ #        ## only makes sense for linear chain 
+ #        classifier = self._xyz_classify_modes(evecs)
+ #        # within each branch, sort by frequency
+ #        N_ions = len(evals) // 3
+ #        sorted_by_branch_evals = np.zeros_like(evals)
+ #        sorted_by_branch_evecs = np.zeros_like(evecs)
+ #        for direction in range(3):
+ #            direction_indices = np.where(classifier == direction)[0]
+ #            # they are already sorted by frequency from the original mode analysis code, so we can just take them in order
+ #            sorted_by_branch_evals[direction*N_ions:(direction+1)*N_ions] = evals[direction_indices]
+ #            sorted_by_branch_evecs[:, direction*N_ions:(direction+1)*N_ions] = evecs[:, direction_indices]
+ #        return sorted_by_branch_evals, sorted_by_branch_evecs
+ #
+ #    # Override from parent  
+ #    def organize_modes(self, eigvals, eigvecs):        
+ #        eigvals, eigvecs = self.sort_modes(eigvals, eigvecs)
+ #        eigvals, eigvecs = self.split_modes(eigvals, eigvecs)
+ #        eigvals, eigvecs = self.sort_by_branch(eigvals, eigvecs)
+ #        return eigvals, eigvecs
+ # 
+ # 
+ #    def reindex_ions_by_z(self): 
+ #        # based on the position along z, lowest i, is 0, up to N - 1
+ #        x,y,z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
+ # 
+ #        idx = np.argsort(z)
+ #        self.equilibrium_positions = np.hstack((x[idx], y[idx], z[idx]))
+ # 
+ #        # Reindex all other arrays accordingly
+ #        self.m = self.m[idx]
+ #        self.q = self.q[idx]
+ #        self.atomic_masses = self.atomic_masses[idx]
+ #        self.nuclear_charges = self.nuclear_charges[idx]
+ #        self.atomic_numbers = self.atomic_numbers[idx]
+ #
+ #        # trapping frequencies
+ #        self.omega_x = self.omega_x[idx]
+ #        self.omega_y = self.omega_y[idx]
+ #        self.omega_z = self.omega_z[idx]
+ #        # all ions are the same so this is safe. TODO: When does this change? 
+ #        self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
+ # 
+ #    def solve_ion_trap_equilibrium(self): 
+ #        """ Diagonalizes the Coulomb + harmonic trap Hamiltonian for a system of ions. """
+ #        self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
+ #        
+ #        self.equilibrium_positions = self.solve_for_equilibrium_positions()
+ #        self.reindex_ions_by_z()
+ #        mass_matrix = self.build_mass_matrix(self.m)  
+ #        E_matrix = self.build_E_matrix(self.equilibrium_positions, mass_matrix)  
+ #        T_matrix = self.build_momentum_transform_matrix(mass_matrix)
+ #        H_matrix = self.compute_H_matrix(T_matrix, E_matrix)   
+ #
+ #        self.eigvals, self.eigvecs = self.calculate_normal_modes(H_matrix)
+ #        self.eigvecs_vel = self.get_eigenvectors_xv_coords(T_matrix, self.eigvecs)    
+ #        self.check_for_zero_modes()
+ #        self.check_outer_relation(H_matrix)
+ #
+ #        # S matrix may be important; it's how you convert from x, p coordinates to normal mode coordinates 
+ #        S_matrix = self.get_canonical_transformation(H_matrix, self.eigvecs, self.eigvals) 
+ #        self.check_diagonalization(T_matrix, S_matrix, E_matrix)
+ #        #self.hasrun = True  
+
+
+# Extra methods?
+ #    def return_equilibrium_positions(self, dimensionless: bool) -> Vector:
+ #        """ Return equilibrium positions in either dimensionless or SI units (inverse meters) """
+ #        if dimensionless:
+ #            return self.equilibrium_positions
+ #        else:
+ #            return self.equilibrium_positions * self.characteristic_parameters['length']
+ #
+
+ #    @classmethod
+ #    def from_species(cls, species_name: str, num_ions: int, omega_x: float, omega_y: float, omega_z: float): 
+ #        """ Build the mode analysis class from a species name, corresponding to a system of N ions under harmonic trapping. """ 
+ #        # Import necessary data for the species 
+ #        species_data = AtomicSpin.get_config_data(species_name)
+ #        atomic_mass = species_data['mass']
+ #        atomic_number = species_data['Z']
+ #        # Construct the class 
+ #        return cls(num_ions, omega_x, omega_y, omega_z, atomic_mass, atomic_number)
+
+
+ #    def build_mode_DOFs(self, mode_indices: list[int], fock_dimensions: Vector | int) -> list[MotionalMode]:
+ #        """ Builds and returns an IonSim Motional Degree of Freedom.
+ #
+ #            - Applies each fock dimension to each mode, or applies the same fock dimension to all the modes  
+ #        """
+ #        modes = []
+ #        # Convert list of Fock dimensions to an array if it's not already an array 
+ #        fock_dimensions = self.convert_to_array(fock_dimensions).astype(int)
+ #        for idx, fock_dim in zip(mode_indices, fock_dimensions):
+ #            mode_index = idx # or some function of this index 
+ #            modes.append(MotionalMode.from_frequency(self.eigvals[mode_index], fock_dim))
+ #
+ #        return modes 
+ #
 
 
 #You could redefine the equilibrium finding function to assert that the equilibrium is linear. For example, make a wrapper inside the function for the potential, Jacobian, and Hessian that forces x_i and y_i = 0. 
  
 #This is the code for the Lamb-Dicke parameters: (not that overall phases don't matter here, but the relative phase does. We could pin down the phase with some convention like, "each mode's first non-negative LD value is defined positive.")
-        
- 
 
+class LinearIonChainAnalysis(TrappedIonModeAnalysis):
+    """ Subclass for setting up and analyzing linear ion chains.
 
-class LinearIonChainAnalysis(GeneralizedModeAnalysisWithBranchSortedModes):
-    """
-    Subclass for setting up and analyzing linear ion chains.
+        In a linear ion chain, ions are typically aligned along the z-axis (axial direction),
+        with minimal displacement in the x and y directions (radial directions).
 
-    In a linear ion chain, ions are typically aligned along the z-axis (axial direction),
-    with minimal displacement in the x and y directions (radial directions).
-
-    This class extends GeneralizedModeAnalysisWithBranchSortedModes to:
-    1. Enforce linear chain configuration
-    2. Provide specialized methods for linear chain analysis
-    3. Offer convenience methods for common linear chain scenarios
+        This class accomplishes:     
+            1. Enforce linear chain configuration
+            2. Provide specialized methods for linear chain analysis
+            3. Offer convenience methods for common linear chain scenarios
     """
 
-    def __init__(self, num_ions: int, omega_x: float, omega_y: float, omega_z: float,
-                 atomic_masses: np.ndarray | float, atomic_numbers: np.ndarray | int):
-        """
-        Initialize a linear ion chain analysis.
-
-        Parameters:
-        -----------
-        num_ions : int
-            Number of ions in the chain
-        omega_x, omega_y, omega_z : float
-            Trap frequencies in x, y, and z directions (rad/s)
-        atomic_masses : array or float
-            Atomic masses in amu (atomic mass units)
-        atomic_numbers : array or int
-            Atomic numbers (number of protons)
-        """
-        super().__init__(num_ions, omega_x, omega_y, omega_z, atomic_masses, atomic_numbers)
+ #    def __init__(self, num_ions: int, omega_x: float, omega_y: float, omega_z: float,
+ #                 atomic_masses: np.ndarray | float, atomic_numbers: np.ndarray | int):
+ #        """
+ #        Initialize a linear ion chain analysis.
+ #
+ #        Parameters:
+ #        -----------
+ #        num_ions : int
+ #            Number of ions in the chain
+ #        omega_x, omega_y, omega_z : float
+ #            Trap frequencies in x, y, and z directions (rad/s)
+ #        atomic_masses : array or float
+ #            Atomic masses in amu (atomic mass units)
+ #        atomic_numbers : array or int
+ #            Atomic numbers (number of protons)
+ #        """
+ #        super().__init__(num_ions, omega_x, omega_y, omega_z, atomic_masses, atomic_numbers)
 
     def solve_ion_trap_equilibrium(self):
-        """
-        Solve for equilibrium positions and analyze normal modes for a linear chain.
+        """ Solve for equilibrium positions and analyze normal modes for a linear chain.
 
-        This method:
-        1. Sets up dimensionless parameters
-        2. Solves for equilibrium positions
-        3. Reindexes ions by their z-position (closest to center first)
-        4. Computes normal modes with branch sorting
-        5. Performs validation checks
+            This method:
+            1. Sets up dimensionless parameters
+            2. Solves for equilibrium positions
+            3. Reindexes ions by their z-position (closest to center first)
+            4. Computes normal modes with branch sorting
+            5. Performs validation checks
         """
         # Set up dimensionless parameters using first ion's properties and axial trap frequency
         self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
@@ -766,15 +862,8 @@ class LinearIonChainAnalysis(GeneralizedModeAnalysisWithBranchSortedModes):
         S_matrix = self.get_canonical_transformation(H_matrix, self.eigvecs, self.eigvals)
         self.check_diagonalization(T_matrix, S_matrix, E_matrix)
 
-    def get_axial_modes(self):
-        """
-        Get the axial (z-direction) normal modes.
-
-        Returns:
-        --------
-        tuple
-            (axial_eigenvalues, axial_eigenvectors) for the axial modes
-        """
+    def get_axial_modes(self) -> tuple:
+        """ Returns eigenvalues, eigenvectors for the axial normal modes """  
         # Axial modes are the last third of the modes (after branch sorting)
         n_modes_per_branch = self.num_ions
         axial_start = 2 * n_modes_per_branch
@@ -785,19 +874,11 @@ class LinearIonChainAnalysis(GeneralizedModeAnalysisWithBranchSortedModes):
 
         return axial_eigvals, axial_eigvecs
 
-    def get_radial_modes(self, direction='x'):
-        """
-        Get the radial normal modes in the specified direction.
+    def get_radial_modes(self, direction='x') -> tuple:
+        """ Returns eigenvalues, eigenvectors for the radial normal modes in the specified direction.
 
-        Parameters:
-        -----------
-        direction : str
-            'x' or 'y' for radial direction
-
-        Returns:
-        --------
-        tuple
-            (radial_eigenvalues, radial_eigenvectors) for the specified radial modes
+            Parameters:
+                direction : str; 'x' or 'y' for radial direction
         """
         if direction not in ['x', 'y']:
             raise ValueError("Direction must be 'x' or 'y'")
@@ -816,14 +897,7 @@ class LinearIonChainAnalysis(GeneralizedModeAnalysisWithBranchSortedModes):
         return radial_eigvals, radial_eigvecs
 
     def get_ion_spacing(self):
-        """
-        Get the spacing between consecutive ions along the z-axis.
-
-        Returns:
-        --------
-        np.ndarray
-            Array of distances between consecutive ions (in meters)
-        """
+        """ Returns an array of ion spacings between consecutive ions along the z-axis. """
         # Get z positions (dimensionful)
         x, y, z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
         z_dimensionful = z * self.characteristic_parameters['length']
@@ -834,15 +908,8 @@ class LinearIonChainAnalysis(GeneralizedModeAnalysisWithBranchSortedModes):
 
         return ion_spacing
 
-    def get_center_of_mass_position(self):
-        """
-        Get the center of mass position of the ion chain.
-
-        Returns:
-        --------
-        tuple
-            (com_x, com_y, com_z) center of mass coordinates in meters
-        """
+    def get_center_of_mass_position(self) -> tuple:
+        """ Get the center of mass position of the ion chain. """
         # Get positions (dimensionful)
         x, y, z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
         x_dim = x * self.characteristic_parameters['length']
@@ -858,42 +925,21 @@ class LinearIonChainAnalysis(GeneralizedModeAnalysisWithBranchSortedModes):
         return com_x, com_y, com_z
 
     def get_axial_mode_frequencies(self):
-        """
-        Get the frequencies of the axial modes.
-
-        Returns:
-        --------
-        np.ndarray
-            Array of axial mode frequencies in rad/s
-        """
+        """ Returns the frequencies [rad/s] of the axial modes. """
         axial_eigvals, _ = self.get_axial_modes()
         return axial_eigvals * self.trap_freq_scale
 
     def get_radial_mode_frequencies(self, direction='x'):
-        """
-        Get the frequencies of the radial modes in the specified direction.
-
-        Parameters:
-        -----------
-        direction : str
-            'x' or 'y' for radial direction
-
-        Returns:
-        --------
-        np.ndarray
-            Array of radial mode frequencies in rad/s
+        """ Returns the frequencies of the radial modes in rad/s for the specified direction.
+            direction = 'x' or 'y' for radial direction
         """
         radial_eigvals, _ = self.get_radial_modes(direction)
         return radial_eigvals * self.trap_freq_scale
 
     def get_mode_participation_factors_by_branch(self):
-        """
-        Get mode participation factors organized by branch (x, y, z).
+        """ Returns a dictionary of mode participation factors organized by branch (x, y, z).
 
-        Returns:
-        --------
-        dict
-            Dictionary with keys 'x', 'y', 'z' containing mode participation factors
+            Output dictionary with keys 'x', 'y', 'z' containing mode participation factors
             for each branch. Each value is a 2D array of shape (num_ions, num_modes_per_branch)
         """
         # Get full mode participation factors
@@ -910,25 +956,19 @@ class LinearIonChainAnalysis(GeneralizedModeAnalysisWithBranchSortedModes):
 
         return result
 
-    def calculate_lamb_dicke_parameters(self, wavevector: np.ndarray | float) -> dict:
-        """
-        Calculate Lamb-Dicke parameters for all ions and modes, organized by branch.
+    def calculate_lamb_dicke_parameters(self, wavevector: Vector) -> dict:
+        """ Calculate Lamb-Dicke parameters for all ions and modes, organized by branch.
 
-        The Lamb-Dicke parameter η = k · Δr_0 represents the ratio of the spatial
-        extent of the ion's zero-point motion to the wavelength of the laser.
-
-        Parameters:
-        -----------
-        wavevector : np.ndarray or float
-            - If array: Full wavevector (kx, ky, kz) as a 3-element array in units of 1/m
-            - If float: Magnitude of the laser wavevector |k| in units of 1/m (for backward compatibility)
-
-        Returns:
-        --------
-        dict
-            Dictionary with keys 'x', 'y', 'z' containing Lamb-Dicke parameters
-            for each branch. Each value is a 2D array of shape (num_ions, num_modes_per_branch)
-            representing η_{direction}[ion_index, mode_index]
+            The Lamb-Dicke parameter η = k · Δr_0 represents the ratio of the spatial
+            extent of the ion's zero-point motion to the wavelength of the laser.
+    
+            Parameters:
+                wavevector : k = (kx, ky, kz) as a 3-element array in units of 1/m
+    
+            Returns:
+                Dictionary with keys 'x', 'y', 'z' containing Lamb-Dicke parameters
+                for each branch. Each value is a 2D array of shape (num_ions, num_modes_per_branch)
+                representing η_{direction}[ion_index, mode_index]
         """
         # Get mode participation factors (which are proportional to zero-point motion)
         mode_pf_by_branch = self.get_mode_participation_factors_by_branch()
@@ -951,16 +991,15 @@ class LinearIonChainAnalysis(GeneralizedModeAnalysisWithBranchSortedModes):
 
             # Compute Lamb-Dicke parameters as dot product: η = k · Δr_0
             # This gives us shape (num_ions, num_modes) for the total LD parameter
-            num_ions = self.num_ions
-            num_modes = 3 * num_ions
+            num_modes = 3 * self. num_ions
 
             # Reshape for dot product: (3, num_ions, num_modes) · (3,) -> (num_ions, num_modes)
-            total_ld_params = np.zeros((num_ions, num_modes), dtype=complex)
+            total_ld_params = np.zeros((self.num_ions, num_modes), dtype=complex)
             for i in range(3):
                 total_ld_params += wavevector[i] * full_mode_pf[i, :, :]
 
             # Organize by branch for consistency with scalar case
-            n_modes_per_branch = num_ions
+            n_modes_per_branch = self.num_ions
             lamb_dicke_parameters = {
                 'x': total_ld_params[:, :n_modes_per_branch],
                 'y': total_ld_params[:, n_modes_per_branch:2*n_modes_per_branch],
@@ -969,81 +1008,43 @@ class LinearIonChainAnalysis(GeneralizedModeAnalysisWithBranchSortedModes):
 
         return lamb_dicke_parameters
 
-    def calculate_lamb_dicke_parameters_full(self, wavevector: np.ndarray | float) -> np.ndarray:
-        """
-        Calculate full Lamb-Dicke parameter matrix.
+    def calculate_lamb_dicke_parameters_full(self, wavevector: Vector) -> Matrix:
+        """ Calculate full Lamb-Dicke parameter matrix from a laser wavevector k = (kx, ky, kz) 
 
-        Parameters:
-        -----------
-        wavevector : np.ndarray or float
-            - If array: Full wavevector (kx, ky, kz) as a 3-element array in units of 1/m
-            - If float: Magnitude of the laser wavevector |k| in units of 1/m (for backward compatibility)
-
-        Returns:
-        --------
-        np.ndarray
-            - If scalar wavevector: Full matrix of shape (3, num_ions, num_modes)
-              where eta[direction, ion, mode] gives the component-wise LD parameter
-            - If vector wavevector: Total LD parameter matrix of shape (num_ions, num_modes)
-              where eta[ion, mode] gives the total LD parameter k · Δr_0
+            Returns: 
+                - Total LD parameter matrix of shape (num_ions, num_modes) where eta[ion, mode] 
+                    gives the total LD parameter k · Δr_0.
         """
         # Get full mode participation factors
         mode_pf = self.calculate_mode_participation_factors()
 
-        if isinstance(wavevector, (float, int)):
-            # Scalar case: component-wise multiplication (backward compatibility)
-            return wavevector * mode_pf
-        else:
-            # Vector case: compute dot product k · Δr_0 (physically accurate)
-            wavevector = np.asarray(wavevector)
-            if wavevector.shape != (3,):
-                raise ValueError("Wavevector must be a 3-element array (kx, ky, kz)")
+        # Vector case: compute dot product k · Δr_0 (physically accurate)
+        wavevector = np.asarray(wavevector)
+        if wavevector.shape != (3,):
+            raise ValueError(f"Wavevector must be a 3-element array (kx, ky, kz). Received {wavevector}")
 
-            # Compute total Lamb-Dicke parameter as dot product
-            # Shape: (3, num_ions, num_modes) · (3,) -> (num_ions, num_modes)
-            num_ions = self.num_ions
-            num_modes = 3 * num_ions
-            total_ld_params = np.zeros((num_ions, num_modes), dtype=complex)
+        # Compute total Lamb-Dicke parameter as dot product
+        # Shape: (3, num_ions, num_modes) · (3,) -> (num_ions, num_modes)
+        num_modes = 3 * self.num_ions
+        total_ld_params = np.zeros((self.num_ions, num_modes), dtype=complex)
 
-            for i in range(3):
-                total_ld_params += wavevector[i] * mode_pf[i, :, :]
+        for i in range(3):
+            total_ld_params += wavevector[i] * mode_pf[i, :, :]
 
-            return total_ld_params
+        return total_ld_params
 
-    def get_axial_lamb_dicke_parameters(self, wavevector: np.ndarray | float) -> np.ndarray:
-        """
-        Get Lamb-Dicke parameters for axial (z) modes only.
+    def get_axial_lamb_dicke_parameters(self, wavevector: Vector) -> Vector:
+        """ Get Lamb-Dicke parameters for axial (z) modes only.
 
-        Parameters:
-        -----------
-        wavevector : np.ndarray or float
-            - If array: Full wavevector (kx, ky, kz) as a 3-element array in units of 1/m
-            - If float: Magnitude of the laser wavevector |k| in units of 1/m (for backward compatibility)
-
-        Returns:
-        --------
-        np.ndarray
-            Lamb-Dicke parameters for axial modes, shape (num_ions, num_axial_modes)
+            Returns: Lamb-Dicke parameters for axial modes, NDArray of shape (num_ions, num_axial_modes)
         """
         lamb_dicke_by_branch = self.calculate_lamb_dicke_parameters(wavevector)
         return lamb_dicke_by_branch['z']
 
-    def get_radial_lamb_dicke_parameters(self, wavevector: np.ndarray | float, direction: str = 'x') -> np.ndarray:
-        """
-        Get Lamb-Dicke parameters for radial modes in specified direction.
+    def get_radial_lamb_dicke_parameters(self, wavevector: Vector | float, direction: str = 'x') -> Vector:
+        """ Get Lamb-Dicke parameters for radial modes modes in a specified direction.
 
-        Parameters:
-        -----------
-        wavevector : np.ndarray or float
-            - If array: Full wavevector (kx, ky, kz) as a 3-element array in units of 1/m
-            - If float: Magnitude of the laser wavevector |k| in units of 1/m (for backward compatibility)
-        direction : str
-            'x' or 'y' for radial direction
-
-        Returns:
-        --------
-        np.ndarray
-            Lamb-Dicke parameters for radial modes, shape (num_ions, num_radial_modes)
+            Returns: Lamb-Dicke parameters for radial modes, array of shape (num_ions, num_radial_modes)
         """
         if direction not in ['x', 'y']:
             raise ValueError("Direction must be 'x' or 'y'")
@@ -1052,14 +1053,7 @@ class LinearIonChainAnalysis(GeneralizedModeAnalysisWithBranchSortedModes):
         return lamb_dicke_by_branch[direction]
 
     def get_two_central_ion_separation(self) -> float:
-        """
-        Calculate the separation between the two central ions in the chain.
-
-        Returns:
-        --------
-        float
-            Distance between the two central ions in meters
-        """
+        """ Calculate the separation between the two central ions in the chain. Returns: Distance between the two central ions in meters """
         # Get z positions (dimensionful)
         x, y, z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
         z_dimensionful = z * self.characteristic_parameters['length']
@@ -1073,20 +1067,12 @@ class LinearIonChainAnalysis(GeneralizedModeAnalysisWithBranchSortedModes):
 
     def find_axial_frequency_for_desired_central_ion_separation(self, target_separation: float,
                                                                bounds: tuple = (0.1e6, 0.5e6)) -> float:
-        """
-        Find the axial frequency (wz) required to achieve a desired separation between central ions.
+        """ Computes the axial frequency (wz) [rad/s] required to achieve a desired separation between central ions.
 
-        Parameters:
-        -----------
-        target_separation : float
-            Desired separation between central ions in meters
-        bounds : tuple
-            Tuple of (min_freq, max_freq) in Hz for the root finding algorithm
+            Parameters:
+                - target_separation : float; Desired separation between central ions in meters
+                - bounds : tuple; (min_freq, max_freq) in Hz for the root finding algorithm
 
-        Returns:
-        --------
-        float
-            Axial frequency in rad/s that achieves the target separation
         """
         from scipy.optimize import root_scalar
 
@@ -1114,9 +1100,7 @@ class LinearIonChainAnalysis(GeneralizedModeAnalysisWithBranchSortedModes):
         return result.root
 
     def print_chain_summary(self):
-        """
-        Print a summary of the linear ion chain configuration.
-        """
+        """ Print a summary of the linear ion chain configuration. """
         print(f"Linear Ion Chain Analysis Summary")
         print(f"Number of ions: {self.num_ions}")
         print(f"Trap frequencies: x={self.omega_x[0]/(2*np.pi)/1e6:.2f} MHz, "
@@ -1140,5 +1124,3 @@ class LinearIonChainAnalysis(GeneralizedModeAnalysisWithBranchSortedModes):
         print(f"Radial X mode frequencies: {radial_x_freqs/(2*np.pi)/1e6:.2f} MHz")
         print(f"Radial Y mode frequencies: {radial_y_freqs/(2*np.pi)/1e6:.2f} MHz")
 
-
- 
