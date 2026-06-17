@@ -215,9 +215,7 @@ class TrappedIonModeAnalysis:
         """
         # Convert to dimensionless units using axial trap frequency and first ion's mass and charge
         # TODO: take in input here or in class constructor for mass, charge, trap scales.
-        #self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
         self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
-
         self.equilibrium_positions = self.solve_for_equilibrium_positions()
 
         # Use configurable reindexing strategy
@@ -560,10 +558,8 @@ class TrappedIonModeAnalysis:
         return classifier
 
     def sort_by_branch(self, evals, evecs):
-        """Sorts the eigenvalues, eigenvectors by mode branch (radial x, radial y, axial (z)).
-
-        Only makes sense for linear chain configurations where Hessian is block diagonal.
-        """
+        """ Sorts the eigenvalues, eigenvectors by mode branch (radial x, radial y, axial (z)).
+            Only makes sense for linear chain configurations where Hessian is block diagonal. """
         classifier = self._xyz_classify_modes(evecs)
         # within each branch, sort by frequency
         N_ions = len(evals) // 3
@@ -640,7 +636,6 @@ class TrappedIonModeAnalysis:
     def from_atomic_spin_basis(cls, spins: list[degree_of_freedom], omega_x: float, omega_y: float, omega_z: float): 
         """ Build the mode analysis class from a basis of AtomicSpin degrees of freedom under harmonic trapping. """ 
         # Extract number of ions and the mass and atomic number from the DOF in the basis 
-        #DOFs = atomic_structure_basis.degrees_of_freedom
         DOFs = spins 
         num_ions = len(DOFs)
         atomic_masses = []
@@ -668,134 +663,80 @@ class TrappedIonModeAnalysis:
 
         return modes
 
-    
-#classes
-# GeneralizedModeAnalysisWithBranchSortedModes has been consolidated into TrappedIonModeAnalysis
-# with configurable mode_organization and reindexing_strategy parameters.
+    def _ensure_mode_analysis_run(self):
+        """Ensure that mode analysis has ran. If not, run it automatically."""
+        if not hasattr(self, 'eigvals') or not hasattr(self, 'eigvecs'):
+            self.solve_ion_trap_equilibrium()
 
- #class LinearIonChainAnalysis(TrappedIonModeAnalysis):
- # 
- #    def _xyz_classify_modes(self, evecs):
- #        N_coords, N_modes = np.shape(evecs)
- #        N_ions = N_coords // 6
- #        classifier = np.zeros(N_modes, dtype=int)
- #        for mode_index in range(N_modes):
- #            x_score = np.sum(np.abs(evecs[0:N_ions, mode_index])) + np.sum(np.abs(evecs[3*N_ions:4*N_ions, mode_index]))
- #            y_score = np.sum(np.abs(evecs[N_ions:2*N_ions, mode_index])) + np.sum(np.abs(evecs[4*N_ions:5*N_ions, mode_index]))
- #            z_score = np.sum(np.abs(evecs[2*N_ions:3*N_ions, mode_index])) + np.sum(np.abs(evecs[5*N_ions:6*N_ions, mode_index]))
- #            scores = [x_score, y_score, z_score]
- #            max_index = np.argmax(scores)
- #            classifier[mode_index] = max_index
- #        for direction in range(3):
- #            count = np.sum(classifier == direction)
- #            assert count == N_modes // 3, f"Classification error: direction {direction} has {count} modes, expected {N_modes // 3}"
- #        return classifier
- #
- #    def sort_by_branch(self, evals, evecs):
- #        """ Sorts the eigenvalues, eigenvectors by mode branch (radial x, radial y, axial (z)) """
- #        # Hessian block diagonal H_xx, H_yy, H_zz non-zero for linear chain 
- #        ## only makes sense for linear chain 
- #        classifier = self._xyz_classify_modes(evecs)
- #        # within each branch, sort by frequency
- #        N_ions = len(evals) // 3
- #        sorted_by_branch_evals = np.zeros_like(evals)
- #        sorted_by_branch_evecs = np.zeros_like(evecs)
- #        for direction in range(3):
- #            direction_indices = np.where(classifier == direction)[0]
- #            # they are already sorted by frequency from the original mode analysis code, so we can just take them in order
- #            sorted_by_branch_evals[direction*N_ions:(direction+1)*N_ions] = evals[direction_indices]
- #            sorted_by_branch_evecs[:, direction*N_ions:(direction+1)*N_ions] = evecs[:, direction_indices]
- #        return sorted_by_branch_evals, sorted_by_branch_evecs
- #
- #    # Override from parent  
- #    def organize_modes(self, eigvals, eigvecs):        
- #        eigvals, eigvecs = self.sort_modes(eigvals, eigvecs)
- #        eigvals, eigvecs = self.split_modes(eigvals, eigvecs)
- #        eigvals, eigvecs = self.sort_by_branch(eigvals, eigvecs)
- #        return eigvals, eigvecs
- # 
- # 
- #    def reindex_ions_by_z(self): 
- #        # based on the position along z, lowest i, is 0, up to N - 1
- #        x,y,z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
- # 
- #        idx = np.argsort(z)
- #        self.equilibrium_positions = np.hstack((x[idx], y[idx], z[idx]))
- # 
- #        # Reindex all other arrays accordingly
- #        self.m = self.m[idx]
- #        self.q = self.q[idx]
- #        self.atomic_masses = self.atomic_masses[idx]
- #        self.nuclear_charges = self.nuclear_charges[idx]
- #        self.atomic_numbers = self.atomic_numbers[idx]
- #
- #        # trapping frequencies
- #        self.omega_x = self.omega_x[idx]
- #        self.omega_y = self.omega_y[idx]
- #        self.omega_z = self.omega_z[idx]
- #        # all ions are the same so this is safe. TODO: When does this change? 
- #        self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
- # 
- #    def solve_ion_trap_equilibrium(self): 
- #        """ Diagonalizes the Coulomb + harmonic trap Hamiltonian for a system of ions. """
- #        self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
- #        
- #        self.equilibrium_positions = self.solve_for_equilibrium_positions()
- #        self.reindex_ions_by_z()
- #        mass_matrix = self.build_mass_matrix(self.m)  
- #        E_matrix = self.build_E_matrix(self.equilibrium_positions, mass_matrix)  
- #        T_matrix = self.build_momentum_transform_matrix(mass_matrix)
- #        H_matrix = self.compute_H_matrix(T_matrix, E_matrix)   
- #
- #        self.eigvals, self.eigvecs = self.calculate_normal_modes(H_matrix)
- #        self.eigvecs_vel = self.get_eigenvectors_xv_coords(T_matrix, self.eigvecs)    
- #        self.check_for_zero_modes()
- #        self.check_outer_relation(H_matrix)
- #
- #        # S matrix may be important; it's how you convert from x, p coordinates to normal mode coordinates 
- #        S_matrix = self.get_canonical_transformation(H_matrix, self.eigvecs, self.eigvals) 
- #        self.check_diagonalization(T_matrix, S_matrix, E_matrix)
- #        #self.hasrun = True  
+    def get_mode_participation_factors_for_mode(self, mode_index: int) -> Matrix:
+        """ Returns mode participation factors for a specific mode by its index.
 
+            Outpout: Array of shape (3, num_ions) containing participation factors
+                where result[dimension, ion] gives the participation factor
+                for that dimension and ion in the specified mode.
+        """
+        self._ensure_mode_analysis_run()
 
-# Extra methods?
- #    def return_equilibrium_positions(self, dimensionless: bool) -> Vector:
- #        """ Return equilibrium positions in either dimensionless or SI units (inverse meters) """
- #        if dimensionless:
- #            return self.equilibrium_positions
- #        else:
- #            return self.equilibrium_positions * self.characteristic_parameters['length']
- #
+        # Get full participation factor matrix
+        full_participation = self.calculate_mode_participation_factors()
 
- #    @classmethod
- #    def from_species(cls, species_name: str, num_ions: int, omega_x: float, omega_y: float, omega_z: float): 
- #        """ Build the mode analysis class from a species name, corresponding to a system of N ions under harmonic trapping. """ 
- #        # Import necessary data for the species 
- #        species_data = AtomicSpin.get_config_data(species_name)
- #        atomic_mass = species_data['mass']
- #        atomic_number = species_data['Z']
- #        # Construct the class 
- #        return cls(num_ions, omega_x, omega_y, omega_z, atomic_mass, atomic_number)
+        # Extract participation factors for the specific mode
+        mode_participation = full_participation[:, :, mode_index]
 
+        return mode_participation
 
- #    def build_mode_DOFs(self, mode_indices: list[int], fock_dimensions: Vector | int) -> list[MotionalMode]:
- #        """ Builds and returns an IonSim Motional Degree of Freedom.
- #
- #            - Applies each fock dimension to each mode, or applies the same fock dimension to all the modes  
- #        """
- #        modes = []
- #        # Convert list of Fock dimensions to an array if it's not already an array 
- #        fock_dimensions = self.convert_to_array(fock_dimensions).astype(int)
- #        for idx, fock_dim in zip(mode_indices, fock_dimensions):
- #            mode_index = idx # or some function of this index 
- #            modes.append(MotionalMode.from_frequency(self.eigvals[mode_index], fock_dim))
- #
- #        return modes 
- #
+    def get_lamb_dicke_parameters_for_mode(self, mode_index: int, wavevector: Vector) -> Matrix:
+        """ Return Lamb-Dicke parameters for a specific mode by its index.
+
+                - mode_index: Index of the mode of interest
+                - wavevector: Wavevector k as a 3-element array (kx, ky, kz) or scalar wavenumber
+
+                Returns an array of shape (num_ions,) containing Lamb-Dicke parameters
+                where result[ion] gives the LD parameter for that ion in the specified mode.
+        """
+        self._ensure_mode_analysis_run()
+
+        # Get participation factors for this mode
+        mode_participation = self.get_mode_participation_factors_for_mode(mode_index)
+
+        # Calculate Lamb-Dicke parameters
+        if wavevector.shape != (3,):
+            raise ValueError("Wavevector must be a 3-element array (kx, ky, kz)")
+
+        # Compute dot product: (3, num_ions) · (3,) -> (num_ions,)
+        lamb_dicke_params = np.zeros(self.num_ions, dtype=complex)
+        for i in range(3):
+            lamb_dicke_params += wavevector[i] * mode_participation[i, :]
+
+        return lamb_dicke_params
+
+    def get_mode_properties(self, mode_index: int) -> dict:
+        """Get comprehensive properties for a specific mode. Returns a dictionary containing frequency,
+                participation factors, and other properties for the specified mode.
+
+                - mode_index: Index of the mode of interest
+
+            Returns:
+                Dictionary containing:
+                - 'frequency': Mode frequency in rad/s
+                - 'participation_factors': Array of shape (3, num_ions)
+                - 'frequency_MHz': Mode frequency in MHz (convenience)
+        """
+        self._ensure_mode_analysis_run()
+
+        # Get basic mode properties
+        frequency = self.eigvals[mode_index] * self.trap_freq_scale
+        participation_factors = self.get_mode_participation_factors_for_mode(mode_index)
+
+        return {
+            'frequency': frequency,  # rad/s
+            'frequency_MHz': frequency / (2 * np.pi * 1e6),  # MHz
+            'participation_factors': participation_factors,
+            'mode_index': mode_index
+        }
 
 
 #You could redefine the equilibrium finding function to assert that the equilibrium is linear. For example, make a wrapper inside the function for the potential, Jacobian, and Hessian that forces x_i and y_i = 0. 
- 
 #This is the code for the Lamb-Dicke parameters: (not that overall phases don't matter here, but the relative phase does. We could pin down the phase with some convention like, "each mode's first non-negative LD value is defined positive.")
 
 class LinearIonChainAnalysis(TrappedIonModeAnalysis):
@@ -813,9 +754,9 @@ class LinearIonChainAnalysis(TrappedIonModeAnalysis):
     def __init__(self, num_ions: int, omega_x: float, omega_y: float, omega_z: float,
                  atomic_masses: np.ndarray | float, atomic_numbers: np.ndarray | int):
         """ Initialize a linear ion chain analysis, defaulting to branch sorted modes. """
-        mode_organization = 'branched'
+        mode_organization = 'branch_sorted'
         reindexing_strategy = 'z_axis'
-        super().__init__(num_ions, omega_x, omega_y, omega_z, atomic_masses, atomic_numbers, mode_organization)
+        super().__init__(num_ions, omega_x, omega_y, omega_z, atomic_masses, atomic_numbers, mode_organization, reindexing_strategy)
 
     def solve_ion_trap_equilibrium(self):
         """ Solve for equilibrium positions and analyze normal modes for a linear chain. It reindexes ions by their axial position. """
@@ -935,6 +876,67 @@ class LinearIonChainAnalysis(TrappedIonModeAnalysis):
 
         return result
 
+    def get_mode_properties_by_branch(self, branch: str, mode_index_in_branch: int) -> dict:
+        """ Returns a dictionary containing properties (freq, participations) for a specific mode within a branch (x, y, or z).
+
+            For linear chains with branch-sorted modes, this provides an intuitive way
+            to access mode properties by branch and mode number within that branch.
+
+                - branch: 'x', 'y', or 'z' for the mode branch
+                - mode_index_in_branch: Index of the mode within the specified branch (0 to num_ions-1)
+        """
+        self._ensure_mode_analysis_run()
+
+        if branch not in ['x', 'y', 'z']:
+            raise ValueError("Branch must be 'x', 'y', or 'z'")
+
+        if mode_index_in_branch < 0 or mode_index_in_branch >= self.num_ions:
+            raise ValueError(f"Mode index in branch must be between 0 and {self.num_ions-1}")
+
+        # Calculate the global mode index
+        n_modes_per_branch = self.num_ions
+        if branch == 'x':
+            global_mode_index = mode_index_in_branch
+        elif branch == 'y':
+            global_mode_index = n_modes_per_branch + mode_index_in_branch
+        else:  # branch == 'z'
+            global_mode_index = 2 * n_modes_per_branch + mode_index_in_branch
+
+        # Get properties using the parent class method
+        properties = super().get_mode_properties(global_mode_index)
+
+        # Add branch-specific information
+        properties['branch'] = branch
+        properties['mode_index_in_branch'] = mode_index_in_branch
+
+        return properties
+
+    def get_lamb_dicke_parameters_by_branch(self, branch: str, mode_index_in_branch: int,
+                                          wavevector: Vector | float) -> Vector:
+        """Get Lamb-Dicke parameters for a specific mode within a branch.
+
+            Parameters:
+                branch: 'x', 'y', or 'z' for the mode branch
+                mode_index_in_branch: Index of the mode within the specified branch
+                wavevector: Wavevector k as a 3-element array or scalar wavenumber
+
+            Returns:
+                Array of Lamb-Dicke parameters for each ion in the specified mode
+        """
+        self._ensure_mode_analysis_run()
+
+        # Get the global mode index
+        n_modes_per_branch = self.num_ions
+        if branch == 'x':
+            global_mode_index = mode_index_in_branch
+        elif branch == 'y':
+            global_mode_index = n_modes_per_branch + mode_index_in_branch
+        else:  # branch == 'z'
+            global_mode_index = 2 * n_modes_per_branch + mode_index_in_branch
+
+        # Use parent class method to get LD parameters
+        return super().get_lamb_dicke_parameters_for_mode(global_mode_index, wavevector)
+
     def calculate_lamb_dicke_parameters(self, wavevector: Vector) -> dict:
         """ Calculate Lamb-Dicke parameters for all ions and modes, organized by branch.
 
@@ -952,38 +954,28 @@ class LinearIonChainAnalysis(TrappedIonModeAnalysis):
         # Get mode participation factors (which are proportional to zero-point motion)
         mode_pf_by_branch = self.get_mode_participation_factors_by_branch()
 
-        # Handle both full wavevector (preferred) and scalar wavenumber (backward compatibility)
-        if isinstance(wavevector, (float, int)):
-            # Scalar case: multiply each component by the same wavenumber
-            # This assumes the laser is equally coupled to all directions
-            lamb_dicke_parameters = {}
-            for direction in ['x', 'y', 'z']:
-                lamb_dicke_parameters[direction] = wavevector * mode_pf_by_branch[direction]
-        else:
-            # Vector case: compute dot product k · Δr_0 for proper directionality
-            wavevector = np.asarray(wavevector)
-            if wavevector.shape != (3,):
-                raise ValueError("Wavevector must be a 3-element array (kx, ky, kz)")
+        if wavevector.shape != (3,):
+            raise ValueError("Wavevector must be a 3-element array (kx, ky, kz)")
 
-            # Get full mode participation factors
-            full_mode_pf = self.calculate_mode_participation_factors()
+        # Get full mode participation factors
+        full_mode_pf = self.calculate_mode_participation_factors()
 
-            # Compute Lamb-Dicke parameters as dot product: η = k · Δr_0
-            # This gives us shape (num_ions, num_modes) for the total LD parameter
-            num_modes = 3 * self. num_ions
+        # Compute Lamb-Dicke parameters as dot product: η = k · Δr_0
+        # This gives us shape (num_ions, num_modes) for the total LD parameter
+        num_modes = 3 * self. num_ions
 
-            # Reshape for dot product: (3, num_ions, num_modes) · (3,) -> (num_ions, num_modes)
-            total_ld_params = np.zeros((self.num_ions, num_modes), dtype=complex)
-            for i in range(3):
-                total_ld_params += wavevector[i] * full_mode_pf[i, :, :]
+        # Reshape for dot product: (3, num_ions, num_modes) · (3,) -> (num_ions, num_modes)
+        total_ld_params = np.zeros((self.num_ions, num_modes), dtype=complex)
+        for i in range(3):
+            total_ld_params += wavevector[i] * full_mode_pf[i, :, :]
 
-            # Organize by branch for consistency with scalar case
-            n_modes_per_branch = self.num_ions
-            lamb_dicke_parameters = {
-                'x': total_ld_params[:, :n_modes_per_branch],
-                'y': total_ld_params[:, n_modes_per_branch:2*n_modes_per_branch],
-                'z': total_ld_params[:, 2*n_modes_per_branch:3*n_modes_per_branch]
-            }
+        # Organize by branch for consistency with scalar case
+        n_modes_per_branch = self.num_ions
+        lamb_dicke_parameters = {
+            'x': total_ld_params[:, :n_modes_per_branch],
+            'y': total_ld_params[:, n_modes_per_branch:2*n_modes_per_branch],
+            'z': total_ld_params[:, 2*n_modes_per_branch:3*n_modes_per_branch]
+        }
 
         return lamb_dicke_parameters
 
@@ -997,8 +989,6 @@ class LinearIonChainAnalysis(TrappedIonModeAnalysis):
         # Get full mode participation factors
         mode_pf = self.calculate_mode_participation_factors()
 
-        # Vector case: compute dot product k · Δr_0 (physically accurate)
-        wavevector = np.asarray(wavevector)
         if wavevector.shape != (3,):
             raise ValueError(f"Wavevector must be a 3-element array (kx, ky, kz). Received {wavevector}")
 
@@ -1057,7 +1047,7 @@ class LinearIonChainAnalysis(TrappedIonModeAnalysis):
 
         def separation_error(wz_Hz):
             # Create a temporary analysis object with the current wz
-            temp_analysis = GeneralizedModeAnalysisWithBranchSortedModes(
+            temp_analysis = LinearIonChainAnalysis(
                 num_ions=self.num_ions,
                 omega_x=self.omega_x[0],
                 omega_y=self.omega_y[0],
