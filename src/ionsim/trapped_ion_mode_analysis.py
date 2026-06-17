@@ -106,9 +106,6 @@ class TrappedIonModeAnalysis:
             return x
         return np.array(x) 
 
-    #def dimensionless_parameters(self):
-    #def nondimensionalize_parameters(self):
-    #def convert_parameters_to_dimensionless(self, charge_scale: float=1., mass_scale: float=1., trap_freq_scale: float=1.):
     def set_up_dimensionless_parameeters(self, charge_scale: float=1., mass_scale: float=1., trap_freq_scale: float=1.):
         """ Compute dimensionless parameters, using first ion's properties and axial (z) trapping frequency. 
 
@@ -205,7 +202,17 @@ class TrappedIonModeAnalysis:
             print("has duplicate eigenvalues: ", has_duplicate_eigvals)
 
     def solve_ion_trap_equilibrium(self):
-        """ Diagonalizes the Coulomb + harmonic trap Hamiltonian for a system of ions. """
+        """ Solve for equilibrium positions and analyze normal modes for a linear chain by minizing the Coulomb + 
+                harmonic trap energy functional for a system of ions
+
+            This method:
+            1. Sets up dimensionless parameters
+            2. Solves for equilibrium positions
+            3. Reindexes ions by their z-position (closest to center first)
+            4. Computes normal modes with branch sorting
+            5. Performs validation checks
+
+        """
         # Convert to dimensionless units using axial trap frequency and first ion's mass and charge
         # TODO: take in input here or in class constructor for mass, charge, trap scales.
         #self.convert_parameters_to_dimensionless(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
@@ -603,9 +610,7 @@ class TrappedIonModeAnalysis:
     # Derived properties 
     def compute_reference_single_ion_lamb_dicke_factors(self, wavenumber: float) -> (float, float, float):
         """ Computes analytical Lamb-Dicke parameter by eta = k * sqrt(hbar / m omega) for an ion in a light-field with wavevector |k| 
-
             - wavenumber: wavevector magnitude |k| in units of 1 / m  
-
         """
         # TODO: better way to handle units? 
         # Convention to use first value of trap frequency arrays (representing one of the ions)  
@@ -648,8 +653,6 @@ class TrappedIonModeAnalysis:
                 atomic_numbers.append(DOF.atomic_number) 
         # Construct the class 
         return cls(num_ions, omega_x, omega_y, omega_z, atomic_mass, atomic_number)
-
-
 
     def build_mode_DOFs(self, mode_indices: list[int], fock_dimensions: Vector | int) -> list[MotionalMode]:
         """Builds and returns an IonSim Motional Degree of Freedom.
@@ -815,15 +818,7 @@ class LinearIonChainAnalysis(TrappedIonModeAnalysis):
         super().__init__(num_ions, omega_x, omega_y, omega_z, atomic_masses, atomic_numbers, mode_organization)
 
     def solve_ion_trap_equilibrium(self):
-        """ Solve for equilibrium positions and analyze normal modes for a linear chain.
-
-            This method:
-            1. Sets up dimensionless parameters
-            2. Solves for equilibrium positions
-            3. Reindexes ions by their z-position (closest to center first)
-            4. Computes normal modes with branch sorting
-            5. Performs validation checks
-        """
+        """ Solve for equilibrium positions and analyze normal modes for a linear chain. It reindexes ions by their axial position. """
         # Set up dimensionless parameters using first ion's properties and axial trap frequency
         self.set_up_dimensionless_parameeters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
 
@@ -865,10 +860,7 @@ class LinearIonChainAnalysis(TrappedIonModeAnalysis):
 
     def get_radial_modes(self, direction='x') -> tuple:
         """ Returns eigenvalues, eigenvectors for the radial normal modes in the specified direction.
-
-            Parameters:
-                direction : str; 'x' or 'y' for radial direction
-        """
+                - direction : str; 'x' or 'y' for radial direction """
         if direction not in ['x', 'y']:
             raise ValueError("Direction must be 'x' or 'y'")
 
@@ -919,9 +911,7 @@ class LinearIonChainAnalysis(TrappedIonModeAnalysis):
         return axial_eigvals * self.trap_freq_scale
 
     def get_radial_mode_frequencies(self, direction='x'):
-        """ Returns the frequencies of the radial modes in rad/s for the specified direction.
-            direction = 'x' or 'y' for radial direction
-        """
+        """ Returns the frequencies of the radial modes in rad/s for the specified direction ('x' or 'y'). """
         radial_eigvals, _ = self.get_radial_modes(direction)
         return radial_eigvals * self.trap_freq_scale
 

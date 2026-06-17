@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 from scipy.linalg import expm
-from ionsim.trapped_ion_mode_analysis import TrappedIonModeAnalysis, LinearIonChainAnalysis, GeneralizedModeAnalysisWithBranchSortedModes 
+from ionsim.trapped_ion_mode_analysis import TrappedIonModeAnalysis, LinearIonChainAnalysis
 from ionsim.testing import assert_array_close
 
 class TestModeAnalysis(unittest.TestCase):
@@ -194,7 +194,7 @@ if __name__ == '__main__':
     print("="*60)
 
     # Create a 4-ion analysis
-    four_ion_analysis = GeneralizedModeAnalysisWithBranchSortedModes(
+    four_ion_analysis = TrappedIonModeAnalysis(
         num_ions=4,
         omega_x=2*np.pi*11e6,
         omega_y=2*np.pi*10e6,
