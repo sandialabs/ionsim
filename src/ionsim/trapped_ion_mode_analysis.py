@@ -807,23 +807,12 @@ class LinearIonChainAnalysis(TrappedIonModeAnalysis):
             3. Offer convenience methods for common linear chain scenarios
     """
 
- #    def __init__(self, num_ions: int, omega_x: float, omega_y: float, omega_z: float,
- #                 atomic_masses: np.ndarray | float, atomic_numbers: np.ndarray | int):
- #        """
- #        Initialize a linear ion chain analysis.
- #
- #        Parameters:
- #        -----------
- #        num_ions : int
- #            Number of ions in the chain
- #        omega_x, omega_y, omega_z : float
- #            Trap frequencies in x, y, and z directions (rad/s)
- #        atomic_masses : array or float
- #            Atomic masses in amu (atomic mass units)
- #        atomic_numbers : array or int
- #            Atomic numbers (number of protons)
- #        """
- #        super().__init__(num_ions, omega_x, omega_y, omega_z, atomic_masses, atomic_numbers)
+    def __init__(self, num_ions: int, omega_x: float, omega_y: float, omega_z: float,
+                 atomic_masses: np.ndarray | float, atomic_numbers: np.ndarray | int):
+        """ Initialize a linear ion chain analysis, defaulting to branch sorted modes. """
+        mode_organization = 'branched'
+        reindexing_strategy = 'z_axis'
+        super().__init__(num_ions, omega_x, omega_y, omega_z, atomic_masses, atomic_numbers, mode_organization)
 
     def solve_ion_trap_equilibrium(self):
         """ Solve for equilibrium positions and analyze normal modes for a linear chain.
