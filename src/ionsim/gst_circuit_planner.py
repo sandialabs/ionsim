@@ -6,12 +6,15 @@ from itertools import product
 
 from ionsim.gst_circuit_parser import ParsedCircuit, ParsedGate
 
+
+""" Circuit planner has 2 modes: 1) Gate model agnostic, 2) optimized planner based on gate models and germ sensitivies. """ 
 class GSTCircuitPlanner:
-    def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials = None, measure_fiducials = None, germs = None, germ_powers=[1,2,4,8,16]):
+    def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials = None, measure_fiducials = None, germs = None, germ_powers: list[int]=[1,2,4,8,16], gate_models: dict | None=None):
         """ Constructor for GST Circuit Planner class. The user passes in the gate names and qubit labels at a minimum. 
 
             - Sets up list of prep gates, measure gates, and germ gates. The class organizes GST circuits based on those gates requested germ powers. 
             - Can write the GST circuit sequences to a file.  
+            - Optional arguments to provide a dictionary of gate process matrix models, which should match the gate names  
 
         """ 
         self.qubit_labels = qubit_labels
@@ -36,6 +39,15 @@ class GSTCircuitPlanner:
         self.prep_fiducials = [self.to_parsed_seq(fid) for fid in prep_fiducials]
         self.measure_fiducials = [self.to_parsed_seq(fid) for fid in measure_fiducials]
         self.germs = [self.to_parsed_seq(germ) for germ in germs]
+
+        # Check that gate models correspond with gate names if gate models are provided  
+        self.gate_models = None
+        if gate_models is not None:
+            gate_model_names = gate_models.keys()
+            if gate_model_names != gate_names:
+                ValueError(f"The gate models is missing one of the gates. Expected gate models for {gate_model_names} and received models for {gate_model_names}")
+            self.gate_models = gate_models
+
 
     def _construct_gate_name_to_object_mapping(self, gate_names: list[str], qubit_labels: list[str]): 
         """ Set up the gate name -> ParsedGate look up dictionary """ 
@@ -241,13 +253,32 @@ class GSTCircuitPlanner:
 
 
 ### Function that checks if a gate model is amplified by certain germs? 
-
- #    def compute_gate_model_sensitivity_to_germs(self, gate_model: Callable): 
- #        """ Function to check whether a gate model's parameter is sensitive to the germs in the planner. """ 
+ #    def compute_gate_model_sensitivity_to_germs(self, gate_model: Callable, max_power: int=32, TOL: float = 1E-6): 
+ #        """ Function to check whether a gate model's parameters are sensitive to the germs in the planner. 
+ #
+ #            - gate_model returns a process matrix as a function of its parameters 
+ #
+ #        """ 
+ #
+ #        # Dimensionality of Hilbert and Hilbert-Schmidt space: 
+ #        d = 2**(len(self.qubit_labels))
+ #        d2 = d**2 
  #
  #        if self.germs is None:
  #            ValueError(f"Germs must be specified.")
-
+ #
+ #        def germ_power_matrix(theta, power):
+ #            """ Computes G raised to a power, where G is the germ. """
+ #
+ #        for germ in self.germs:
+ #            # Compute sensitivity of germ for each gate parameter 
+ #
+ #            # Store each germ process matrix 
+ #            def germ_model(theta):
+ #                germ_process_matrix = np.eye(d2, dtype=complex)
+ #                for g in germ.gates:
+ #                    germ_process_matrix = self.gate_models[g.name](*theta) @ germ_process_matrix 
+ #                 
 
         # Check sensitivies via ||d (germ process matrix) / d theta ||
 

@@ -963,7 +963,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - takes in an input dictionary "ideal_gate_set" that contains process matrices for each gate in the gate set. 
             - additionally, the ideal_gate_set input contains the ideal prep state and ideal POVM 
 
-
         """ 
         if self.solver_result is None:
             self.solve_for_gate_parameters()
