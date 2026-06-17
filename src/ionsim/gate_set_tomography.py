@@ -701,6 +701,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # 2. Compute SVD to get projector to linear-independent subspace  
         U, S, Vh = np.linalg.svd(gram_matrix)
 
+        if len(S) < self.d2:
+            ValueError(f"Gram matrix is not informationally complete. It has rank {len(S)} instead of {self.d2}.")
+
         # Projector onto k = d^2 top right singular vectors  
         Pi = Vh[:self.d2, :]
 
@@ -709,6 +712,17 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         N_significant_vals = np.sum(S > TOL)
         if N_significant_vals < self.d2:
             ValueError(f" Fiducials are not informationally complete. Only {N_significant_vals} singular values instead of {self.d2}.")
+
+        # Check separation between complete and excess subspaces
+        if len(S) > self.d2:
+            ratio = S[self.d2]/S[self.d2 - 1]  # should be small
+            if ratio > 0.1:
+                print(f"WARNING: There is weak separation between signal and noise subspace.")
+
+        # Check condition number of d^2 subspace:
+        cond = S[0] / S[self.d2 - 1] 
+        if cond > 100:
+            print(f"WARNING: Poorly conditioned linear GST. LGST estimates may be noisy. Condition number = {cond}")
 
         # Decomposition of Gram matrix = AB, where A is measurement matrix and B is prep matrix 
         # See Section 3. of "Gate Set Tomography" published in Quantum, 2021. 
