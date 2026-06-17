@@ -702,15 +702,20 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         U, S, Vh = np.linalg.svd(gram_matrix)
 
         # Projector onto k = d^2 top right singular vectors  
-        k = self.d2
-        Pi = Vh[:k, :]
+        Pi = Vh[:self.d2, :]
+
+        # Check that the fiducials are informationally complete by checking singular values: 
+        TOL = 1E-10
+        N_significant_vals = np.sum(S > TOL)
+        if N_significant_vals < self.d2:
+            ValueError(f" Fiducials are not informationally complete. Only {N_significant_vals} singular values instead of {self.d2}.")
 
         # Decomposition of Gram matrix = AB, where A is measurement matrix and B is prep matrix 
         # See Section 3. of "Gate Set Tomography" published in Quantum, 2021. 
         # Gram = AB (fiducial measure @ fiducial prep); decompose B = B_0 Pi, B_0 ideal gauge  
         if ideal_gate_set is not None and target_rho is not None:
             N_prep = len(self.prep_fiducials)
-            B_ideal = np.zeros((k, N_prep), dtype=complex)
+            B_ideal = np.zeros((self.d2, N_prep), dtype=complex)
             
             for j, prep_fid in enumerate(self.prep_fiducials):
                 state = target_rho.supervector.copy()
@@ -721,7 +726,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # Project onto Pi subspace, Pi Pi^T is identity since rows of Pi are orthonormal 
             B0 = B_ideal @ Pi.conj().T
         else:
-            B0 = np.eye(k, dtype=complex)
+            B0 = np.eye(self.d2, dtype=complex)
 
         # Compute gate process matrix estimates via the following formula (Neilsen, 2021):
         # G_k = B0 (Pi Gram^T Gram Pi^T)^{-1} (Pi Gram^T P_k Pi^T) B0^{-1}
