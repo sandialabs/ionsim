@@ -1,0 +1,459 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# sandia-claudecode - Launch hardened Claude Code container with network proxy sidecar
+# ==============================================================================
+# Architecture:
+#   podman internal network (no outbound route)
+#     ├── claudecode container (ONLY on internal net, no internet)
+#     └── nginx proxy sidecar (internal net + default net)
+#           └── forwards ONLY /v1/messages to LiteLLM upstream
+#               all other requests → 403 with agent-friendly JSON error
+#
+# Usage:
+#   cd ~/repos/my-project && sandia-claudecode shirty
+#   sandia-claudecode shirty --dir ~/repos/my-project
+#   sandia-claudecode --debug shirty
+#   sandia-claudecode shirty -- --env EXTRA_VAR=value
+#
+# Security model: container-as-sandbox
+#   - Rootless podman (container root maps to user's UID on host)
+#   - --cap-drop=all (zero Linux capabilities)
+#   - --security-opt=no-new-privileges (no privilege escalation)
+#   - --read-only filesystem (writable only via project mount and tmpfs)
+#   - No docker.sock bind
+#   - No outbound network (--internal podman network, no route exists)
+#   - All external traffic proxied and audited through nginx sidecar
+# ==============================================================================
+
+set -euo pipefail
+
+# Prevent Git Bash (MSYS2) on Windows from mangling Unix paths in podman args
+export MSYS_NO_PATHCONV=1
+
+# =============================================================================
+# CONFIGURATION — Edit these for your environment
+# =============================================================================
+
+# Container images
+IMAGE_REGISTRY="cee-gitlab.sandia.gov:4567/asc-do/agentic-coding-pilot/sandia-code-public"
+IMAGE_TAG="latest"
+CLAUDECODE_IMAGE="${IMAGE_REGISTRY}/claudecode:${IMAGE_TAG}"
+PROXY_IMAGE="${IMAGE_REGISTRY}/proxy:${IMAGE_TAG}"
+
+# LiteLLM upstream (the ONLY external endpoint the proxy will forward to)
+LITELLM_HOST="shirty.sandia.gov"
+LITELLM_PORT=443
+NEXUS_HOST="nexus.web.sandia.gov"
+NEXUS_PORT=443
+
+# Internal network name (shared between proxy and claudecode containers)
+INTERNAL_NET="claudecode-sandbox"
+
+# Resource limits
+PIDS_LIMIT=4096
+
+# =============================================================================
+# END CONFIGURATION
+# =============================================================================
+
+SCRIPT_NAME="$(basename "$0")"
+SESSION_ID="${$}-${RANDOM}${RANDOM}"
+PROXY_NAME="proxy-${SESSION_ID}"
+CLAUDECODE_NAME="claudecode-${SESSION_ID}"
+SECRET_NAME="shirty-key-${SESSION_ID}"
+DEBUG=false
+SESSION_DIR=""
+FLUSH_PID=""
+
+# --- Helpers -----------------------------------------------------------------
+
+usage() {
+    cat <<EOF
+Usage: ${SCRIPT_NAME} [OPTIONS] <profile> [-- <extra podman args>]
+
+Launch a hardened Claude Code container with network proxy sidecar.
+Drops you into a shell where you can run 'claudecode' to start working.
+
+By default, the current working directory is mounted into the container
+at /projects as the only writable host directory.
+
+Profiles:
+  shirty       Launch with shirty (Devstral 2 123B, Gemma 4 31B) configuration
+
+Options:
+  --dir|-d     Project directory to mount (default: current directory)
+  --debug      Print the full podman commands before executing
+  --help       Show this help message
+
+Environment:
+  SHIRTY_API_KEY   Required. Set in a .env file or export before running.
+
+Examples:
+  cd ~/repos/my-project && ${SCRIPT_NAME} shirty
+  ${SCRIPT_NAME} shirty --dir ~/repos/my-project
+  ${SCRIPT_NAME} --debug shirty
+  ${SCRIPT_NAME} shirty -- --env MY_VAR=value
+  ${SCRIPT_NAME} shirty -- -v ~/data:/data:ro
+EOF
+    exit 0
+}
+
+log()   { printf "\e[0;36m[%s]\e[0m %s\n" "${SCRIPT_NAME}" "$*"; }
+warn()  { printf "\e[0;36m[%s]\e[0m WARNING: %s\n" "${SCRIPT_NAME}" "$*" >&2; }
+error() { printf "\e[0;36m[%s]\e[0m ERROR: %s\n" "${SCRIPT_NAME}" "$*" >&2; exit 1; }
+
+# --- Host resolution ---------------------------------------------------------
+
+resolve_host() {
+    local hostname="$1"
+    local ip
+
+    if command -v getent &>/dev/null; then
+        ip=$(getent ahosts "${hostname}" 2>/dev/null | awk 'NR==1{print $1}')
+    elif command -v nslookup &>/dev/null; then
+        ip=$(nslookup "${hostname}" 2>/dev/null | awk '/^Address:/{a=$2} END{print a}')
+    elif command -v python3 &>/dev/null; then
+        ip=$(python3 -c "import socket; print(socket.gethostbyname('${hostname}'))" 2>/dev/null)
+    elif command -v python &>/dev/null; then
+        ip=$(python -c "import socket; print(socket.gethostbyname('${hostname}'))" 2>/dev/null)
+    fi
+
+    if [ -z "${ip}" ]; then
+        error "Failed to resolve '${hostname}'. Ensure you are on the Sandia network."
+    fi
+    echo "${ip}"
+}
+
+# --- Pre-flight checks -------------------------------------------------------
+
+preflight() {
+    command -v podman &>/dev/null || error "podman is not installed or not in PATH."
+
+    if ! podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null | grep -qi true; then
+        error "podman is not running in rootless mode."
+    fi
+
+    if [ -z "${SHIRTY_API_KEY:-}" ]; then
+        if [ -f ".env" ]; then
+            log "Loading .env file..."
+            set -a
+            source .env 2>/dev/null || true
+            set +a
+        fi
+    fi
+    [ -n "${SHIRTY_API_KEY:-}" ] || error "SHIRTY_API_KEY is not set. Export it or put it in a .env file."
+
+    log "Preflight checks passed."
+}
+
+# --- Project directory validation --------------------------------------------
+
+validate_project_dir() {
+    local project_path="$1"
+    project_path="$(cd "$project_path" 2>/dev/null && pwd)" \
+        || error "Project directory does not exist: $1"
+
+    [ -d "$project_path" ] || error "Not a directory: $project_path"
+    [ -r "$project_path" ] || error "Directory is not readable: $project_path"
+    [ -w "$project_path" ] || error "Directory is not writable: $project_path"
+
+    case "$project_path" in
+        /|/etc*|/usr*|/var*|/bin*|/sbin*|/lib*|/boot*|/proc*|/sys*|/dev*|/run*|/root|/home|/Users)
+            error "Refusing to mount system/root directory: $project_path" ;;
+    esac
+
+    local resolved_home
+    resolved_home="$(cd ~ 2>/dev/null && pwd)"
+    if [ "$project_path" = "$resolved_home" ]; then
+        error "Refusing to mount your entire home directory. Use a subdirectory."
+    fi
+    echo "$project_path"
+}
+
+# --- Extra args validation ---------------------------------------------------
+
+validate_extra_args() {
+    local blocked_pattern='^--(network|net|cap-add|privileged|security-opt|device|pid|userns|ipc|dns|add-host|mount)([= ]|$)'
+    for arg in "$@"; do
+        if [[ "$arg" =~ $blocked_pattern ]]; then
+            error "Blocked podman flag in extra args: '${arg}'"
+        fi
+        local host_path=""
+        if [[ "$arg" =~ ^-v(.+) ]]; then host_path="${BASH_REMATCH[1]}"
+        elif [[ "$arg" =~ ^--volume[=](.+) ]]; then host_path="${BASH_REMATCH[1]}"
+        elif [[ "$arg" =~ ^--volume$ ]]; then _next_is_volume=true; continue; fi
+
+        if [[ "${_next_is_volume:-}" == true ]]; then host_path="$arg"; _next_is_volume=false; fi
+        if [[ -n "$host_path" ]]; then
+            host_path="${host_path%%:*}"
+            validate_project_dir "$host_path" >/dev/null
+        fi
+    done
+}
+
+# --- Network setup -----------------------------------------------------------
+
+setup_network() {
+    if ! podman network exists "${INTERNAL_NET}" 2>/dev/null; then
+        log "Creating internal network: ${INTERNAL_NET}"
+        podman network create --internal "${INTERNAL_NET}"
+    fi
+}
+
+# --- Proxy sidecar -----------------------------------------------------------
+
+start_proxy() {
+    log "Starting nginx proxy sidecar: ${PROXY_NAME}"
+    local litellm_ip nexus_ip
+    litellm_ip=$(resolve_host "${LITELLM_HOST}")
+    nexus_ip=$(resolve_host "${NEXUS_HOST}")
+    log "  Shirty: ${LITELLM_HOST} -> ${litellm_ip}"
+    log "  Nexus:  ${NEXUS_HOST} -> ${nexus_ip}"
+
+    local proxy_cmd=(
+        podman run -d --rm --name "${PROXY_NAME}" --platform linux/amd64
+        --network "${INTERNAL_NET}"
+        --add-host "${LITELLM_HOST}:${litellm_ip}"
+        --add-host "${NEXUS_HOST}:${nexus_ip}"
+        --env "LITELLM_UPSTREAM=${litellm_ip}:${LITELLM_PORT}"
+        --env "LITELLM_HOST_HEADER=${LITELLM_HOST}"
+        --env "NEXUS_UPSTREAM=${nexus_ip}:${NEXUS_PORT}"
+        --env "NEXUS_HOST_HEADER=${NEXUS_HOST}"
+        --cap-drop=all --security-opt=no-new-privileges --read-only
+        --tmpfs /tmp:rw,noexec,nosuid,size=64m
+        --tmpfs /var/cache/nginx:rw,noexec,nosuid,size=32m
+        --tmpfs /run:rw,noexec,nosuid,size=16m
+        --pids-limit="${PIDS_LIMIT}"
+        "${PROXY_IMAGE}"
+    )
+
+    if $DEBUG; then log "DEBUG proxy cmd: ${proxy_cmd[*]}"; fi
+    "${proxy_cmd[@]}" >/dev/null || error "Failed to start proxy container."
+
+    # Verify the container is actually still running (catches immediate crashes)
+    sleep 1
+    if ! podman container exists "${PROXY_NAME}" 2>/dev/null; then
+        error "Proxy container exited immediately. Debug with: podman run --rm -it ... ${PROXY_IMAGE}"
+    fi
+
+    podman network connect podman "${PROXY_NAME}" 2>/dev/null || true
+
+    log "Waiting for proxy health check..."
+    local retries=0
+    PROXY_IP=$(podman inspect "${PROXY_NAME}" \
+        --format "{{(index .NetworkSettings.Networks \"${INTERNAL_NET}\").IPAddress}}")
+
+    while [ $retries -lt 15 ]; do
+        if podman exec "${PROXY_NAME}" curl -sf --noproxy '*' http://127.0.0.1:4000/health >/dev/null 2>&1; then
+            log "Proxy is healthy at ${PROXY_IP}:4000"
+            return 0
+        fi
+        retries=$((retries + 1))
+        sleep 1
+    done
+    error "Proxy failed to become healthy."
+}
+
+# --- API key secret ----------------------------------------------------------
+
+create_secret() {
+    log "Creating podman secret: ${SECRET_NAME}"
+    podman secret rm "${SECRET_NAME}" 2>/dev/null || true
+    printf '%s' "${SHIRTY_API_KEY}" | podman secret create "${SECRET_NAME}" - >/dev/null \
+        || error "Failed to create podman secret."
+}
+
+# --- cgroup version detection -----------------------------------------------
+
+detect_cgroup_version() {
+    # Use podman info rather than inspecting /sys/fs/cgroup directly so this
+    # works correctly on macOS and Windows (Podman Machine) as well as Linux.
+    podman info --format '{{.Host.CgroupsVersion}}' 2>/dev/null
+}
+
+# --- Cleanup -----------------------------------------------------------------
+
+cleanup() {
+    local exit_code=$?
+    log "Cleaning up session ${SESSION_ID}..."
+
+    # Stop the periodic log flush background process if it's still running
+    if [ -n "${FLUSH_PID}" ]; then
+        kill "${FLUSH_PID}" 2>/dev/null || true
+    fi
+
+    # Final log pull -- captures anything since the last periodic flush
+    if [ -n "${SESSION_DIR}" ]; then
+        podman exec "${PROXY_NAME}" cat /tmp/access.log             > "${SESSION_DIR}/access.log" 2>/dev/null || true
+        if podman exec "${PROXY_NAME}" cat /tmp/inference.log             > "${SESSION_DIR}/inference.log" 2>/dev/null; then
+            log "Inference audit log saved."
+        fi
+
+        # Compress and remove the working directory.
+        # tar.gz is readable on Linux, macOS, and Windows 11+ without extra tools.
+        local archive="${SESSION_DIR}.tar.gz"
+        if [ -n "$(ls -A "${SESSION_DIR}" 2>/dev/null)" ]; then
+            tar -czf "${archive}" -C "$(dirname "${SESSION_DIR}")"                 "$(basename "${SESSION_DIR}")" 2>/dev/null                 && rm -rf "${SESSION_DIR}"                 && log "Session logs archived to: ${archive}"
+        else
+            rm -rf "${SESSION_DIR}"
+        fi
+    fi
+
+    podman stop "${PROXY_NAME}" 2>/dev/null || true
+    podman stop "${CLAUDECODE_NAME}" 2>/dev/null || true
+    podman secret rm "${SECRET_NAME}" 2>/dev/null || true
+    log "Session ended (exit code: ${exit_code})."
+}
+
+# --- Main container launch ---------------------------------------------------
+
+launch_claudecode() {
+    local project_host_path="$1"
+    shift
+    local extra_args=("$@")
+
+    log "Launching Claude Code container: ${CLAUDECODE_NAME}"
+    log "  Project: ${project_host_path} → /projects"
+    log "  Run 'claude' inside the container to start working."
+
+    local claudecode_cmd=(
+        podman run --rm -it 
+	--name "${CLAUDECODE_NAME}" 
+	--platform linux/amd64
+
+        # ===== NETWORK ISOLATION =====
+        # ONLY on the internal network. No route to the outside world.
+        --network "${INTERNAL_NET}"
+        --dns 127.0.0.1
+        --add-host "proxy:${PROXY_IP}"
+
+        # ===== CAPABILITY RESTRICTIONS =====
+        # Zero capabilities. Rootless podman maps container root → user UID
+        # on host. Combined with no-new-privileges, cannot escalate.
+        --cap-drop=all
+        --security-opt=no-new-privileges
+
+        # ===== FILESYSTEM =====
+        # Read-only rootfs (immutable base image)
+        --read-only
+        # Writable scratch (noexec — no running binaries from tmp)
+        --tmpfs /tmp:rw,noexec,nosuid,size=2g
+        --tmpfs /var/tmp:rw,noexec,nosuid,size=512m
+        # Writable home for Claude Code state, history, config
+        # exec required: Claude Code writes and runs temp scripts here
+        --tmpfs /root:rw,exec,size=4g
+
+        # ===== PROJECT MOUNT =====
+        # The ONLY host directory in the container — read/write
+        -v "${project_host_path}:/projects:rw"
+        -w /projects
+
+        # ===== NO CONTAINER RUNTIME SOCKETS =====
+        # (Explicitly NOT binding docker.sock, podman.sock, or similar)
+
+        # ===== NO HTTP PROXY INJECTION =====
+        --http-proxy=false
+
+        # ===== RESOURCE LIMITS =====
+        --pids-limit="${PIDS_LIMIT}"
+	
+	# ===== ENVIRONMENT =====
+        --env TMPDIR=/root/tmp
+    )
+    
+    # ===== API KEY =====
+    # On cgroup v2 (Linux modern, macOS, WSL), deliver the key via podman
+    # secret so it never appears in env vars, podman inspect, or debug output.
+    # On cgroup v1 (RHEL8 and older systems), secret mounting is broken due to
+    # a podman/conmon incompatibility. Fall back to env var delivery with a
+    # warning. The threat model impact is low (user's own key, isolated network)
+    # but users should upgrade to cgroup v2 when possible.
+    if [ "$(detect_cgroup_version)" = "v2" ]; then
+        claudecode_cmd+=(--secret "${SECRET_NAME},target=/run/secrets/api-key")
+        claudecode_cmd+=(--env "ANTHROPIC_API_KEY=")
+    else
+        warn "cgroup v1 detected -- API key will be delivered via environment variable instead of podman secret. This is a reduced security posture. Upgrade your system to cgroup v2 when possible."
+        claudecode_cmd+=(--env "SHIRTY_API_KEY=${SHIRTY_API_KEY}")
+    fi
+
+    # Append any extra user-provided podman args (after validation)
+    if [ ${#extra_args[@]} -gt 0 ]; then
+        validate_extra_args "${extra_args[@]}"
+        claudecode_cmd+=("${extra_args[@]}")
+    fi
+
+    # Image must be last
+    claudecode_cmd+=("${CLAUDECODE_IMAGE}")
+
+    if $DEBUG; then
+        log "DEBUG claudecode cmd: ${claudecode_cmd[*]}"
+    fi
+
+    "${claudecode_cmd[@]}"
+}
+
+# --- Entrypoint --------------------------------------------------------------
+
+main() {
+    local profile=""
+    local project_dir="."
+    local extra_args=()
+    local parsing_extra=false
+
+    while [ $# -gt 0 ]; do
+        if $parsing_extra; then
+            extra_args+=("$1")
+            shift
+            continue
+        fi
+        case "$1" in
+            --debug)  DEBUG=true; shift ;;
+            --help)   usage ;;
+            -d|--dir) shift; project_dir="$1"; shift ;;
+            --)       parsing_extra=true; shift ;;
+            -*)       error "Unknown option: $1" ;;
+            *)
+                if [ -z "$profile" ]; then
+                    profile="$1"
+                else
+                    error "Unexpected argument: $1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    [ -n "$profile" ] || usage
+
+    case "$profile" in
+        shirty) log "Profile: shirty (Devstral 2 123B, Gemma 4 31B)" ;;
+        *)      error "Unknown profile: ${profile}. Available: shirty" ;;
+    esac
+
+    # Validate and resolve project directory
+    project_dir="$(validate_project_dir "$project_dir")"
+    log "Project directory: ${project_dir}"
+
+    preflight
+    setup_network
+    trap cleanup EXIT INT TERM
+    start_proxy
+    create_secret
+
+    # Create the session log directory now so the periodic flush and cleanup
+    # both reference the same path. Named with a startup timestamp.
+    SESSION_DIR="${HOME}/.sandia-claudecode/logs/session-${SESSION_ID}-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "${SESSION_DIR}"
+
+    # Periodic log flush: copies inference.log from the proxy container every
+    # 5 minutes so logs survive a hard kill or proxy crash mid-session.
+    ( while podman container exists "${PROXY_NAME}" 2>/dev/null; do
+        sleep 300
+        podman exec "${PROXY_NAME}" cat /tmp/inference.log             > "${SESSION_DIR}/inference.log.partial" 2>/dev/null || true
+      done ) &
+    FLUSH_PID=$!
+
+    launch_claudecode "$project_dir" "${extra_args[@]+"${extra_args[@]}"}"
+}
+
+main "$@"

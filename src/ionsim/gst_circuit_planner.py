@@ -10,17 +10,18 @@ from ionsim.gst_circuit_parser import ParsedCircuit, ParsedGate
 """ Circuit planner has 2 modes: 1) Gate model agnostic, 2) optimized planner based on gate models and germ sensitivies. """ 
 class GSTCircuitPlanner:
     def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials = None, measure_fiducials = None, germs = None, germ_powers: list[int]=[1,2,4,8,16], gate_models: dict | None=None):
-        """ Constructor for GST Circuit Planner class. The user passes in the gate names and qubit labels at a minimum. 
+        """ Constructor for GST Circuit Planner class. The user passes in the gate names and qubit labels at a minimum.
 
-            - Sets up list of prep gates, measure gates, and germ gates. The class organizes GST circuits based on those gates requested germ powers. 
-            - Can write the GST circuit sequences to a file.  
-            - Optional arguments to provide a dictionary of gate process matrix models, which should match the gate names  
+            - Sets up list of prep gates, measure gates, and germ gates. The class organizes GST circuits based on those gates requested germ powers.
+            - Can write the GST circuit sequences to a file.
+            - Optional arguments to provide a dictionary of gate process matrix models, which should match the gate names
+            - mode: 'standard' for agnostic planning, 'optimized' for gate-model-aware planning
 
         """ 
         self.qubit_labels = qubit_labels
         self.gate_names = gate_names
         self.germ_powers = germ_powers
-        
+
         # Build Parsed Gate objects from gate names and store them in a dictionary  
         self._construct_gate_name_to_object_mapping(gate_names, qubit_labels) 
 
@@ -34,11 +35,12 @@ class GSTCircuitPlanner:
         if germs is None and len(qubit_labels) == 1:
             germs = self.standard_1Q_germs(gate_names)
 
-        # Ensure consistency in inputs: 
-        # Convert all string-based fiducials/germs to ParsedGate objects
-        self.prep_fiducials = [self.to_parsed_seq(fid) for fid in prep_fiducials]
-        self.measure_fiducials = [self.to_parsed_seq(fid) for fid in measure_fiducials]
-        self.germs = [self.to_parsed_seq(germ) for germ in germs]
+        # If optimized mode, optimize germ selection
+        # Set mode --> either standard (gate model agnostic) or gate-model optimized 
+        if gate_models is None:
+            self.mode = 'standard' 
+        else:
+            self.mode = 'optimized' 
 
         # Check that gate models correspond with gate names if gate models are provided  
         self.gate_models = None
@@ -47,6 +49,23 @@ class GSTCircuitPlanner:
             if gate_model_names != gate_names:
                 ValueError(f"The gate models is missing one of the gates. Expected gate models for {gate_model_names} and received models for {gate_model_names}")
             self.gate_models = gate_models
+
+        if self.mode == 'optimized':
+            if germs is None:
+                # Generate candidate germs for optimization
+                candidate_germs = self._generate_candidate_germs_1Q(gate_names)
+                optimized_germs = self.optimize_germs(candidate_germs)
+                germs = optimized_germs
+            else:
+                # Optimize from provided germs
+                optimized_germs = self.optimize_germs(germs)
+                germs = optimized_germs
+
+        # Ensure consistency in inputs: 
+        # Convert all string-based fiducials/germs to ParsedGate objects
+        self.prep_fiducials = [self.to_parsed_seq(fid) for fid in prep_fiducials]
+        self.measure_fiducials = [self.to_parsed_seq(fid) for fid in measure_fiducials]
+        self.germs = [self.to_parsed_seq(germ) for germ in germs]
 
 
     def _construct_gate_name_to_object_mapping(self, gate_names: list[str], qubit_labels: list[str]): 
@@ -157,7 +176,55 @@ class GSTCircuitPlanner:
         else:
             germs = [ [X_pi2], [Y_pi2], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2] ]
 
-        return germs 
+        return germs
+
+    def _generate_candidate_germs_1Q(self, gate_names: list[str]) -> list:
+        """Generate a comprehensive set of candidate germs for 1Q optimization."""
+        qubits = (0, )
+        X_pi2 = ParsedGate('Gxpi2', qubits)
+        Y_pi2 = ParsedGate('Gypi2', qubits)
+        idle = ParsedGate('[]', ())
+
+        # Generate comprehensive candidate set
+        candidates = []
+
+        # Single gates
+        if 'Gxpi2' in gate_names:
+            candidates.append([X_pi2])
+        if 'Gypi2' in gate_names:
+            candidates.append([Y_pi2])
+        if 'idle' in gate_names:
+            candidates.append([idle])
+
+        # Two-gate sequences
+        if 'Gxpi2' in gate_names and 'Gypi2' in gate_names:
+            candidates.extend([
+                [X_pi2, Y_pi2],
+                [Y_pi2, X_pi2],
+                [X_pi2, X_pi2],
+                [Y_pi2, Y_pi2]
+            ])
+
+        # Three-gate sequences
+        if 'Gxpi2' in gate_names and 'Gypi2' in gate_names:
+            candidates.extend([
+                [X_pi2, X_pi2, Y_pi2],
+                [Y_pi2, Y_pi2, X_pi2],
+                [X_pi2, Y_pi2, X_pi2],
+                [Y_pi2, X_pi2, Y_pi2],
+                [X_pi2, X_pi2, X_pi2],
+                [Y_pi2, Y_pi2, Y_pi2]
+            ])
+
+        # Four-gate sequences (for more comprehensive coverage)
+        if 'Gxpi2' in gate_names and 'Gypi2' in gate_names:
+            candidates.extend([
+                [X_pi2, Y_pi2, X_pi2, Y_pi2],
+                [X_pi2, X_pi2, Y_pi2, Y_pi2],
+                [X_pi2, Y_pi2, Y_pi2, X_pi2]
+            ])
+
+        return candidates
 
 
     @staticmethod
@@ -197,7 +264,142 @@ class GSTCircuitPlanner:
     def to_parsed_seq(self, seq):
         return [self.to_parsed_gate(g) for g in seq]
 
-    
+
+    def _compute_germ_process_matrix(self, germ, theta):
+        """Compute the process matrix for a germ"""
+        d = 2**len(self.qubit_labels)
+        d2 = d**2
+
+        germ_process_matrix = np.eye(d2, dtype=complex)
+
+        for gate in germ:
+            # Get the gate model function for this gate
+            gate_func = self.gate_models[gate.name]
+            # Evaluate at current parameters
+            gate_matrix = gate_func(*theta)
+            germ_process_matrix = gate_matrix @ germ_process_matrix
+
+        return germ_process_matrix 
+
+    def compute_gate_model_sensitivity_to_germs(self, gate_model: Callable, max_power: int=16) 
+        """ Compute sensitivity of gate model parameters to germ sequences.
+
+            gate_model: Callable that returns a process matrix as function of parameters
+            max_power: Maximum germ power to consider
+
+        Returns:
+            Dictionary: {germ: sensitivity_matrix} where sensitivity_matrix[param_idx, power-1]
+            represents the sensitivity of parameter param_idx to germ^power.
+        """
+        import inspect
+
+        # Validate inputs
+        if self.germs is None:
+            raise ValueError("Germs must be specified for sensitivity analysis.")
+        if self.gate_models is None:
+            raise ValueError("Gate models must be provided for sensitivity analysis.")
+
+        d = 2**len(self.qubit_labels)
+        d2 = d**2
+
+        # Get parameter information from gate model
+        sig = inspect.signature(gate_model)
+        param_names = list(sig.parameters.keys())
+        n_params = len(param_names)
+
+        # Compute nominal parameter values (use zeros as starting point)
+        theta_nominal = np.zeros(n_params)
+
+        sensitivity_results = {}
+
+        for germ in self.germs:
+            # Initialize sensitivity matrix: params x powers
+            germ_sensitivity = np.zeros((n_params, max_power))
+            germ_process_matrix = self._compute_germ_process_matrix(germ, theta_nominal) 
+
+            for power in range(1, max_power + 1):
+                # Compute germ^power process matrix at nominal parameters
+                G_power = np.linalg.matrix_power(germ_process_matrix, power) 
+                #G_power = self._compute_germ_power_matrix(germ, theta_nominal, power)
+
+                # Compute sensitivity via finite differences for each parameter
+                for param_idx in range(n_params):
+                    # Perturb parameter
+                    theta_perturbed = theta_nominal.copy()
+                    epsilon = 1e-6
+                    theta_perturbed[param_idx] += epsilon
+
+                    G_power_perturbed = self._compute_germ_process_matrix(germ, theta_perturbed)
+                    G_power_perturbed = np.linalg.matrix_power(G_power_perturbed, power)
+                    #G_power_perturbed = self._compute_germ_power_matrix(germ, theta_perturbed, power)
+
+                    # Compute Frobenius norm of difference
+                    diff = np.linalg.norm(G_power_perturbed - G_power, 'fro')
+                    sensitivity = diff / epsilon
+
+                    germ_sensitivity[param_idx, power-1] = sensitivity
+
+            sensitivity_results[germ] = germ_sensitivity
+
+        return sensitivity_results
+
+    def _select_germs_based_on_sensitivity(self, sensitivity_data):
+        """ Select germs that provide good coverage of parameter sensitivity.
+
+            sensitivity_data: Dictionary of {gate_name: {germ: sensitivity_matrix}}
+
+            Returns a list of selected germs 
+        """
+        # Simple selection strategy: choose germs with highest average sensitivity
+        # across all parameters and powers
+
+        germ_scores = {}
+
+        for gate_name, gate_sensitivity in sensitivity_data.items():
+            for germ, sensitivity_matrix in gate_sensitivity.items():
+                # Compute average sensitivity across all parameters and powers
+                avg_sensitivity = np.mean(sensitivity_matrix)
+
+                # Accumulate scores across different gates
+                if germ in germ_scores:
+                    germ_scores[germ] += avg_sensitivity
+                else:
+                    germ_scores[germ] = avg_sensitivity
+
+        # Sort germs by score (highest first)
+        sorted_germs = sorted(germ_scores.items(), key=lambda x: x[1], reverse=True)
+
+        # Return germs sorted by sensitivity score
+        return [germ for germ, score in sorted_germs]
+
+    def optimize_germs(self, candidate_germs=None, n_germs_to_select=None):
+        """ Select optimal germs based on sensitivity analysis.
+
+            candidate_germs: List of candidate germs to consider (if None, use current germs)
+            n_germs_to_select: Number of germs to select (if None, select all)
+
+            Returns a list of selected germs that maximize parameter sensitivity.
+        """
+        if self.gate_models is None:
+            raise ValueError("Gate models must be provided for germ optimization.")
+
+        # Use candidate germs if provided, otherwise use current germs
+        germs_to_consider = candidate_germs if candidate_germs is not None else self.germs
+
+        # Compute sensitivity for all gates and germs
+        sensitivity_data = {}
+        for gate_name, gate_model in self.gate_models.items():
+            sensitivity_data[gate_name] = self.compute_gate_model_sensitivity_to_germs(gate_model)
+
+        # Select germs based on sensitivity
+        selected_germs = self._select_germs_based_on_sensitivity(sensitivity_data)
+
+        # Limit number of germs if requested
+        if n_germs_to_select and len(selected_germs) > n_germs_to_select:
+            selected_germs = selected_germs[:n_germs_to_select]
+
+        return selected_germs
+
     def write_circuit_design(self, filepath):
         """ Writes a design yaml file with circuit design information """
         #filename = 'GST_circuit_design.yaml'  
@@ -249,51 +451,4 @@ class GSTCircuitPlanner:
                     germs = dict_to_fiducials(design['germs']), germ_powers = design['germ_powers'] )
 
         return planner 
-
-
-
-### Function that checks if a gate model is amplified by certain germs? 
- #    def compute_gate_model_sensitivity_to_germs(self, gate_model: Callable, max_power: int=32, TOL: float = 1E-6): 
- #        """ Function to check whether a gate model's parameters are sensitive to the germs in the planner. 
- #
- #            - gate_model returns a process matrix as a function of its parameters 
- #
- #        """ 
- #
- #        # Dimensionality of Hilbert and Hilbert-Schmidt space: 
- #        d = 2**(len(self.qubit_labels))
- #        d2 = d**2 
- #
- #        if self.germs is None:
- #            ValueError(f"Germs must be specified.")
- #
- #        def germ_power_matrix(theta, power):
- #            """ Computes G raised to a power, where G is the germ. """
- #
- #        for germ in self.germs:
- #            # Compute sensitivity of germ for each gate parameter 
- #
- #            # Store each germ process matrix 
- #            def germ_model(theta):
- #                germ_process_matrix = np.eye(d2, dtype=complex)
- #                for g in germ.gates:
- #                    germ_process_matrix = self.gate_models[g.name](*theta) @ germ_process_matrix 
- #                 
-
-        # Check sensitivies via ||d (germ process matrix) / d theta ||
-
-        
-
-
-
-
-
-
-
-
-
-
-
-
-
 
