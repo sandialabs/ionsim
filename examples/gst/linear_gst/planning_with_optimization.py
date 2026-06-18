@@ -140,6 +140,9 @@ def run_optimized_planning(gate_names, qubit_labels, gate_models, output_file):
         print(f"  {i+1}. {germ_str}")
     print(f"Total circuits generated: {len(optimized_planner.generate_gst_circuits())}")
 
+    # Run amplification completeness diagnostics
+    optimized_planner.print_amplification_diagnostics()
+
     return optimized_planner
 
 
@@ -244,6 +247,7 @@ def main():
     # Run optimized planning
     optimized_output = './optimized_gst_circuits.gstdata'
     optimized_planner = run_optimized_planning(gate_names, qubit_labels, gate_models, optimized_output)
+    sys.exit(0)
 
     # Compare germ selections
     compare_germ_selections(standard_planner, optimized_planner)
@@ -252,17 +256,9 @@ def main():
     # Parse the optimized circuits
     optimized_circuits = ism.parse_gst_circuit_file(optimized_output)
 
-
-    sys.exit(0)
     # Simulate a subset for demonstration (remove num_circuits=None to simulate all)
-    simulate_circuits(
-        gst_circuits=optimized_circuits,
-        gate_mappings=gate_mappings,
-        rho_0=rho_0,
-        outcome_labels=outcome_labels,
-        output_file='./simulated_optimized_gst_data.gstdata',
-        num_circuits=100  # Simulate first 100 circuits for demo; remove for full simulation
-    )
+    simulate_circuits(gst_circuits=optimized_circuits, gate_mappings=gate_mappings, rho_0=rho_0, outcome_labels=outcome_labels,
+                        output_file='./simulated_optimized_gst_data.gstdata', num_circuits=100 ) # Simulate first 100 circuits for demo; remove for full simulation)
 
     print("\n" + "="*70)
     print("Example completed successfully!")

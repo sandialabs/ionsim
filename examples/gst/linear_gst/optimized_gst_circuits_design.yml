@@ -83,10 +83,10 @@ measure_fiducials:
 germs:
 - - name: '[]'
     qubits: []
-- - name: Gypi2
+- - name: Gxpi2
     qubits:
     - 0
-- - name: Gxpi2
+- - name: Gypi2
     qubits:
     - 0
 - - name: Gxpi2

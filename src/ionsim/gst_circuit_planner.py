@@ -461,6 +461,186 @@ class GSTCircuitPlanner:
 
         return selected_germs
 
+    def analyze_germ_amplification_completeness(self, germs=None, sensitivity_threshold=1e-6):
+        """Analyze whether the germ set provides amplification for all gate model parameters.
+
+        This method checks if each parameter in each gate model is sufficiently amplified
+        by at least one germ in the germ set. It provides diagnostic information about
+        which parameters are well-amplified and which are not.
+
+        Args:
+            germs: List of germs to analyze (if None, use current germs)
+            sensitivity_threshold: Minimum sensitivity value to consider a parameter amplified
+
+        Returns:
+            Dictionary containing:
+            - 'amplification_status': Overall status ('complete', 'incomplete', or 'no_gate_models')
+            - 'amplified_parameters': Dictionary mapping gate names to lists of amplified parameter names
+            - 'unamplified_parameters': Dictionary mapping gate names to lists of unamplified parameter names
+            - 'parameter_sensitivities': Detailed sensitivity information for each parameter
+            - 'warnings': List of warning messages
+        """
+        if self.gate_models is None:
+            return {
+                'amplification_status': 'no_gate_models',
+                'amplified_parameters': {},
+                'unamplified_parameters': {},
+                'parameter_sensitivities': {},
+                'warnings': ['No gate models provided - cannot analyze amplification completeness']
+            }
+
+        # Use current germs if none provided
+        germs_to_analyze = germs if germs is not None else self.germs
+
+        if not germs_to_analyze:
+            return {
+                'amplification_status': 'no_germs',
+                'amplified_parameters': {},
+                'unamplified_parameters': {},
+                'parameter_sensitivities': {},
+                'warnings': ['No germs provided - cannot analyze amplification completeness']
+            }
+
+        # Compute sensitivity for the germs
+        sensitivity_data = self.compute_germ_sensitivities(germs_to_analyze)
+
+        # Collect all parameters across all gate models
+        all_parameters = {}
+        for gate_name, gate_func in self.gate_models.items():
+            import inspect
+            sig = inspect.signature(gate_func)
+            param_names = list(sig.parameters.keys())
+            all_parameters[gate_name] = param_names
+
+        # Analyze amplification for each parameter
+        amplified_parameters = {gate_name: [] for gate_name in self.gate_models.keys()}
+        unamplified_parameters = {gate_name: [] for gate_name in self.gate_models.keys()}
+        parameter_sensitivities = {}
+
+        warnings = []
+
+        for gate_name, param_names in all_parameters.items():
+            parameter_sensitivities[gate_name] = {}
+
+            for param_idx, param_name in enumerate(param_names):
+                max_sensitivity = 0
+                best_germ = None
+                best_power = None
+
+                # Check sensitivity across all germs and powers
+                for germ_name, gate_sensitivities in sensitivity_data.items():
+                    if gate_name in gate_sensitivities:
+                        sensitivity_matrix = gate_sensitivities[gate_name]
+
+                        # Find maximum sensitivity for this parameter across all powers
+                        param_sensitivities = sensitivity_matrix[param_idx, :]
+                        germ_max_sensitivity = np.max(param_sensitivities)
+
+                        if germ_max_sensitivity > max_sensitivity:
+                            max_sensitivity = germ_max_sensitivity
+                            # Find the power that gives maximum sensitivity
+                            best_power_idx = np.argmax(param_sensitivities)
+                            best_power = best_power_idx + 1  # Convert from 0-indexed to 1-indexed
+                            best_germ = germ_name
+
+                parameter_sensitivities[gate_name][param_name] = {
+                    'max_sensitivity': max_sensitivity,
+                    'best_germ': best_germ,
+                    'best_power': best_power,
+                    'is_amplified': max_sensitivity >= sensitivity_threshold
+                }
+
+                if max_sensitivity >= sensitivity_threshold:
+                    amplified_parameters[gate_name].append(param_name)
+                else:
+                    unamplified_parameters[gate_name].append(param_name)
+                    warnings.append(f"Parameter '{param_name}' in gate '{gate_name}' has low sensitivity (max: {max_sensitivity:.2e}) - may not be well amplified by any germ")
+
+        # Determine overall amplification status
+        total_unamplified = sum(len(params) for params in unamplified_parameters.values())
+        if total_unamplified == 0:
+            amplification_status = 'complete'
+        else:
+            amplification_status = 'incomplete'
+
+        return {
+            'amplification_status': amplification_status,
+            'amplified_parameters': amplified_parameters,
+            'unamplified_parameters': unamplified_parameters,
+            'parameter_sensitivities': parameter_sensitivities,
+            'warnings': warnings
+        }
+
+    def print_amplification_diagnostics(self, germs=None, sensitivity_threshold=1e-6):
+        """Print diagnostic information about germ amplification completeness.
+
+        This method provides a human-readable summary of which parameters are
+        well-amplified by the germ set and which are not.
+
+        Args:
+            germs: List of germs to analyze (if None, use current germs)
+            sensitivity_threshold: Minimum sensitivity value to consider a parameter amplified
+        """
+        diagnostics = self.analyze_germ_amplification_completeness(germs, sensitivity_threshold)
+
+        print("\n" + "="*80)
+        print("GERM AMPLIFICATION COMPLETENESS DIAGNOSTICS")
+        print("="*80)
+
+        if diagnostics['amplification_status'] == 'no_gate_models':
+            print("No gate models provided - cannot analyze amplification completeness")
+            return
+
+        if diagnostics['amplification_status'] == 'no_germs':
+            print("No germs provided - cannot analyze amplification completeness")
+            return
+
+        print(f"Amplification Status: {diagnostics['amplification_status'].upper()}")
+        print(f"Sensitivity Threshold: {sensitivity_threshold:.2e}")
+        print(f"Number of Germs Analyzed: {len(self.germs if germs is None else germs)}")
+
+        if diagnostics['amplification_status'] == 'complete':
+            print("\n✓ ALL PARAMETERS ARE WELL-AMPLIFIED")
+            print("The germ set provides good sensitivity to all gate model parameters.")
+        else:
+            print("\n⚠ INCOMPLETE AMPLIFICATION DETECTED")
+            print("Some gate model parameters have low sensitivity to the germ set.")
+
+        print("\n" + "-"*80)
+        print("PARAMETER AMPLIFICATION SUMMARY")
+        print("-"*80)
+
+        for gate_name in self.gate_models.keys():
+            print(f"\nGate: {gate_name}")
+
+            amplified = diagnostics['amplified_parameters'][gate_name]
+            unamplified = diagnostics['unamplified_parameters'][gate_name]
+
+            if amplified:
+                print(f"  ✓ Well-amplified parameters ({len(amplified)}):")
+                for param_name in amplified:
+                    sensitivity_info = diagnostics['parameter_sensitivities'][gate_name][param_name]
+                    print(f"    - {param_name}: max sensitivity = {sensitivity_info['max_sensitivity']:.2e}")
+                    print(f"      (best germ: {sensitivity_info['best_germ']}, power: {sensitivity_info['best_power']})")
+
+            if unamplified:
+                print(f"  ⚠ Low-sensitivity parameters ({len(unamplified)}):")
+                for param_name in unamplified:
+                    sensitivity_info = diagnostics['parameter_sensitivities'][gate_name][param_name]
+                    print(f"    - {param_name}: max sensitivity = {sensitivity_info['max_sensitivity']:.2e}")
+                    print(f"      (best germ: {sensitivity_info['best_germ']}, power: {sensitivity_info['best_power']})")
+
+        if diagnostics['warnings']:
+            print("\n" + "-"*80)
+            print("WARNINGS")
+            print("-"*80)
+            for warning in diagnostics['warnings']:
+                print(f"  ⚠ {warning}")
+
+        print("\n" + "="*80)
+
+        return diagnostics
+
     def write_circuit_design(self, filepath):
         """ Writes a design yaml file with circuit design information """
         #filename = 'GST_circuit_design.yaml'  
