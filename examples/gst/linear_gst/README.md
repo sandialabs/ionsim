@@ -52,7 +52,7 @@ The optimized planner:
 ### 3. Sensitivity Analysis
 
 The planner includes methods for:
-- `compute_gate_model_sensitivity_to_germs()` - Computes parameter sensitivity matrices
+- `compute_germ_sensitivities()` - Computes parameter sensitivity matrices for all gate models in each germ
 - `optimize_germs()` - Selects optimal germ set
 - `_select_germs_based_on_sensitivity()` - Implements selection strategy
 

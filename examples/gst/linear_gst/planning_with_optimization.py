@@ -127,7 +127,7 @@ def run_optimized_planning(gate_names, qubit_labels, gate_models, output_file):
     optimized_planner = ism.GSTCircuitPlanner(gate_names=gate_names, qubit_labels=qubit_labels, germ_powers=[1, 2, 4, 8, 16], gate_models=gate_models)
 
     # Generate and write circuits
-    optimized_planner.write_circuit_plan(output_file, num_qubits=1)
+    optimized_planner.write_circuit_plan(output_file, N_qubits=1)
     optimized_planner.write_circuit_design(output_file.replace('.gstdata', '_design.yml'))
 
     end_time = time.perf_counter()

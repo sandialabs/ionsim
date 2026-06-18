@@ -256,6 +256,9 @@ class GSTCircuitPlanner:
             if isinstance(g, ParsedGate):
                 return g
             if isinstance(g, str):
+                # Handle special case for idle gate represented as '[]'
+                if g == '[]':
+                    return ParsedGate('[]', ())
                 if g in self.gate_lookup:
                     return self.gate_lookup[g]
                 raise ValueError(f"Unknown gate name: {g}")
@@ -265,8 +268,16 @@ class GSTCircuitPlanner:
         return [self.to_parsed_gate(g) for g in seq]
 
 
-    def _compute_germ_process_matrix(self, germ, theta):
-        """Compute the process matrix for a germ"""
+    def _compute_germ_process_matrix(self, germ, theta_dict):
+        """Compute the process matrix for a germ given parameter values for each gate model.
+
+        Args:
+            germ: List of ParsedGate objects representing the germ
+            theta_dict: Dictionary mapping gate names to their parameter arrays
+
+        Returns:
+            Process matrix for the germ sequence
+        """
         d = 2**len(self.qubit_labels)
         d2 = d**2
 
@@ -274,115 +285,157 @@ class GSTCircuitPlanner:
 
         for gate in germ:
             # Get the gate model function for this gate
-            # Convention is for idle gate to be named '[]'; however, gate models generally use "idle" instead. 
-            if gate.name == '[]':
-                gate_func = self.gate_models['idle']
-            else:
-                gate_func = self.gate_models[gate.name]
+            # Convention is for idle gate to be named '[]'; however, gate models generally use "idle" instead.
+            gate_name = 'idle' if gate.name == '[]' else gate.name
+            gate_func = self.gate_models[gate_name]
+
+            # Get parameters for this specific gate model
+            theta = theta_dict[gate_name]
+            print(gate_name)
+            print(theta)
 
             # Evaluate at current parameters
             gate_matrix = gate_func(*theta)
             germ_process_matrix = gate_matrix @ germ_process_matrix
 
-        return germ_process_matrix 
+        return germ_process_matrix
 
-    def compute_gate_model_sensitivity_to_germs(self, gate_model: Callable, germs: list[list[ParsedGate]], max_power: int=16): 
-        """ Compute sensitivity of gate model parameters to germ sequences.
+    def compute_germ_sensitivities(self, germs: list[list[ParsedGate]], max_power: int=16):
+        """Compute sensitivity of all gate model parameters to germ sequences.
 
-            gate_model: Callable that returns a process matrix as function of parameters
+        This method computes the sensitivity of each parameter from each gate model
+        used in a germ to the germ's process matrix and its powers. This provides
+        a comprehensive view of how each parameter affects the germ behavior.
+
+        Args:
+            germs: List of germs (each germ is a list of ParsedGate objects)
             max_power: Maximum germ power to consider
 
-            Returns:
-            Dictionary: {germ: sensitivity_matrix} where sensitivity_matrix[param_idx, power-1]
-            represents the sensitivity of parameter param_idx to germ^power.
+        Returns:
+            Dictionary: {germ_name: sensitivity_data} where sensitivity_data is a
+            dictionary mapping gate names to their sensitivity matrices. Each
+            sensitivity matrix has shape (n_params, max_power) where
+            sensitivity_matrix[param_idx, power-1] represents the sensitivity
+            of parameter param_idx to germ^power.
         """
         import inspect
 
-        # Validate inputs
- #        if self.germs is None:
- #            raise ValueError("Germs must be specified for sensitivity analysis.")
         if self.gate_models is None:
             raise ValueError("Gate models must be provided for sensitivity analysis.")
 
         d = 2**len(self.qubit_labels)
         d2 = d**2
 
-        # Get parameter information from gate model
-        sig = inspect.signature(gate_model)
-        param_names = list(sig.parameters.keys())
-        n_params = len(param_names)
-
-        # Compute nominal parameter values (use zeros as starting point)
-        theta_nominal = np.zeros(n_params)
-
         sensitivity_results = {}
 
         for germ in germs:
-            germ_name = ''
+            # Create a descriptive name for the germ
+            germ_name = ''.join([gate.name for gate in germ])
+            print(f" - Computing sensitivities for germ {germ_name}")
+
+            # Collect all unique gate models in this germ and their parameter information
+            germ_gate_models = {}
+            theta_dict_nominal = {}
 
             for gate in germ:
-                germ_name += gate.name
+                gate_name = 'idle' if gate.name == '[]' else gate.name
+                if gate_name not in germ_gate_models:
+                    gate_func = self.gate_models[gate_name]
+                    sig = inspect.signature(gate_func)
+                    param_names = list(sig.parameters.keys())
+                    n_params = len(param_names)
 
-            print(f" - Looking at sensitivity for germ {germ_name}")
+                    germ_gate_models[gate_name] = {
+                        'function': gate_func,
+                        'param_names': param_names,
+                        'n_params': n_params
+                    }
+                    # Store nominal parameters (zeros) for this gate model
+                    theta_dict_nominal[gate_name] = np.zeros(n_params)
 
-            # Initialize sensitivity matrix: params x powers
-            germ_sensitivity = np.zeros((n_params, max_power))
-            germ_process_matrix = self._compute_germ_process_matrix(germ, theta_nominal) 
+            # Initialize sensitivity data structure for this germ
+            germ_sensitivity_data = {}
+
+            for gate_name, gate_info in germ_gate_models.items():
+                n_params = gate_info['n_params']
+                # Initialize sensitivity matrix: params x powers
+                germ_sensitivity_data[gate_name] = np.zeros((n_params, max_power))
+
+            # Compute nominal germ process matrix
+            germ_process_matrix_nominal = self._compute_germ_process_matrix(germ, theta_dict_nominal)
 
             for power in range(1, max_power + 1):
                 # Compute germ^power process matrix at nominal parameters
-                G_power = np.linalg.matrix_power(germ_process_matrix, power) 
-                #G_power = self._compute_germ_power_matrix(germ, theta_nominal, power)
+                G_power_nominal = np.linalg.matrix_power(germ_process_matrix_nominal, power)
 
-                # Compute sensitivity via finite differences for each parameter
-                for param_idx in range(n_params):
-                    # Perturb parameter
-                    theta_perturbed = theta_nominal.copy()
-                    epsilon = 1e-6
-                    theta_perturbed[param_idx] += epsilon
+                # Compute sensitivity via finite differences for each parameter of each gate model
+                for gate_name, gate_info in germ_gate_models.items():
+                    n_params = gate_info['n_params']
 
-                    G_power_perturbed = self._compute_germ_process_matrix(germ, theta_perturbed)
-                    G_power_perturbed = np.linalg.matrix_power(G_power_perturbed, power)
-                    #G_power_perturbed = self._compute_germ_power_matrix(germ, theta_perturbed, power)
+                    for param_idx in range(n_params):
+                        # Perturb this specific parameter
+                        theta_dict_perturbed = {gn: params.copy() for gn, params in theta_dict_nominal.items()}
+                        epsilon = 1e-6
+                        theta_dict_perturbed[gate_name][param_idx] += epsilon
 
-                    # Compute Frobenius norm of difference
-                    diff = np.linalg.norm(G_power_perturbed - G_power, 'fro')
-                    sensitivity = diff / epsilon
+                        # Compute perturbed germ process matrix
+                        germ_process_matrix_perturbed = self._compute_germ_process_matrix(germ, theta_dict_perturbed)
+                        G_power_perturbed = np.linalg.matrix_power(germ_process_matrix_perturbed, power)
 
-                    germ_sensitivity[param_idx, power-1] = sensitivity
+                        # Compute Frobenius norm of difference
+                        diff = np.linalg.norm(G_power_perturbed - G_power_nominal, 'fro')
+                        sensitivity = diff / epsilon
 
-            sensitivity_results[germ_name] = germ_sensitivity
+                        germ_sensitivity_data[gate_name][param_idx, power-1] = sensitivity
+
+            sensitivity_results[germ_name] = germ_sensitivity_data
 
         return sensitivity_results
 
-    def _select_germs_based_on_sensitivity(self, sensitivity_data):
+    def _select_germs_based_on_sensitivity(self, sensitivity_data, candidate_germs):
         """ Select germs that provide good coverage of parameter sensitivity.
 
-            sensitivity_data: Dictionary of {gate_name: {germ: sensitivity_matrix}}
+            sensitivity_data: Dictionary of {germ_name: {gate_name: sensitivity_matrix}}
+            candidate_germs: List of candidate germs (lists of ParsedGate objects)
 
-            Returns a list of selected germs 
+            Returns a list of selected germs (lists of ParsedGate objects)
         """
         # Simple selection strategy: choose germs with highest average sensitivity
         # across all parameters and powers
 
         germ_scores = {}
+        germ_name_to_germ = {}
 
-        for gate_name, gate_sensitivity in sensitivity_data.items():
-            for germ, sensitivity_matrix in gate_sensitivity.items():
-                # Compute average sensitivity across all parameters and powers
+        # Map germ names back to actual germ objects
+        for germ in candidate_germs:
+            germ_name = ''.join([gate.name for gate in germ])
+            germ_name_to_germ[germ_name] = germ
+
+        for germ_name, gate_sensitivities in sensitivity_data.items():
+            total_sensitivity = 0
+            total_params = 0
+
+            # Sum sensitivity across all gate models in this germ
+            for gate_name, sensitivity_matrix in gate_sensitivities.items():
+                # Compute average sensitivity for this gate model
                 avg_sensitivity = np.mean(sensitivity_matrix)
+                # Get number of parameters for weighting
+                n_params = sensitivity_matrix.shape[0]
 
-                # Accumulate scores across different gates
-                if germ in germ_scores:
-                    germ_scores[germ] += avg_sensitivity
-                else:
-                    germ_scores[germ] = avg_sensitivity
+                total_sensitivity += avg_sensitivity * n_params
+                total_params += n_params
+
+            # Compute weighted average sensitivity for this germ
+            if total_params > 0:
+                germ_scores[germ_name] = total_sensitivity / total_params
+            else:
+                germ_scores[germ_name] = 0
 
         # Sort germs by score (highest first)
         sorted_germs = sorted(germ_scores.items(), key=lambda x: x[1], reverse=True)
 
-        # Return germs sorted by sensitivity score
-        return [germ for germ, score in sorted_germs]
+        # Return the actual germ objects sorted by sensitivity score
+        return [germ_name_to_germ[germ] for germ, score in sorted_germs]
 
     def optimize_germs(self, candidate_germs=None, n_germs_to_select=None):
         """ Select optimal germs based on sensitivity analysis.
@@ -398,13 +451,11 @@ class GSTCircuitPlanner:
         # Use candidate germs if provided, otherwise use current germs
         germs_to_consider = candidate_germs if candidate_germs is not None else self.germs
 
-        # Compute sensitivity for all gates and germs
-        sensitivity_data = {}
-        for gate_name, gate_model in self.gate_models.items():
-            sensitivity_data[gate_name] = self.compute_gate_model_sensitivity_to_germs(gate_model, germs_to_consider)
+        # Compute sensitivity for all germs (new method that handles multiple gate models per germ)
+        sensitivity_data = self.compute_germ_sensitivities(germs_to_consider)
 
         # Select germs based on sensitivity
-        selected_germs = self._select_germs_based_on_sensitivity(sensitivity_data)
+        selected_germs = self._select_germs_based_on_sensitivity(sensitivity_data, germs_to_consider)
 
         # Limit number of germs if requested
         if n_germs_to_select and len(selected_germs) > n_germs_to_select:
