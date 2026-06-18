@@ -291,8 +291,6 @@ class GSTCircuitPlanner:
 
             # Get parameters for this specific gate model
             theta = theta_dict[gate_name]
-            print(gate_name)
-            print(theta)
 
             # Evaluate at current parameters
             gate_matrix = gate_func(*theta)
