@@ -105,7 +105,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Verbose logging in objective functions is expensive in iterative solvers.
         self.verbose = verbose 
 
-        #TODO: Algorithm for optimizing stepwise by circuit depth.  
         # initialize GST results to None 
         if circuit_design :
             # Use a list of tuples instead of list of gates for compatibility with dictionaries 
