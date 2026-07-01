@@ -3,24 +3,31 @@ import re
 import yaml 
 from pathlib import Path 
 from itertools import product
+import inspect
+import matplotlib.pyplot as plt
 
 from ionsim.gst_circuit_parser import ParsedCircuit, ParsedGate
 
 
 """ Circuit planner has 2 modes: 1) Gate model agnostic, 2) optimized planner based on gate models and germ sensitivies. """ 
 class GSTCircuitPlanner:
-    def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials = None, measure_fiducials = None, germs = None, germ_powers: list[int]=[1,2,4,8,16], gate_models: dict | None=None):
+    def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials = None, measure_fiducials = None, germs = None, germ_powers: list[int]=[1,2,4,8,16], 
+                    gate_models: dict | None=None, long_sequence_GST:bool = True):
         """ Constructor for GST Circuit Planner class. The user passes in the gate names and qubit labels at a minimum.
 
             - Sets up list of prep gates, measure gates, and germ gates. The class organizes GST circuits based on those gates requested germ powers.
             - Can write the GST circuit sequences to a file.
             - Optional arguments to provide a dictionary of gate process matrix models, which should match the gate names
+            - long GST: 'True' will use germs to do long-gst circuits, 'false' will use only linear gst circuits  
             - mode: 'standard' for agnostic planning, 'optimized' for gate-model-aware planning
 
         """ 
         self.qubit_labels = qubit_labels
         self.gate_names = gate_names
-        self.germ_powers = germ_powers
+        if long_sequence_GST:
+            self.germ_powers = germ_powers
+        else:
+            self.germ_powers = [1]
 
         # Build Parsed Gate objects from gate names and store them in a dictionary  
         self._construct_gate_name_to_object_mapping(gate_names, qubit_labels) 
@@ -31,8 +38,8 @@ class GSTCircuitPlanner:
             prep_fiducials, measure_fiducials = self.standard_1Q_fiducials()
         elif prep_fiducials is None and measure_fiducials is None and len(qubit_labels) > 1:
             raise IonSimError(f"2-qubit GST circuit planning default options are currently not implemented in IonSim. Please specify a choice of fiducial prep circuits.")
-        
-        if germs is None and len(qubit_labels) == 1:
+
+        if germs is None and len(qubit_labels) == 1: 
             germs = self.standard_1Q_germs(gate_names)
 
         # If optimized mode, optimize germ selection
@@ -50,8 +57,17 @@ class GSTCircuitPlanner:
                 ValueError(f"The gate models is missing one of the gates. Expected gate models for {gate_model_names} and received models for {gate_model_names}")
             self.gate_models = gate_models
 
+        self.long_GST = long_sequence_GST  
+
+        # Ensure consistency in inputs: 
+        # Convert all string-based fiducials/germs to ParsedGate objects
+        self.prep_fiducials = [self.to_parsed_seq(fid) for fid in prep_fiducials]
+        self.measure_fiducials = [self.to_parsed_seq(fid) for fid in measure_fiducials]
+        self.germs = [self.to_parsed_seq(germ) for germ in germs]
+        
         if self.mode == 'optimized':
-            if germs is None:
+            assert self.long_GST
+            if self.germs is None or not self.germs:
                 # Generate candidate germs for optimization
                 candidate_germs = self._generate_candidate_germs_1Q(gate_names)
                 optimized_germs = self.optimize_germs(candidate_germs)
@@ -60,12 +76,9 @@ class GSTCircuitPlanner:
                 # Optimize from provided germs
                 optimized_germs = self.optimize_germs(germs)
                 germs = optimized_germs
+            # Set the germs list according to optimization  
+            self.germs = germs 
 
-        # Ensure consistency in inputs: 
-        # Convert all string-based fiducials/germs to ParsedGate objects
-        self.prep_fiducials = [self.to_parsed_seq(fid) for fid in prep_fiducials]
-        self.measure_fiducials = [self.to_parsed_seq(fid) for fid in measure_fiducials]
-        self.germs = [self.to_parsed_seq(germ) for germ in germs]
 
 
     def _construct_gate_name_to_object_mapping(self, gate_names: list[str], qubit_labels: list[str]): 
@@ -83,7 +96,12 @@ class GSTCircuitPlanner:
         gst_circuits = []
         unique = set()
 
-        for circ in self._linear_gst_circuits() + self._long_gst_circuits():
+        if self.long_GST:
+            circuits = self._linear_gst_circuits() + self._long_gst_circuits()
+        else:
+            circuits = self._linear_gst_circuits() 
+
+        for circ in circuits: 
             key = circ.build_circuit_string()
 
             if key not in unique:
@@ -118,6 +136,7 @@ class GSTCircuitPlanner:
 
     def _long_gst_circuits(self) -> list:
         """ Long-form GST circuits: fiducial_prep + prep^{germ} + fiducial_measure """ 
+        assert self.long_GST
         circuits = []
         for germ in self.germs:
             for power in self.germ_powers:
@@ -298,7 +317,8 @@ class GSTCircuitPlanner:
 
         return germ_process_matrix
 
-    def compute_germ_sensitivities(self, germs: list[list[ParsedGate]], max_power: int=16):
+    #def compute_germ_sensitivities(self, germs: list[list[ParsedGate]], max_power: int=16):
+    def compute_germ_sensitivities(self, germs: list[list[ParsedGate]]): 
         """Compute sensitivity of all gate model parameters to germ sequences.
 
         This method computes the sensitivity of each parameter from each gate model
@@ -307,7 +327,6 @@ class GSTCircuitPlanner:
 
         Args:
             germs: List of germs (each germ is a list of ParsedGate objects)
-            max_power: Maximum germ power to consider
 
         Returns:
             Dictionary: {germ_name: sensitivity_data} where sensitivity_data is a
@@ -325,6 +344,7 @@ class GSTCircuitPlanner:
         d2 = d**2
 
         sensitivity_results = {}
+        max_power = self.germ_powers[-1]
 
         for germ in germs:
             # Create a descriptive name for the germ
@@ -357,12 +377,12 @@ class GSTCircuitPlanner:
             for gate_name, gate_info in germ_gate_models.items():
                 n_params = gate_info['n_params']
                 # Initialize sensitivity matrix: params x powers
-                germ_sensitivity_data[gate_name] = np.zeros((n_params, max_power))
+                germ_sensitivity_data[gate_name] = np.zeros((n_params, len(self.germ_powers)))
 
             # Compute nominal germ process matrix
             germ_process_matrix_nominal = self._compute_germ_process_matrix(germ, theta_dict_nominal)
 
-            for power in range(1, max_power + 1):
+            for i, power in enumerate(self.germ_powers):
                 # Compute germ^power process matrix at nominal parameters
                 G_power_nominal = np.linalg.matrix_power(germ_process_matrix_nominal, power)
 
@@ -373,7 +393,8 @@ class GSTCircuitPlanner:
                     for param_idx in range(n_params):
                         # Perturb this specific parameter
                         theta_dict_perturbed = {gn: params.copy() for gn, params in theta_dict_nominal.items()}
-                        epsilon = 1e-6
+                        #epsilon = 1e-6
+                        epsilon = 1e-3
                         theta_dict_perturbed[gate_name][param_idx] += epsilon
 
                         # Compute perturbed germ process matrix
@@ -384,7 +405,7 @@ class GSTCircuitPlanner:
                         diff = np.linalg.norm(G_power_perturbed - G_power_nominal, 'fro')
                         sensitivity = diff / epsilon
 
-                        germ_sensitivity_data[gate_name][param_idx, power-1] = sensitivity
+                        germ_sensitivity_data[gate_name][param_idx, i] = sensitivity
 
             sensitivity_results[germ_name] = germ_sensitivity_data
 
@@ -446,6 +467,7 @@ class GSTCircuitPlanner:
         if self.gate_models is None:
             raise ValueError("Gate models must be provided for germ optimization.")
 
+        assert self.long_GST
         # Use candidate germs if provided, otherwise use current germs
         germs_to_consider = candidate_germs if candidate_germs is not None else self.germs
 
@@ -461,24 +483,24 @@ class GSTCircuitPlanner:
 
         return selected_germs
 
-    def analyze_germ_amplification_completeness(self, germs=None, sensitivity_threshold=1e-6):
-        """Analyze whether the germ set provides amplification for all gate model parameters.
+    def analyze_germ_amplification_completeness(self, germs=None, sensitivity_threshold=1e-3):
+        """ Analyze whether the germ set provides amplification for all gate model parameters.
 
-        This method checks if each parameter in each gate model is sufficiently amplified
-        by at least one germ in the germ set. It provides diagnostic information about
-        which parameters are well-amplified and which are not.
+            This method checks if each parameter in each gate model is sufficiently amplified
+            by at least one germ in the germ set. It provides diagnostic information about
+            which parameters are well-amplified and which are not.
 
-        Args:
-            germs: List of germs to analyze (if None, use current germs)
-            sensitivity_threshold: Minimum sensitivity value to consider a parameter amplified
+            Args:
+                germs: List of germs to analyze (if None, use current germs)
+                sensitivity_threshold: Minimum sensitivity value to consider a parameter amplified
 
-        Returns:
-            Dictionary containing:
-            - 'amplification_status': Overall status ('complete', 'incomplete', or 'no_gate_models')
-            - 'amplified_parameters': Dictionary mapping gate names to lists of amplified parameter names
-            - 'unamplified_parameters': Dictionary mapping gate names to lists of unamplified parameter names
-            - 'parameter_sensitivities': Detailed sensitivity information for each parameter
-            - 'warnings': List of warning messages
+            Returns:
+                Dictionary containing:
+                - 'amplification_status': Overall status ('complete', 'incomplete', or 'no_gate_models')
+                - 'amplified_parameters': Dictionary mapping gate names to lists of amplified parameter names
+                - 'unamplified_parameters': Dictionary mapping gate names to lists of unamplified parameter names
+                - 'parameter_sensitivities': Detailed sensitivity information for each parameter
+                - 'warnings': List of warning messages
         """
         if self.gate_models is None:
             return {
@@ -489,19 +511,16 @@ class GSTCircuitPlanner:
                 'warnings': ['No gate models provided - cannot analyze amplification completeness']
             }
 
+        assert self.long_GST
         # Use current germs if none provided
         germs_to_analyze = germs if germs is not None else self.germs
 
         if not germs_to_analyze:
-            return {
-                'amplification_status': 'no_germs',
-                'amplified_parameters': {},
-                'unamplified_parameters': {},
-                'parameter_sensitivities': {},
-                'warnings': ['No germs provided - cannot analyze amplification completeness']
-            }
+            return { 'amplification_status': 'no_germs', 'amplified_parameters': {}, 'unamplified_parameters': {},
+                'parameter_sensitivities': {}, 'warnings': ['No germs provided - cannot analyze amplification completeness'] }
 
-        # Compute sensitivity for the germs
+        # Sensitivity for the germs: {germ name, {gate model : array of shape params x powers}} 
+        # i.e. dictionary of key = germ name, value = dictionary with key = gate model, matrix of d[germ]/dtheta of shape parameters x germ powers
         sensitivity_data = self.compute_germ_sensitivities(germs_to_analyze)
 
         # Collect all parameters across all gate models
@@ -519,6 +538,7 @@ class GSTCircuitPlanner:
 
         warnings = []
 
+        # For each gate model, extract parameter sensitivities for each germ 
         for gate_name, param_names in all_parameters.items():
             parameter_sensitivities[gate_name] = {}
 
@@ -526,40 +546,117 @@ class GSTCircuitPlanner:
                 max_sensitivity = 0
                 best_germ = None
                 best_power = None
+                max_sensitivity_in_high_power_range = 0
+                best_high_power_germ = None
+                best_high_power = None
 
                 # Check sensitivity across all germs and powers
                 for germ_name, gate_sensitivities in sensitivity_data.items():
                     if gate_name in gate_sensitivities:
                         sensitivity_matrix = gate_sensitivities[gate_name]
 
-                        # Find maximum sensitivity for this parameter across all powers
+                        # Find maximum sensitivity for this parameter in this germ for this gate model across all powers
                         param_sensitivities = sensitivity_matrix[param_idx, :]
-                        germ_max_sensitivity = np.max(param_sensitivities)
+                        germ_max_sensitivity = np.max(param_sensitivities) # over all powers 
 
                         if germ_max_sensitivity > max_sensitivity:
                             max_sensitivity = germ_max_sensitivity
                             # Find the power that gives maximum sensitivity
                             best_power_idx = np.argmax(param_sensitivities)
-                            best_power = best_power_idx + 1  # Convert from 0-indexed to 1-indexed
+                            best_power = self.germ_powers[best_power_idx] 
                             best_germ = germ_name
+
+                        # Check sensitivity at high germ powers (last half of power range)
+                        high_power_indices = range(len(param_sensitivities) // 2, len(param_sensitivities))
+                        high_power_sensitivities = param_sensitivities[high_power_indices]
+                        if len(high_power_sensitivities) > 0:
+                            germ_high_power_max = np.max(high_power_sensitivities)
+                            if germ_high_power_max > max_sensitivity_in_high_power_range:
+                                max_sensitivity_in_high_power_range = germ_high_power_max
+                                # Find the high power that gives maximum sensitivity
+                                high_power_idx = np.argmax(high_power_sensitivities)
+                                #best_high_power = high_power_indices[high_power_idx] + 1  # Convert to 1-indexed
+                                best_high_power = self.germ_powers[high_power_idx] 
+                                best_high_power_germ = germ_name
+
+                # Determine amplification status
+                is_amplified_overall = max_sensitivity >= sensitivity_threshold
+                is_amplified_at_high_powers = max_sensitivity_in_high_power_range >= sensitivity_threshold
+
+                # Check if sensitivity increases with germ power (amplification)
+                shows_amplification = False
+                overall_max_at_high_power = False
+
+                if best_germ is not None and best_high_power_germ is not None:
+                    # Get full sensitivity curve for the best germ
+                    sensitivity_matrix = sensitivity_data[best_germ][gate_name]
+                    param_sensitivities = sensitivity_matrix[param_idx, :]
+
+                    # Check if sensitivity at highest power is significantly greater than at lowest power
+                    if len(param_sensitivities) > 1:
+                        lowest_power_sensitivity = param_sensitivities[0]
+                        highest_power_sensitivity = param_sensitivities[-1]
+                        amplification_factor = highest_power_sensitivity / lowest_power_sensitivity if lowest_power_sensitivity > 0 else float('inf')
+                        shows_amplification = amplification_factor > 2.0  # Arbitrary threshold for "significant amplification"
+
+                        # Check if the overall maximum sensitivity occurs at high powers
+                        overall_max_power = np.argmax(param_sensitivities) + 1  # Convert to 1-indexed
+                        # Consider "high power" as powers in the upper half of the range
+                        high_power_threshold = len(param_sensitivities) // 2
+                        overall_max_at_high_power = overall_max_power > high_power_threshold
 
                 parameter_sensitivities[gate_name][param_name] = {
                     'max_sensitivity': max_sensitivity,
                     'best_germ': best_germ,
                     'best_power': best_power,
-                    'is_amplified': max_sensitivity >= sensitivity_threshold
+                    'max_sensitivity_in_high_power_range': max_sensitivity_in_high_power_range,
+                    'best_high_power_germ': best_high_power_germ,
+                    'best_high_power': best_high_power,
+                    'is_amplified': is_amplified_overall,
+                    'is_amplified_at_high_powers': is_amplified_at_high_powers,
+                    'shows_amplification': shows_amplification,
+                    'overall_max_at_high_power': overall_max_at_high_power,
                 }
 
-                if max_sensitivity >= sensitivity_threshold:
+                # Categorize parameters based on amplification quality
+                if is_amplified_at_high_powers and shows_amplification and overall_max_at_high_power:
+                    # Ideal case: sensitive at high powers, shows amplification, and max occurs at high powers
                     amplified_parameters[gate_name].append(param_name)
-                else:
+                elif is_amplified_at_high_powers and overall_max_at_high_power:
+                    # Sensitive at high powers and max occurs at high powers, but doesn't show strong amplification
+                    amplified_parameters[gate_name].append(param_name)
+                    warnings.append(f"Parameter '{param_name}' in gate '{gate_name}' is amplified at high powers (sensitivity: {max_sensitivity_in_high_power_range:.2e}) but shows limited amplification growth.")
+                elif is_amplified_at_high_powers and not overall_max_at_high_power:
+                    # CRITICAL: Sensitive at high powers but maximum occurs at LOW powers
                     unamplified_parameters[gate_name].append(param_name)
-                    warnings.append(f"Parameter '{param_name}' in gate '{gate_name}' has low sensitivity (max: {max_sensitivity:.2e}) - may not be well amplified by any germ")
+                    warnings.append(f"Parameter '{param_name}' in gate '{gate_name}' has sensitivity at high powers ({max_sensitivity_in_high_power_range:.2e}) but MAXIMUM sensitivity occurs at LOW power ({best_power}) with value {max_sensitivity:.2e} - NOT properly amplified for long-sequence GST!")
+                elif is_amplified_overall:
+                    # Amplified overall but not at high powers - problematic for long-sequence GST
+                    unamplified_parameters[gate_name].append(param_name)
+                    warnings.append(f"Parameter '{param_name}' in gate '{gate_name}' has sensitivity at low powers but NOT at high powers (overall max: {max_sensitivity:.2e} at power {best_power}, high-power max: {max_sensitivity_in_high_power_range:.2e}) - NOT amplificationally complete!")
+                else:
+                    # Not amplified at all
+                    unamplified_parameters[gate_name].append(param_name)
+                    warnings.append(f"Parameter '{param_name}' in gate '{gate_name}' has low sensitivity overall (max: {max_sensitivity:.2e}) - may not be well amplified by any germ")
 
         # Determine overall amplification status
         total_unamplified = sum(len(params) for params in unamplified_parameters.values())
+
+        # Check if all parameters are amplified at high powers
+        total_params = sum(len(params) for params in all_parameters.values())
+        amplified_at_high_powers_count = 0
+
+        for gate_name, param_names in all_parameters.items():
+            for param_name in param_names:
+                sensitivity_info = parameter_sensitivities[gate_name][param_name]
+                if sensitivity_info['is_amplified_at_high_powers']:
+                    amplified_at_high_powers_count += 1
+
         if total_unamplified == 0:
-            amplification_status = 'complete'
+            if amplified_at_high_powers_count == total_params:
+                amplification_status = 'complete'
+            else:
+                amplification_status = 'partial'  # All parameters have some sensitivity, but not all amplify well
         else:
             amplification_status = 'incomplete'
 
@@ -571,16 +668,17 @@ class GSTCircuitPlanner:
             'warnings': warnings
         }
 
-    def print_amplification_diagnostics(self, germs=None, sensitivity_threshold=1e-6):
-        """Print diagnostic information about germ amplification completeness.
+    def print_amplification_diagnostics(self, germs=None, sensitivity_threshold=1e-4):
+        """ Print diagnostic information about germ amplification completeness.
 
-        This method provides a human-readable summary of which parameters are
-        well-amplified by the germ set and which are not.
+            This method provides a human-readable summary of which parameters are
+            well-amplified by the germ set and which are not.
 
-        Args:
-            germs: List of germs to analyze (if None, use current germs)
-            sensitivity_threshold: Minimum sensitivity value to consider a parameter amplified
+            Args:
+                germs: List of germs to analyze (if None, use current germs)
+                sensitivity_threshold: Minimum sensitivity value to consider a parameter amplified
         """
+        assert self.long_GST
         diagnostics = self.analyze_germ_amplification_completeness(germs, sensitivity_threshold)
 
         print("\n" + "="*80)
@@ -601,10 +699,16 @@ class GSTCircuitPlanner:
 
         if diagnostics['amplification_status'] == 'complete':
             print("\n✓ ALL PARAMETERS ARE WELL-AMPLIFIED")
-            print("The germ set provides good sensitivity to all gate model parameters.")
+            print("The germ set provides good sensitivity to all gate model parameters at high powers.")
+            print("This is ideal for long-sequence GST where error should scale as 1/L.")
+        elif diagnostics['amplification_status'] == 'partial':
+            print("\n⚠ PARTIAL AMPLIFICATION DETECTED")
+            print("All parameters have some sensitivity, but not all show strong amplification at high powers.")
+            print("Some parameters may not benefit fully from longer circuits.")
         else:
-            print("\n⚠ INCOMPLETE AMPLIFICATION DETECTED")
-            print("Some gate model parameters have low sensitivity to the germ set.")
+            print("\n❌ INCOMPLETE AMPLIFICATION DETECTED")
+            print("Some gate model parameters are NOT well-amplified by the germ set.")
+            print("Parameters without high-power sensitivity will show flat error scaling in staged MLE.")
 
         print("\n" + "-"*80)
         print("PARAMETER AMPLIFICATION SUMMARY")
@@ -617,18 +721,36 @@ class GSTCircuitPlanner:
             unamplified = diagnostics['unamplified_parameters'][gate_name]
 
             if amplified:
-                print(f"  ✓ Well-amplified parameters ({len(amplified)}):")
+                print(f"  ✓ Amplified parameters ({len(amplified)}):")
                 for param_name in amplified:
                     sensitivity_info = diagnostics['parameter_sensitivities'][gate_name][param_name]
-                    print(f"    - {param_name}: max sensitivity = {sensitivity_info['max_sensitivity']:.2e}")
-                    print(f"      (best germ: {sensitivity_info['best_germ']}, power: {sensitivity_info['best_power']})")
+                    if sensitivity_info['shows_amplification'] and sensitivity_info['overall_max_at_high_power']:
+                        amplification_status = "✓ Strong amplification (max at high power)"
+                    elif sensitivity_info['shows_amplification']:
+                        amplification_status = "⚠ Weak amplification (max not at high power)"
+                    elif sensitivity_info['overall_max_at_high_power']:
+                        amplification_status = "⚠ Limited amplification (max at high power but no growth)"
+                    else:
+                        amplification_status = "❌ Poor amplification (max at low power)"
+
+                    print(f"    - {param_name}: {amplification_status}")
+                    print(f"      Best overall: germ={sensitivity_info['best_germ']}, power={sensitivity_info['best_power']} (sensitivity={sensitivity_info['max_sensitivity']:.2e})")
 
             if unamplified:
-                print(f"  ⚠ Low-sensitivity parameters ({len(unamplified)}):")
+                print(f"  ⚠ Problematic parameters ({len(unamplified)}):")
                 for param_name in unamplified:
                     sensitivity_info = diagnostics['parameter_sensitivities'][gate_name][param_name]
-                    print(f"    - {param_name}: max sensitivity = {sensitivity_info['max_sensitivity']:.2e}")
-                    print(f"      (best germ: {sensitivity_info['best_germ']}, power: {sensitivity_info['best_power']})")
+                    print(f"    - {param_name}:")
+                    print(f"      Best overall: germ={sensitivity_info['best_germ']}, power={sensitivity_info['best_power']} (sensitivity={sensitivity_info['max_sensitivity']:.2e})")
+
+                    if sensitivity_info['is_amplified'] and not sensitivity_info['is_amplified_at_high_powers']:
+                        print(f"      ❌ CRITICAL: Sensitive at low powers but NOT at high powers!")
+                        print(f"      This parameter will NOT benefit from longer circuits.")
+                    elif sensitivity_info['is_amplified_at_high_powers'] and not sensitivity_info.get('overall_max_at_high_power', False):
+                        print(f"      ❌ CRITICAL: Maximum sensitivity at LOW power ({sensitivity_info['best_power']})!")
+                        print(f"      This parameter will NOT benefit from longer circuits.")
+                    else:
+                        print(f"      ❌ Not sensitive at any power level.")
 
         if diagnostics['warnings']:
             print("\n" + "-"*80)
@@ -640,6 +762,123 @@ class GSTCircuitPlanner:
         print("\n" + "="*80)
 
         return diagnostics
+
+    def plot_parameter_sensitivity_curves(self, germs=None, sensitivity_threshold=1e-4, filename=None, include_all_germs:bool=False):
+        """ Plot sensitivity vs. germ power for each parameter to visualize amplification.
+
+            This creates diagnostic plots showing how sensitivity changes with germ power,
+            which is essential for verifying amplification completeness.
+
+            Args:
+                germs: List of germs to analyze (if None, use current germs)
+                sensitivity_threshold: Threshold for considering a parameter amplified
+                filename: If provided, save the plot to this file
+        """
+
+        assert self.long_GST
+        if self.gate_models is None:
+            print("No gate models provided - cannot plot sensitivity curves")
+            return
+
+        # Compute sensitivity data
+        germs_to_analyze = germs if germs is not None else self.germs
+        sensitivity_data = self.compute_germ_sensitivities(germs_to_analyze)
+
+        # Collect all parameters
+        all_parameters = {}
+        for gate_name, gate_func in self.gate_models.items():
+            sig = inspect.signature(gate_func)
+            param_names = list(sig.parameters.keys())
+            all_parameters[gate_name] = param_names
+
+        # Create plots
+        n_gates = len(all_parameters)
+        fig, axes = plt.subplots(n_gates, 1, figsize=(12, 6 * n_gates))
+        if n_gates == 1:
+            axes = [axes]  # Ensure axes is iterable
+
+        # Make a subplot for each gate model 
+        for ax, (gate_name, param_names) in zip(axes, all_parameters.items()):
+            ax.set_title(f"Gate: {gate_name}", fontsize=14, fontweight='bold')
+
+            for param_idx, param_name in enumerate(param_names):
+                # Find the best germ for this parameter
+                max_sensitivity = 0
+                best_germ_name = None
+
+                # Build sensitivity matrix for each germ 
+                for germ_name, gate_sensitivities in sensitivity_data.items():
+                    if gate_name in gate_sensitivities:
+                        sensitivity_matrix = gate_sensitivities[gate_name]
+                        param_sensitivities = sensitivity_matrix[param_idx, :]
+                        germ_max = np.max(param_sensitivities)
+
+                        if germ_max > max_sensitivity:
+                            max_sensitivity = germ_max
+                            best_germ_name = germ_name
+
+                if best_germ_name is not None and not include_all_germs:
+                    sensitivity_matrix = sensitivity_data[best_germ_name][gate_name]
+                    # sensitivities for a germ has shape (n_params, powers) 
+                    sensitivities_at_powers = []
+                    for i, power in enumerate(self.germ_powers):
+                        sensitivities_at_powers.append(sensitivity_matrix[param_idx, i])
+
+                    sensitivities_at_powers = np.array(sensitivities_at_powers)
+
+                    # Plot the sensitivity curve
+                    ax.semilogy(self.germ_powers, sensitivities_at_powers, 'o-', label=f"{param_name} (best germ: {best_germ_name})")
+
+                    # Add threshold line
+                   # ax.axhline(sensitivity_threshold, color='red', linestyle='--', alpha=0.5, label='Threshold' if param_idx == 0 else "")
+
+                    # Annotate max sensitivity
+                    max_idx = np.argmax(sensitivities_at_powers)
+                    ax.annotate(f"{sensitivities_at_powers[max_idx]:.1e}",
+                               (self.germ_powers[max_idx], sensitivities_at_powers[max_idx]),
+                               textcoords="offset points", xytext=(10,10), ha='center')
+                elif include_all_germs:
+                    for germ_name, gate_sensitivities in sensitivity_data.items():
+                        if gate_name in gate_sensitivities:
+                            sensitivity_matrix = gate_sensitivities[gate_name] # matrix of parameters x powers 
+
+                            # sensitivities for a germ has shape (n_params, powers) 
+                            sensitivities_at_powers = []
+                            for i, power in enumerate(self.germ_powers):
+                                sensitivities_at_powers.append(sensitivity_matrix[param_idx, i])
+    
+                            # Plot the sensitivity curve
+                            ax.semilogy(self.germ_powers, np.array(sensitivities_at_powers), 'o-', label=f"{param_name} (germ: {germ_name})")
+    
+            # Add threshold line
+            ax.axhline(sensitivity_threshold, color='red', linestyle='--', alpha=0.5, label='Threshold' if param_idx == 0 else "")
+
+            ax.set_xlabel("Germ Power", fontsize=12)
+            ax.set_ylabel("Sensitivity (Frobenius norm)", fontsize=12)
+            ax.grid(True, which="both", ls="--")
+
+            # Only add legend if there are parameters with data
+            if param_names:
+                ax.legend(fontsize=10)
+
+            # Add amplification guidance
+            if param_names:  # If there are parameters for this gate
+                ax.text(0.02, 0.95,
+                       "✓ Good amplification: curve rises with germ power\n"
+                       "❌ No amplification: flat or falling curve",
+                       transform=ax.transAxes, verticalalignment='top',
+                       bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.3))
+
+        #plt.tight_layout()
+
+        if filename:
+            plt.savefig(filename, dpi=300)
+            #plt.savefig(filename, bbox_inches='tight', dpi=300)
+            print(f"Saved sensitivity plots to {filename}")
+        else:
+            plt.show()
+
+        return fig, axes
 
     def write_circuit_design(self, filepath):
         """ Writes a design yaml file with circuit design information """

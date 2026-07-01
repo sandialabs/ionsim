@@ -253,7 +253,7 @@ def main():
 
     print(f"\n\n")
     print(f" --- Estimating gate set error compared to ideal gate set ---")
-    gate_set_error = GST_analyzer.compute_gate_set_process_infidelity(solver_results, ideal_gate_set)
+    gate_set_error = GST_analyzer.compute_gate_set_error(solver_results, ideal_gate_set)
     print(f"\nGate set error: {gate_set_error}")
 
     estimate_uncertainties = False 
