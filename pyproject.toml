@@ -19,6 +19,7 @@ dependencies = [
     "pint",
     "sympy",
     "qutip"
+    "h5py"
 ]
 classifiers = [
     "Development Status :: 2 - Beta",
