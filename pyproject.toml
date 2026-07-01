@@ -17,7 +17,8 @@ dependencies = [
     "icecream",
     "pyyaml",
     "pint",
-    "sympy"
+    "sympy",
+    "h5py"
 ]
 classifiers = [
     "Development Status :: 2 - Beta",

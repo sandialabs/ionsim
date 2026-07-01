@@ -1,3 +1,12 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 import numpy as np
 from dataclasses import dataclass
 from scipy.sparse import csr_matrix
@@ -38,7 +47,7 @@ class CompositeOperator(ABC):
         for operator in self.operators:
             if isinstance(operator, GeneralOperator):
                 if operator.couplings:
-                    coupling_ops.append(operator.coupling_operator_contribution()) 
+                    coupling_ops.append(operator.coupling_operator_contribution) 
             elif isinstance(operator, CouplingOperator):
                 coupling_ops.append(operator)
         return coupling_ops            
@@ -50,7 +59,7 @@ class CompositeOperator(ABC):
         for operator in self.operators:
             if isinstance(operator, GeneralOperator):
                 if operator.energy_shifts:
-                    energy_shift_ops.append(operator.energy_shift_operator_contribution()) 
+                    energy_shift_ops.append(operator.energy_shift_operator_contribution) 
             elif isinstance(operator, EnergyShiftOperator):
                 energy_shift_ops.append(operator)
         return energy_shift_ops
