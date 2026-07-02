@@ -51,9 +51,10 @@ def _perpendicular_basis(n_hat: Vector, ref_axis: Vector | None=None) -> tuple[V
 class BeamProfile(ABC):
     """ Beam profile represented by a spatial envelope as well as power, peak-field relationship"""
     # TODO: Re-think / check naming conventions  
+    ## TODO: Should we make power an attribute and make those functions properties? 
 
     @abstractmethod
-    def peak_field(self, power: float) -> float:
+    def peak_electric_field_magnitude(self, power: float) -> float:
         """ Peak electirc field atmplitude E0 [V/m] given power in Watts. """ 
 
     @abstractmethod
@@ -66,7 +67,7 @@ class PlaneWave(BeamProfile):
     """ Plane wave exp(i k r) """
     intensity: float 
 
-    def peak_field(self, power: float) -> float:
+    def peak_electric_field_magnitude(self, power: float) -> float:
         return np.sqrt(2. * self.intensity / (const.c * const.epsilon_0))
 
     def relative_envelope(self, r, n_hat, k) -> complex:
@@ -83,8 +84,8 @@ class GaussianBeam(BeamProfile):
     focus: Vector = np.zeros(3) 
     wavelength: float  
 
-    def peak_field(self, power: float) -> float:
-        I0 = 2. * power / (np.pi * (self.waist ** 2))
+    def peak_electric_field_magnitude(self, power: float) -> float:
+        I0 = 2. * power / (np.pi * (self.waist ** 2)) # intensity, Watts/m^2 
         return np.sqrt(2. * I0 / (const.c * const.epsilon_0))
 
     def relative_envelope(self, r: Vector, n_hat: Vector, k: float) -> complex:
@@ -103,7 +104,6 @@ class GaussianBeam(BeamProfile):
         amp = (self.waist/wz) * np.exp(-(rho/wz)**2)
         curvature_phase = 0.5 * k * (rho**2) * inv_Rz
         return amp * np.exp(1j * (curvature_phase - gouy)) 
-
 
 
 
@@ -148,7 +148,7 @@ class Laser():
     def from_frequency(cls, frequency: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable,  
                         power: float | None=None, modulation_functions: dict | None=None): 
         """ Constructs laser class from an input frequency in rad/s """ 
-        wavelength = 2. * np.pi * const.SPEED_OF_LIGHT / frequency   # meters 
+        wavelength = 2. * np.pi * const.c / frequency   # meters 
         return cls(wavelength, propagation_vector, phase, frequency, polarization, beam_profile, power, modulation_functions)
 
 
@@ -156,7 +156,7 @@ class Laser():
     def from_wavelength(cls, wavelength: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable,  
                         power: float | None=None, modulation_functions: dict | None=None): 
         """ Constructs laser class from an input wavelength in meters """ 
-        frequency = 2 * np.pi * const.SPEED_OF_LIGHT / wavelength  # rad/s 
+        frequency = 2 * np.pi * const.c / wavelength  # rad/s 
         return cls(wavelength, propagation_vector, phase, frequency, polarization, beam_profile, power, modulation_functions)
 
 
@@ -169,9 +169,15 @@ class Laser():
 
     @property
     def peak_intensity(self) -> float:
-        """ Peak intensity I [W/m^2] """  
+        """ Peak intensity [W/m^2] """  
         E0 = self.peak_field_amplitude
+        # Impedence of free space is Z0 = 1/(epsilon0 x speed of light)
+        # TODO confirm Peak intensity is E0^2 /(2 Z0) 
         return 0.5 * const.c * const.epsilon_0 * (E0**2)
+
+    @property
+    def peak_electric_field_magnitude(self) -> float:
+        return self.beam_profile.peak_electric_field_magnitude(self.power) 
 
     @property 
     def propagation_unit_vector(self):
@@ -570,6 +576,7 @@ class Laser():
         
         self.intensity = 2*self.power_0/(_np.pi * self.waist**2) # Watts/meter^2
         self.electric_field = _np.sqrt( 2 * self.intensity * const.IMPEDENCE_OF_FREE_SPACE ) # Volts/meter
+        #self.intensity = self.electric_field**2 / (2 * const.IMPEDENCE_OF_FREE_SPACE) # Watts/meter^2
 
         # Allow for method chaining
         return self
