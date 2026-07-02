@@ -111,7 +111,6 @@ class GaussianBeam(BeamProfile):
 @dataclass(frozen=True, eq=False)
 class Laser():
     """ Laser class representing a single monochromatic laser beam  """ 
-
  #    def __init__(self, wavelength: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable, 
  #                        power: float | None=None, modulation_functions: dict | None=None): 
     wavelength: float
@@ -137,6 +136,13 @@ class Laser():
 
         if np.abs(np.dot(self.polarization,self.propagation_unit_vector)) > 1.e-6:
             raise ValueError('Laser polarization is not perpendicular to k vector')
+
+        # Check frequency - wavelength relationship 
+        # TODO: Check necessary precision for this check to be meaningful 
+        light_physics_deviation = np.abs(self.frequency - 2.*np.pi*const.c/self.wavelength)
+        if light_physics_deviation > 1E-9: 
+            raise ValueError(f"Laser frequency and wavelength must satisfy speed of light in vacuum. This is violated with a deviation: {light_physics_deviation}")
+
 
     @classmethod
     def from_frequency(cls, frequency: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable,  
@@ -679,7 +685,6 @@ class Polarization:
             epsilon vector specified with 3 componenets: eps_+1, eps_0, eps_-1, 
 
         """
-
         z = _unit_vector(quantization_axis)
         x, y = _perpendicular_basis(z)
         e_p1 = -(x + 1j*y)/np.sqrt(2.)
