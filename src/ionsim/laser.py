@@ -8,15 +8,72 @@
 #***************************************************************************************************
 
 import numpy as _np
-from scipy import integrate as _int
-from scipy import interpolate as _interp
-from numpy import linalg as lin
-from ionsim.tools import amotools as amo
-from ionsim.tools import constants as const
-import sys
+from scipy import constants
+#from scipy import integrate as _int
+#from scipy import interpolate as _interp
+#from numpy import linalg as lin
+#from ionsim.tools import amotools as amo
+#from ionsim.tools import constants as const
+#from scipy.special import comb 
+from numpy.typing import NDArray
+
+from ionsim.custom_types import Matrix, Vector
+
+
+def _unit_vector(vec: Vector) -> Vector:
+    """ Returns a real unit vector of an input vector """ 
+    v = np.asarray(vec)
+
+    norm = np.linalg.norm(v)
+    if norm < 1E-9:
+        raise ValueError("Cannot normalize a vector with norm near zero. Computed norm {norm}")
+
+    return v/norm
+
+
 
 class Laser():
     """Laser type to store the data associated with a particular laser"""
+
+    # TODO: Add time-dependence -- phase modulation. 
+
+
+    def __init__(self, wavelength: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Vector, beam_profile: Callable, 
+                        power: float | None=None): 
+        """ Laser class constructor representing a single monochromatic laser beam  """ 
+
+        self.wavelength = wavelength
+        self.phase = phase
+
+        # Safety checks on propagation vector  
+        if hasattr(propagation_vector, "__len__"):
+            if len(propagation_vector) != 3: 
+                raise ValueError(f"Specify a 3-component vector for the beam pointing unit vector 'n hat'. Current input has {len(propagation_unit_vector)} components.")
+        else:
+            raise TypeError(f"Propagation vector must be a vector (numpy array), received a {type(propagation_vector)}.") 
+        assert len(propagation_vector) == 3
+        
+        self.propagation_vector = propagation_vector
+        self.propagation_unit_vector = _unit_vector(propagation_vector) 
+        #self.propagation_unit_vector = self.propagation_vector / np.linalg.norm(self.propagation_vector) 
+        if np.abs(np.linalg.norm(self.propagation_unit_vector) - 1.) > 1E-8):
+            raise IonSimError(f"Propagation unit vector is not normalized! Norm = {np.linalg.norm(self.propagation_unit_vector)}")
+
+        if np.abs(np.dot(self.polarization,self.propagation_unit_vector)) > 1.e-6:
+            raise ValueError('Laser polarization is not perpendicular to k vector')
+
+
+
+    @property
+    def wavevector(self):
+        return self.propagation_unit_vector * np.pi * 2. / self.wavelength
+        
+
+
+
+    #================================================================
+
+
     def __init__(self):
         super(Laser, self).__init__()
         self.circular_basis = {
@@ -427,3 +484,94 @@ class Laser():
             # cs = plt.contour(real(z), 20)
             # plt.colorbar()
             # plt.show()
+
+
+
+class Polarization:
+    """ Comlpex Cartesian polarization (Jones) Vector in the lab frame. This is set to be perpendicular to a reference propagation direction (e.g. of a laser) """
+
+
+    # TODO: Convert to data class? Put checks in post init?
+    # TODO: Should we use "components" or "vector" to refer to the polarization vector? 
+    def __init__(self, vector: Vector, EM_field_propagation_direction: Vector, normalize: bool=True):
+
+        self.vector = np.asarray(vector, dtype=complex) 
+        self.EM_field_propagation_direction = _unit_vector(EM_field_propagation_direction) 
+
+        projection = np.dot(self.vector, self.EM_field_propagation-direction)
+
+        if np.abs(projection) > 1E-6: 
+            raise ValueError(f"Polarization vector is not perpendicular to the reference propagation direction. Dot product = {projection}, should be zero.")
+
+        if normalize:
+            norm = np.sqrt(np.vdot(self.vector, self.vector).real)
+            if norm < 1E-9: 
+                raise ValueError("Cannot normalize a vector with norm near zero. Computed norm {norm}")
+            self.vector /= norm
+
+
+    
+    @classmethod
+    def linear(cls, propagation_direction: Vector, angle: float = 0., ref_axis = Vector | None=None):
+        """ Linear polarization at an angle (radians) from a reference direction in the perpendicular plane. """ 
+        e1, e2 = _perpendicular_basis(propagation_direction, ref_axis)
+
+        polarization_vector = np.cos(angle) * e1 + np.sin(angle) * e2
+        return cls(polarization_vector, propagation_direction)
+
+
+    @classmethod
+    def circular(cls, propagation_direction: Vector, handedness: str, ref_axis = Vector | None=None):
+        """ Circular polarization built in the (e1, e2) plane perpendicular to the propagation direction (n hat)
+
+            - handedness is specified by '+' or '-'
+            - eps_{+/-} = (e1 +/- ie2)/sqrt(2) 
+
+            NOTE: Corresponding with atomic raising/lowering angular momentum operators depends on quantization axis. 
+
+        """
+
+        e1, e2 = _perpendicular_basis(propagation_direction, ref_axis)
+
+        if handedness == '+':
+            polarization_vector = (e1 + 1j * sign * e2)/np.sqrt(2.)
+        if handedness == '-':
+            polarization_vector = (e1 - 1j * sign * e2)/np.sqrt(2.)
+        else:
+            raise IonSimError("Handedness must be specified either by a string, e.g. '+' or '-'.")
+
+        return cls(polarization_vector, propagation_direction)
+
+
+    @classmethod
+    def from_spherical(cls, epsilon_vector: Vector, propagation_direction: Vector, 
+                            quantization_axis: Vector = np.array([0., 0., 1.])):
+        """ Builds a Cartesian polarization vector from the specified spherical components (eps_+, eps_0, eps_-), which are 
+            relative to the specified quantization axis (defaulting to (0, 0, 1)). 
+
+            epsilon vector specified with 3 componenets: eps_+1, eps_0, eps_-1, 
+
+        """
+
+        z = _unit_vector(quantization_axis)
+        x, y = _perpendicular_basis(z)
+        e_p1 = -(x + 1j*y)/np.sqrt(2.)
+        e_0 = z.astype(complex) 
+        e_m1 = (x - 1j*y)/np.sqrt(2.)
+
+        polarization_vector = e_p1 * epsilon_vector[0] + e_0 * epsilon_vector[1] + e_m1 * epsilon_vector[2] 
+        return cls(polarization_vector, propagation_direction
+
+
+
+    def __repr__(self):
+        return f"Polarization(vec = {self.vec}, propagation_direction={self.propagation_direction})" 
+
+
+
+
+
+
+
+ 
+

@@ -49,3 +49,4 @@ def as_dense_vector(vector: AnyVector, warn: bool = True) -> Vector:
 
 def as_dense_matrix(matrix: AnyMatrix, warn: bool = True) -> Matrix:
     return as_dense(matrix, warn)
+

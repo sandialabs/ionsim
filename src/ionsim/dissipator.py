@@ -16,7 +16,7 @@ from functools import cached_property
 from ionsim.basis import StandardBasis
 from ionsim.degree_of_freedom import AtomicSpin 
 from ionsim.operator import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
-from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix, as_dense_matrix
+from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix
 from ionsim.custom_math import matrix_AYB_multiply_to_superoperator, solve_time_evolution_equation
 from ionsim.ionsim_error import IonSimError
 from ionsim.composite_operator import CompositeOperator
