@@ -49,37 +49,39 @@ def _perpendicular_basis(n_hat: Vector, ref_axis: Vector | None=None) -> tuple[V
 
 
 
-
+@dataclass(frozen=True, eq=False)
 class Laser():
-    """Laser type to store the data associated with a particular laser"""
+    """ Laser class representing a single monochromatic laser beam  """ 
 
-    # TODO: Add time-dependence -- phase modulation. 
+ #    def __init__(self, wavelength: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable, 
+ #                        power: float | None=None, modulation_functions: dict | None=None): 
+    wavelength: float
+    propagation_vector: Vector
+    phase: float
+    frequency: float
+    polarization: Polarization 
+    beam_profile: Callable
+    power: float
+    modulation_functions: dict | None=None ''' e.g. {'phase': Callable, 'amplitude' : Callable, 'frequency' : Callable}'''
 
-
-    def __init__(self, wavelength: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Vector, beam_profile: Callable, 
-                        power: float | None=None): 
-        """ Laser class constructor representing a single monochromatic laser beam  """ 
-
-        self.wavelength = wavelength
-        self.phase = phase
-
+    def __post_init__(self):
         # Safety checks on propagation vector  
-        if hasattr(propagation_vector, "__len__"):
-            if len(propagation_vector) != 3: 
+        if hasattr(self.propagation_vector, "__len__"):
+            if len(self.propagation_vector) != 3: 
                 raise ValueError(f"Specify a 3-component vector for the beam pointing unit vector 'n hat'. Current input has {len(propagation_unit_vector)} components.")
         else:
             raise TypeError(f"Propagation vector must be a vector (numpy array), received a {type(propagation_vector)}.") 
-        assert len(propagation_vector) == 3
+        assert len(self.propagation_vector) == 3
         
-        self.propagation_vector = propagation_vector
-        self.propagation_unit_vector = _unit_vector(propagation_vector) 
-        #self.propagation_unit_vector = self.propagation_vector / np.linalg.norm(self.propagation_vector) 
         if np.abs(np.linalg.norm(self.propagation_unit_vector) - 1.) > 1E-8):
             raise IonSimError(f"Propagation unit vector is not normalized! Norm = {np.linalg.norm(self.propagation_unit_vector)}")
 
         if np.abs(np.dot(self.polarization,self.propagation_unit_vector)) > 1.e-6:
             raise ValueError('Laser polarization is not perpendicular to k vector')
 
+    @property 
+    def propagation_unit_vector(self):
+        return _unit_vector(self.propagation_vector)
 
 
     @property
@@ -88,9 +90,25 @@ class Laser():
         
 
 
+    @classmethod
+    def from_frequency(cls, frequency: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable,  
+                        power: float | None=None, modulation_functions: dict | None=None): 
+        """ Constructs laser class from an input frequency in rad/s """ 
+        wavelength = 2. * np.pi * const.SPEED_OF_LIGHT / frequency   # meters 
+        return cls(wavelength, propagation_vector, phase, frequency, polarization, beam_profile, power, modulation_functions)
 
-    #================================================================
 
+
+    @classmethod
+    def from_wavelength(cls, wavelength: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable,  
+                        power: float | None=None, modulation_functions: dict | None=None): 
+        """ Constructs laser class from an input wavelength in meters """ 
+        frequency = 2 * np.pi * const.SPEED_OF_LIGHT / wavelength  # rad/s 
+        return cls(wavelength, propagation_vector, phase, frequency, polarization, beam_profile, power, modulation_functions)
+
+    #==============================================================================================
+    #==============================================================================================
+    #==============================================================================================
 
     def __init__(self):
         super(Laser, self).__init__()
@@ -503,6 +521,12 @@ class Laser():
             # plt.colorbar()
             # plt.show()
 
+
+
+
+    #==============================================================================================
+    #==============================================================================================
+    #==============================================================================================
 
 
 @dataclass(frozen=True, eq=False)
