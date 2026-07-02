@@ -365,3 +365,5 @@ class GeneralOperator(Operator): # is there a better name? We avoid "DenseOperat
             column = self.basis.states.index(element.column_state)
             matrices.append(csr_matrix(([element.strength], ([row], [column])), shape=(size, size)))
         return np.sum(matrices)
+
+

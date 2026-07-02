@@ -186,7 +186,7 @@ class DissipatorSpontaneousEmission(Dissipator):
                         # Create lowering operator  
                         g_level_index = DOF.energy_levels.index(g_level)
                         lowering_matrix = np.zeros((len(DOF.energy_levels), len(DOF.energy_levels)))
-                        lowering_matrix[g_level_index, e_level_index] = 1.*np.sqrt(decay_rate) 
+                        lowering_matrix[g_level_index, e_level_index] = np.sqrt(decay_rate) 
 
                         # Enlarge lowering opearator to live in entire basis 
                         if not all_spins_are_same:

@@ -9,10 +9,11 @@
 
 from ionsim.ionsim_error import IonSimError
 from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicSpin
-from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
+from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, compute_dipole_amplitude
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.custom_types import Vector, Matrix
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD
+from ionsim.laser import Laser 
 
 import numpy as np
 from numpy.linalg import multi_dot
@@ -39,6 +40,12 @@ class Basis(ABC):
     @abstractmethod
     def vectors(self):
         """Basis-state vectors."""
+
+    @property
+    def spin_DOFs(self):
+        """ Returns list of spin degrees of freedom or empty list if none. """
+        spins = [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicSpin)]
+        return spins
 
     @property
     def change_of_basis_matrix(self):
@@ -180,6 +187,43 @@ class Basis(ABC):
         standard_matrix = self.transform_matrix_to_standard_basis(matrix)
         return new_basis.transform_matrix_from_standard_basis(standard_matrix)
 
+
+#=========================================================================================================================================================
+#=========================================================================================================================================================
+    # TODO: Should this method go in a different class? 
+    def build_atom_laser_coupling_operators_for_ground_level(self, ground_level: AtomicInternalEnergyLevel, laser: Laser, multipole: str="E1", 
+                                                            all_spins_are_same: bool = True) -> list[Operator]: 
+        """ New helper method for building light-atom coupling operators from AMO physics - Atomic Structure details """ 
+
+        if multipole == 'E1':
+            q = [-1, 0, 1] 
+        elif multipole == 'E2':
+            q = [-2, -2, 0, 1, 2] 
+        else:
+            raise ValueError(f"Multipole value must be either 'E1' or 'E2', corresponding respectively to electric dipole or quadrupole transitions.")
+
+        for atom in self.spin_DOFs:        
+            # Build coupling operator for each |g>, |e> pairing   
+            atomic_levels = atom.energy_levels 
+
+            for excited_level in atomic_levels: 
+                if ground_level.name == level.name:
+                    pass
+                for _q in q: 
+                    coupling_amplitude = compute_dipole_amplitude(ground_level, excited_level, _q) 
+            
+
+
+            # Break from the loop if all the AtomicSpin DOFs are the same 
+            if all_spins_are_same:
+                break 
+
+        return operators 
+
+
+    #def build_all_atom_light_coupling_operators
+
+
 @dataclass(frozen=True, eq=False)
 class StandardBasis(Basis):
     """A basis of energy eigenstates of a non-interacting Hamiltonian."""
@@ -195,11 +239,7 @@ class StandardBasis(Basis):
         """Basis-state vectors corresponding to the energy eigenstates."""
         return list(np.eye(len(self.states)))
 
-    @property
-    def spin_DOFs(self):
-        """ Returns list of spin degrees of freedom or empty list if none. """
-        spins = [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicSpin)]
-        return spins
+    # TODO: Check that moving the spin_DOFs property from here to Basis isn't a problem 
 
 
 @dataclass(frozen=True, eq=False)
