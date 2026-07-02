@@ -9,6 +9,7 @@
 
 import numpy as _np
 from scipy import constants
+from dataclasses import dataclass
 #from scipy import integrate as _int
 #from scipy import interpolate as _interp
 #from numpy import linalg as lin
@@ -504,30 +505,34 @@ class Laser():
 
 
 
+@dataclass(frozen=True, eq=False)
 class Polarization:
-    """ Comlpex Cartesian polarization (Jones) Vector in the lab frame. This is set to be perpendicular to a reference propagation direction (e.g. of a laser) """
+    """ Complex Cartesian polarization (Jones) Vector in the lab frame. This is set to be perpendicular to a reference propagation direction (e.g. of a laser) """
+    # TODO: For naming, Should we use "components" or "vector" to refer to the polarization vector? 
+    vector: Vector
+    EM_field_propagation_direction: Vector
+    normalized: bool=True
 
-
-    # TODO: Convert to data class? Put checks in post init?
-    # TODO: Should we use "components" or "vector" to refer to the polarization vector? 
-    def __init__(self, vector: Vector, EM_field_propagation_direction: Vector, normalize: bool=True):
-
-        self.vector = np.asarray(vector, dtype=complex) 
+    def __post_init__(self):
+        # Convert EM field to a unit vector and normalize the polarization vector if desired 
         self.EM_field_propagation_direction = _unit_vector(EM_field_propagation_direction) 
 
+        # Safety check: 
         projection = np.dot(self.vector, self.EM_field_propagation-direction)
-
         if np.abs(projection) > 1E-6: 
             raise ValueError(f"Polarization vector is not perpendicular to the reference propagation direction. Dot product = {projection}, should be zero.")
 
-        if normalize:
+        # Normalize if necessary 
+        if self.normalized:
             norm = np.sqrt(np.vdot(self.vector, self.vector).real)
             if norm < 1E-9: 
                 raise ValueError("Cannot normalize a vector with norm near zero. Computed norm {norm}")
             self.vector /= norm
 
+    def __repr__(self):
+        return f"Polarization(vec = {self.vec}, propagation_direction={self.propagation_direction})" 
 
-    
+
     @classmethod
     def linear(cls, propagation_direction: Vector, angle: float = 0., ref_axis = Vector | None=None):
         """ Linear polarization at an angle (radians) from a reference direction in the perpendicular plane. """ 
@@ -593,17 +598,4 @@ class Polarization:
         eps_0 = np.vdot(e_0, self.vector)
         eps_m1 = np.vdot(e_m1, self.vector)
         return np.array([eps_p1, eps_0, eps_m1])
-
-
-
-    def __repr__(self):
-        return f"Polarization(vec = {self.vec}, propagation_direction={self.propagation_direction})" 
-
-
-
-
-
-
-
- 
 
