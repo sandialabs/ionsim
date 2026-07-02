@@ -20,6 +20,7 @@ from numpy.typing import NDArray
 from ionsim.custom_types import Matrix, Vector
 
 
+## Vector helper operations
 def _unit_vector(vec: Vector) -> Vector:
     """ Returns a real unit vector of an input vector """ 
     v = np.asarray(vec)
@@ -29,6 +30,22 @@ def _unit_vector(vec: Vector) -> Vector:
         raise ValueError("Cannot normalize a vector with norm near zero. Computed norm {norm}")
 
     return v/norm
+
+
+def _perpendicular_basis(n_hat: Vector, ref_axis: Vector | None=None) -> tuple[Vector, Vector]:
+    """ Finds orthonormal vectors to a vector "n hat". Option to include a reference axis """ 
+
+    n_hat = _unit_vector(n_hat)
+    if ref_axis is None:
+        # TODO: Decide whether this convention is best.
+        ref_axis = np.array([0., 0., 1.]) if np.abs(n_hat[2]) < (1. - 1E-5)  else np.array([1., 0., 0.]) 
+
+    e1 = np.cross(ref_axis, n_hat)
+    e1 = e1 / np.linalg.norm(e1)
+    e2 = np.cross(n_hat, e1) # by definition, n x e1 gives you e2. 
+    return e1, e2
+
+
 
 
 
@@ -561,6 +578,21 @@ class Polarization:
 
         polarization_vector = e_p1 * epsilon_vector[0] + e_0 * epsilon_vector[1] + e_m1 * epsilon_vector[2] 
         return cls(polarization_vector, propagation_direction
+
+    
+    def spherical_components(self, quantization_axis: Vector = np.array([0., 0., 1.])) -> Vector: 
+        """ Projects the polarization vector's components along a specified quantization axis. """ 
+        # TODO Decide - return as a tuple or a Vector? 
+        z = _unit_vector(quantization_axis)
+        x, y = _perpendicular_basis(z)
+        e_p1 = -(x + 1j*y)/np.sqrt(2.)
+        e_0 = z.astype(complex) 
+        e_m1 = (x - 1j*y)/np.sqrt(2.)
+        
+        eps_p1 = np.vdot(e_p1, self.vector)
+        eps_0 = np.vdot(e_0, self.vector)
+        eps_m1 = np.vdot(e_m1, self.vector)
+        return np.array([eps_p1, eps_0, eps_m1])
 
 
 
