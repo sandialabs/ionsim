@@ -8,7 +8,8 @@
 #***************************************************************************************************
 
 import numpy as _np
-from scipy import constants
+from scipy import constants as const
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 #from scipy import integrate as _int
 #from scipy import interpolate as _interp
@@ -47,6 +48,64 @@ def _perpendicular_basis(n_hat: Vector, ref_axis: Vector | None=None) -> tuple[V
     return e1, e2
 
 
+class BeamProfile(ABC):
+    """ Beam profile represented by a spatial envelope as well as power, peak-field relationship"""
+    # TODO: Re-think / check naming conventions  
+
+    @abstractmethod
+    def peak_field(self, power: float) -> float:
+        """ Peak electirc field atmplitude E0 [V/m] given power in Watts. """ 
+
+    @abstractmethod
+    def relative_envelope(self, r: Vector, n_hat: Vector, k: float) -> complex:
+        """ Complex relative spatial envelope at position vector r. The exp(i k r) is handled explicitly in the laser class so should not be handled here. """ 
+
+
+@dataclass(frozen=True, eq=False)
+class PlaneWave(BeamProfile):
+    """ Plane wave exp(i k r) """
+    intensity: float 
+
+    def peak_field(self, power: float) -> float:
+        return np.sqrt(2. * self.intensity / (const.c * const.epsilon_0))
+
+    def relative_envelope(self, r, n_hat, k) -> complex:
+        return 1. + 0j
+
+
+
+# TODO: add a beam profile constructor by name, e.g. 'gaussian' 
+# Change name to just "Gaussian" (rm "beam")
+@dataclass(frozen=True, eq=False)
+class GaussianBeam(BeamProfile):
+    """ Gaussian beam """  
+    waist: float 
+    focus: Vector = np.zeros(3) 
+    wavelength: float  
+
+    def peak_field(self, power: float) -> float:
+        I0 = 2. * power / (np.pi * (self.waist ** 2))
+        return np.sqrt(2. * I0 / (const.c * const.epsilon_0))
+
+    def relative_envelope(self, r: Vector, n_hat: Vector, k: float) -> complex:
+        dr = r - self.focus
+        z = np.dot(dr, n_hat)
+
+        # What is rho? 
+        rho_vector = dr - z*n_hat
+        rho = np.linalg.norm(rho_vector)
+
+        zR = np.pi * (self.waist**2) / self.wavelength
+        wz = self.waist * np.sqrt(1. + (z / zR)**2) 
+        gouy = np.arctan2(z, zR)
+        inv_Rz = z/(z**2 + zR**2)
+
+        amp = (self.waist/wz) * np.exp(-(rho/wz)**2)
+        curvature_phase = 0.5 * k * (rho**2) * inv_Rz
+        return amp * np.exp(1j * (curvature_phase - gouy)) 
+
+
+
 
 
 @dataclass(frozen=True, eq=False)
@@ -60,7 +119,7 @@ class Laser():
     phase: float
     frequency: float
     polarization: Polarization 
-    beam_profile: Callable
+    beam_profile: BeamProfile 
     power: float
     modulation_functions: dict | None=None ''' e.g. {'phase': Callable, 'amplitude' : Callable, 'frequency' : Callable}'''
 
@@ -79,6 +138,35 @@ class Laser():
         if np.abs(np.dot(self.polarization,self.propagation_unit_vector)) > 1.e-6:
             raise ValueError('Laser polarization is not perpendicular to k vector')
 
+    @classmethod
+    def from_frequency(cls, frequency: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable,  
+                        power: float | None=None, modulation_functions: dict | None=None): 
+        """ Constructs laser class from an input frequency in rad/s """ 
+        wavelength = 2. * np.pi * const.SPEED_OF_LIGHT / frequency   # meters 
+        return cls(wavelength, propagation_vector, phase, frequency, polarization, beam_profile, power, modulation_functions)
+
+
+    @classmethod
+    def from_wavelength(cls, wavelength: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable,  
+                        power: float | None=None, modulation_functions: dict | None=None): 
+        """ Constructs laser class from an input wavelength in meters """ 
+        frequency = 2 * np.pi * const.SPEED_OF_LIGHT / wavelength  # rad/s 
+        return cls(wavelength, propagation_vector, phase, frequency, polarization, beam_profile, power, modulation_functions)
+
+
+    @property
+    def peak_field_amplitude(self) -> float:
+        """ Peak E0 [V/m], e.g. at beam focus for a Gaussian beam """ 
+        if isinstance(self.profile, PlaneWave):
+            return self.profile.peak_field(self.power) 
+        return self.profile.peak_field(self.power)
+
+    @property
+    def peak_intensity(self) -> float:
+        """ Peak intensity I [W/m^2] """  
+        E0 = self.peak_field_amplitude
+        return 0.5 * const.c * const.epsilon_0 * (E0**2)
+
     @property 
     def propagation_unit_vector(self):
         return _unit_vector(self.propagation_vector)
@@ -89,22 +177,15 @@ class Laser():
         return self.propagation_unit_vector * np.pi * 2. / self.wavelength
         
 
+    ## Helper methods for calculations / AMO simulations  
+    def detuning_from(self, transition_frequency: float) -> float:
+        """ Computes detuning defined as laser_frequency - transition_frequency in rad/s of the laser from a transition frequency in rad/s """ 
+        return self.frequency - transition_frequency
+    
 
-    @classmethod
-    def from_frequency(cls, frequency: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable,  
-                        power: float | None=None, modulation_functions: dict | None=None): 
-        """ Constructs laser class from an input frequency in rad/s """ 
-        wavelength = 2. * np.pi * const.SPEED_OF_LIGHT / frequency   # meters 
-        return cls(wavelength, propagation_vector, phase, frequency, polarization, beam_profile, power, modulation_functions)
+    
 
 
-
-    @classmethod
-    def from_wavelength(cls, wavelength: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable,  
-                        power: float | None=None, modulation_functions: dict | None=None): 
-        """ Constructs laser class from an input wavelength in meters """ 
-        frequency = 2 * np.pi * const.SPEED_OF_LIGHT / wavelength  # rad/s 
-        return cls(wavelength, propagation_vector, phase, frequency, polarization, beam_profile, power, modulation_functions)
 
     #==============================================================================================
     #==============================================================================================
