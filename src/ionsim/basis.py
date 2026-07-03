@@ -21,6 +21,7 @@ from typing import Callable
 from functools import wraps # do I need this?
 from scipy.sparse import csr_matrix
 from scipy.sparse import kron as skron
+from scipy import constants as const
 
 from abc import ABC, abstractmethod
 from typing import Sequence
@@ -195,9 +196,10 @@ class Basis(ABC):
                                                             all_spins_are_same: bool = True) -> list[Operator]: 
         """ New helper method for building light-atom coupling operators from AMO physics - Atomic Structure details """ 
 
-        if multipole == 'E1':
+        if multipole == 'E1' or multipole == 'dipole':
             q = [-1, 0, 1] 
         elif multipole == 'E2':
+            raise ValueError(f"Only E1 (dipole) transitions are implemented.")
             q = [-2, -2, 0, 1, 2] 
         else:
             raise ValueError(f"Multipole value must be either 'E1' or 'E2', corresponding respectively to electric dipole or quadrupole transitions.")
@@ -209,8 +211,13 @@ class Basis(ABC):
             for excited_level in atomic_levels: 
                 if ground_level.name == level.name:
                     pass
+                coupling_amplitudes = {}
                 for _q in q: 
-                    coupling_amplitude = compute_dipole_amplitude(ground_level, excited_level, _q) 
+                    coupling_amplitudes{_q} = compute_dipole_amplitude(ground_level, excited_level, _q) 
+
+                # Compute dot product with laser field polarization vector 
+                laser.polarization.spherical_components 
+                
             
 
 
@@ -219,6 +226,71 @@ class Basis(ABC):
                 break 
 
         return operators 
+
+
+    def build_atom_laser_coupling_operator(self, atom: AtomicSpin, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, laser: Laser, multipole: str = "E1"): 
+        """ Builds a light-atom coupling operator between two atomic levels in the full basis """  
+        # Need to build the operator with access to the full basis 
+        if multipole == 'E1' or multipole == 'dipole':
+            q = [-1, 0, 1] 
+        elif multipole == 'E2':
+            raise ValueError(f"Only E1 (dipole) transitions are implemented.")
+            q = [-2, -2, 0, 1, 2] 
+        else:
+            raise ValueError(f"Multipole value must be either 'E1' or 'E2', corresponding respectively to electric dipole or quadrupole transitions.")
+
+        atomic_levels = atom.energy_levels 
+        if (not ground_level in atomic_levels) or (not excited_level in atomic_levels):
+            raise ValueError("Specified ground and excited levels must be in the atom's atomic structure.")
+
+        coupling_amplitudes = {}
+        for _q in q: 
+            coupling_amplitudes{_q} = compute_dipole_amplitude(ground_level, excited_level, _q) 
+
+        # Compute dot product with laser field polarization vector 
+        # TODO: should we use vdot? 
+        polarization = laser.polarization.spherical_components
+        rabi_frequency = 2. * laser.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) / const.hbar 
+
+        coupling_operator = np.zeros((2,2)) 
+        ground_index = atomic_levels.index(ground_level) 
+        excited_index = atomic_levels.index(excited_level) 
+        # Convention: We build a raising operator only; the Hamiltonian class will supply the h.c. lowering operator 
+        coupling_operator[excited_index, ground_index] = 0.5 * rabi_frequency * np.exp(1j*laser.phase) 
+
+        # Retrieve modulation function from laser class 
+        if laser.mod_functions is not None and None not in laser.mod_functions.values():
+            # Unpack modulation functions and check which exist 
+            amplitude_mod = laser.modulation_function['amplitude']
+            phase_mod = laser.modulation_function['phase']
+            frequency_mod = laser.modulation_function['phase']
+            # There are several combinations of None/not None to handle: 
+            if phase_mod is None and frequency_mod is None and amplitude_mod is not None:
+                def mod_function(t: float):
+                    return lambda t: amplitude_mod(t) 
+            elif phase_mod is None and amplitude_mod is None and frequency_mod is not None:
+                def mod_function(t: float):
+                    return lambda t: np.exp(1j * frequency_mod(t) * t) 
+
+            elif phase_mod is None and amplitude_mod is None and frequency_mod is not None:
+                def mod_function(t: float):
+                    return lambda t: np.exp(1j * frequency_mod(t) * t) 
+
+
+
+                mod_function = laser.modulation_function['amplitude']
+
+
+
+        return CouplingOperator.from_matrix(basis, coupling_operator, )
+
+        #for amplitude in coupling_amplitudes.values():
+            #if amplitude != 0.:
+                
+                 
+
+        
+
 
 
     #def build_all_atom_light_coupling_operators

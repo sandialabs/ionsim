@@ -68,6 +68,7 @@ class PlaneWave(BeamProfile):
     intensity: float 
 
     def peak_electric_field_magnitude(self, power: float) -> float:
+    """ Peak electric field magnitude |E0| """ 
         return np.sqrt(2. * self.intensity / (const.c * const.epsilon_0))
 
     def relative_envelope(self, r, n_hat, k) -> complex:
@@ -85,6 +86,7 @@ class GaussianBeam(BeamProfile):
     wavelength: float  
 
     def peak_electric_field_magnitude(self, power: float) -> float:
+        """ Peak electric field magnitude |E0| in free space """ 
         I0 = 2. * power / (np.pi * (self.waist ** 2)) # intensity, Watts/m^2 
         return np.sqrt(2. * I0 / (const.c * const.epsilon_0))
 
@@ -96,7 +98,9 @@ class GaussianBeam(BeamProfile):
         rho_vector = dr - z*n_hat
         rho = np.linalg.norm(rho_vector)
 
-        zR = np.pi * (self.waist**2) / self.wavelength
+        n = 1. # refractive index of free space  
+        zR = np.pi * (self.waist**2) * n / self.wavelength # Rayleigh range  
+        # Beam width w(z) evaluated at beam position z: 
         wz = self.waist * np.sqrt(1. + (z / zR)**2) 
         gouy = np.arctan2(z, zR)
         inv_Rz = z/(z**2 + zR**2)
@@ -106,13 +110,9 @@ class GaussianBeam(BeamProfile):
         return amp * np.exp(1j * (curvature_phase - gouy)) 
 
 
-
-
 @dataclass(frozen=True, eq=False)
 class Laser():
     """ Laser class representing a single monochromatic laser beam  """ 
- #    def __init__(self, wavelength: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable, 
- #                        power: float | None=None, modulation_functions: dict | None=None): 
     wavelength: float
     propagation_vector: Vector
     phase: float
@@ -170,9 +170,8 @@ class Laser():
     @property
     def peak_intensity(self) -> float:
         """ Peak intensity [W/m^2] """  
-        E0 = self.peak_field_amplitude
         # Impedence of free space is Z0 = 1/(epsilon0 x speed of light)
-        # TODO confirm Peak intensity is E0^2 /(2 Z0) 
+        E0 = self.peak_field_amplitude
         return 0.5 * const.c * const.epsilon_0 * (E0**2)
 
     @property
@@ -195,7 +194,38 @@ class Laser():
         return self.frequency - transition_frequency
     
 
-    
+    @property
+    def modulation_function(self, t: float):
+        """ Modulation function g(t) of the laser profile """ 
+        if self.mod_functions is None 
+            return None
+
+        if all(func is None for func in self.mod_functions.values()):
+            return None 
+
+        # Safety checks 
+        allowed_keys = ['amplitude', 'phase', 'frequency']
+        if self.mod_functions.keys() != allowed_keys:
+            raise ValueError("Modulation functions should be specified as callables for the allowed keys: {allowed_keys}. Received keys {self.mod_functions.keys()} instead.")
+
+        # Unpack modulation functions and check which exist 
+        amplitude_mod = self.modulation_function['amplitude']
+        phase_mod = self.modulation_function['phase']
+        frequency_mod = self.modulation_function['phase']
+        # Handle all combinations of the modulation functions and combine usage  
+        # There are several combinations of None/not None to handle: 
+        if phase_mod is None and frequency_mod is None and amplitude_mod is not None:
+            def mod_function(t: float):
+                return lambda t: amplitude_mod(t) 
+        elif phase_mod is None and amplitude_mod is None and frequency_mod is not None:
+            def mod_function(t: float):
+                return lambda t: np.exp(1j * frequency_mod(t) * t) 
+
+        elif phase_mod is None and amplitude_mod is None and frequency_mod is not None:
+            def mod_function(t: float):
+                return lambda t: np.exp(1j * frequency_mod(t) * t) 
+
+
 
 
 
@@ -385,7 +415,7 @@ class Laser():
             # self.quadrupole_polarizations = {q:abs(_np.dot(self.polarization, _np.dot(amo.circular_tensor[q], self.nhat))) for q in [2,1,0,-1,-2]}
             self.quadrupole_polarizations = {q:_np.dot(self.polarization, _np.dot(amo.circular_tensor[q], self.nhat)) for q in [2,1,0,-1,-2]}
             
-        self.wavelength = const.SPEED_OF_LIGHT / self.frequency_0 # meters
+        self.wavelength = const.c/ self.frequency_0 # meters
         self.wavenumber = 2*_np.pi/self.wavelength # inverse meters
 
         # Computing electric field
@@ -627,6 +657,7 @@ class Laser():
 class Polarization:
     """ Complex Cartesian polarization (Jones) Vector in the lab frame. This is set to be perpendicular to a reference propagation direction (e.g. of a laser) """
     # TODO: For naming, Should we use "components" or "vector" to refer to the polarization vector? 
+    # TODO: make quantization axis an attribute; make resulting basis vectors a property? 
     vector: Vector
     EM_field_propagation_direction: Vector
     normalized: bool=True
@@ -694,6 +725,7 @@ class Polarization:
         """
         z = _unit_vector(quantization_axis)
         x, y = _perpendicular_basis(z)
+        # See eq. 7.188 from "Quantum and Atom Optics by Daniel Steck"  
         e_p1 = -(x + 1j*y)/np.sqrt(2.)
         e_0 = z.astype(complex) 
         e_m1 = (x - 1j*y)/np.sqrt(2.)
