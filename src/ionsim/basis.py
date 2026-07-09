@@ -198,8 +198,7 @@ class StandardBasis(Basis):
     @property
     def atomic_structure_DOFs(self):
         """ Returns list of atomic structure degrees of freedom or empty list if none. """
-        atoms = [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicStructure)]
-        return atoms  
+        return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicStructure)]
 
 
 @dataclass(frozen=True, eq=False)
