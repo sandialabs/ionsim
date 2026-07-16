@@ -73,6 +73,13 @@ class EnergyShift(OperatorElement):
         if self.row_state.name != self.column_state.name: # or check equality between state objects? not currently allowed 
           raise IonSimError('Energy Shift must use same row and column state to represent a diagonal element.')
 
+        # TODO: Brandon - do you think energy shift (diagonal) hamiltonian elements should be real valued? 
+        if isinstance(self.strength, complex):
+            if self.strength.imag > SMALLEST_ENERGY_SCALE: 
+                raise IonSimError("Invalid energy shift matrix element. Element must be real valued. Energy strength = {self.strength}")
+            else:
+                object.__setattr__(self, 'strength', self.strength.real)
+
 
 # ---- Classes for operators ----  
 @dataclass(frozen=True, eq=False)
