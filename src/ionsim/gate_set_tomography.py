@@ -971,69 +971,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # return final result, having used all circuits:
         return solver_result, solver_results
 
-   
- #    def circuit_depth_scaling_analysis(self):
- #        # TODO: Decide whether to keep this; we will likely delete  
- #        organize_circuits_by_germ_power = False  
- #        if organize_circuits_by_germ_power: 
- #            circuit_groups = self._group_circuits_by_germ_power()
- #        else:
- #            circuit_groups = self._group_circuits_by_base_depth()
- #            #circuit_groups = self._group_circuits_by_depth()
- #
- #        sorted_depths = sorted(circuit_groups.keys()) # keys are circuit depths 
- #        if self.verbose: 
- #            if organize_circuits_by_germ_power: 
- #                print(f"--- Circuit bins by germ powers (p): {sorted_depths} ") 
- #                for p in sorted_depths:
- #                    print(f"    p={p}: {len(circuit_groups[p])} circuits ")
- #            else:
- #                print(f"--- Circuit bins by circuit depth (L): {sorted_depths} ") 
- #                for L in sorted_depths:
- #                    print(f"    L={L}: {len(circuit_groups[L])} circuits ")
- #
- #
- #        # First step runs linear GST to generate a good initial guess in the right gauge
- #        theta_linear_gst = self.solve_for_gate_parameters(None, 'linear') 
- #
- #        results_by_stage = {}
- #        #num_stages = len(sorted_depths)
- #        for L, circuits in circuit_groups.items():
- #            # Store a copy of the circuits so we can re-use internal functions that use parsed_circuits attribute  
- #            original_circuits = self.parsed_circuits
- #            if L == sorted_depths[0]: 
- #                self.parsed_circuits = circuits 
- #            else:
- #                self.parsed_circuits = circuits + circuit_groups[1] # base circuits + current circuits  
- #
- # #            if stage < (num_stages - 1):
- # #                objective_function = self.chi_squared 
- # #            else:
- #            objective_function = lambda params: -1. * self.log_likelihood(params) 
- #
- #            theta_init = theta_linear_gst
- #            #else:
- #            #    theta_init = self.gst_parameters.copy()
- #
- #            #objective_function = lambda params: -1. * self.log_likelihood(params)
- #
- #            # TODO: Standardize solve result objects between GST solver methods 
- #            #solver_result = opt.minimize(fun = lambda params: objective_function(params), x0 = np.ones(self.num_gst_parameters)*1E-2, method=method, bounds = bounds)
- #            method = 'L-BFGS-B'
- #            bounds = None 
- #            solver_result = opt.minimize(fun = lambda params: objective_function(params),  x0 = theta_init, method=method, bounds = bounds)
- #            self.solver_result = solver_result
- #            self.gst_parameters = solver_result.x
- #
- #            # Record solver parameter estimation results at each circuit depth group  
- #            results_by_stage[L] = solver_result.x 
- #
- #            # restore circuit information
- #            self.parsed_circuits = original_circuits
- #
- #        return results_by_stage 
- #
-    
+
     ### Functions for gate set error metrics ### 
     def compute_gate_set_error_by_element(self, gst_parameters: Vector, ideal_gate_set: dict, error_metric:str='frobenius norm') -> dict:
         """ Computes an error for each element of the gate set by comparison to the ideal gate set elements. 
