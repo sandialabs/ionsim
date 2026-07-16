@@ -691,7 +691,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         """ Function to estimate gate set parameters using linear matrix inversion """
         # Method follows approach from Neilsen et al. "Gate Set Tomography", Quantum 2021. 
         # 1. Build the Gram matrix: <<F_i|F_j>>
-        print(f"\n --- Running linear GST ---")
+        if self.verbose:
+            print(f"\n --- Running linear GST ---")
         gram_matrix = self._build_probability_matrix(target_gate = None)
 
         gram_matrix_det = np.linalg.det(gram_matrix)
