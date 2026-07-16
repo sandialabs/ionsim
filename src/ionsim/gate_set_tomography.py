@@ -616,8 +616,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for label, effect in M_effects.items():
             print(f"\nMeasurement effect {label} vectors: {effect}")
 
-    def solve_for_gate_parameters(self, parameters_guess: Vector | None, solver: str = 'MLE'):
+    def solve_for_gate_parameters(self, parameters_guess: Vector | dict | None, solver: str = 'MLE'):
         """ Function to solve for the parametrization values of a particular gate. 
+
+            - Parameters guess can be a list/vector of parameter values, or a dict: {gate name : {parameter name : initial value, ...}}
 
             - Default behavior is a maximum likelihood approach that finds parameters 
                 that maximize the likelihood of the gate given the data, i.e. solving: 
@@ -627,7 +629,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - Returns either a dictionary of parameters (name, value) or a 1D array of values.
 
         """
-        # Specify initial guess. 
+        # Specify initial guess and handle different input formats 
         if parameters_guess is None:
             # If no initial guess is specified, we use linear GST to generate a good guess for the gate set parameters  
             self.solver_result = self.run_linear_gst(self.ideal_gate_set, self.target_rho)
@@ -635,7 +637,17 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             theta_0 = self.gst_parameters 
             self.solver_result = None
         else:
-            theta_0 = parameters_guess
+            if isinstance(parameters_guess, dict):
+                for gate_name in parameters_guess.keys():  
+                    index_of_gate_in_GS = list(self.gate_models.keys()).index(gate_name)
+                    for parameter, initial_value in parameters_guess[gate_name].items():
+                        param_indx = self.get_parameter_index_by_name_in_gate(gate_name, parameter)
+                        self.gst_parameters[param_indx] = initial_value 
+                theta_0 = self.gst_parameters
+            elif isinstance(parameters_guess, Vector):
+                theta_0 = parameters_guess
+            else:
+                raise ValueError(f"Parameter vector initial guess should be a list/array/Vector or nested dictionary. Received: {type(parameters_guess)}")
 
         if self.verbose: 
             print(f"\n -- Solver for gate parameters in GST using {solver} --- ")
