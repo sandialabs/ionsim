@@ -91,6 +91,17 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if parameter_bounds is not None:
             self.parameter_bounds = parameter_bounds 
 
+        # Parse user input from dictionary format to a list of tuples 
+        if self.parameter_bounds is not None:
+            parameter_bounds = [(None, None) for i in range(len(self.gst_parameters))]
+            # Unpack parameter bounding information
+            for gate_name in self.parameter_bounds.keys():  
+                index_of_gate_in_GS = list(self.gate_models.keys()).index(gate_name)
+                for parameter, bounds in self.parameter_bounds[gate_name].items():
+                    param_indx = self.get_parameter_index_by_name_in_gate(gate_name, parameter)
+                    parameter_bounds[param_indx] = self.parameter_bounds[gate_name][parameter]
+            self.parameter_bounds = parameter_bounds 
+
         # Set up cached parameters and process matrices 
         self.cached_theta = None 
         self.process_matrix_cache = None 
@@ -403,7 +414,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return self.process_matrix_cache 
 
 
-
     def log_likelihood(self, theta: Vector | None=None, theta_function=None) -> float:
         """ Computes total log-likelihood of the parameters given the data.
 
@@ -557,7 +567,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         parameter_names = list(gate_model_sig.parameters.keys())  
         indx_in_gate_model = parameter_names.index(parameter_name)
         slice_from_global_parameters_list = self.gst_parameter_indices[gate_name]
-        return slice_from_global_parameters_list.start + indx
+        return slice_from_global_parameters_list.start + indx_in_gate_model
         
     def get_parameter_value_by_name(self, gate_name: str, parameter_name: str) -> float:
         """ Return the parameter value for a requested parameter in a gate model"""
@@ -630,21 +640,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             print(f"\n -- Solver for gate parameters in GST using {solver} --- ")
             print(f"Initial parameters: {theta_0}")
 
-        parameter_bounds = None
-        if self.parameter_bounds is not None:
-            parameter_bounds = [(None, None) for i in range(len(gst.parameters))]
-
-            # Unpack parameter bounding information
-            for gate_name in self.parameter_bounds.keys():  
-                index_of_gate_in_GS = self.gate_models.index(gate_name)
-                for parameter, bounds in self.parameter_bounds[gate_name].items():
-                    param_indx = get_parameter_index_by_name_in_gate(parameter, gate_name)
-                    parameter_bounds[param_indx] = self.parameter_bounds[gate_name][parameter]
-
-        # TODO: Standardize output; This function has heterogeneous output, depending on which case is called. 
         if solver == 'MLE':
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
-            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B', bounds = parameter_bounds) 
+            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds) 
             self.solver_result = solver_result
             self.gst_parameters = solver_result.x
             return solver_result
@@ -654,9 +652,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             return self.gst_parameters 
         elif solver == 'staged MLE':
             # Do staged MLE --> MLE done in batches of increasing circuit depths. 
-            self.solver_result, results_by_stage = self.staged_objective_minimization(theta_0, method = 'L-BFGS-B', bounds = parameter_bounds) 
+            self.solver_result, results_by_stage = self.staged_objective_minimization(theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds) 
+            self.results_by_stage = results_by_stage
             self.gst_parameters = self.solver_result.x
-            return self.solver_result, results_by_stage
+            return self.solver_result 
         else:
             raise IonSimError('Invalid solver input.')
 
@@ -972,6 +971,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
    
     def circuit_depth_scaling_analysis(self):
+        # TODO: Decide whether to keep this; we will likely delete  
         organize_circuits_by_germ_power = False  
         if organize_circuits_by_germ_power: 
             circuit_groups = self._group_circuits_by_germ_power()
@@ -1009,7 +1009,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
  #            else:
             objective_function = lambda params: -1. * self.log_likelihood(params) 
 
-            #if stage == 0:
             theta_init = theta_linear_gst
             #else:
             #    theta_init = self.gst_parameters.copy()
@@ -1033,9 +1032,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return results_by_stage 
 
     
-
-        
-
     ### Functions for gate set error metrics ### 
     def compute_gate_set_error_by_element(self, gst_parameters: Vector, ideal_gate_set: dict, error_metric:str='frobenius norm') -> dict:
         """ Computes an error for each element of the gate set by comparison to the ideal gate set elements. 
