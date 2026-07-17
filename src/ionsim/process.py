@@ -5,6 +5,7 @@ from ionsim.basis import DegreeOfFreedom, Basis, StandardBasis
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.dissipator import Lindbladian 
+from ionsim.operator import Operator
 from ionsim.state import State
 
 
@@ -327,6 +328,24 @@ class Circuit(Process):
         process_matrix = trapz_for_matrix(ys, noise.domain_arguments) 
         return cls(gates[0].basis, process_matrix, gates)
 
+
+    def predict_outcome_probabilities(self, initial_state: State, outcome_operators: list[Operator]) -> list[float]:
+        """ Computes a number or list of probabilities of observing outcomes when applying the circuit to a state. 
+            
+            Outcomes are specified as a list of projector operators, e.g. [|0><0|, |1><1|]. 
+        
+        """ 
+        outcome_probabilities = []
+        # Propagate the init state using the circuit 
+        propagated_state = initial_state.propagate_using_process_matrix(self.process_matrix) 
+
+        # Represent state and outcome operators in superket/superbra form 
+        for outcome_op in outcome_operators:
+            outcome_probabilities.append(np.dot(outcome_op.superbra, propagated_state.supervector).real) 
+
+        return outcome_probabilities
+
+        
 def _combine_process_matrices(process_matrices: list[Matrix]):
     """Combine a series of process matrices (in chronological order) into a single process matrix for the whole circuit."""
     if len(process_matrices) == 1:

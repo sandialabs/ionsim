@@ -5,8 +5,10 @@ import numpy as np
 from ionsim.process import Gate, Circuit
 from ionsim.degree_of_freedom import AtomicSpin
 from ionsim.basis import StandardBasis
-from ionsim.named_operators import Unitary
+from ionsim.named_operators import Unitary, Pauli
 from ionsim.noise import Noise
+from ionsim.operator import EnergyShiftOperator
+from ionsim.state import State 
 
 class TestProcess(unittest.TestCase):
 
@@ -59,6 +61,16 @@ class TestProcess(unittest.TestCase):
         )
         fidelity = ramsey.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
         self.assertAlmostEqual(fidelity, 0.9306176541502548, places=14)
+
+        # Test computing outcome probabilities 
+        outcome_operator = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_1, Pauli.projector_0)) 
+        #outcome_operator = EnergyShiftOperator.from_matrix(self.basis, Pauli.projector_0)         
+        initial_state = State.from_coefficients(self.basis, [1., 0., 0., 0.]) 
+
+        outcome_probability = ramsey.predict_outcome_probabilities(initial_state, [outcome_operator]) 
+        self.assertAlmostEqual(outcome_probability[0], 0.9530090510307307, places = 10)
+
+
 
 if __name__ == '__main__':
     unittest.main()
