@@ -281,3 +281,25 @@ class Hamiltonian(CompositeOperator):
         end = time.perf_counter()
         ic(f'Evolving wavefunction took {end-start} seconds.')
         return result
+
+
+    ## Adiabatic elimination methodology 
+    @classmethod
+    def adiabatic_elimination(cls, self, states_to_eliminate: list[EnergyEigenstate]):
+        """ Adiabatic elimination method, returns a Hamiltonian in a reduced basis """
+
+        states_to_keep = [state for state in self.basis.states if state not in states_to_eliminate]    
+
+        # Build projectors into the appropriate subspaces 
+
+        # Define reduced basis:
+        reduced_basis = self.basis 
+        # Could try a basis method (from reduced set of states or something) 
+
+
+        # Build new operators in the reduced basis 
+        operators = []
+
+
+ 
+        return cls(reduced_basis, operators, self.rotating_frame_energies, self.sparse) 
