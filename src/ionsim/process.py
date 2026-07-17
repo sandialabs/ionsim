@@ -385,7 +385,7 @@ class Circuit(Process):
             return [None for _ in range(len(outcome_operators))] 
 
         # Although a list of functions (each fxn corresponding to an outcome) is more intuitive,  
-        #   it is more efficient to evaluate the circuit process matrix once, then loop over outcome operators. 
+        #   it is more efficient to evaluate the circuit process matrix once and then loop over outcome operators. 
         @wraps(self.process_matrix_function)
         def outcome_probabilities_function(*args, **kwargs) -> list[float]:
             circuit_process_matrix = self.process_matrix_function(*args, **kwargs)
