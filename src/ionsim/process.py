@@ -303,6 +303,16 @@ class Gate(Process):
 class Circuit(Process):
     """A quantum circuit (i.e., a series of gates) in a basis of states."""
     gates: list[Gate]
+    process_matrix_function: Callable | None = None
+    parameters: None | dict[str, float] = field(default_factory=dict) 
+
+    def __post_init__(self):
+        # Check that process_matrix_function(*parameter_args) == process_matrix 
+        parameter_names, arguments = list(self.parameters.keys()), list(self.parameters.values())
+        if self.process_matrix_function:
+            if not (self.process_matrix_function(*arguments) == self.process_matrix).all:
+                raise IonSimError(f"Error, process matrix function and process matrix attributes do not correspond.")
+
 
     @classmethod
     def from_gates(cls, gates: list[Gate], noise: Noise | None = None):
@@ -328,14 +338,24 @@ class Circuit(Process):
         process_matrix = trapz_for_matrix(ys, noise.domain_arguments) 
         return cls(gates[0].basis, process_matrix, gates)
 
+    def predict_outcome_probability(self, initial_state: State, outcome_operator: Operator) -> float:
+        """ Computes a probability of observing an outcome when applying the circuit to a state. 
+            
+            Outcome is specified as a POVM projector operator, e.g. |0><0| 
+        
+        """ 
+        return predict_outcome_probability_from_process_matrix(initial_state, self.process_matrix, outcome_operator)
 
     def predict_outcome_probabilities(self, initial_state: State, outcome_operators: list[Operator]) -> list[float]:
-        """ Computes a number or list of probabilities of observing outcomes when applying the circuit to a state. 
+        """ Computes a list of probabilities of observing outcomes when applying the circuit to a state. 
             
             Outcomes are specified as a list of projector operators, e.g. [|0><0|, |1><1|]. 
         
         """ 
         outcome_probabilities = []
+
+        # It is more efficient to evaluate the circuit's action on the state ONCE and then loop over outcome operators. 
+
         # Propagate the init state using the circuit 
         propagated_state = initial_state.propagate_using_process_matrix(self.process_matrix) 
 
@@ -345,6 +365,38 @@ class Circuit(Process):
 
         return outcome_probabilities
 
+
+    def build_outcome_probability_function(self, initial_state: State, outcome_operator: Operator) -> Callable:
+        """ Returns a function that returns an outcome probability as a function of circuit model parameters """  
+        if self.process_matrix_function is None:
+            return None 
+
+        @wraps(self.process_matrix_function)
+        def outcome_probability_function(*args, **kwargs) -> float:
+            circuit_process_matrix = self.process_matrix_function(*args, **kwargs)
+            return predict_outcome_probability_from_process_matrix(initial_state, circuit_process_matrix, outcome_operator)
+            
+        return outcome_probability_function
+
+
+    def build_outcome_probabilities_function(self, initial_state: State, outcome_operators: list[Operator]) -> Callable:
+        """ Returns a function that returns a list of outcome probabilities as a function of circuit model parameters """  
+        if self.process_matrix_function is None:
+            return [None for _ in range(len(outcome_operators))] 
+
+        # Although a list of functions (each fxn corresponding to an outcome) is more intuitive,  
+        #   it is more efficient to evaluate the circuit process matrix once, then loop over outcome operators. 
+        @wraps(self.process_matrix_function)
+        def outcome_probabilities_function(*args, **kwargs) -> list[float]:
+            circuit_process_matrix = self.process_matrix_function(*args, **kwargs)
+            propagated_state = initial_state.propagate_using_process_matrix(circuit_process_matrix)
+            outcome_probabilities = []
+            for operator in outcome_operators:
+                outcome_probabilities.append(np.dot(outcome_op.superbra, propagated_state.supervector).real)
+            return outcome_probabilities
+            
+        return outcome_probabilities_function
+
         
 def _combine_process_matrices(process_matrices: list[Matrix]):
     """Combine a series of process matrices (in chronological order) into a single process matrix for the whole circuit."""
@@ -352,6 +404,13 @@ def _combine_process_matrices(process_matrices: list[Matrix]):
         return process_matrices[0]
     else:
         return np.linalg.multi_dot(process_matrices[::-1])
+
+
+def predict_outcome_probability_from_process_matrix(initial_state: State, process_matrix: Matrix, outcome_operator: Operator) -> float:
+    """ Predicts the outcome of a process matrix on a state after measurement/projection <==> outcome operator """   
+    propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
+    return np.dot(outcome_operator.superbra, propagated_state.supervector).real
+
 
 
 
