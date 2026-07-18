@@ -11,9 +11,12 @@ from ionsim.state import State
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Callable
 from abc import ABC
 import scipy 
+import typing
+from typing import Callable, Dict, List, Sequence, get_type_hints, get_origin, get_args
+import inspect 
+from functools import reduce 
 from icecream import ic
 
 @dataclass(frozen=True, eq=False)
@@ -304,14 +307,14 @@ class Circuit(Process):
     """A quantum circuit (i.e., a series of gates) in a basis of states."""
     gates: list[Gate]
     process_matrix_function: Callable | None = None
-    parameters: None | dict[str, float] = field(default_factory=dict) 
+    #parameters: None | dict[str, float] = field(default_factory=dict) 
 
-    def __post_init__(self):
-        # Check that process_matrix_function(*parameter_args) == process_matrix 
-        parameter_names, arguments = list(self.parameters.keys()), list(self.parameters.values())
-        if self.process_matrix_function:
-            if not (self.process_matrix_function(*arguments) == self.process_matrix).all:
-                raise IonSimError(f"Error, process matrix function and process matrix attributes do not correspond.")
+ #    def __post_init__(self):
+ #        # Check that process_matrix_function(*parameter_args) == process_matrix 
+ #        parameter_names, arguments = list(self.parameters.keys()), list(self.parameters.values())
+ #        if self.process_matrix_function:
+ #            if not (self.process_matrix_function(*arguments) == self.process_matrix).all:
+ #                raise IonSimError(f"Error, process matrix function and process matrix attributes do not correspond.")
 
 
     @classmethod
@@ -323,6 +326,18 @@ class Circuit(Process):
             process_matrix = _combine_process_matrices([gate.process_matrix for gate in gates])
             return cls(gates[0].basis, process_matrix, gates)
         pmats_list = []
+
+        circuit_process_matrix_function = None # default 
+        if all(gate.process_matrix_function is None for gate in gates):
+            # Compile gate function list (in circuit order) and then reverse by circuit convention  
+            gate_functions = []
+            for gate in gate:
+                gate_functions.append(gate.process_matrix_function)
+
+            # Reverse gate function order by convention (last gate in original list is first gate to apply)  
+            gate_functions = gate_functions[::-1]
+            circuit_process_matrix_function = Circuit_Process_Matrix_Function_Helper(gate_functions)
+
         for gate in gates:
             if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
                 arguments = np.array(list(gate.parameters.values()))
@@ -336,7 +351,7 @@ class Circuit(Process):
         probs = [noise.probability_density_function(darg) for darg in noise.domain_arguments]
         ys = np.array([p * chi for p, chi in zip(probs, process_mats)])
         process_matrix = trapz_for_matrix(ys, noise.domain_arguments) 
-        return cls(gates[0].basis, process_matrix, gates)
+        return cls(gates[0].basis, process_matrix, gates, circuit_process_matrix_function)
 
     def predict_outcome_probability(self, initial_state: State, outcome_operator: Operator) -> float:
         """ Computes a probability of observing an outcome when applying the circuit to a state. 
@@ -353,7 +368,6 @@ class Circuit(Process):
         
         """ 
         outcome_probabilities = []
-
         # It is more efficient to evaluate the circuit's action on the state ONCE and then loop over outcome operators. 
 
         # Propagate the init state using the circuit 
@@ -413,7 +427,147 @@ def predict_outcome_probability_from_process_matrix(initial_state: State, proces
 
 
 
+#import jax 
+#import jax.numpy as jnp 
+    
+#jax.config.update("jax_enable_x64", True)
 
+#class Circuit_Process_Matrix_Helper():
+#@dataclass(frozen=True, eq=False)
+class Circuit_Process_Matrix_Function_Helper():
+    """ Builds a single process matrix function for a circuit, represented as a composition of gates 
+            where each gate is represented by its own gate process matrix function. 
+
+        - This class builds a single callable that returns the process matrix for the circuit. 
+
+        - The class organizes and tracks each gate model input arguments in order to avoid namespace 
+            conflicts.  
+
+        - Functions that are repeated are computed once and reused to avoid excess compution.  
+
+        - Includes JAX functionality for derivative computation of the proess matrix function w.r.t. gate parameters
+            - requires jax, jaxlib  
+    """ 
+
+    def __init__(self, gate_models: Sequence[Callable], separator: str = "__"):
+        """ 
+            gate_models: a sequence to represent the order of gates applied in the circuit 
+
+            separator: a string used for namespacing parameters within a gate model, e.g. "X_pi2__thetaX"
+                refers to the parameter arg thetaX within the gate model function X_pi2.  
+
+        """
+        self.gate_sequence = list(gate_models)
+        self.separator = seperator 
+
+        self.unique_functions = list({id(f): f for f in self.gate_sequence}.values())
+
+        self._param_map: dict[str, tuple] = {} # namespaced name -> (function name, original name)
+        self._name_to_function: dict[str, Callable] = {}
+        self._type_hints: dict[str, type] = {}
+
+        self._build_signature()
+
+
+    def _build_signature(self):
+        """ Builds the circuit process matrix function signature """ 
+        params = []
+        seen_names = set()
+        for f in self.unique_functions:
+            fname = f.__name__
+            if fname in seen_names:
+                raise ValueError(f"Duplicate function name '{fname}' -- two distinct functions can't share a name. Rename one or pass explicit names.")
+            seen_names.add(fname)
+            self._name_to_func[fname] = f
+
+            sig = inspect.signature(f)
+            try:
+                hints = get_type_hints(f)
+            except Exception:
+                hints = {} # skip if this fails 
+        
+            for name, param in sig.parameters.items():
+                if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                    raise NotImplementedError(f"{fname} uses *args/**kwargs, not supported.")
+                namespace = f"{fname}{self.separator}{name}"
+                if namespace in self._param_map:
+                    raise ValueError(f"Parameter collision in '{namespace}'")
+                self._param_map[namespace] = (fname, name)
+                if name in hints:
+                    self._type_hints[namespace] = hints[name]
+                params.append(param.replace(name=namespace, kind=inspect.Parameter.KEYWORD_ONLY))
+
+        self.__signature__ = inspect.Signature(params)
+
+
+    def check_types(self, **kwargs) -> list[str]:
+        """ Returns human readable messages for type-hint vs. actual type mismatch """
+
+        errors = []
+        for namespace, value, in kwargs.items():
+            expected = self._type_hints.get(namespace)
+            if expected is None:
+                continue
+            if not self._type_matches(value, expected):
+                fname, orig_name = self._param_map[namespace]
+                expected_repr = getattr(expected, "__name__", str(expected))
+                errors.append(f"{namespace} (={value!r}) expected {expected_repr} for {fname}'s '{orig_name}', got {type(value).__name__}")
+        return errors 
+
+    def missing_required(self, **kwargs) -> list[str]:
+        """ Returns namespaced names of required parameters not supplied"""
+        provided = set(kwargs)
+        return [name for name, p in self.__signature__.parameters.items() 
+                if p.default is inspect.Parameter.empty and name not in provided]
+
+
+    def __call__(self):
+        """ method for Callable behavior """
+        missing = self.missing_required(**kwargs)
+        if missing:
+            by_func: dict[str,list] = {}
+            for namespace in missing:
+                fname, orig_name = self._param_map[namespace]
+                by_func.setdefault(fname, []).append(orig_name)
+            details = "; ".join(f"{fname} missing {names}" for fname, names in by_func.items())
+            raise TypeError(f"Missing required argument(s): {details}")
+
+        valid_names = set(self.__signature__.parameters)
+        unexpected = set(kwargs) - valid_names
+
+        if unexpected:
+            raise TypeError(f"Unexpected argument(s): {sorted(unexpected)}. Valid arguments are: {sorted(valid_names)}")
+        
+        errors_type = self.check_types(**kwargs)
+        if errors_type:
+            raise TypeError("Type mismatch: " + "; ".join(errors_type)) 
+
+        bound = self.__signature__.bind(**kwargs)
+        bound.apply_defaults()
+
+        per_function_kwargs = {fname: {} for fname in self._name_to_func}
+        for namespace, value in bound.arguments.items():
+            fname, orig_name = self.p_param_map[namespace]
+            per_function_kwargs[fname][orig_name] = value
+
+        # call each unique function once and store the result to reuse at every instance of that function 
+        results = {fname: f(**per_function_kwargs[fname]) for fname, f in self._name_to_func.items()}
+
+        # Build list of matrices 
+        matrices = [results[f.__name__] for f in self.sequence]
+
+        return reduce(lambda g1,g2: g1 @ g2, matrices)
+
+
+
+
+
+                
+
+
+
+
+# Possible idea: Build a IonSim circuit object from a ParsedCircuit object, requires gate models + basis  
 #@dataclass(frozen=True,eq=False)
 #class GST_Circuit():
 #    """ Class containing IonSim GST Circuit Objects, containing lists of gates"""
@@ -433,9 +587,3 @@ def predict_outcome_probability_from_process_matrix(initial_state: State, proces
 #    def __repr__(self):
 #        readable_name = " ".join(repr(gate.name) for gate in self.expanded_gates) or "(empty)"
 #        return f"GST_Circuit({gates_readable}, counts={self.counts})"
-
-
-
-### Define a custom "Gate Set" object to store the core gates in a GST? This is a way to avoid storing excess gates / process matrices for GST circuits. 
-
-    # Defines gate set and does Circuit design for GST 
