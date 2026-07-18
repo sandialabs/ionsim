@@ -393,6 +393,7 @@ class Circuit(Process):
         return outcome_probability_function
 
 
+    ## TODO: Need to test this functionality; we may need to move this into the Circuit PM fxn Helper module below 
     def build_outcome_probabilities_function(self, initial_state: State, outcome_operators: list[Operator]) -> Callable:
         """ Returns a function that returns a list of outcome probabilities as a function of circuit model parameters """  
         if self.process_matrix_function is None:
@@ -427,10 +428,9 @@ def predict_outcome_probability_from_process_matrix(initial_state: State, proces
 
 
 
-#import jax 
-#import jax.numpy as jnp 
-    
-#jax.config.update("jax_enable_x64", True)
+import jax 
+import jax.numpy as jnp 
+jax.config.update("jax_enable_x64", True)
 
 #class Circuit_Process_Matrix_Helper():
 #@dataclass(frozen=True, eq=False)
@@ -559,11 +559,49 @@ class Circuit_Process_Matrix_Function_Helper():
         return reduce(lambda g1,g2: g1 @ g2, matrices)
 
 
+    def gradient(self, scalar_function: Callable, wrt: list[str], **kwargs):
+        """ Computes a derivative of a scalar function with respect to (wrt) a list of parameters with all else (kwargs) fixed. 
 
+            scalar function takes in a matrix function and returns a scalar. 
 
+            Returns (value, gradients) where gradients is {name: dValue/dName} for every name in 'wrt'.
 
-                
+        """
+        unknown = set(wrt) - set(self.__signature__.parameters)
 
+        if unknown:
+            raise ValueError(f"Unknown parameter name(s) in 'wrt': {sorted(unknown)}")
+
+        diff_values = {k: kwargs[k] for k in wrt}
+        fixed_values = {k: v for k, v in kwargs.items() if k not in wrt}
+        
+        def f(diff_params: dict):
+            merged = {**fixed_values, **diff_params}
+            U = self(**merged)
+            return scalar_function(U)
+    
+        value, gradients = jax.value_and_grad(f)(diff_values)
+        return value, gradients
+
+    def jacobian(self, vector_fn: Callable, wrt: list[str], **kwargs):
+        """ Same as gradient (above) but for a vector-valued output (e.g. multiple outcome probabilities)
+            Returns (value, jac) where jac[name] has shape (len(output), *shape(param))
+        """
+        unknown = set(wrt) - set(self.__signature__.parameters)
+
+        if unknown:
+            raise ValueError(f"Unknown parameter name(s) in 'wrt': {sorted(unknown)}")
+
+        diff_values = {k: kwargs[k] for k in wrt}
+        fixed_values = {k: v for k, v in kwargs.items() if k not in wrt}
+
+        def f(diff_params: dict):
+            merged = {**fixed_values, **diff_params}
+            return scalar_function(self(**merged))
+
+        value = f(diff_values)    
+        jac = jax.jacobian(f)(diff_values)
+        return value, jac 
 
 
 
