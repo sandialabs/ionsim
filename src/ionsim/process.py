@@ -7,7 +7,7 @@ from ionsim.hamiltonian import Hamiltonian
 from ionsim.dissipator import Lindbladian 
 from ionsim.operator import Operator
 from ionsim.state import State
-
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
 import numpy as np
 from dataclasses import dataclass, field
@@ -16,7 +16,7 @@ import scipy
 import typing
 from typing import Callable, Dict, List, Sequence, get_type_hints, get_origin, get_args
 import inspect 
-from functools import reduce 
+from functools import reduce, wraps 
 from icecream import ic
 
 @dataclass(frozen=True, eq=False)
@@ -39,7 +39,7 @@ class Process(ABC):
 class Gate(Process):
     """A quantum gate represented in a basis of states."""
     process_matrix_function: Callable | None = None
-    parameters: dict[str, float] = field(default_factory=dict)
+    parameters: dict[str, float] = field(default_factory=dict) 
 
     unitary: Matrix | None = None
 
@@ -208,19 +208,16 @@ class Gate(Process):
 
         # Use general t-dependent, non-commutating Lindbladian method unless user specifies otherwise 
         if lindbladian_time_independent:
-            #print(f"Lindbladian is time-independent. Simplifying computation of process matrix via direct matrix exponentiation.")
             # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
             process_matrix = scipy.linalg.expm(lindbladian.matrix_function(0) * duration)
 
         elif lindbladian_commutes_at_later_times:
-            #print(f"Lindbladian commutes at different times. Integrating Lindbladian directly in time.") 
             # Lindbladian is time dependent but commute with itself at later times: Integrate each element of the lindbladian matrix forward in time from t = 0 to t = duration            
             L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
 
             process_matrix = scipy.linalg.expm(L_integral)
 
         else:
-            #print(f"Default method for generating process matrix from generic time-dependent, non-commutating Lindbladian.")
             # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
             # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
             # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 
@@ -322,21 +319,22 @@ class Circuit(Process):
         """Build a circuit from a series of gates in the same basis."""
         if any(gate.basis is not gates[0].basis for gate in gates):
             raise IonSimError('All gates in a circuit must be in the same basis.')
-        if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
-            process_matrix = _combine_process_matrices([gate.process_matrix for gate in gates])
-            return cls(gates[0].basis, process_matrix, gates)
-        pmats_list = []
 
         circuit_process_matrix_function = None # default 
-        if all(gate.process_matrix_function is None for gate in gates):
+        if all(gate.process_matrix_function is not None for gate in gates):
             # Compile gate function list (in circuit order) and then reverse by circuit convention  
             gate_functions = []
-            for gate in gate:
+            for gate in gates:
                 gate_functions.append(gate.process_matrix_function)
 
             # Reverse gate function order by convention (last gate in original list is first gate to apply)  
             gate_functions = gate_functions[::-1]
             circuit_process_matrix_function = Circuit_Process_Matrix_Function_Helper(gate_functions)
+
+        if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
+            process_matrix = _combine_process_matrices([gate.process_matrix for gate in gates])
+            return cls(gates[0].basis, process_matrix, gates, circuit_process_matrix_function)
+        pmats_list = []
 
         for gate in gates:
             if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
@@ -380,6 +378,7 @@ class Circuit(Process):
         return outcome_probabilities
 
 
+    ## TODO: Need to test this functionality for circuit pm function; we may need to move this into the Circuit PM fxn Helper module below 
     def build_outcome_probability_function(self, initial_state: State, outcome_operator: Operator) -> Callable:
         """ Returns a function that returns an outcome probability as a function of circuit model parameters """  
         if self.process_matrix_function is None:
@@ -393,7 +392,6 @@ class Circuit(Process):
         return outcome_probability_function
 
 
-    ## TODO: Need to test this functionality; we may need to move this into the Circuit PM fxn Helper module below 
     def build_outcome_probabilities_function(self, initial_state: State, outcome_operators: list[Operator]) -> Callable:
         """ Returns a function that returns a list of outcome probabilities as a function of circuit model parameters """  
         if self.process_matrix_function is None:
@@ -407,7 +405,9 @@ class Circuit(Process):
             propagated_state = initial_state.propagate_using_process_matrix(circuit_process_matrix)
             outcome_probabilities = []
             for operator in outcome_operators:
-                outcome_probabilities.append(np.dot(outcome_op.superbra, propagated_state.supervector).real)
+                outcome_probabilities.append(np.dot(operator.superbra, propagated_state.supervector).real)
+            #print(sum(outcome_probabilities))
+            assert np.abs(1. - sum(outcome_probabilities)) < NUMERICAL_EQUIVALENCE_THRESHOLD  
             return outcome_probabilities
             
         return outcome_probabilities_function
@@ -458,10 +458,8 @@ class Circuit_Process_Matrix_Function_Helper():
 
         """
         self.gate_sequence = list(gate_models)
-        self.separator = seperator 
-
+        self.separator = separator 
         self.unique_functions = list({id(f): f for f in self.gate_sequence}.values())
-
         self._param_map: dict[str, tuple] = {} # namespaced name -> (function name, original name)
         self._name_to_function: dict[str, Callable] = {}
         self._type_hints: dict[str, type] = {}
@@ -478,7 +476,7 @@ class Circuit_Process_Matrix_Function_Helper():
             if fname in seen_names:
                 raise ValueError(f"Duplicate function name '{fname}' -- two distinct functions can't share a name. Rename one or pass explicit names.")
             seen_names.add(fname)
-            self._name_to_func[fname] = f
+            self._name_to_function[fname] = f
 
             sig = inspect.signature(f)
             try:
@@ -487,7 +485,7 @@ class Circuit_Process_Matrix_Function_Helper():
                 hints = {} # skip if this fails 
         
             for name, param in sig.parameters.items():
-                if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
                     raise NotImplementedError(f"{fname} uses *args/**kwargs, not supported.")
                 namespace = f"{fname}{self.separator}{name}"
                 if namespace in self._param_map:
@@ -499,6 +497,34 @@ class Circuit_Process_Matrix_Function_Helper():
 
         self.__signature__ = inspect.Signature(params)
 
+    @staticmethod
+    def _type_matches(value, expected) -> bool:
+        """ Check 'value' at runtime against a type hint (expected) """
+        if expected is typing.Any or expected is inspect.Parameter.empty:
+            return True
+
+        if expected in (int, float, complex) and (isinstance(value, (int, float, complex)) or hasattr(value, "dtype")):
+            return True
+
+        origin = get_origin(expected)
+        if origin is typing.Union:
+            return any(Circuit_Process_Matrix_Function_Helper._type_matches(value, arg) for arg in get_args(expected))
+
+        if origin is not None:
+            try:
+                return isinstance(value, origin)
+            except TypeError:
+                return True
+
+        if isinstance(expected, type):
+            if expected is float and isinstance(value, int):
+                return True
+            try:
+                return isinstance(value, expected)
+            except TypeError:
+                return True
+
+        return True # unrecognized hint, don't fail in this case 
 
     def check_types(self, **kwargs) -> list[str]:
         """ Returns human readable messages for type-hint vs. actual type mismatch """
@@ -520,8 +546,7 @@ class Circuit_Process_Matrix_Function_Helper():
         return [name for name, p in self.__signature__.parameters.items() 
                 if p.default is inspect.Parameter.empty and name not in provided]
 
-
-    def __call__(self):
+    def __call__(self, **kwargs):
         """ method for Callable behavior """
         missing = self.missing_required(**kwargs)
         if missing:
@@ -545,19 +570,18 @@ class Circuit_Process_Matrix_Function_Helper():
         bound = self.__signature__.bind(**kwargs)
         bound.apply_defaults()
 
-        per_function_kwargs = {fname: {} for fname in self._name_to_func}
+        per_function_kwargs = {fname: {} for fname in self._name_to_function}
         for namespace, value in bound.arguments.items():
-            fname, orig_name = self.p_param_map[namespace]
+            fname, orig_name = self._param_map[namespace]
             per_function_kwargs[fname][orig_name] = value
 
         # call each unique function once and store the result to reuse at every instance of that function 
-        results = {fname: f(**per_function_kwargs[fname]) for fname, f in self._name_to_func.items()}
+        results = {fname: f(**per_function_kwargs[fname]) for fname, f in self._name_to_function.items()}
 
         # Build list of matrices 
-        matrices = [results[f.__name__] for f in self.sequence]
+        matrices = [results[f.__name__] for f in self.gate_sequence]
 
         return reduce(lambda g1,g2: g1 @ g2, matrices)
-
 
     def gradient(self, scalar_function: Callable, wrt: list[str], **kwargs):
         """ Computes a derivative of a scalar function with respect to (wrt) a list of parameters with all else (kwargs) fixed. 

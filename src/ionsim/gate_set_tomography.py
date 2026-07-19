@@ -96,11 +96,15 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if self.parameter_bounds is not None:
             parameter_bounds = [(None, None) for i in range(len(self.gst_parameters))]
             # Unpack parameter bounding information
-            for gate_name in self.parameter_bounds.keys():  
-                index_of_gate_in_GS = list(self.gate_models.keys()).index(gate_name)
-                for parameter, bounds in self.parameter_bounds[gate_name].items():
-                    param_indx = self.get_parameter_index_by_name_in_gate(gate_name, parameter)
-                    parameter_bounds[param_indx] = self.parameter_bounds[gate_name][parameter]
+            if isinstance(self.parameter_bounds, dict):
+                for gate_name in self.parameter_bounds.keys():  
+                    index_of_gate_in_GS = list(self.gate_models.keys()).index(gate_name)
+                    for parameter, bounds in self.parameter_bounds[gate_name].items():
+                        param_indx = self.get_parameter_index_by_name_in_gate(gate_name, parameter)
+                        parameter_bounds[param_indx] = self.parameter_bounds[gate_name][parameter]
+            else:
+                if not isinstance(self.parameter_bounds, list):
+                    raise TypeError(f"Parameter bounds must be a `list' or 'dict' type.")
             self.parameter_bounds = parameter_bounds 
 
         # Set up cached parameters and process matrices 
@@ -644,7 +648,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                         param_indx = self.get_parameter_index_by_name_in_gate(gate_name, parameter)
                         self.gst_parameters[param_indx] = initial_value 
                 theta_0 = self.gst_parameters
-            elif isinstance(parameters_guess, Vector):
+            elif isinstance(parameters_guess, list) or isinstance(parameters_guess, np.ndarray):
                 theta_0 = parameters_guess
             else:
                 raise ValueError(f"Parameter vector initial guess should be a list/array/Vector or nested dictionary. Received: {type(parameters_guess)}")

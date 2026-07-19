@@ -64,11 +64,43 @@ class TestProcess(unittest.TestCase):
 
         # Test computing outcome probabilities 
         outcome_operator = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_1, Pauli.projector_0)) 
-        #outcome_operator = EnergyShiftOperator.from_matrix(self.basis, Pauli.projector_0)         
         initial_state = State.from_coefficients(self.basis, [1., 0., 0., 0.]) 
 
         outcome_probability = ramsey.predict_outcome_probabilities(initial_state, [outcome_operator]) 
         self.assertAlmostEqual(outcome_probability[0], 0.9530090510307307, places = 10)
+
+#    def test_circuit_process_matrix_functions(self):
+#        """ Test the process matrix function of a circuit and derivatives of probability outcomes """ 
+#        ramsey_circuit = Circuit.from_gates(
+#            [
+#                Gate.from_unitary_function(self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.phi_noise),
+#                Gate.from_unitary_function(self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.phi_noise),
+#            ]
+#            #self.theta_noise,
+#            #self.theta_noise,
+#        )
+#
+#        circuit_pm_function = ramsey_circuit.process_matrix_function 
+#
+#        # Test outcome probability function  
+#        outcome_operator = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_1, Pauli.projector_0)) 
+#        initial_state = State.from_coefficients(self.basis, [1., 0., 0., 0.]) 
+#
+#        prob_function = ramsey_circuit.build_outcome_probability_function(initial_state, outcome_operator)
+#        import inspect
+#        
+#        sig = inspect.signature(prob_function)
+#        parameter_names = list(sig.parameters.keys())  
+#        print(f"Parameters: {parameter_names}")
+#        print(f"Parameter dict: {sig.parameters}")
+#        circuit_parameters = {'phi' : 0., 'theta' : np.pi/2}
+#        outcome_prob = prob_function(**circuit_parameters)
+#        print(outcome_prob)
+
+        # Compute outcome probability using probability function: 
+
+        #prob_gradient = ramsey_circuit.gradient(") 
+        
 
 
 
