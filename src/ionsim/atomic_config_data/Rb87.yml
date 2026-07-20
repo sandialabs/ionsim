@@ -1,0 +1,65 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
+---
+species: '87Rb'  # Neutral 
+mass: 86.909180520 # Daltons
+Z: 37 # number of protons, must be integral 
+nuclear_spin: 1.5
+charge: 0.0 # Coulomb
+magnetic_moment: 2.7512  # units of \mu_{N}, the nuclear magneton  
+levels:
+  - term_symbol: 'S1/2'  # 5S_1/2 
+    coupling_scheme: 'ls'
+    fine_energy: 0.0 # Hz 
+    hyperfine_A: 3.41734130545215e+9 # Hz
+    lifetime: null
+    n: 5
+    s: 0.5 
+
+  - term_symbol: 'P1/2'  # 5P_1/2 
+    coupling_scheme: 'ls'
+    fine_energy: 377.1074635e+12  # Hz 
+    hyperfine_A: 408.328e+6 # Hz 
+    lifetime: 27.70e-9  
+    n: 5
+    s: 0.5 
+
+  - term_symbol: 'P3/2'  # 5P_1/2 
+    coupling_scheme: 'ls'
+    fine_energy: 384.2304844685e+12  # Hz 
+    hyperfine_A: 84.7185e+6 # Hz 
+    lifetime: 26.24 # TODO: check units  
+    n: 5
+    s: 0.5 
+
+  - term_symbol: 'P3/2'  # 6P_1/2 
+    coupling_scheme: 'ls'
+    fine_energy: 713.2839e+12  # Hz 
+    hyperfine_A: 27.7008231192e+6  # Hz 
+    lifetime: 26.24 # TODO update  
+    n: 6
+    s: 0.5 
+
+# Rydberg level: 
+  - term_symbol: 'S1/2'  # 5S_1/2 
+    coupling_scheme: 'ls'
+    fine_energy: 1008.7062997826108e+12  # Hz 
+    hyperfine_A: None # TODO: Verify this number 
+    lifetime: 72.0e-6  # seconds  
+    n: 53
+    s: 0.5 
+
+
+### References: 
+#1. https://steck.us/alkalidata/rubidium87numbers.1.6.pdf
+#2. NIST database, query "Rb I": https://physics.nist.gov/cgi-bin/ASD/energy1.pl?de=0&spectrum=Rb+I&units=4&format=0&output=0&page_size=15&average_out=1&multiplet_ordered=1&conf_out=on&term_out=on&level_out=on&unc_out=1&j_out=on&lande_out=on&perc_out=on&biblio=on&splitting=1&temp=&submit=Retrieve+Data
+#3. Rydberg data: https://arxiv.org/pdf/1103.6221; https://pubs.aip.org/aip/jpr/article/35/1/301/242196/Wavelengths-Transition-Probabilities-and-Energy 
+#4. Hyperfine coefficient data: https://pubs.aip.org/aip/jpr/article/35/1/301/242196/Wavelengths-Transition-Probabilities-and-Energy 
+# J. Phys. Chem. Ref. Data, Vol. 35, No. 1, 200
