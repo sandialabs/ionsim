@@ -588,6 +588,8 @@ class Circuit_Process_Matrix_Function_Helper():
 
             scalar function takes in a matrix function and returns a scalar. 
 
+            kwargs specifies the point where the gradient is evaluated, e.g. "Rx__theta" = value
+
             Returns (value, gradients) where gradients is {name: dValue/dName} for every name in 'wrt'.
 
         """
