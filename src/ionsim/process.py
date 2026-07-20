@@ -313,7 +313,7 @@ class Circuit(Process):
  #            if not (self.process_matrix_function(*arguments) == self.process_matrix).all:
  #                raise IonSimError(f"Error, process matrix function and process matrix attributes do not correspond.")
 
-
+    # TODO: Should the user be adding noise at the circuit level? Is it an essential feature? We could just have them specify it at the gate level? 
     @classmethod
     def from_gates(cls, gates: list[Gate], noise: Noise | None = None):
         """Build a circuit from a series of gates in the same basis."""
@@ -321,6 +321,8 @@ class Circuit(Process):
             raise IonSimError('All gates in a circuit must be in the same basis.')
 
         circuit_process_matrix_function = None # default 
+        deterministic = (noise is None) or all([noise.parameter_name not in gate.parameters for gate in gates])
+        #if deterministic and all(gate.process_matrix_function is not None for gate in gates):
         if all(gate.process_matrix_function is not None for gate in gates):
             # Compile gate function list (in circuit order) and then reverse by circuit convention  
             gate_functions = []
@@ -331,11 +333,14 @@ class Circuit(Process):
             gate_functions = gate_functions[::-1]
             circuit_process_matrix_function = Circuit_Process_Matrix_Function_Helper(gate_functions)
 
-        if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
+        #if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
+        if deterministic: 
             process_matrix = _combine_process_matrices([gate.process_matrix for gate in gates])
             return cls(gates[0].basis, process_matrix, gates, circuit_process_matrix_function)
         pmats_list = []
 
+        # TODO: Handle noise correctly when building circuit process matrix function  
+        # TODO: Wouldn't there be name conflict ambiguity issues? e.g. where noise is specified for a parameter, but that parameter may be included in multiple gates with different meanings?  
         for gate in gates:
             if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
                 arguments = np.array(list(gate.parameters.values()))
