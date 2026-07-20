@@ -37,7 +37,7 @@ class AtomicSpin(DegreeOfFreedom):
 
     @classmethod
     def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None,
-            name: str | None = None, magnetic_field: float=0.):
+            name: str | None = None, magnetic_field: float=0., **kwargs):
         """Build the atomic spin degree of freedom for a particular species of atom."""
         config_data = cls.get_config_data(species)
         nuclear_spin = config_data['nuclear_spin']
@@ -60,7 +60,6 @@ class AtomicSpin(DegreeOfFreedom):
             get_fine_data, FineLevel, HyperfineLevel = cls.get_level_factory(level_data['coupling_scheme'])
             fine_data = get_fine_data(level_data)
             j = fine_data['j']
-
             # ic(FineLevel.__annotations__, FineLevel(**fine_data, mj={'key': 1}))
             # TODO: why is mypy not catching this??
 
@@ -79,11 +78,11 @@ class AtomicSpin(DegreeOfFreedom):
                         gj = 2. * (gj1 - 1.) * (k*(k+1) + j1*(j1+1) - l2*(l2 + 1))/((2*j + 1)*(2*k + 1))
                         gj += (3*j*(j+1) - k*(k+1) + s2*(s2+1))/(2.*j*(j+1)) 
                         fine_data['gj'] = gj
-                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, None, s2, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z, gj = gj)
+                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, None, s2, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z, gj = gj, **kwargs)
                 else:
                     s = fine_data['s']
                     l = fine_data['l']
-                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z)
+                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z, **kwargs)
                 zeeman_energy_shifts, zeeman_eigenvecs = Zeeman_solver.solve_at_field(magnetic_field)
                 zeeman_energy_shifts *= np.pi*2. # convert to rad/s 
 

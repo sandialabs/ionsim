@@ -65,7 +65,7 @@ class TestZeemanSolver(unittest.TestCase):
         tests = {case['test_name'] : [] for case in self.test_cases}
 
         # For magnetic field strength, verify energy shift for a state: 
-        tests['87Rb'].append({'Magnetic field' : 2000, # Gauss
+       tests['87Rb'].append({'Magnetic field' : 2000, # Gauss
                 'state type' : 'hyperfine',
                 'F,mF' : (1,1.0),
                 'Zeeman shift' : -6.253586054112444  
