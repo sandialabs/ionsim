@@ -154,6 +154,7 @@ class AtomicSpin(DegreeOfFreedom):
     @staticmethod
     def compute_l(term_symbol: str):
         """Compute the total electronic orbital angular momentum "l" from a term symbol."""
+        # TODO: Accomodate Rydberg term symbols, e.g. "53 S1/2" or "53S1/2". Get Brandon's input on preference  
         return {'S': 0, 'P': 1, 'D': 2, 'F': 3}[term_symbol[0]]
 
     @staticmethod

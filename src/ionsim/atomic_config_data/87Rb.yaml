@@ -48,7 +48,7 @@ levels:
     s: 0.5 
 
 # Rydberg level: 
-  - term_symbol: '53S1/2'  # 5S_1/2 
+  - term_symbol: '53 S1/2'  # 5S_1/2 
     coupling_scheme: 'ls'
     fine_energy: 1008.7062997826108e+12  # Hz 
     hyperfine_A: 149.6e+3  
