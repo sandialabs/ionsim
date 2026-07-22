@@ -393,7 +393,7 @@ class ZeemanHyperfineSolver():
 
     
     def get_state_energy(self, energies: NDArray, eigenvectors: NDArray, f: float, 
-                            mf: float, tolerance: float = 1e-6, subtract_hyperfine_shift: bool=False) -> float:
+                            mf: float, tolerance: float = 1e-6, subtract_hyperfineA_shift: bool=False) -> float:
         """ Returns the energy for an angular momentum state of interest |F, mF> 
         At zero or low field, F is a good quantum number. At finite field, mf is conserved but F is not. 
         Assumes energies and eigenvectors at one magnetic field condition.

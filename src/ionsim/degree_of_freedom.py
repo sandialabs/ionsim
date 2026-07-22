@@ -109,8 +109,8 @@ class AtomicSpin(DegreeOfFreedom):
                         # Extract any Zeeman shifts for this mF state 
                         zeeman_shift_energy = 0.
                         if magnetic_field != 0. :
-                            # Hyperfine shift is already accounted for in AtomicInternalEnergyLevel 
-                            zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = f, mf = mf, subtract_hyperfine_shift=True)
+                            # Hyperfine A shift is already accounted for in AtomicInternalEnergyLevel 
+                            zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = f, mf = mf, subtract_hyperfineA_shift=True)
 
                         # Create the level 
                         level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy * np.pi * 2.)
