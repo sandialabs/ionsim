@@ -371,7 +371,7 @@ class ZeemanHyperfineSolver():
 
     
     def get_state_energy(self, energies: NDArray, eigenvectors: NDArray, f: float, 
-                            mf: float, tolerance: float = 1e-6) -> float:
+                            mf: float, tolerance: float = 1e-6, subtract_hyperfine_shift: bool=False) -> float:
         """ Returns the energy for an angular momentum state of interest |F, mF> 
         At zero or low field, F is a good quantum number. At finite field, mf is conserved but F is not. 
         Assumes energies and eigenvectors at one magnetic field condition.
@@ -403,8 +403,17 @@ class ZeemanHyperfineSolver():
         
         if state_indx == -1:
             raise ValueError(f"Basis state mF = {mf} not found in list of basis states: {mf_values}.")
+        if subtract_hyperfine_shift:
+            return (energies[state_indx]*self.internal_freq_units - self.hyperfine_energy_shift(f)).magnitude
         return energies[state_indx]
 
+    def hyperfine_energy_shift(self, f: float):
+        """The energy shift of the level from the hyperfine interaction."""
+        return self.hyperfine_a/2 * (
+            + f * (f + 1)
+            - self.j * (self.j + 1)
+            - self.i * (self.i + 1)
+        )
 
     def get_state_energy_from_mjmi_pair(self, energies: NDArray, eigenvectors: NDArray, mj: float, mi: float) -> float:
         """ Returns the energy for a basis angular momentum state of interest: |mj, mi> 

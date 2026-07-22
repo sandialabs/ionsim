@@ -51,7 +51,7 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     @property
     def energy(self):
         # Total energy: bare energy + external shifts (e.g. Zeeman, light shifts)
-        return self.bare_energy + self.external_energy_shift 
+        return self.bare_energy + self.external_energy_shift
 
 @dataclass(frozen=True, eq=False)
 class LSFineLevel(AtomicInternalEnergyLevel): 

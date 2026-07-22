@@ -65,6 +65,7 @@ class AtomicSpin(DegreeOfFreedom):
 
             # Use Zeeman Solver based on level manifold to compute Zeeman shifts 
             if magnetic_field != 0. :
+                # Hyperfine A coefficient is converted to rad/s prior to this function 
                 if level_data['coupling_scheme'] == 'j1l2': 
                     s2 = fine_data['s2']
                     if fine_data['gj'] is None:
@@ -78,13 +79,12 @@ class AtomicSpin(DegreeOfFreedom):
                         gj = 2. * (gj1 - 1.) * (k*(k+1) + j1*(j1+1) - l2*(l2 + 1))/((2*j + 1)*(2*k + 1))
                         gj += (3*j*(j+1) - k*(k+1) + s2*(s2+1))/(2.*j*(j+1)) 
                         fine_data['gj'] = gj
-                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, None, s2, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z, gj = gj, **kwargs)
+                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, None, s2, fine_data['hyperfine_A']/(2.*np.pi), mass, magnetic_moment, z, gj = gj, **kwargs)
                 else:
                     s = fine_data['s']
                     l = fine_data['l']
-                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z, **kwargs)
+                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']/(2. * np.pi), mass, magnetic_moment, z, **kwargs)
                 zeeman_energy_shifts, zeeman_eigenvecs = Zeeman_solver.solve_at_field(magnetic_field)
-                zeeman_energy_shifts *= np.pi*2. # convert to rad/s 
 
             # Construct levels based on coupling structure 
             if structure == 'fine':
@@ -92,10 +92,10 @@ class AtomicSpin(DegreeOfFreedom):
                     # Extract any Zeeman shifts for this state 
                     zeeman_shift_energy = 0.
                     if magnetic_field != 0. :
-                        # For fine couplings, F = J since I = 0, so F <==> J and mf <==> mj labels are interchangable. 
-                        zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = j, mf = mj)
+                        # For fine couplings, F = J since I = 0, so F <==> J and mf <==> mj labels are interchangable.
+                        zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = j, mf = mj) 
                     # Create the level 
-                    level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy)
+                    level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy*np.pi*2.)
                     if level_names is None or level.name in level_names: 
                         levels.append(level)
             else:
@@ -104,10 +104,11 @@ class AtomicSpin(DegreeOfFreedom):
                         # Extract any Zeeman shifts for this mF state 
                         zeeman_shift_energy = 0.
                         if magnetic_field != 0. :
-                            zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = f, mf = mf)
+                            # Hyperfine shift is already accounted for in AtomicInternalEnergyLevel 
+                            zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = f, mf = mf, subtract_hyperfine_shift=True)
 
                         # Create the level 
-                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy)
+                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy * np.pi * 2.)
                         if level_names is None or level.name in level_names:
                             levels.append(level)
         return cls(levels, name)
