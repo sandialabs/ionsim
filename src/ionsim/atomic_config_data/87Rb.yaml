@@ -40,7 +40,8 @@ levels:
     n: 5
     s: 0.5 
 
-  - term_symbol: 'P3/2'  # 6P_1/2 
+  # TODO: Need input for fixing ambiguity in term symbols 
+  - term_symbol: '6 P3/2'  # 6P_3/2 
     coupling_scheme: 'ls'
     fine_energy: 713.2839e+12  # Hz 
     hyperfine_A: 27.7008231192e+6  # Hz 

@@ -425,7 +425,7 @@ class ZeemanHyperfineSolver():
         
         if state_indx == -1:
             raise ValueError(f"Basis state mF = {mf} not found in list of basis states: {mf_values}.")
-        if subtract_hyperfine_shift:
+        if subtract_hyperfineA_shift:
             return (energies[state_indx]*self.internal_freq_units - self.hyperfine_energy_shift(f)).magnitude
         return energies[state_indx]
 
