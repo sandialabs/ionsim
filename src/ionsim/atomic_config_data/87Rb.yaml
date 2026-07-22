@@ -31,10 +31,11 @@ levels:
     n: 5
     s: 0.5 
 
-  - term_symbol: 'P3/2'  # 5P_1/2 
+  - term_symbol: 'P3/2'  # 5P_3/2 
     coupling_scheme: 'ls'
     fine_energy: 384.2304844685e+12  # Hz 
     hyperfine_A: 84.7185e+6 # Hz 
+    hyperfine_B: 12.496537e+6 # Hz 
     lifetime: 26.24 # TODO: check units  
     n: 5
     s: 0.5 

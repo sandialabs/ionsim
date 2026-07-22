@@ -66,6 +66,11 @@ class AtomicSpin(DegreeOfFreedom):
             # Use Zeeman Solver based on level manifold to compute Zeeman shifts 
             if magnetic_field != 0. :
                 # Hyperfine A coefficient is converted to rad/s prior to this function 
+                if fine_data['hyperfine_B'] is None:
+                    hyperfine_B = None
+                else:
+                    hyperfine_B = fine_data['hyperfine_B']/(2. * np.pi) 
+
                 if level_data['coupling_scheme'] == 'j1l2': 
                     s2 = fine_data['s2']
                     if fine_data['gj'] is None:
@@ -79,11 +84,11 @@ class AtomicSpin(DegreeOfFreedom):
                         gj = 2. * (gj1 - 1.) * (k*(k+1) + j1*(j1+1) - l2*(l2 + 1))/((2*j + 1)*(2*k + 1))
                         gj += (3*j*(j+1) - k*(k+1) + s2*(s2+1))/(2.*j*(j+1)) 
                         fine_data['gj'] = gj
-                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, None, s2, fine_data['hyperfine_A']/(2.*np.pi), mass, magnetic_moment, z, gj = gj, **kwargs)
+                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, None, s2, fine_data['hyperfine_A']/(2.*np.pi), hyperfine_B, mass, magnetic_moment, z, gj = gj, **kwargs)
                 else:
                     s = fine_data['s']
                     l = fine_data['l']
-                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']/(2. * np.pi), mass, magnetic_moment, z, **kwargs)
+                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']/(2. * np.pi), hyperfine_B, mass, magnetic_moment, z, **kwargs)
                 zeeman_energy_shifts, zeeman_eigenvecs = Zeeman_solver.solve_at_field(magnetic_field)
 
             # Construct levels based on coupling structure 
@@ -130,6 +135,11 @@ class AtomicSpin(DegreeOfFreedom):
         fine_data = dict(level_data)
         fine_data['fine_energy'] = 2 * np.pi * fine_data['fine_energy'] # convert from Hz to rad./s
         fine_data['hyperfine_A'] = 2 * np.pi * fine_data['hyperfine_A'] # convert from Hz to rad./s
+        try: 
+            hyperfine_B = fine_data['hyperfine_B'] * 2. * np.pi
+        except:
+            hyperfine_B = None
+        fine_data['hyperfine_B'] = hyperfine_B 
         fine_data['l'] = cls.compute_l(level_data['term_symbol'])
         fine_data['j'] = cls.compute_j(level_data['term_symbol'])
         fine_data['term_symbol'] = level_data['unique_term_symbol']
@@ -143,6 +153,11 @@ class AtomicSpin(DegreeOfFreedom):
         fine_data = dict(level_data)
         fine_data['fine_energy'] = 2 * np.pi * fine_data['fine_energy'] # convert from Hz to rad./s
         fine_data['hyperfine_A'] = 2 * np.pi * fine_data['hyperfine_A'] # convert from Hz to rad./s
+        try: 
+            hyperfine_B = fine_data['hyperfine_B'] * np.pi * 2.
+        except:
+            hyperfine_B = None
+        fine_data['hyperfine_B'] = hyperfine_B 
         fine_data['k'] = cls.compute_k(level_data['term_symbol'])
         fine_data['j'] = cls.compute_j(level_data['term_symbol'])
         fine_data['gj'] = fine_data.get('gj', None)

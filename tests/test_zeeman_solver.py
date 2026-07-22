@@ -27,6 +27,7 @@ class TestZeemanSolver(unittest.TestCase):
                 'L' : 0,
                 'S' : 0.5,
                 'hyperfine_A' : 3417.34 * 1E-3, # GHz
+                'hyperfine_B' : None,  
                 'mass' : 86.909, #daltons 
                 'gI' : -0.0009951414,
                 'Z' : 37, 
@@ -41,6 +42,7 @@ class TestZeemanSolver(unittest.TestCase):
                 'L' : 0,
                 'S' : 0.0,
                 'hyperfine_A' : 0., # 
+                'hyperfine_B' : None, 
                 'mass' : 170.936323, #daltons 
                 'gI' : None,
                 'Z' : 70, 
@@ -51,7 +53,7 @@ class TestZeemanSolver(unittest.TestCase):
         ]
         self.solvers = {
             case['test_name'] : ZeemanHyperfineSolver(
-                case['I'], case['J'], case['L'], case['S'], case['hyperfine_A'], case['mass'], z = case['Z'], nuclear_moment = case['magnetic moment'],
+                case['I'], case['J'], case['L'], case['S'], case['hyperfine_A'], case['hyperfine_B'], case['mass'], z = case['Z'], nuclear_moment = case['magnetic moment'],
                 gi = case['gI'], freq_units = case['frequency units'], approximation = case['approximation'])
                 for case in self.test_cases
             }
