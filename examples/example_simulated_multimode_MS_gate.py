@@ -163,7 +163,7 @@ def main():
         end = time.perf_counter()
         ic(f'Propagating state took {end - start} s.')
 
-        basis_xx = ism.XPauliAndFockBasis([*spins, *modes])
+        basis_xx = ism.XPauliAndFockBasis([*spins, *modes], spins)
         psis_xx = [ism.State.from_state(basis_xx, psi) for psi in psis]
 
         alphas = np.array([psi.compute_coherent_displacements(spins, modes[0]) for psi in psis_xx])

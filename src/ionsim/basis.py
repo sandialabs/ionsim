@@ -259,24 +259,11 @@ class YPauliBasis(Basis):
 @dataclass(frozen=True, eq=False)
 class XPauliAndFockBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix and Fock states."""
-#<<<<<<< HEAD
-
- #    @property
- #    def spin_DOFs(self):
- #        """ Returns list of spin degrees of freedom or empty list if none. """
- #        spins = [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicSpin)]
- #        return spins 
-
- #    @property
- #    def motional_modes(self):
- #        return [dof for dof in self.degrees_of_freedom if dof not in self.spin_DOFs]
-#=======
     atomic_structure_DOFs: list[AtomicStructure]
 
     @property
     def motional_modes(self):
         return [dof for dof in self.degrees_of_freedom if dof not in self.atomic_structure_DOFs]
-#>>>>>>> main
 
     @property
     def vectors(self):
@@ -285,11 +272,7 @@ class XPauliAndFockBasis(Basis):
         minus = 1/np.sqrt(2)*np.array([1, -1])
         groups = list(itertools.product(
             *[
- #<<<<<<< HEAD
- #                [plus, minus] if dof in self.spin_DOFs else
- #=======
                 [plus, minus] if dof in self.atomic_structure_DOFs else
-#>>>>>>> main
                 [np.eye(len(dof.energy_levels))[i] for i in range(len(dof.energy_levels))]
                 for dof in self.degrees_of_freedom
             ]
