@@ -87,7 +87,7 @@ class Dissipator(CompositeOperator):
             
             # Static, diagonal contribution 
             if isinstance(lindblad_operator, GeneralOperator):
-                L_matrix += lindblad_operator.diagonal_contribution.static_matrix
+                L_matrix += lindblad_operator.energy_shift_operator_contribution.static_matrix
             elif isinstance(lindblad_operator, EnergyShiftOperator):
                 L_matrix += lindblad_operator.static_matrix
 
