@@ -57,7 +57,6 @@ class TrappedIonCrystal:
         #self.nuclear_charges = self.atomic_charges * const.e # Z * e, const.e ==> elementary charge in Coulombs 
 
         # Trapping frequencies for each ion 
-        # TODO: loop and vectorize trap frequencies?  
         self.omega_x = self.calculate_species_trap_frequencies(omega_x)   
         self.omega_y = self.calculate_species_trap_frequencies(omega_y)
         self.omega_z = self.calculate_species_trap_frequencies(omega_z)    
@@ -141,14 +140,13 @@ class TrappedIonCrystal:
         """ Given the eigensolve of the dynamical matrix, get the transform matrix to the canonical coordinates.
             X = S X', where X' = (Q,P)^T and X = (q,p)^T
         """
-        ## TODO: understand the sign in the transformation matrix
+        # the sign due to the convention of writing the time evolution as exp(-iwt)
         sign = -1
         num_coords, num_eigenvalues = np.shape(eigenvectors)
         assert num_coords //2 == num_eigenvalues 
         T = np.zeros((num_coords,num_coords),dtype=complex) 
         eigenvectors = self.normalize_eigenvectors(eigenvectors, H, eigenvalues)
         T = np.sqrt(2)*np.concatenate((np.real(eigenvectors), sign*np.imag(eigenvectors)), axis=1)
-        # the sign is likely due to the convention of writing the time evolution as exp(-iwt)
         return T
 
     def check_for_zero_modes(self):
@@ -196,14 +194,13 @@ class TrappedIonCrystal:
 
         """
         # Convert to dimensionless units using axial trap frequency and first ion's mass and charge
-        # TODO: take in input here or in class constructor for mass, charge, trap scales.
         self.set_up_dimensionless_parameters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
         self.equilibrium_positions = self.solve_for_equilibrium_positions()
 
         # Use configurable reindexing strategy
         if self.reindexing_strategy == 'z_axis':
             self.reindex_ions_by_z()
-        else:  # 'distance'
+        else:  
             self.reindex_ions()
 
         # Compute helper matrices for computing normal mode properties
@@ -220,7 +217,6 @@ class TrappedIonCrystal:
         # Perform checks
         self.check_outer_relation(H_matrix)
         self.check_diagonalization(T_matrix, S_matrix, E_matrix)
-        #self.hasrun = True  
 
     @property
     def normal_mode_frequencies(self):
@@ -279,7 +275,6 @@ class TrappedIonCrystal:
 
     def reindex_ions(self):
         """Re-indexes the ions to order based on the distance from the center of the trap, where smallest index is closest to the center."""
-        # TODO: How are even/odd cases is handled?
         x,y,z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
         r = np.sqrt(x**2 + y**2 + z**2)
         idx = np.argsort(r)
@@ -310,7 +305,7 @@ class TrappedIonCrystal:
         self.omega_x = self.omega_x[idx]
         self.omega_y = self.omega_y[idx]
         self.omega_z = self.omega_z[idx]
-        # all ions are the same so this is safe. TODO: When does this change?
+        # uses first ion's properties as the characteristic scalings 
         self.set_up_dimensionless_parameters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
 
 
@@ -497,7 +492,6 @@ class TrappedIonCrystal:
         J = np.block([[zeros, I], [-I, zeros]])
         return J    
 
-    ### Mode organizing helper methods  
     def sort_modes(self, eigvals, eigvecs):
        eigvals = np.imag(eigvals)
        sort_dex = np.argsort(eigvals)
@@ -516,7 +510,6 @@ class TrappedIonCrystal:
         eigvals, eigvecs = self.sort_modes(eigvals, eigvecs)
         eigvals, eigvecs = self.split_modes(eigvals, eigvecs)
 
-        # Apply branch sorting if configured
         if self.mode_organization == 'branch_sorted':
             eigvals, eigvecs = self.sort_by_branch(eigvals, eigvecs)
 
@@ -549,7 +542,7 @@ class TrappedIonCrystal:
         sorted_by_branch_evecs = np.zeros_like(evecs)
         for direction in range(3):
             direction_indices = np.where(classifier == direction)[0]
-            # they are already sorted by frequency from the original mode analysis code, so we can just take them in order
+            # they are already sorted by frequency, so take them in order  
             sorted_by_branch_evals[direction*N_ions:(direction+1)*N_ions] = evals[direction_indices]
             sorted_by_branch_evecs[:, direction*N_ions:(direction+1)*N_ions] = evecs[:, direction_indices]
         return sorted_by_branch_evals, sorted_by_branch_evecs 
@@ -566,8 +559,6 @@ class TrappedIonCrystal:
             For N ions, this form organizes the 3N modes into N modes per direction "d", where d = x, y, z. 
 
         """ 
-
-        # TODO: For the linear case: the shape should be (d, N, N) for d dimensions (3), N ions, and N modes per direction. 
         eigvecs = self.eigvecs
         num_coords, num_modes = np.shape(eigvecs) 
         num_ions = num_modes // 3
@@ -591,7 +582,7 @@ class TrappedIonCrystal:
         trap_frequencies = np.array([self.omega_x[0], self.omega_y[0], self.omega_z[0]])        
         mass = self.atomic_masses[0] 
         eta_x, eta_y, eta_z = wavenumber * np.sqrt(const.hbar / (2 * mass * trap_frequencies))
-        return eta_x, eta_y, eta_z    # ignore the phase
+        return eta_x, eta_y, eta_z  
 
     def return_equilibrium_positions(self, dimensionless: bool) -> Vector:
         """Return equilibrium positions in either dimensionless or SI units (inverse meters)."""
@@ -624,7 +615,6 @@ class TrappedIonCrystal:
                 raise IonSimError("Atomic structure basis should only contain AtomicStructure objects. No motional modes should be included.")
             atomic_masses.append(DOF.atomic_mass) 
             atomic_charges.append(DOF.atomic_charge) 
-        # Construct the class 
         return cls(num_ions, omega_x, omega_y, omega_z, atomic_masses, atomic_charges)
 
     def build_mode_DOFs(self, mode_indices: list[int], fock_dimensions: Vector | int) -> list[MotionalMode]:
@@ -633,7 +623,6 @@ class TrappedIonCrystal:
             - Applies each fock dimension to each mode, or applies the same fock dimension to all the modes
         """
         modes = []
-        # Convert list of Fock dimensions to an array if it's not already an array
         fock_dimensions = self.convert_to_array(fock_dimensions).astype(int)
         for idx, fock_dim in zip(mode_indices, fock_dimensions):
             mode_index = idx # or some function of this index
@@ -1000,7 +989,6 @@ class LinearIonChain(TrappedIonCrystal):
         num_modes = 3 * self.num_ions
         total_ld_params = np.zeros((self.num_ions, num_modes), dtype=complex)
 
-        # TODO: Replace with dot product for efficiency 
         for i in range(3):
             total_ld_params += wavevector[i] * mode_pf[i, :, :]
 
@@ -1101,4 +1089,3 @@ class LinearIonChain(TrappedIonCrystal):
         print(f"\nAxial mode frequencies: {axial_freqs/(2*np.pi)/1e6} MHz")
         print(f"Radial X mode frequencies: {radial_x_freqs/(2*np.pi)/1e6} MHz")
         print(f"Radial Y mode frequencies: {radial_y_freqs/(2*np.pi)/1e6} MHz")
-
