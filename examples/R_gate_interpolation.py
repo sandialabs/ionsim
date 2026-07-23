@@ -1,14 +1,19 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
 from pathlib import Path
-
-import ionsim as sm
-
 import numpy as np
 from scipy.sparse import kron as skron
 import h5py
-
 from icecream import ic
 import sys
 
+import ionsim as sm
 sparse = False
 modulate_amplitude = False
 num_spins = 1
