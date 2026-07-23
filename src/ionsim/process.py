@@ -145,12 +145,12 @@ class Gate(Process):
             for final_state in final_states: # iterate rows with inner loop for column-stacked supervectors
                 density_matrix = np.outer(final_state.wavefunction, final_state_p.wavefunction.conj().T)
                 if dofs_to_trace_out is None:
-                    spin_state = State.from_density_matrix(basis, density_matrix)
+                    reduced_state = State.from_density_matrix(basis, density_matrix)
                 else:
-                    spin_state = State.from_density_matrix(
+                    reduced_state = State.from_density_matrix(
                         basis, density_matrix
                     ).trace_out_degree_of_freedom(dof_to_trace_out)
-                supervectors.append(spin_state.supervector)
+                supervectors.append(reduced_state.supervector)
         process_matrix = np.array(supervectors).T
 
         return cls(reduced_basis, process_matrix, unitary=unitary)

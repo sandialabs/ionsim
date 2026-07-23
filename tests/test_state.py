@@ -12,7 +12,11 @@ import unittest
 import numpy as np
 
 from ionsim.state import State
-from ionsim.degree_of_freedom import AtomicSpin, MotionalMode
+#<<<<<<< HEAD
+#from ionsim.degree_of_freedom import AtomicSpin, MotionalMode
+#=======
+from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
+#>>>>>>> main
 from ionsim.basis import StandardBasis, XPauliBasis
 from ionsim.named_operators import Pauli
 from ionsim.testing import assert_array_close
@@ -21,19 +25,19 @@ class TestState(unittest.TestCase):
 
     def setUp(self):
         """Set up the necessary objects for testing."""
-        self.spin_a = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        self.spin_b = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        self.basis = StandardBasis([self.spin_a, self.spin_b])
-        self.basis_x = XPauliBasis([self.spin_a, self.spin_b])
+        self.atomic_structure_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.atomic_structure_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.basis = StandardBasis([self.atomic_structure_a, self.atomic_structure_b])
+        self.basis_x = XPauliBasis([self.atomic_structure_a, self.atomic_structure_b])
         self.eig_x = np.array([[1, 0], [0, -1]])
         self.state = State.from_density_matrix(self.basis_x, np.kron(self.eig_x, Pauli.I))
 
-        # Set up spin-motional state with 2 spins and 1 motional mode  
+        # Set up atomic structure - motional state with 2 structure and 1 motional mode  
         self.mode = MotionalMode.from_frequency(frequency=2*np.pi * 3e6, fock_dimension=5)
-        self.spin_motion_basis = StandardBasis([self.spin_a, self.spin_b, self.mode])
-        state_coefficients = np.zeros(len(self.spin_motion_basis.states))
+        self.atomic_structure_motion_basis = StandardBasis([self.atomic_structure_a, self.atomic_structure_b, self.mode])
+        state_coefficients = np.zeros(len(self.atomic_structure_motion_basis.states))
         state_coefficients[0] = 1.
-        self.spin_motion_state = State.from_coefficients(self.spin_motion_basis, list(state_coefficients))
+        self.atomic_structure_motion_state = State.from_coefficients(self.atomic_structure_motion_basis, list(state_coefficients))
 
     def test_density_matrix_in_new_basis(self):
         """Test the density matrix in the new basis."""
@@ -48,7 +52,7 @@ class TestState(unittest.TestCase):
         domain_limit = 2.
         x_grid = np.linspace(-domain_limit, domain_limit, 25)
         p_grid = np.linspace(-domain_limit, domain_limit, 25)
-        W_distribution = self.spin_motion_state.compute_wigner_distribution(x_grid, p_grid)[0]        
+        W_distribution = self.atomic_structure_motion_state.compute_wigner_distribution(x_grid, p_grid)[0]        
 
         # Test just one slice of the array and half of its contents (U(1) symmetric about origin)) 
         slice_indx = 12
@@ -65,7 +69,7 @@ class TestState(unittest.TestCase):
     def test_quadrature_computation(self):
         """ Yest computation of x, p, and x^2, and p^2 expectations """ 
         include_squared_quantities = True
-        x, p, x2, p2 = self.spin_motion_state.compute_quadratures(include_squared_quantities)
+        x, p, x2, p2 = self.atomic_structure_motion_state.compute_quadratures(include_squared_quantities)
 
         x_expected = 0.
         p_expected = 0.

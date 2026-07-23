@@ -40,10 +40,10 @@ class State:
         if not self.basis.motional_modes: 
             return None 
 
-        # Trace out spin DOFs to obtain a purely motional state  
+        # Trace out atomic structure DOFs to obtain a purely motional state  
         state = self
-        for spin in self.basis.spin_DOFs:
-            state = state.trace_out_degree_of_freedom(spin)            
+        for dof in self.basis.atomic_structure_DOFs:
+            state = state.trace_out_degree_of_freedom(dof)
              
         return state 
 
@@ -179,15 +179,15 @@ class State:
         basis = StandardBasis([dof for dof in self.basis.degrees_of_freedom if dof is not degree_of_freedom])
         return State.from_density_matrix(basis, density_matrix)
 
-    def compute_coherent_displacements(self, spin_dofs: list[DegreeOfFreedom], motional_dof: DegreeOfFreedom):
-        """Compute the coherent displacement (expectation value of the lowering operator) for each spin state."""
-        assert(len(self.basis.degrees_of_freedom) == len(spin_dofs) + 1) # TODO: trace out other degrees of freedom
-        spin_basis = StandardBasis(spin_dofs)
+    def compute_coherent_displacements(self, atomic_structure_dofs: list[DegreeOfFreedom], motional_dof: DegreeOfFreedom):
+        """Compute the coherent displacement (expectation value of the lowering operator) for each angular momentum state."""
+        assert(len(self.basis.degrees_of_freedom) == len(atomic_structure_dofs) + 1) # TODO: trace out other degrees of freedom
+        structure_basis = StandardBasis(atomic_structure_dofs)
         lowering = Fock.lowering(len(motional_dof.energy_levels))
         diplacements = []
-        for vector in spin_basis.vectors:
-            spin_proj = spin_basis.compute_projector_matrix(vector)
-            displacement = np.trace(np.kron(spin_proj, lowering).dot(self.density_matrix))
+        for vector in structure_basis.vectors:
+            structure_proj = structure_basis.compute_projector_matrix(vector)
+            displacement = np.trace(np.kron(structure_proj, lowering).dot(self.density_matrix))
             diplacements.append(displacement)
         return diplacements
 
