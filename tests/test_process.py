@@ -98,7 +98,7 @@ class TestProcess(unittest.TestCase):
         #print(f"Parameter dict: {sig.parameters}")
         circuit_parameters = {'R__phi' : 0., 'R__theta' : np.pi/2}
         outcome_prob = prob_function(**circuit_parameters)
-        print(outcome_prob)
+        #print(outcome_prob)
         #self.assertAlmostEqual(outcome_prob, 0.9530090510307307, places = 10)
 
         # Compute outcome probability using probability function: 
