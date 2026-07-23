@@ -4,7 +4,7 @@ import scipy.constants as const
 import warnings
 import scipy.optimize as opt
 from ionsim.custom_types import Matrix, Vector
-from ionsim.degree_of_freedom import AtomicSpin, MotionalMode
+from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.basis import StandardBasis 
 
 ## References: 
@@ -604,24 +604,24 @@ class TrappedIonModeAnalysis:
     def from_species(cls, species_name: str, num_ions: int, omega_x: float, omega_y: float, omega_z: float):
         """Build the mode analysis class from a species name, corresponding to a system of N ions under harmonic trapping."""
         # Import necessary data for the species
-        species_data = AtomicSpin.get_config_data(species_name)
+        species_data = AtomicStructure.get_config_data(species_name)
         atomic_mass = species_data['mass']
         atomic_charge = species_data['charge']
         # Construct the class
         return cls(num_ions, omega_x, omega_y, omega_z, atomic_mass, atomic_charge)
 
     @classmethod
-    def from_atomic_spin_basis(cls, spin_basis: StandardBasis, omega_x: float, omega_y: float, omega_z: float): 
-        """ Build the mode analysis class from a basis of AtomicSpin degrees of freedom under harmonic trapping. """ 
+    def from_atomic_structure_basis(cls, atomic_structure_basis: StandardBasis, omega_x: float, omega_y: float, omega_z: float): 
+        """ Build the mode analysis class from a basis of AtomicStructure degrees of freedom under harmonic trapping. """ 
         # Extract number of ions and the mass and atomic number from the DOF in the basis 
-        spin_DOFs = spin_basis.degrees_of_freedom 
-        num_ions = len(spin_DOFs)
+        atomic_struct_DOFs = atomic_structure_basis.degrees_of_freedom 
+        num_ions = len(atomic_struct_DOFs)
         atomic_masses = []
         atomic_charges = []
 
-        for DOF in spin_DOFs:
-            if not isinstance(DOF, AtomicSpin):
-                raise IonSimError("Atomic structure basis should only contain AtomicSpin objects. No motional modes should be included.")
+        for DOF in atomic_struct_DOFs:
+            if not isinstance(DOF, AtomicStructure):
+                raise IonSimError("Atomic structure basis should only contain AtomicStructure objects. No motional modes should be included.")
             atomic_masses.append(DOF.atomic_mass) 
             atomic_charges.append(DOF.atomic_charge) 
         # Construct the class 

@@ -7,12 +7,10 @@ import matplotlib
 import matplotlib.pyplot as plt
 import platform
 from scipy.special import factorial 
-matplotlib.rcParams['text.usetex']=True 
-style_path_data = 'style/plot_style_data.txt'
 
 TPI = 2*np.pi
 
-def four_tone_hamiltonian(basis, spin_basis, modes, spectator_modes, etas, rabi_rate_x, rabi_rate_y, omega_x_red, omega_x_blue, omega_y_red, omega_y_blue, targetIon: AtomicSpin, 
+def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi_rate_x, rabi_rate_y, omega_x_red, omega_x_blue, omega_y_red, omega_y_blue, targetIon: AtomicStructure, 
                         index_mode_i:int, index_mode_j:int, phi:float, sparse=False, mod=None): 
     ''' Applies 4-tone MS-like gate to a single ion "k" to produce a spin-dependent motional operation. 
         Consists of 2 sidebands (red and blue) on mode i and another 2 sidebands (red and blue) on mode j:  
@@ -33,7 +31,7 @@ def four_tone_hamiltonian(basis, spin_basis, modes, spectator_modes, etas, rabi_
 
     # build matrices for fundamental raising/lowering spin/Fock operators: 
     # Raising operator for target ion "k" 
-    raise_spin_k = spin_basis.enlarge_matrix(ism.Pauli.plus, [targetIon])
+    raise_spin_k = qubit_basis.enlarge_matrix(ism.Pauli.plus, [targetIon])
     
     fock_dimension = len(modes[index_mode_i].energy_levels)
     assert fock_dimension == len(modes[index_mode_j].energy_levels)
@@ -115,17 +113,17 @@ def thermal_state_populations(nbar: float, fock_dimension):
     return fock_populations*normalization 
 
 
-def dephasing_dissipator(basis, spin_basis, modes, dephasing_rates: list[float]):
+def dephasing_dissipator(basis, qubit_basis, modes, dephasing_rates: list[float]):
     ''' Dissipator for ion motional mode dephasing ''' 
 
     motional_basis = ism.StandardBasis([*modes])
-    spins = spin_basis.degrees_of_freedom
+    qubits = qubit_basis.degrees_of_freedom
     
     # Build spin basis identity 
     spin_identities = []
-    for spin in spins:
+    for spin in qubits:
         # Identity matrix for mode m in Fock space, enlarged to fit dimensionality of M modes 
-        spin_identities.append(spin_basis.enlarge_matrix(ism.Pauli.I, [spin]))
+        spin_identities.append(qubit_basis.enlarge_matrix(ism.Pauli.I, [spin]))
 
     spin_identity = np.sum(spin_identities, axis=0)
 
@@ -154,9 +152,9 @@ def heating_dissipator(basis, modes, heating_rates: list[float]):
     
     # Build spin basis identity 
     spin_identities = []
-    for spin in spins:
+    for spin in qubits:
         # Identity matrix for mode m in Fock space, enlarged to fit dimensionality of M modes 
-        spin_identities.append(spin_basis.enlarge_matrix(ism.Pauli.I, [spin]))
+        spin_identities.append(qubit_basis.enlarge_matrix(ism.Pauli.I, [spin]))
 
     spin_identity = np.sum(spin_identities, axis=0)
 
@@ -185,7 +183,7 @@ def carrier_hamiltonian(basis, target_ion, rabi_rate: float, phase: float, omega
     """ Hamiltonian for carrier spin pulse: (hbar * Omega/2) * sigma_phi e^iphi + h.c. """ 
     prefactor = rabi_rate * 0.5 * np.exp(-1j*phase)
     operator_raising = basis.enlarge_matrix(prefactor * ism.Pauli.plus, [target_ion])
-    #raise_spin_k = spin_basis.enlarge_matrix(ism.Pauli.plus, [target_ion])
+    #raise_spin_k = qubit_basis.enlarge_matrix(ism.Pauli.plus, [target_ion])
 
     operators = [ism.CouplingOperator.from_matrix(basis, operator_raising, omega_carrier, modulation_function=mod)] 
     interaction_frame_energies = [-state.energy for state in basis.states]
@@ -275,21 +273,21 @@ def main():
     num_ions = 2
 
     # Create 171Yb+ qubits 
-    spins = [
-        ism.AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+    qubits = [
+        ism.AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         for _ in range(num_ions)
     ]
 
-    target_ion = spins[0]    
-    target_ion_index = spins.index(target_ion)
+    target_ion = qubits[0]    
+    target_ion_index = qubits.index(target_ion)
 
-    spin_basis = ism.StandardBasis([*spins])
+    qubit_basis = ism.StandardBasis([*qubits])
 
     # Use mode analysis to get motional mode information 
     omega_x = 2.1 * TPI * 1E6 # MHz -> rad/s  
     omega_y = 2.6 * TPI * 1E6 # ""  
     omega_z = 0.50 * TPI * 1E6 # ""  
-    trap_analysis = ism.LinearIonChainAnalysis.from_atomic_spin_basis(spin_basis, omega_x, omega_y, omega_z) 
+    trap_analysis = ism.LinearIonChainAnalysis.from_atomic_structure_basis(qubit_basis, omega_x, omega_y, omega_z) 
     trap_analysis.solve_ion_trap_equilibrium()
     print()
     trap_analysis.print_chain_summary()
@@ -306,14 +304,14 @@ def main():
 
     fock_dimension = 10
     branch_dir = 'x'
-    spin_basis = ism.StandardBasis([target_ion]) # Now reset the spin basis to just include the target ion 
+    qubit_basis = ism.StandardBasis([target_ion]) # Now reset the spin basis to just include the target ion 
     modes = trap_analysis.build_mode_DOFs_from_branch(branch_dir, [tilt_mode_index, COM_mode_index], fock_dimension)
     if include_spectator_mode:
-        basis = ism.StandardBasis([spins[target_ion_index], *modes])
+        basis = ism.StandardBasis([qubits[target_ion_index], *modes])
         motional_basis = ism.StandardBasis(modes)
         spectator_modes = [modes[1]]
     else:
-        basis = ism.StandardBasis([spins[target_ion_index], modes[tilt_mode_index]])
+        basis = ism.StandardBasis([qubits[target_ion_index], modes[tilt_mode_index]])
         motional_basis = ism.StandardBasis([modes[tilt_mode_index]])
         modes = [modes[0]]
         spectator_modes = [] 
@@ -403,10 +401,10 @@ def main():
     # =============================
     ## Create Hamiltonians: 
     squeezing_phase = 0.
-    squeezing_hamiltonian = four_tone_hamiltonian(basis, spin_basis, modes, spectator_modes, lamb_dicke_parameters, x_rabi_rate, y_rabi_rate, omega_r_mode_i, omega_b_mode_i, omega_r_mode_j, 
+    squeezing_hamiltonian = four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, lamb_dicke_parameters, x_rabi_rate, y_rabi_rate, omega_r_mode_i, omega_b_mode_i, omega_r_mode_j, 
                                                     omega_b_mode_j, target_ion, mode_i_index, mode_j_index, squeezing_phase, mod=mod_function)
 
-    reverse_squeezing_hamiltonian = four_tone_hamiltonian(basis, spin_basis, modes, spectator_modes, lamb_dicke_parameters, x_rabi_rate, y_rabi_rate, omega_r_mode_i, omega_b_mode_i, omega_r_mode_j, omega_b_mode_j, 
+    reverse_squeezing_hamiltonian = four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, lamb_dicke_parameters, x_rabi_rate, y_rabi_rate, omega_r_mode_i, omega_b_mode_i, omega_r_mode_j, omega_b_mode_j, 
                                                         target_ion, mode_i_index, mode_j_index, squeezing_phase + np.pi, mod=mod_function) 
 
     pi_pulse_hamiltonian = carrier_hamiltonian(basis, target_ion, rabi_rate, 0., np.abs(omega_qubit), False, None)  
@@ -414,7 +412,7 @@ def main():
     if include_dissipation : 
         # Create dissipator and then full Lindbladian: 
         #ion_heating_dissipator = heating_dissipator(basis, modes, mode_heating_rates) 
-        _dephasing_dissipator = dephasing_dissipator(basis, spin_basis, modes, mode_dephasing_rates) 
+        _dephasing_dissipator = dephasing_dissipator(basis, qubit_basis, modes, mode_dephasing_rates) 
         lindbladian_4tone = ism.Lindbladian(squeezing_hamiltonian, _dephasing_dissipator)
         #lindbladian_4tone = ism.Lindbladian(squeezing_hamiltonian, ion_heating_dissipator)
         # Create reverse processes 
@@ -462,8 +460,8 @@ def main():
 
     ground_state_level_index = 0 
     excited_state_level_index = 1 
-    ground_state_level_name = spin_basis.degrees_of_freedom[0].energy_levels[ground_state_level_index].name 
-    excited_state_level_name = spin_basis.degrees_of_freedom[0].energy_levels[excited_state_level_index].name 
+    ground_state_level_name = qubit_basis.degrees_of_freedom[0].energy_levels[ground_state_level_index].name 
+    excited_state_level_name = qubit_basis.degrees_of_freedom[0].energy_levels[excited_state_level_index].name 
     print("Ground state level name: " + ground_state_level_name)
     print("Excited state level name: " + excited_state_level_name)
 
@@ -524,7 +522,6 @@ def main():
     new_basis = spin_rhos[0].basis # should be 2-qubit basis 
     
     populations = np.array([rho.compute_basis_state_probabilities() for rho in spin_rhos])
-    plt.style.use(style_path_data) 
     plt.figure(figsize=(6,4))
     for i,state in enumerate(new_basis.states):
         plt.plot(times*1E6, populations[:, i], label= state.name)
@@ -671,7 +668,6 @@ def main():
         r_X[i], r_P[i] = estimate_squeezing_magnitude(motional_rhos[i], motional_rhos[i].basis)
         n_t[i] = compute_N(motional_rhos[i], motional_rhos[i].basis)
 
-    plt.style.use(style_path_data) 
     plt.figure(figsize=(5,5))
     plt.plot(times*1E6, r_X, marker = 's', linestyle = 'solid', color = 'k', markersize = 3, linewidth = 1.5, label = r'$r_{X}$')
     plt.plot(times*1E6, r_P, marker = 'o', linestyle = 'solid', color = 'r', markersize = 3, linewidth = 1.5, label = r'$r_{P}$')

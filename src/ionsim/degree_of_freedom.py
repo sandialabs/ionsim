@@ -1,3 +1,12 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 from ionsim.energy_level import EnergyLevel
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.atomic_internal_energy_level import LSFineLevel, LSHyperfineLevel, J1L2FineLevel, J1L2HyperfineLevel
@@ -22,8 +31,8 @@ class DegreeOfFreedom(ABC):
     #name: str | None = None # TODO: will we use these names?
 
 @dataclass(frozen=True, eq=False)
-class AtomicSpin(DegreeOfFreedom):
-    """An atomic spin degree of freedom, i.e. its coupled spin and orbital angular momentum."""
+class AtomicStructure(DegreeOfFreedom):
+    """An atomic structure object, containing atomic internal energy levels corresponding to angular momentum eigenstates.""" 
     energy_levels: list[AtomicInternalEnergyLevel]
     # Store mass and atomic number 
     atomic_mass: float 
@@ -31,9 +40,9 @@ class AtomicSpin(DegreeOfFreedom):
     name: str | None = None # TODO: will we use these names?
 
     @classmethod
-    def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None,
+    def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None, 
             name: str | None = None, magnetic_field: float=0.):
-        """Build the atomic spin degree of freedom for a particular species of atom."""
+        """Build the atomic structure degree of freedom for a particular species of atom."""
         config_data = cls.get_config_data(species)
         nuclear_spin = config_data['nuclear_spin']
         levels_data = config_data['levels']

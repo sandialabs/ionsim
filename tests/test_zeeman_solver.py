@@ -1,8 +1,22 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 import unittest
 import numpy as np
 from scipy.linalg import expm
 from ionsim.zeeman_solver import ZeemanHyperfineSolver 
-from ionsim.degree_of_freedom import AtomicSpin
+#<<<<<<< HEAD
+#from ionsim.degree_of_freedom import AtomicSpin
+#=======
+from ionsim.testing import assert_array_close
+from ionsim.degree_of_freedom import AtomicStructure
+#>>>>>>> main
 
 class TestZeemanSolver(unittest.TestCase):
 
@@ -46,8 +60,8 @@ class TestZeemanSolver(unittest.TestCase):
                 for case in self.test_cases
             }
 
-        # Test 3: Use AtomicSpin from_species()  
-        self.spin = AtomicSpin.from_species(species='171Yb', term_symbols=['S0'], level_names=['S0,1/2,1/2', 'S0,1/2,-1/2'], magnetic_field = 400.) 
+        # Test 3: Use AtomicStructure from_species()  
+        self.Yb = AtomicStructure.from_species(species='171Yb', term_symbols=['S0'], level_names=['S0,1/2,1/2', 'S0,1/2,-1/2'], magnetic_field = 400.) 
 
     def test_explicit_zeeman_solvers(self):
         # Test functionality when using explicit construction of Zeeman Solver objects for each test case. 
@@ -94,10 +108,10 @@ class TestZeemanSolver(unittest.TestCase):
                 self.assertAlmostEqual(calculated_value, test['Zeeman shift'], places=6) 
 
 
-    def test_AtomicSpin_ZeemanShift(self): 
-        """Test the Zeemaen shift functionality within AtomicSpin class."""
+    def test_AtomicStructure_ZeemanShift(self): 
+        """Test the Zeemaen shift functionality within AtomicStructure class."""
         expected_frequency = 149.98214416459987*2. # kHz
-        qubit_frequency = self.spin.energy_levels[1].energy - self.spin.energy_levels[0].energy
+        qubit_frequency = self.Yb.energy_levels[1].energy - self.Yb.energy_levels[0].energy
         qubit_frequency /= (2.* np.pi) # convert from rad/s to Hz 
         self.assertAlmostEqual(expected_frequency, np.abs(qubit_frequency)*1E-3, places=6)
 

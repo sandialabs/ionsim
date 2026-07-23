@@ -1,3 +1,12 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 from ionsim.custom_math import trapz_for_matrix
 from ionsim.custom_types import Vector, Matrix
 from ionsim.noise import Noise
@@ -136,12 +145,12 @@ class Gate(Process):
             for final_state in final_states: # iterate rows with inner loop for column-stacked supervectors
                 density_matrix = np.outer(final_state.wavefunction, final_state_p.wavefunction.conj().T)
                 if dofs_to_trace_out is None:
-                    spin_state = State.from_density_matrix(basis, density_matrix)
+                    reduced_state = State.from_density_matrix(basis, density_matrix)
                 else:
-                    spin_state = State.from_density_matrix(
+                    reduced_state = State.from_density_matrix(
                         basis, density_matrix
                     ).trace_out_degree_of_freedom(dof_to_trace_out)
-                supervectors.append(spin_state.supervector)
+                supervectors.append(reduced_state.supervector)
         process_matrix = np.array(supervectors).T
 
         return cls(reduced_basis, process_matrix, unitary=unitary)
