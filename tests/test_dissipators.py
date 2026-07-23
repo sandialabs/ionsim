@@ -20,7 +20,7 @@ from ionsim.operator import CouplingOperator, EnergyShiftOperator
 from ionsim.named_operators import Pauli, Fock
 from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.dissipator import Dissipator, Lindbladian
+from ionsim.lindbladian import Dissipator, Lindbladian
 from ionsim.state import State
 
 TPI = 2*np.pi
