@@ -18,7 +18,7 @@ def characteristic_length(q: float, mass: float, omega: float) -> float:
     return l0
 
 
-class TrappedIonModeAnalysis:
+class TrappedIonCrystal:
     def __init__(self, num_ions: int, omega_x: float, omega_y: float, omega_z: float, atomic_masses: Vector | float, atomic_charges: Vector | int,
                  mode_organization: str = 'frequency_only', reindexing_strategy: str = 'distance'):
         """ Class for determining properties of trapped-ion phonon modes, requiring the following system parameters:
@@ -716,10 +716,7 @@ class TrappedIonModeAnalysis:
         }
 
 
-#You could redefine the equilibrium finding function to assert that the equilibrium is linear. For example, make a wrapper inside the function for the potential, Jacobian, and Hessian that forces x_i and y_i = 0. 
-#This is the code for the Lamb-Dicke parameters: (not that overall phases don't matter here, but the relative phase does. We could pin down the phase with some convention like, "each mode's first non-negative LD value is defined positive.")
-
-class LinearIonChainAnalysis(TrappedIonModeAnalysis):
+class LinearIonChain(TrappedIonCrystal):
     """ Subclass for setting up and analyzing linear ion chains.
 
         In a linear ion chain, ions are typically aligned along the z-axis (axial direction),
@@ -1056,7 +1053,7 @@ class LinearIonChainAnalysis(TrappedIonModeAnalysis):
 
         def separation_error(wz_Hz):
             # Create a temporary analysis object with the current wz
-            temp_analysis = LinearIonChainAnalysis(
+            temp_analysis = LinearIonChain(
                 num_ions=self.num_ions,
                 omega_x=self.omega_x[0],
                 omega_y=self.omega_y[0],

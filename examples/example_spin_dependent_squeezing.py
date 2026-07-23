@@ -287,7 +287,7 @@ def main():
     omega_x = 2.1 * TPI * 1E6 # MHz -> rad/s  
     omega_y = 2.6 * TPI * 1E6 # ""  
     omega_z = 0.50 * TPI * 1E6 # ""  
-    trap_analysis = ism.LinearIonChainAnalysis.from_atomic_structure_basis(qubit_basis, omega_x, omega_y, omega_z) 
+    trap_analysis = ism.LinearIonChain.from_atomic_structure_basis(qubit_basis, omega_x, omega_y, omega_z) 
     trap_analysis.solve_ion_trap_equilibrium()
     print()
     trap_analysis.print_chain_summary()
