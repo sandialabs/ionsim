@@ -8,7 +8,7 @@
 #***************************************************************************************************
 
 from ionsim.ionsim_error import IonSimError
-from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicSpin
+from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.custom_types import Vector, Matrix
@@ -196,16 +196,15 @@ class StandardBasis(Basis):
         return list(np.eye(len(self.states)))
 
     @property
-    def spin_DOFs(self):
-        """ Returns list of spin degrees of freedom or empty list if none. """
-        spins = [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicSpin)]
-        return spins
+    def atomic_structure_DOFs(self):
+        """ Returns list of atomic structure degrees of freedom or empty list if none. """
+        return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicStructure)]
 
 
 @dataclass(frozen=True, eq=False)
 class ZPauliBasis(StandardBasis):
     """A basis in which the basis states correspond to the (plus/minus) eigenstates of the z-Pauli spin matrix."""
-    degrees_of_freedom: list[AtomicSpin]
+    degrees_of_freedom: list[AtomicStructure]
 
     def __post_init__(self):
         # self._check_if_pauli_basis() # TODO: should we only allow for one degree of freedom here?
@@ -214,7 +213,7 @@ class ZPauliBasis(StandardBasis):
 @dataclass(frozen=True, eq=False)
 class XPauliBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix."""
-    degrees_of_freedom: list[AtomicSpin]
+    degrees_of_freedom: list[AtomicStructure]
 
     def __post_init__(self):
         # self._check_if_pauli_basis() # TODO: should we only allow for one degree of freedom here?
@@ -233,7 +232,7 @@ class XPauliBasis(Basis):
 @dataclass(frozen=True, eq=False)
 class YPauliBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix."""
-    degrees_of_freedom: list[AtomicSpin]
+    degrees_of_freedom: list[AtomicStructure]
 
     def __post_init__(self):
         # self._check_if_pauli_basis() # TODO: should we only allow for one degree of freedom here?
@@ -252,11 +251,11 @@ class YPauliBasis(Basis):
 @dataclass(frozen=True, eq=False)
 class XPauliAndFockBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix and Fock states."""
-    atomic_spins: list[AtomicSpin]
+    atomic_structure_DOFs: list[AtomicStructure]
 
     @property
     def motional_modes(self):
-        return [dof for dof in self.degrees_of_freedom if dof not in self.atomic_spins]
+        return [dof for dof in self.degrees_of_freedom if dof not in self.atomic_structure_DOFs]
 
     @property
     def vectors(self):
@@ -265,7 +264,7 @@ class XPauliAndFockBasis(Basis):
         minus = 1/np.sqrt(2)*np.array([1, -1])
         groups = list(itertools.product(
             *[
-                [plus, minus] if dof in self.atomic_spins else
+                [plus, minus] if dof in self.atomic_structure_DOFs else
                 [np.eye(len(dof.energy_levels))[i] for i in range(len(dof.energy_levels))]
                 for dof in self.degrees_of_freedom
             ]

@@ -6,7 +6,6 @@
 # in compliance with the License. You may obtain a copy of the License at
 # http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
 #***************************************************************************************************
-
 from pathlib import Path
 
 import ionsim as sm
@@ -24,7 +23,7 @@ modulate_amplitude = False
 num_spins = 1
 
 spins = [
-    sm.AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+    sm.AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
     for _ in range(num_spins)
 ]
 basis = sm.StandardBasis([*spins])
