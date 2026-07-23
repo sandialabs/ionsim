@@ -16,6 +16,7 @@ import scipy
 import typing
 from typing import Callable, Dict, List, Sequence, get_type_hints, get_origin, get_args
 import inspect 
+import functools
 from functools import reduce, wraps 
 from icecream import ic
 
@@ -384,17 +385,36 @@ class Circuit(Process):
 
 
     ## TODO: Need to test this functionality for circuit pm function; we may need to move this into the Circuit PM fxn Helper module below 
+ #    def build_outcome_probability_function(self, initial_state: State, outcome_operator: Operator) -> Callable:
+ #        """ Returns a function that returns an outcome probability as a function of circuit model parameters """  
+ #        if self.process_matrix_function is None:
+ #            return None 
+ #
+ #        @wraps(self.process_matrix_function)
+ #        def outcome_probability_function(*args, **kwargs) -> float:
+ #            circuit_process_matrix = self.process_matrix_function(*args, **kwargs)
+ #            return predict_outcome_probability_from_process_matrix(initial_state, circuit_process_matrix, outcome_operator)
+ #            
+ #        return outcome_probability_function
     def build_outcome_probability_function(self, initial_state: State, outcome_operator: Operator) -> Callable:
         """ Returns a function that returns an outcome probability as a function of circuit model parameters """  
-        if self.process_matrix_function is None:
-            return None 
 
-        @wraps(self.process_matrix_function)
-        def outcome_probability_function(*args, **kwargs) -> float:
-            circuit_process_matrix = self.process_matrix_function(*args, **kwargs)
+        def scalar_function(circuit_process_matrix):
             return predict_outcome_probability_from_process_matrix(initial_state, circuit_process_matrix, outcome_operator)
-            
+
+        def outcome_probability_function(**kwargs):
+            return scalar_function(self.process_matrix_function(**kwargs)) 
+
+        outcome_probability_function.__signature__ = self.process_matrix_function.__signature__
+        outcome_probability_function.__name__ = "outcome_probability" 
+        outcome_probability_function.__doc__ = "Outcome probability given a circuit acted on an initial state.\n"
+        outcome_probability_function.scalar_fn = scalar_function # Needed by jax for gradient / derivative work 
+        outcome_probability_function.process_matrix_function = self.process_matrix_function 
         return outcome_probability_function
+
+ #        def outcome_probability_function(*args, **kwargs) -> float:
+ #            circuit_process_matrix = self.process_matrix_function(*args, **kwargs)
+ #            return predict_outcome_probability_from_process_matrix(initial_state, circuit_process_matrix, outcome_operator)
 
 
     def build_outcome_probabilities_function(self, initial_state: State, outcome_operators: list[Operator]) -> Callable:
@@ -454,16 +474,33 @@ class Circuit_Process_Matrix_Function_Helper():
             - requires jax, jaxlib  
     """ 
 
-    def __init__(self, gate_models: Sequence[Callable], separator: str = "__"):
+    def __init__(self, gate_models: Sequence[Callable], separator: str = "__", jax_native: bool=False, forward_diff_eps: float = 1e-6):
         """ 
             gate_models: a sequence to represent the order of gates applied in the circuit 
 
             separator: a string used for namespacing parameters within a gate model, e.g. "X_pi2__thetaX"
                 refers to the parameter arg thetaX within the gate model function X_pi2.  
 
+            jax_native: either a bool or a dictionary containing boolean for each gate in the gate sequence  
+
         """
-        self.gate_sequence = list(gate_models)
         self.separator = separator 
+
+        if isinstance(jax_native, bool):
+            flags = {f.__name__: jax_native for f in list(gate_models)}
+        else:
+            flags = {f.__name__: jax_native.get(f.__name__, False) for f in list(gate_models)}
+
+        # Wrap each gate model once and then reuse it whenever the gate appears: 
+        wrap_cache = {}
+        def get_effective(function: Callable) -> int:
+            # Key by id is safer than function name to avoid possible name conflicts 
+            if id(function) not in wrap_cache:
+                wrap_cache[id(function)] = function if flags[function.__name__] else make_matrix_function_jax_differentiable(function, eps=forward_diff_eps) 
+            return wrap_cache[id(function)] 
+
+        self.gate_sequence = [get_effective(f) for f in list(gate_models)] 
+
         self.unique_functions = list({id(f): f for f in self.gate_sequence}.values())
         self._param_map: dict[str, tuple] = {} # namespaced name -> (function name, original name)
         self._name_to_function: dict[str, Callable] = {}
@@ -606,6 +643,7 @@ class Circuit_Process_Matrix_Function_Helper():
         diff_values = {k: kwargs[k] for k in wrt}
         fixed_values = {k: v for k, v in kwargs.items() if k not in wrt}
         
+        # Set a 1-parameter function taking a dictionary for jax usage  
         def f(diff_params: dict):
             merged = {**fixed_values, **diff_params}
             U = self(**merged)
@@ -613,6 +651,7 @@ class Circuit_Process_Matrix_Function_Helper():
     
         value, gradients = jax.value_and_grad(f)(diff_values)
         return value, gradients
+
 
     def jacobian(self, vector_fn: Callable, wrt: list[str], **kwargs):
         """ Same as gradient (above) but for a vector-valued output (e.g. multiple outcome probabilities)
@@ -626,6 +665,7 @@ class Circuit_Process_Matrix_Function_Helper():
         diff_values = {k: kwargs[k] for k in wrt}
         fixed_values = {k: v for k, v in kwargs.items() if k not in wrt}
 
+        # Set a 1-parameter function taking a dictionary for jax usage  
         def f(diff_params: dict):
             merged = {**fixed_values, **diff_params}
             return scalar_function(self(**merged))
@@ -633,6 +673,78 @@ class Circuit_Process_Matrix_Function_Helper():
         value = f(diff_values)    
         jac = jax.jacobian(f)(diff_values)
         return value, jac 
+
+
+
+
+### Helper function to interface with jax library; converting a complicated python callable to jax differentiable 
+def make_matrix_function_jax_differentiable(function: Callable, eps: float = 1e-6, diff_params: list[str] = None) -> Callable:
+    """ Wraps an arbitrarily complicated python function mapping named parameters to a matrix into a 
+        JAX-differentiable function via jax.custom_jvp with a central finite-difference backward rule. 
+
+        This avoids an explicit tracing of the function's body by Jax, leading to no restrictions on the 
+        function to make it compatible with JAX. 
+
+        - diff_params are the parameters that the function is differentiated with respect to 
+
+        Note: custom_vjp operates correctly by separating the output's real and imaginary parts 
+    """
+    sig = inspect.signature(function) 
+    param_names = list(sig.parameters.keys())
+
+    try: 
+        hints = get_type_hints(function) 
+    except Exception:
+        hints = {}
+
+    if diff_params is not None:
+        is_diff = {name: name in diff_params for name in param_names}
+    else:
+        is_diff = {name: (True if hints.get(name) is None else hints[name] in (float, complex)) for name in param_names}
+
+    diff_names = [n for n in param_names if is_diff[n]]
+    nondiff_names = [n for n in param_names if not is_diff[n]]
+
+    def positional_function(nondiff_args, diff_args):
+        kwargs = dict(zip(nondiff_names, nondiff_args))
+        kwargs.update(dict(zip(diff_names, diff_args)))
+        return function(**kwargs)
+
+    @functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def wrapped_real_imaginary(nondiff_args, diff_args):
+        U = positional_function(nondiff_args, diff_args)
+        return jnp.real(U), jnp.imag(U)
+
+    def wrapped_real_imaginary_fwd(nondiff_args, diff_args):
+        U = positional_function(nondiff_args, diff_args)
+        return (jnp.real(U), jnp.imag(U)), diff_args
+
+    def wrapped_real_imaginary_bwd(nondiff_args, residual_diff_args, cotangent):
+        ct_real, ct_imag = cotangent 
+        grads = []
+        for i, arg in enumerate(residual_diff_args):
+            plus = list(residual_diff_args); plus[i] = args + eps
+            minus = list(residual_diff_args); minus[i] = args - eps
+            dU = (positional_function(nondiff_args, tuple(plus)) - positional_function(nondiff_args, tuple(minus)))/(2. * eps)
+            grads.append( jnp.sum(ct_real * jnp.real(dU)) + jnp.sum(ct_imag * jnp.imag(dU)) )
+        return (tuple(grads), ) 
+
+    wrapped_real_imaginary.defvjp(wrapped_real_imaginary_fwd, wrapped_real_imaginary_bwd)
+
+    def wrapped(**kwargs):
+        bound = sig.bind(**kwargs)
+        bound.apply_defaults()
+        nondiff_args = tuple(bound.arguments[n] for n in nondiff_names)
+        diff_args = tuple(bound.arguments[n] for n in diff_names)
+        U_real, U_imag = wrapped_real_imaginary(nondiff_args, diff_args)
+        return U_real + 1j*U_imag
+
+    wrapped.__name__ = function.__name__
+    wrapped.__signature__ = sig 
+    wrapped.__doc__ = function.__doc__ 
+    return wrapped 
+        
+
 
 
 
