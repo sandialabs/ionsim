@@ -1,3 +1,12 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 import unittest
 import numpy as np
 from scipy.linalg import expm
@@ -9,7 +18,7 @@ from ionsim.testing import assert_array_close
 from ionsim.basis import StandardBasis
 from ionsim.operator import CouplingOperator, EnergyShiftOperator
 from ionsim.named_operators import Pauli, Fock
-from ionsim.degree_of_freedom import AtomicSpin, MotionalMode
+from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.dissipator import Dissipator, Lindbladian
 from ionsim.state import State
@@ -69,7 +78,7 @@ class TestDissipators(unittest.TestCase):
         for case in self.test_cases:
             # Create spins and basis. Store for each case 
             case['qubits'] = [
-                AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+                AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
                 for _ in range(case['number of qubits'])
                 ]
 
