@@ -11,8 +11,12 @@ import unittest
 import numpy as np
 from scipy.linalg import expm
 from ionsim.zeeman_solver import ZeemanHyperfineSolver 
+#<<<<<<< HEAD
+#from ionsim.degree_of_freedom import AtomicSpin
+#=======
 from ionsim.testing import assert_array_close
 from ionsim.degree_of_freedom import AtomicStructure
+#>>>>>>> main
 
 class TestZeemanSolver(unittest.TestCase):
 
@@ -57,7 +61,7 @@ class TestZeemanSolver(unittest.TestCase):
             }
 
         # Test 3: Use AtomicStructure from_species()  
-        self.spin = AtomicStructure.from_species(species='171Yb', term_symbols=['S0'], level_names=['S0,1/2,1/2', 'S0,1/2,-1/2'], magnetic_field = 400.) 
+        self.Yb = AtomicStructure.from_species(species='171Yb', term_symbols=['S0'], level_names=['S0,1/2,1/2', 'S0,1/2,-1/2'], magnetic_field = 400.) 
 
     def test_explicit_zeeman_solvers(self):
         # Test functionality when using explicit construction of Zeeman Solver objects for each test case. 
@@ -107,7 +111,7 @@ class TestZeemanSolver(unittest.TestCase):
     def test_AtomicStructure_ZeemanShift(self): 
         """Test the Zeemaen shift functionality within AtomicStructure class."""
         expected_frequency = 149.98214416459987*2. # kHz
-        qubit_frequency = self.spin.energy_levels[1].energy - self.spin.energy_levels[0].energy
+        qubit_frequency = self.Yb.energy_levels[1].energy - self.Yb.energy_levels[0].energy
         qubit_frequency /= (2.* np.pi) # convert from rad/s to Hz 
         self.assertAlmostEqual(expected_frequency, np.abs(qubit_frequency)*1E-3, places=6)
 

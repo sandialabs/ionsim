@@ -28,12 +28,16 @@ from icecream import ic
 class DegreeOfFreedom(ABC):
     """A degree of freedom in a basis of states."""
     energy_levels: Sequence[EnergyLevel]
-    name: str | None = None # TODO: will we use these names?
+    #name: str | None = None # TODO: will we use these names?
 
 @dataclass(frozen=True, eq=False)
 class AtomicStructure(DegreeOfFreedom):
     """An atomic structure object, containing atomic internal energy levels corresponding to angular momentum eigenstates.""" 
     energy_levels: list[AtomicInternalEnergyLevel]
+    # Store mass and atomic number 
+    atomic_mass: float 
+    atomic_charge: int 
+    name: str | None = None # TODO: will we use these names?
 
     @classmethod
     def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None, 
@@ -42,8 +46,9 @@ class AtomicStructure(DegreeOfFreedom):
         config_data = cls.get_config_data(species)
         nuclear_spin = config_data['nuclear_spin']
         levels_data = config_data['levels']
-        mass = config_data['mass'] # Daltons
-        z = config_data['Z'] # Atomic number, number of protons 
+        atomic_mass = config_data['mass'] # Daltons
+        atomic_charge = config_data['charge'] # Daltons
+        atomic_number = config_data['Z'] # Atomic number, number of protons 
         magnetic_moment = config_data['magnetic_moment'] # units of \mu_{N}
         structure = 'fine' if nuclear_spin == 0 else 'hyperfine' 
 
@@ -79,11 +84,11 @@ class AtomicStructure(DegreeOfFreedom):
                         gj = 2. * (gj1 - 1.) * (k*(k+1) + j1*(j1+1) - l2*(l2 + 1))/((2*j + 1)*(2*k + 1))
                         gj += (3*j*(j+1) - k*(k+1) + s2*(s2+1))/(2.*j*(j+1)) 
                         fine_data['gj'] = gj
-                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, None, s2, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z, gj = gj)
+                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, None, s2, fine_data['hyperfine_A']*2.*np.pi, atomic_mass, magnetic_moment, atomic_number, gj = gj)
                 else:
                     s = fine_data['s']
                     l = fine_data['l']
-                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z)
+                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']*2.*np.pi, atomic_mass, magnetic_moment, atomic_number)
                 zeeman_energy_shifts, zeeman_eigenvecs = Zeeman_solver.solve_at_field(magnetic_field)
                 zeeman_energy_shifts *= np.pi*2. # convert to rad/s 
 
@@ -111,7 +116,7 @@ class AtomicStructure(DegreeOfFreedom):
                         level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy)
                         if level_names is None or level.name in level_names:
                             levels.append(level)
-        return cls(levels, name)
+        return cls(levels, atomic_mass, atomic_charge, name)
 
     @classmethod
     def get_level_factory(cls, coupling_scheme: str):
@@ -194,6 +199,7 @@ class AtomicStructure(DegreeOfFreedom):
 class MotionalMode(DegreeOfFreedom):
     """An normal mode of motion for a linear chain of ions."""
     energy_levels: list[CollectiveMotionalEnergyLevel]
+    name: str | None = None # TODO: will we use these names?
 
     @classmethod
     def from_frequency(cls, frequency: float, fock_dimension: int, name: str | None = None):
