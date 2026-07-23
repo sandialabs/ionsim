@@ -41,7 +41,7 @@ levels:
     s: 0.5 
 
   # TODO: Need input for fixing ambiguity in term symbols 
-  - term_symbol: '6 P3/2'  # 6P_3/2 
+  - term_symbol: 'P3/2'  # 6P_3/2 
     coupling_scheme: 'ls'
     fine_energy: 713.2839e+12  # Hz 
     hyperfine_A: 27.7008231192e+6  # Hz 
@@ -50,7 +50,7 @@ levels:
     s: 0.5 
 
 # Rydberg level: 
-  - term_symbol: '53 S1/2'  # 5S_1/2 
+  - term_symbol: 'S1/2'  # 53 S_1/2 
     coupling_scheme: 'ls'
     fine_energy: 1008.7062997826108e+12  # Hz 
     hyperfine_A: 149.6e+3  

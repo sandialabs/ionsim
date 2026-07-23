@@ -35,6 +35,12 @@ class AtomicStructure(DegreeOfFreedom):
     """An atomic structure object, containing atomic internal energy levels corresponding to angular momentum eigenstates.""" 
     energy_levels: list[AtomicInternalEnergyLevel]
 
+    # TODO: Potentially change "term_symbols" to "manifold_names"; 
+    #   - If all the manifolds are unique, that's great. If you need to specify "n" to specify a unique level manifold, we should possibly require the user to specify the "n" in the term symbol. 
+    #   - if term symbol refers to just L and J, then maybe another name would be manifold that refers to n, L, and J. 
+    #   - "electronic_manifolds" (65 S1/2) OR (S1/2, but then some logic checks if that's unique. If not unique, throw error because its ambiguous.) , instead of term_symbols; 
+            # - if someone puts in 65 S1/2 and its unique, let's just keep it because that's what they put in.  
+
     @classmethod
     def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None,
             name: str | None = None, magnetic_field: float=0., **kwargs):
