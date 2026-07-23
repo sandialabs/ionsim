@@ -142,10 +142,6 @@ class TestDissipators(unittest.TestCase):
             
                 spin_identity = np.sum(spin_identities, axis=0)
 
-                # Tensor raising/lowering operators with spin identity for each mode that is heating  
-                lowering_operators = []
-                raising_operators = []
-
                 # Basis is of the form spins x modes, so we tensor in the that order: 
                 N_thermal = case['N thermal']
                 lowering_operator = np.sqrt(decay_rate*(N_thermal+1)) * skron(spin_identity, mode_lowering_matrix) 

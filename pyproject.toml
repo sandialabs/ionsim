@@ -18,6 +18,7 @@ dependencies = [
     "pyyaml",
     "pint",
     "sympy",
+    "qutip",
     "h5py"
 ]
 classifiers = [

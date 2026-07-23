@@ -200,6 +200,9 @@ class StandardBasis(Basis):
         """ Returns list of atomic structure degrees of freedom or empty list if none. """
         return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicStructure)]
 
+    @property
+    def motional_modes(self):
+        return [dof for dof in self.degrees_of_freedom if dof not in self.atomic_structure_DOFs]
 
 @dataclass(frozen=True, eq=False)
 class ZPauliBasis(StandardBasis):
@@ -228,6 +231,11 @@ class XPauliBasis(Basis):
             return [plus, minus]
         pairs = list(itertools.product(*[[plus, minus] for dof in self.degrees_of_freedom]))
         return [np.kron(*pair) for pair in pairs]
+
+    @property
+    def spin_DOFs(self):
+        """ Returns list of spin degrees of freedom """ 
+        return self.degrees_of_freedom 
 
 @dataclass(frozen=True, eq=False)
 class YPauliBasis(Basis):
@@ -270,3 +278,4 @@ class XPauliAndFockBasis(Basis):
             ]
         ))
         return [ft.reduce(np.kron, group) for group in groups]
+
