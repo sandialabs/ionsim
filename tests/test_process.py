@@ -71,12 +71,12 @@ class TestProcess(unittest.TestCase):
 
     def test_circuit_process_matrix_functions(self):
         """ Test the process matrix function of a circuit and derivatives of probability outcomes """ 
+        # TODO: This currently works without circuit noise only; we need to fix this to work with Noise objects 
         noisy_R_gate = Gate.from_unitary_function(self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.phi_noise)
 
-        # TODO: This currently works without circuit noise only; we need to fix this to work with Noise objects 
         ramsey_circuit = Circuit.from_gates([noisy_R_gate, noisy_R_gate])
-        #ramsey_circuit = Circuit.from_gates([noisy_R_gate, noisy_R_gate], self.theta_noise) # functions but not accurate  
 
+        #ramsey_circuit = Circuit.from_gates([noisy_R_gate, noisy_R_gate], self.theta_noise) # functions but not accurate  
         ## Fixed a bug where a noisy process matrix function would not work with kwargs 
         circuit_pm_function = ramsey_circuit.process_matrix_function 
 
@@ -90,9 +90,6 @@ class TestProcess(unittest.TestCase):
         self.assertAlmostEqual(outcome_prob, 0.9530090510307307, places = 10)
 
         # Compute outcome probability using probability function: 
-        #prob_gradient_wrt_theta = prob_function.gradient("R__theta") 
-        #prob_gradient_wrt_theta = circuit_pm_function.gradient(prob_function, ["R__theta", "R__phi"], R__theta = np.pi/2., R__phi = 0.) 
-
         prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = ["R__phi", "R__theta"], **circuit_parameters) 
         #prob, prob_gradients = circuit_pm_function.gradient(prob_function.scalar_fn, wrt = ["R__phi", "R__theta"], **circuit_parameters) 
         #print(prob)
