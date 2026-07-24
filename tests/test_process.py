@@ -71,7 +71,6 @@ class TestProcess(unittest.TestCase):
 
     def test_circuit_process_matrix_functions(self):
         """ Test the process matrix function of a circuit and derivatives of probability outcomes """ 
-        #noisy_R_gate = Gate.from_unitary_function(self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], None)
         noisy_R_gate = Gate.from_unitary_function(self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.phi_noise)
 
         # TODO: This currently works without circuit noise only; we need to fix this to work with Noise objects 
@@ -79,26 +78,15 @@ class TestProcess(unittest.TestCase):
         #ramsey_circuit = Circuit.from_gates([noisy_R_gate, noisy_R_gate], self.theta_noise) # functions but not accurate  
 
         ## Fixed a bug where a noisy process matrix function would not work with kwargs 
-        # test pm function with noise and kwargs 
-        #tmp_pm_fxn = noisy_R_gate.process_matrix_function
-        #params = {'phi' : 0., 'theta' : np.pi/2.} 
-
         circuit_pm_function = ramsey_circuit.process_matrix_function 
-        #print(circuit_pm_function(**circuit_parameters))
 
         # Test outcome probability function  
         outcome_operator = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_1, Pauli.projector_0)) 
         initial_state = State.from_coefficients(self.basis, [1., 0., 0., 0.]) 
 
         prob_function = ramsey_circuit.build_outcome_probability_function(initial_state, outcome_operator)
-        #import inspect
-        #sig = inspect.signature(prob_function)
-        #parameter_names = list(sig.parameters.keys())  
-        #print(f"Parameters: {parameter_names}")
-        #print(f"Parameter dict: {sig.parameters}")
         circuit_parameters = {'R__phi' : 0., 'R__theta' : np.pi/2}
         outcome_prob = prob_function(**circuit_parameters)
-        #print(outcome_prob)
         self.assertAlmostEqual(outcome_prob, 0.9530090510307307, places = 10)
 
         # Compute outcome probability using probability function: 
