@@ -98,6 +98,7 @@ class TestProcess(unittest.TestCase):
         #print(prob)
         #print(prob_gradients)
         
+        #prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = ["R__phi", "R__theta"], **circuit_parameters) 
 
 
 

@@ -384,18 +384,6 @@ class Circuit(Process):
         return outcome_probabilities
 
 
-    ## TODO: Need to test this functionality for circuit pm function; we may need to move this into the Circuit PM fxn Helper module below 
- #    def build_outcome_probability_function(self, initial_state: State, outcome_operator: Operator) -> Callable:
- #        """ Returns a function that returns an outcome probability as a function of circuit model parameters """  
- #        if self.process_matrix_function is None:
- #            return None 
- #
- #        @wraps(self.process_matrix_function)
- #        def outcome_probability_function(*args, **kwargs) -> float:
- #            circuit_process_matrix = self.process_matrix_function(*args, **kwargs)
- #            return predict_outcome_probability_from_process_matrix(initial_state, circuit_process_matrix, outcome_operator)
- #            
- #        return outcome_probability_function
     def build_outcome_probability_function(self, initial_state: State, outcome_operator: Operator) -> Callable:
         """ Returns a function that returns an outcome probability as a function of circuit model parameters """  
 
@@ -408,15 +396,9 @@ class Circuit(Process):
         outcome_probability_function.__signature__ = self.process_matrix_function.__signature__
         outcome_probability_function.__name__ = "outcome_probability" 
         outcome_probability_function.__doc__ = "Outcome probability given a circuit acted on an initial state.\n"
-        #outcome_probability_function.scalar_fn = scalar_function # Needed by jax for gradient / derivative work 
         outcome_probability_function.scalar_function = scalar_function # Needed by jax for gradient / derivative work 
         outcome_probability_function.process_matrix_function = self.process_matrix_function 
         return outcome_probability_function
-
- #        def outcome_probability_function(*args, **kwargs) -> float:
- #            circuit_process_matrix = self.process_matrix_function(*args, **kwargs)
- #            return predict_outcome_probability_from_process_matrix(initial_state, circuit_process_matrix, outcome_operator)
-
 
     def build_outcome_probabilities_function(self, initial_state: State, outcome_operators: list[Operator]) -> Callable:
         """ Returns a function that returns a list of outcome probabilities as a function of circuit model parameters """  
@@ -449,7 +431,7 @@ def _combine_process_matrices(process_matrices: list[Matrix]):
 def predict_outcome_probability_from_process_matrix(initial_state: State, process_matrix: Matrix, outcome_operator: Operator) -> float:
     """ Predicts the outcome of a process matrix on a state after measurement/projection <==> outcome operator """   
     propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
-    # Using @ operator allows jax compatibility; np.dot does not 
+    # Using @ operator facilitates jax compatibility; np.dot does not 
     return (outcome_operator.superbra @ propagated_state.supervector).real  
 
 
@@ -649,6 +631,7 @@ class Circuit_Process_Matrix_Function_Helper():
         # Set a 1-parameter function taking a dictionary for jax usage  
         def f(diff_params: dict):
             merged = {**fixed_values, **diff_params}
+            # Evaluate (self) process matrix function using the parameters 
             U = self(**merged)
             return scalar_function(U)
     
@@ -746,9 +729,6 @@ def make_matrix_function_jax_differentiable(function: Callable, eps: float = 1e-
     wrapped.__signature__ = sig 
     wrapped.__doc__ = function.__doc__ 
     return wrapped 
-        
-
-
 
 
 # Possible idea: Build a IonSim circuit object from a ParsedCircuit object, requires gate models + basis  
