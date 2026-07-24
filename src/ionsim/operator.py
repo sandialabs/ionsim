@@ -352,6 +352,7 @@ class GeneralOperator(Operator): # is there a better name? We avoid "DenseOperat
         matrix_elements = [] 
         matrix_elements = energy_shift_elements + couplings
 
+        assert len(matrix_elements) == input_operator.count_nonzero(), f"Expected {input_operator.count_nonzero()} elements but have {len(matrix_elements)} instead."
         return cls(basis, matrix_elements, modulation_function)
 
     @property
