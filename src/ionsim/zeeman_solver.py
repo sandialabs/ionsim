@@ -171,7 +171,6 @@ class ZeemanHyperfineSolver():
         for i, (mj1, mi1) in enumerate(self.basis_states):
             for j, (mj2, mi2) in enumerate(self.basis_states):
                 i_dot_j[i,j] = self.hyperfine_matrix_element(mj1, mi1, mj2, mi2)
-                #H[i,j] = self.hyperfine_matrix_element(mj1, mi1, mj2, mi2)
         H = i_dot_j * self.hyperfine_a 
 
         if self.hyperfine_b is None:
