@@ -36,16 +36,15 @@ levels:
     fine_energy: 384.2304844685e+12  # Hz 
     hyperfine_A: 84.7185e+6 # Hz 
     hyperfine_B: 12.496537e+6 # Hz 
-    lifetime: 26.24 # TODO: check units  
+    lifetime: 26.24e-9  
     n: 5
     s: 0.5 
 
-  # TODO: Need input for fixing ambiguity in term symbols 
   - term_symbol: 'P3/2'  # 6P_3/2 
     coupling_scheme: 'ls'
     fine_energy: 713.2839e+12  # Hz 
     hyperfine_A: 27.7008231192e+6  # Hz 
-    lifetime: 26.24 # TODO update  
+    lifetime: 120.7e-9 
     n: 6
     s: 0.5 
 
@@ -65,4 +64,5 @@ levels:
 #3. Rydberg data: https://arxiv.org/pdf/1103.6221; https://pubs.aip.org/aip/jpr/article/35/1/301/242196/Wavelengths-Transition-Probabilities-and-Energy 
 #4. Hyperfine coefficient data: https://pubs.aip.org/aip/jpr/article/35/1/301/242196/Wavelengths-Transition-Probabilities-and-Energy 
 # J. Phys. Chem. Ref. Data, Vol. 35, No. 1, 200
-# 5. Hyperfine coefficient formulae for Rydberg states:  https://opg.optica.org/directpdfaccess/895890df-5796-4f99-8cd1adb0e703f917_472776/optcon-1-5-1176.pdf?da=1&id=472776&seq=0&mobile=no
+# 5. Hyperfine coef$icient formulae for Rydberg states:  https://opg.optica.org/directpdfaccess/895890df-5796-4f99-8cd1adb0e703f917_472776/optcon-1-5-1176.pdf?da=1&id=472776&seq=0&mobile=no
+# 6. lifetime for 6P_3/2 manifold: https://arxiv.org/pdf/1907.01254 
