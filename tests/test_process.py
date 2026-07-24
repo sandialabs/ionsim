@@ -99,13 +99,14 @@ class TestProcess(unittest.TestCase):
         circuit_parameters = {'R__phi' : 0., 'R__theta' : np.pi/2}
         outcome_prob = prob_function(**circuit_parameters)
         #print(outcome_prob)
-        #self.assertAlmostEqual(outcome_prob, 0.9530090510307307, places = 10)
+        self.assertAlmostEqual(outcome_prob, 0.9530090510307307, places = 10)
 
         # Compute outcome probability using probability function: 
         #prob_gradient_wrt_theta = prob_function.gradient("R__theta") 
         #prob_gradient_wrt_theta = circuit_pm_function.gradient(prob_function, ["R__theta", "R__phi"], R__theta = np.pi/2., R__phi = 0.) 
 
-        #prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = ["R__phi", "R__theta"], **circuit_parameters) 
+        prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = ["R__phi", "R__theta"], **circuit_parameters) 
+        #prob, prob_gradients = circuit_pm_function.gradient(prob_function.scalar_fn, wrt = ["R__phi", "R__theta"], **circuit_parameters) 
         #print(prob)
         #print(prob_gradients)
         

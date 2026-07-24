@@ -408,7 +408,8 @@ class Circuit(Process):
         outcome_probability_function.__signature__ = self.process_matrix_function.__signature__
         outcome_probability_function.__name__ = "outcome_probability" 
         outcome_probability_function.__doc__ = "Outcome probability given a circuit acted on an initial state.\n"
-        outcome_probability_function.scalar_fn = scalar_function # Needed by jax for gradient / derivative work 
+        #outcome_probability_function.scalar_fn = scalar_function # Needed by jax for gradient / derivative work 
+        outcome_probability_function.scalar_function = scalar_function # Needed by jax for gradient / derivative work 
         outcome_probability_function.process_matrix_function = self.process_matrix_function 
         return outcome_probability_function
 
@@ -431,7 +432,6 @@ class Circuit(Process):
             outcome_probabilities = []
             for operator in outcome_operators:
                 outcome_probabilities.append(np.dot(operator.superbra, propagated_state.supervector).real)
-            #print(sum(outcome_probabilities))
             assert np.abs(1. - sum(outcome_probabilities)) < NUMERICAL_EQUIVALENCE_THRESHOLD  
             return outcome_probabilities
             
@@ -449,7 +449,8 @@ def _combine_process_matrices(process_matrices: list[Matrix]):
 def predict_outcome_probability_from_process_matrix(initial_state: State, process_matrix: Matrix, outcome_operator: Operator) -> float:
     """ Predicts the outcome of a process matrix on a state after measurement/projection <==> outcome operator """   
     propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
-    return np.dot(outcome_operator.superbra, propagated_state.supervector).real
+    # Using @ operator allows jax compatibility; np.dot does not 
+    return (outcome_operator.superbra @ propagated_state.supervector).real  
 
 
 
@@ -625,7 +626,7 @@ class Circuit_Process_Matrix_Function_Helper():
 
         return reduce(lambda g1,g2: g1 @ g2, matrices)
 
-    def gradient(self, scalar_function: Callable, wrt: list[str], **kwargs):
+    def gradient(self, wrapped_scalar_function: Callable, wrt: list[str], **kwargs):
         """ Computes a derivative of a scalar function with respect to (wrt) a list of parameters with all else (kwargs) fixed. 
 
             scalar function takes in a matrix function and returns a scalar. 
@@ -635,6 +636,8 @@ class Circuit_Process_Matrix_Function_Helper():
             Returns (value, gradients) where gradients is {name: dValue/dName} for every name in 'wrt'.
 
         """
+        # Assumes the a wrapping like such: 
+        scalar_function = wrapped_scalar_function.scalar_function
         unknown = set(wrt) - set(self.__signature__.parameters)
 
         if unknown:
@@ -723,8 +726,8 @@ def make_matrix_function_jax_differentiable(function: Callable, eps: float = 1e-
         ct_real, ct_imag = cotangent 
         grads = []
         for i, arg in enumerate(residual_diff_args):
-            plus = list(residual_diff_args); plus[i] = args + eps
-            minus = list(residual_diff_args); minus[i] = args - eps
+            plus = list(residual_diff_args); plus[i] = arg + eps
+            minus = list(residual_diff_args); minus[i] = arg - eps
             dU = (positional_function(nondiff_args, tuple(plus)) - positional_function(nondiff_args, tuple(minus)))/(2. * eps)
             grads.append( jnp.sum(ct_real * jnp.real(dU)) + jnp.sum(ct_imag * jnp.imag(dU)) )
         return (tuple(grads), ) 
