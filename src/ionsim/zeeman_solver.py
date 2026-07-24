@@ -15,6 +15,7 @@ from numpy.typing import NDArray
 import pint 
 import math
 
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
 class ZeemanHyperfineSolver():
     """ Solver to compute state Zeeman splittings under the combined Zeeman + Hyperfine Hamiltonian
@@ -182,7 +183,7 @@ class ZeemanHyperfineSolver():
             # Denominator: 
             denom = 2*self.i*(2 * self.i - 1)*self.j*(2 * self.j - 1)
 
-            if denom == 0. or (self.j == 0.5 or self.j == 0.5) or (self.i == 0.):
+            if np.abs(denom) < NUMERICAL_EQUIVALENCE_THRESHOLD or denom == 0. or (self.j == 0.5 or self.j == 0.5) or (self.i == 0.):
                 # Quadrapole moment requires I > 1 and J > 1  
                 return H
                     
