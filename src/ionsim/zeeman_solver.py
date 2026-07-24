@@ -182,7 +182,7 @@ class ZeemanHyperfineSolver():
             # Denominator: 
             denom = 2*self.i*(2 * self.i - 1)*self.j*(2 * self.j - 1)
 
-            if np.abs(denom) < 1E-6 or denom == 0. or (self.j == 0.5 or self.j == 0.5) or (self.i == 0.):
+            if denom == 0. or (self.j == 0.5 or self.j == 0.5) or (self.i == 0.):
                 # Quadrapole moment requires I > 1 and J > 1  
                 return H
                     
