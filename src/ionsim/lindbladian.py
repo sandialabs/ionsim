@@ -36,18 +36,6 @@ class Dissipator(CompositeOperator):
     def __post_init__(self):
         super().__post_init__()
 
-    @cached_property
-    def coupling_operators(self):
-        """ Returns a list of all CouplingOperators in the operator list """
-        coupling_ops = []
-        for operator in self.operators:
-            if isinstance(operator, GeneralOperator):
-                if operator.couplings:
-                    coupling_ops.append(operator.coupling_operator_contribution) 
-            elif isinstance(operator, CouplingOperator):
-                coupling_ops.append(operator)
-        return coupling_ops            
-
     @staticmethod
     def lindblad_matrix_to_superoperator(L_matrix: AnyMatrix) -> AnyMatrix:
         """ Method to convert a Lindblad operator in matrix form (N x N) to a superoperator (N^2 x N^2) 

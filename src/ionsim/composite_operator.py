@@ -41,7 +41,6 @@ class CompositeOperator(ABC):
         return len(self.basis.states)
 
     @cached_property
-    @abstractmethod
     def coupling_operators(self):
         """ Returns a list of all CouplingOperators in the operator list """
         coupling_ops = []
