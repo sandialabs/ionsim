@@ -254,14 +254,9 @@ class CouplingOperator(Operator):
         return self.elements 
 
     @property
-    def unique_couplings(self):
+    def hermitian_couplings(self):
         """ Unique couplings in the context of a Hermitian operator """  
         return self._unique_couplings_from_hermitian_coupling_matrix(self.basis, self.static_matrix, self.rate_matrix) 
-
- #    @property
- #    def unique_rates(self):
- #        """ Unique couplings in the context of a Hermitian operator """  
- #        self._unique_couplings_from_hermitian_coupling_matrix(self.static_matrix) 
 
     @classmethod
     def from_matrix(cls, basis: StandardBasis, static_matrix: Matrix, oscillation_rate: float,
@@ -314,7 +309,7 @@ class GeneralOperator(Operator): # is there a better name? We avoid "DenseOperat
         return [element for element in self.elements if isinstance(element, Coupling)]
 
     @property
-    def unique_couplings(self):
+    def hermitian_couplings(self):
         """ Unique couplings in the context of a Hermitian operator """  
         self._unique_couplings_from_hermitian_coupling_matrix(self.static_matrix) 
 

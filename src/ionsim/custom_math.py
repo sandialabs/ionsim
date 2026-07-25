@@ -139,8 +139,6 @@ class ZVODE(OdeSolver):
             num_steps = len(self.time_evals)
             assert(self.time_evals[-1] == self.duration)
 
-        #ic(self.nsteps)
-
         n_states = len(self.initial_vector)
         hamiltonian = self.interaction_function
         t_final = self.duration
@@ -165,13 +163,14 @@ class ZVODE(OdeSolver):
         r.set_initial_value(initial_state, 0)
         dt = t_final/float(num_steps)
         ctr = 0
+        io_freq = 1000 
         while r.successful() and r.t < t_final:
             r.integrate(r.t + dt)
             intermediate_states += [r.y]
             intermediate_times += [r.t]
             ctr += 1
-            if ctr % 1000 == 0:
-                print(f"Completed {ctr} steps.")
+            #if ctr % io_freq == 0:
+            #    print(f"Completed {ctr} steps.")
         return intermediate_times, intermediate_states
 
 # working version

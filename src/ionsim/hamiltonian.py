@@ -40,7 +40,7 @@ class Hamiltonian(CompositeOperator):
     @cached_property
     def coupling_operators(self):
         """ Returns a list of all Hermitian CouplingOperators in the operator list """
-        # The Hamiltonian class assumes coupling operators are only storing unique coupling elements
+        # The Hamiltonian class assumes coupling operators are only storing unique coupling elements by h.c. symmetry
         # First extract all coupling operator types 
         coupling_ops = []
         for operator in self.operators:
@@ -51,9 +51,10 @@ class Hamiltonian(CompositeOperator):
                 coupling_ops.append(operator)
 
         # Then collect the half-operators from Hermitian symmetry that is used throughout the Hamiltonian class  
+        # i.e. the Hamiltonian is built via coupling_operator.static_matrix + its h.c.  
         hermitian_coupling_ops = []
         for op in coupling_ops:
-            unique_couplings = op.unique_couplings
+            unique_couplings = op.hermitian_couplings
             hermitian_coupling_ops.append(CouplingOperator(op.basis, unique_couplings, op.modulation_function)) 
         return hermitian_coupling_ops            
 

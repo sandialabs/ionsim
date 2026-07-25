@@ -119,8 +119,12 @@ class State:
             density_matrix = self.basis.compute_density_matrix_from_supervector(supervectors[-1])
             return State(self.basis, density_matrix)
         rhos = [self.basis.compute_density_matrix_from_supervector(psi) for psi in supervectors]
-        if time_evals is not None and kwargs['ode_solver'] == 'zvode':
-            return times, [State(self.basis, rho) for rho in rhos] 
+        ode_solver = kwargs.get('ode_solver', 'odeintz')
+        if time_evals is not None and ode_solver is not None: 
+            if ode_solver == 'zvode':
+                return times, [State(self.basis, rho) for rho in rhos] 
+            else:
+                return [State(self.basis, rho) for rho in rhos]
         else:
             return [State(self.basis, rho) for rho in rhos]
 

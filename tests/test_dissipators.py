@@ -34,6 +34,9 @@ def exponential_decay(t, A, gamma, C):
 def exponential_warmup(t, y0, gamma):
     return y0 + (0. - y0)*np.exp(-gamma*t)
 
+def spin_flip_exp_decay(t, Omega, gamma):
+    rabi_eff = np.sqrt(Omega**2 - (gamma**2)/4)
+    return 0.5 + 0.5 * np.exp(-1.5*gamma*t) * (np.cos(rabi_eff*t) - (gamma*0.5/rabi_eff)*np.sin(rabi_eff*t))
 
 class TestDissipators(unittest.TestCase):
 
@@ -71,7 +74,17 @@ class TestDissipators(unittest.TestCase):
                 'fock dimension' : 6,
                 'initial state coefficients' : np.array([1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]), 
                 'reference function' : exponential_warmup, 
-            }
+            },
+            {
+                'test name' : 'Spin Flipping',
+                'characteristic time' : 5.0E-6,
+                'number of qubits' : 1,
+                'rabi rate' : 100E3*2.*np.pi, 
+                'detuning' : 0., 
+                'initial state coefficients' : np.array([1., 0.]),
+                'reference function' : spin_flip_exp_decay, 
+                'reference function guess parameters' : [50E3*np.pi*2., 10000]
+            },
         ]
 
         # Set up the qubits, hamiltonian, dissipator, and lindbladian for each test case.  
@@ -112,6 +125,20 @@ class TestDissipators(unittest.TestCase):
                 # Dephasing with Lindblad operator L = Z on qubit 1:                 
                 lower_qubit1 = np.sqrt(decay_rate) * case['basis'].enlarge_matrix(Pauli.minus, [case['qubits'][0]]) 
                 case['lindblad operators'] = [CouplingOperator.from_matrix(case['basis'], lower_qubit1, 0.)] 
+            if case['test name'] == 'Spin Flipping':
+                # Dephasing qubit 1 during Rabi flopping 
+                case['basis'] = StandardBasis([*case['qubits']])
+
+                # Rabi flopping Hamiltonian:                 
+                raise_qubit = case['rabi rate'] * 0.5 * case['basis'].enlarge_matrix(Pauli.plus, [case['qubits'][0]]) 
+                coupling_operator = CouplingOperator.from_matrix(case['basis'], raise_qubit, case['omega_laser']) 
+                frame_energies = [-state.energy for state in case['basis'].states] 
+                case['hamiltonian'] = Hamiltonian(case['basis'], [coupling_operator], frame_energies) 
+
+                case['duration'] = case['characteristic time']*0.125 
+                # Dephasing with Lindblad operator L = Z on qubit 1:                 
+                flip_q1 = np.sqrt(decay_rate) * case['basis'].enlarge_matrix(Pauli.X , [case['qubits'][0]]) 
+                case['lindblad operators'] = [CouplingOperator.from_matrix(case['basis'], flip_q1, 0.)] 
             elif case['test name'] == 'Ion Heating':
                 # Ion heating of 1 mode by lindblad operators: L1 = sqrt(gamma*(n+1)) a ; L2 = sqrt(gamma*n) a^† 
                 # gamma is the heating rate and n is the average number of phonons in thermal equilibrium.  
@@ -169,7 +196,12 @@ class TestDissipators(unittest.TestCase):
             times = np.linspace(0., test_case['duration'], 50)
 
             init_state = test_case['initial state']
-            rho_t = init_state.propagate_using_master_equation(test_case['lindbladian'], test_case['duration'], times) 
+            if test_case['test name'] == 'Spin Flipping':
+                times = np.linspace(0., test_case['duration'], 3000)
+                times, rho_t = init_state.propagate_using_master_equation(test_case['lindbladian'], test_case['duration'], times, ode_solver='zvode', atol=1e-8, rtol=1e-5)
+            else:
+                rho_t = init_state.propagate_using_master_equation(test_case['lindbladian'], test_case['duration'], times) 
+
             if test_case['test name'] == 'Ion Heating':
                 fock_dimension = test_case['fock dimension'] 
                 # Trace out motional modes 
@@ -191,17 +223,25 @@ class TestDissipators(unittest.TestCase):
                 continue 
 
             else:
+                print(test_case['test name'])
                 populations = np.array([rho.compute_basis_state_probabilities() for rho in rho_t] )
                 # Compare population of |1> to reference 
                 Y = populations[:, 1]
             reference_function = test_case['reference function']
 
-            guess_params = test_case['reference function guess parameters']
-            popt, pcov = curve_fit(reference_function, times, Y, p0 = guess_params) 
-            gamma_fit = popt[1]
-            t_decay_fit = 1./gamma_fit
-
-            self.assertAlmostEqual(t_decay_fit, test_case['characteristic time'], places=7)
+            if test_case['test name'] == 'Spin Flipping':
+                # These simulations are slow due to the highly-oscillitory dissipator 
+                # so, simply check equality of |0> population with reference
+                P0_final = populations[-1, 0]
+                P0_final_ref = spin_flip_exp_decay(test_case['duration'], test_case['rabi rate'], 1./test_case['characteristic time'])
+                self.assertAlmostEqual(P0_final, P0_final_ref, places = 4)
+            else:
+                guess_params = test_case['reference function guess parameters']
+                popt, pcov = curve_fit(reference_function, times, Y, p0 = guess_params) 
+                gamma_fit = popt[1]
+                t_decay_fit = 1./gamma_fit
+    
+                self.assertAlmostEqual(t_decay_fit, test_case['characteristic time'], places=7)
 
 
 if __name__ == '__main__':
