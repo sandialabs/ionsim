@@ -161,7 +161,7 @@ class ZVODE(OdeSolver):
             else:
                 return -1.0j * tempham
         r = ode(schrodinger, jacobian)
-        r.set_integrator('zvode', method='adams', with_jacobian=True, self.atol, self.rtol, nsteps=self.nsteps) # use method='bdf' for stiff ode
+        r.set_integrator('zvode', method='adams', with_jacobian=True, atol = self.atol, rtol = self.rtol, nsteps=self.nsteps) # use method='bdf' for stiff ode
         r.set_initial_value(initial_state, 0)
         dt = t_final/float(num_steps)
         ctr = 0
