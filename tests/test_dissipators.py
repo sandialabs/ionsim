@@ -223,7 +223,6 @@ class TestDissipators(unittest.TestCase):
                 continue 
 
             else:
-                print(test_case['test name'])
                 populations = np.array([rho.compute_basis_state_probabilities() for rho in rho_t] )
                 # Compare population of |1> to reference 
                 Y = populations[:, 1]
