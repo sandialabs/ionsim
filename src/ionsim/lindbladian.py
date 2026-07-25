@@ -36,6 +36,18 @@ class Dissipator(CompositeOperator):
     def __post_init__(self):
         super().__post_init__()
 
+    @cached_property
+    def coupling_operators(self):
+        """ Returns a list of all CouplingOperators in the operator list """
+        coupling_ops = []
+        for operator in self.operators:
+            if isinstance(operator, GeneralOperator):
+                if operator.couplings:
+                    coupling_ops.append(operator.coupling_operator_contribution) 
+            elif isinstance(operator, CouplingOperator):
+                coupling_ops.append(operator)
+        return coupling_ops            
+
     @staticmethod
     def lindblad_matrix_to_superoperator(L_matrix: AnyMatrix) -> AnyMatrix:
         """ Method to convert a Lindblad operator in matrix form (N x N) to a superoperator (N^2 x N^2) 
@@ -78,7 +90,7 @@ class Dissipator(CompositeOperator):
 
     def create_lindblad_matrix_function(self, lindblad_operator: Operator) -> Callable:
         """Converts a lindblad Operator object to a callable that returns a matrix at a given time point"""
-        
+
         def _lindblad_function(t: float) -> AnyMatrix:
             if self.sparse:
                 L_matrix = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex') 
@@ -87,12 +99,24 @@ class Dissipator(CompositeOperator):
             
             # Static, diagonal contribution 
             if isinstance(lindblad_operator, GeneralOperator):
-                L_matrix += lindblad_operator.energy_shift_operator_contribution.static_matrix
+                if lindblad_operator.energy_shift_operator_contribution:
+                    L_matrix += lindblad_operator.energy_shift_operator_contribution.static_matrix
             elif isinstance(lindblad_operator, EnergyShiftOperator):
                 L_matrix += lindblad_operator.static_matrix
 
             if isinstance(lindblad_operator, CouplingOperator) or isinstance(lindblad_operator, GeneralOperator):
                 # Must account for frame shifts in coupling operators 
+                # Form shift matrix 
+ #                U_t = np.diag(np.exp(-1j * np.array(self.rotating_frame_energies) * t))
+ #                
+ #                if isinstance(lindblad_operator, GeneralOperator) and lindblad_operator.couplings:
+ #                    offdiagonal_contribution = lindblad_operator.coupling_operator_contribution.static_matrix
+ #                else:
+ #                    offdiagonal_contribution = lindblad_operator.static_matrix
+ #
+ #                offdiagonal_contribution = U_t @ offdiagonal_contribution @ np.conjugate(U_t.T)
+ #                #print(offdiagonal_contribution)
+ #                L_matrix += offdiagonal_contribution
                 L_int, Rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(lindblad_operator) 
     
                 # Element-wise multiplication, compute L * exp(-1j * Rate * t)
@@ -102,6 +126,7 @@ class Dissipator(CompositeOperator):
                     L_matrix += Ltemp 
                 else:
                     L_matrix += (L_int.toarray() * np.exp(-1j * Rate.toarray() * t))
+                #print(Rate.toarray()/(2.*np.pi*1E9))
             return L_matrix
 
         return _lindblad_function

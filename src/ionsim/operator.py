@@ -122,10 +122,27 @@ class Operator(ABC):
 
     @staticmethod
     def _couplings_from_coupling_matrix(basis: StandardBasis, coupling_matrix: csr_matrix, rate: csr_matrix):
-        """ Builds and return list of unique Couplings from the matrix representation of a static operator acting on some DoFs in the basis.
-            Assumes matrix input is of the "Coupling" form (purely off-diagonal) and Hermitian."""
+        """ Builds and return list of Couplings from the matrix representation of a static operator acting on some DoFs in the basis. """
         rows, columns = coupling_matrix.nonzero()
-        # For Hermitian inputs, the upper-right portion of the matrix is handled first by convention of the nonzero() operation output for a csr matrix 
+        indices_list = [(row, column) for row, column in zip(rows, columns)]
+        #included_indices = []
+        couplings = []
+        for row, column in indices_list:
+            assert row != column, 'Input error: Input should be a purely off-diagonal matrix.' 
+            row_state, column_state = basis.states[row], basis.states[column]
+            #if (column,row) not in included_indices:
+            coupling = Coupling(row_state = row_state, column_state = column_state, strength = coupling_matrix[row, column], oscillation_rate = rate[row, column])
+            couplings.append(coupling)
+            #included_indices.append((row, column))
+            if column == row:
+                raise IonSimError('Diagonal elements of oscillating (coupling) operators are not currently allowed.')
+
+        return couplings
+
+    @staticmethod
+    def _unique_couplings_from_hermitian_coupling_matrix(basis: StandardBasis, coupling_matrix: csr_matrix, rate: csr_matrix):
+        """ Builds and return list of Couplings from the matrix representation of a static operator acting on some DoFs in the basis. """
+        rows, columns = coupling_matrix.nonzero()
         indices_list = [(row, column) for row, column in zip(rows, columns)]
         included_indices = []
         couplings = []
@@ -136,9 +153,8 @@ class Operator(ABC):
                 coupling = Coupling(row_state = row_state, column_state = column_state, strength = coupling_matrix[row, column], oscillation_rate = rate[row, column])
                 couplings.append(coupling)
                 included_indices.append((row, column))
-            elif column == row:
+            if column == row:
                 raise IonSimError('Diagonal elements of oscillating (coupling) operators are not currently allowed.')
-
         return couplings
 
     def _check_for_one_oscillation_rate(self):
@@ -237,6 +253,16 @@ class CouplingOperator(Operator):
     def couplings(self):
         return self.elements 
 
+    @property
+    def unique_couplings(self):
+        """ Unique couplings in the context of a Hermitian operator """  
+        return self._unique_couplings_from_hermitian_coupling_matrix(self.basis, self.static_matrix, self.rate_matrix) 
+
+ #    @property
+ #    def unique_rates(self):
+ #        """ Unique couplings in the context of a Hermitian operator """  
+ #        self._unique_couplings_from_hermitian_coupling_matrix(self.static_matrix) 
+
     @classmethod
     def from_matrix(cls, basis: StandardBasis, static_matrix: Matrix, oscillation_rate: float,
             current_dofs: list[DegreeOfFreedom] | None = None, modulation_function: list[Callable] | None = None):
@@ -286,6 +312,11 @@ class GeneralOperator(Operator): # is there a better name? We avoid "DenseOperat
     @property
     def couplings(self):
         return [element for element in self.elements if isinstance(element, Coupling)]
+
+    @property
+    def unique_couplings(self):
+        """ Unique couplings in the context of a Hermitian operator """  
+        self._unique_couplings_from_hermitian_coupling_matrix(self.static_matrix) 
 
     @property
     def energy_shifts(self):

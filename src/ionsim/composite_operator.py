@@ -11,7 +11,7 @@ import numpy as np
 from dataclasses import dataclass
 from scipy.sparse import csr_matrix
 from functools import cached_property
-from abc import ABC 
+from abc import ABC, abstractmethod 
 
 from ionsim.basis import StandardBasis
 from ionsim.operator import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
@@ -41,6 +41,7 @@ class CompositeOperator(ABC):
         return len(self.basis.states)
 
     @cached_property
+    @abstractmethod
     def coupling_operators(self):
         """ Returns a list of all CouplingOperators in the operator list """
         coupling_ops = []

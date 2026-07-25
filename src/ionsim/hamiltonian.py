@@ -37,6 +37,26 @@ class Hamiltonian(CompositeOperator):
     def __post_init__(self):
         super().__post_init__()
 
+    @cached_property
+    def coupling_operators(self):
+        """ Returns a list of all Hermitian CouplingOperators in the operator list """
+        # The Hamiltonian class assumes coupling operators are only storing unique coupling elements
+        # First extract all coupling operator types 
+        coupling_ops = []
+        for operator in self.operators:
+            if isinstance(operator, GeneralOperator):
+                if operator.couplings:
+                    coupling_ops.append(operator.coupling_operator_contribution) 
+            elif isinstance(operator, CouplingOperator):
+                coupling_ops.append(operator)
+
+        # Then collect the half-operators from Hermitian symmetry that is used throughout the Hamiltonian class  
+        hermitian_coupling_ops = []
+        for op in coupling_ops:
+            unique_couplings = op.unique_couplings
+            hermitian_coupling_ops.append(CouplingOperator(op.basis, unique_couplings, op.modulation_function)) 
+        return hermitian_coupling_ops            
+
     @property
     def energies(self):
         return [state.energy + energy for state, energy in zip(self.basis.states, self.rotating_frame_energies)]
