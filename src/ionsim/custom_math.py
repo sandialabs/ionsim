@@ -128,6 +128,8 @@ class SolveIvp(OdeSolver):
 class ZVODE(OdeSolver):
     """Python's zvode routine."""
     nsteps: float = 1e5
+    atol: float = 1e-16
+    rtol: float = 1e-14
 
     def solve(self):
         """Solves the ODE."""
@@ -137,7 +139,7 @@ class ZVODE(OdeSolver):
             num_steps = len(self.time_evals)
             assert(self.time_evals[-1] == self.duration)
 
-        ic(self.nsteps)
+        #ic(self.nsteps)
 
         n_states = len(self.initial_vector)
         hamiltonian = self.interaction_function
@@ -149,7 +151,7 @@ class ZVODE(OdeSolver):
             initial_state[0] = 1.
 
         intermediate_states = [initial_state]
-        intermediate_times = [0]
+        intermediate_times = [0.]
         def schrodinger(t, y):
             return  -1.0j * hamiltonian(t).dot(y)
         def jacobian(t, y):
@@ -159,7 +161,7 @@ class ZVODE(OdeSolver):
             else:
                 return -1.0j * tempham
         r = ode(schrodinger, jacobian)
-        r.set_integrator('zvode', method='adams', with_jacobian=True, atol=1e-16, rtol=1e-14, nsteps=self.nsteps) # use method='bdf' for stiff ode
+        r.set_integrator('zvode', method='adams', with_jacobian=True, self.atol, self.rtol, nsteps=self.nsteps) # use method='bdf' for stiff ode
         r.set_initial_value(initial_state, 0)
         dt = t_final/float(num_steps)
         ctr = 0
@@ -168,7 +170,7 @@ class ZVODE(OdeSolver):
             intermediate_states += [r.y]
             intermediate_times += [r.t]
             ctr += 1
-            if ctr % 100 == 0:
+            if ctr % 1000 == 0:
                 print(f"Completed {ctr} steps.")
         return intermediate_times, intermediate_states
 

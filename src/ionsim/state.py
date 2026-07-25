@@ -119,7 +119,10 @@ class State:
             density_matrix = self.basis.compute_density_matrix_from_supervector(supervectors[-1])
             return State(self.basis, density_matrix)
         rhos = [self.basis.compute_density_matrix_from_supervector(psi) for psi in supervectors]
-        return [State(self.basis, rho) for rho in rhos]
+        if time_evals is not None and kwargs['ode_solver'] == 'zvode':
+            return times, [State(self.basis, rho) for rho in rhos] 
+        else:
+            return [State(self.basis, rho) for rho in rhos]
 
     def get_wavefunction_in_new_basis(self, new_basis: Basis):
         """Get the wavefunction in a new basis."""
