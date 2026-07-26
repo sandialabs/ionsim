@@ -91,12 +91,14 @@ class TestProcess(unittest.TestCase):
 
         # Compute outcome probability using probability function: 
         prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = ["R__phi", "R__theta"], **circuit_parameters) 
-        #prob, prob_gradients = circuit_pm_function.gradient(prob_function.scalar_fn, wrt = ["R__phi", "R__theta"], **circuit_parameters) 
-        #print(prob)
-        #print(prob_gradients)
-        
-        #prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = ["R__phi", "R__theta"], **circuit_parameters) 
 
+        ### Test Jacobian functionality: Compute Jacobian when considering more than 1 outcome: 
+        outcome_operator2 = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_0, Pauli.projector_0)) 
+
+        probs_function = ramsey_circuit.build_outcome_probabilities_function(initial_state, [outcome_operator, outcome_operator2])
+
+        probs, jacobian = circuit_pm_function.jacobian(probs_function, wrt = ["R__phi", "R__theta"], **circuit_parameters)
+        #print(f"Jacobian: \n{jacobian}")
 
 
 if __name__ == '__main__':

@@ -379,9 +379,9 @@ class Circuit(Process):
 
         # Represent state and outcome operators in superket/superbra form 
         for outcome_op in outcome_operators:
-            outcome_probabilities.append(np.dot(outcome_op.superbra, propagated_state.supervector).real) 
+            outcome_probabilities.append((outcome_op.superbra @ propagated_state.supervector).real) 
 
-        return outcome_probabilities
+        return np.array(outcome_probabilities)
 
 
     def build_outcome_probability_function(self, initial_state: State, outcome_operator: Operator) -> Callable:
@@ -401,22 +401,22 @@ class Circuit(Process):
         return outcome_probability_function
 
     def build_outcome_probabilities_function(self, initial_state: State, outcome_operators: list[Operator]) -> Callable:
-        """ Returns a function that returns a list of outcome probabilities as a function of circuit model parameters """  
+        """ Returns a function that returns a vector of outcome probabilities as a function of circuit model parameters """  
         if self.process_matrix_function is None:
             return [None for _ in range(len(outcome_operators))] 
 
-        # Although a list of functions (each fxn corresponding to an outcome) is more intuitive,  
-        #   it is more efficient to evaluate the circuit process matrix once and then loop over outcome operators. 
-        @wraps(self.process_matrix_function)
-        def outcome_probabilities_function(*args, **kwargs) -> list[float]:
-            circuit_process_matrix = self.process_matrix_function(*args, **kwargs)
-            propagated_state = initial_state.propagate_using_process_matrix(circuit_process_matrix)
-            outcome_probabilities = []
-            for operator in outcome_operators:
-                outcome_probabilities.append(np.dot(operator.superbra, propagated_state.supervector).real)
-            assert np.abs(1. - sum(outcome_probabilities)) < NUMERICAL_EQUIVALENCE_THRESHOLD  
-            return outcome_probabilities
-            
+        outcome_matrix = np.row_stack([outcome_op.superbra for outcome_op in outcome_operators])
+        def vector_function(circuit_process_matrix):
+            return predict_outcome_probabilities_from_process_matrix(initial_state, circuit_process_matrix, outcome_matrix)
+
+        def outcome_probabilities_function(**kwargs):
+            return vector_function(self.process_matrix_function(**kwargs)) 
+
+        outcome_probabilities_function.__signature__ = self.process_matrix_function.__signature__
+        outcome_probabilities_function.__name__ = "outcome_probabilities" 
+        outcome_probabilities_function.__doc__ = "Outcome probabilities given a circuit acted on an initial state.\n"
+        outcome_probabilities_function.vector_function = vector_function # Needed by jax for jacobian 
+        outcome_probabilities_function.process_matrix_function = self.process_matrix_function 
         return outcome_probabilities_function
 
         
@@ -434,6 +434,12 @@ def predict_outcome_probability_from_process_matrix(initial_state: State, proces
     # Using @ operator facilitates jax compatibility; np.dot does not 
     return (outcome_operator.superbra @ propagated_state.supervector).real  
 
+def predict_outcome_probabilities_from_process_matrix(initial_state: State, process_matrix: Matrix, outcome_matrix: Matrix) -> Vector:
+    """ Predicts the probabilities of outcomes of a process matrix on a state after measurement/projection <==> outcome operator """   
+    propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
+    # Using @ operator facilitates jax compatibility; np.dot does not 
+    return (outcome_matrix @ propagated_state.supervector).real  
+    #return (outcome_operator.superbra @ propagated_state.supervector).real  
 
 
 import jax 
@@ -639,10 +645,12 @@ class Circuit_Process_Matrix_Function_Helper():
         return value, gradients
 
 
-    def jacobian(self, vector_fn: Callable, wrt: list[str], **kwargs):
+    def jacobian(self, wrapped_vector_function: Callable, wrt: list[str], **kwargs):
         """ Same as gradient (above) but for a vector-valued output (e.g. multiple outcome probabilities)
             Returns (value, jac) where jac[name] has shape (len(output), *shape(param))
         """
+        # Assumes the a wrapping like such: 
+        vector_function = wrapped_vector_function.vector_function
         unknown = set(wrt) - set(self.__signature__.parameters)
 
         if unknown:
@@ -654,7 +662,7 @@ class Circuit_Process_Matrix_Function_Helper():
         # Set a 1-parameter function taking a dictionary for jax usage  
         def f(diff_params: dict):
             merged = {**fixed_values, **diff_params}
-            return scalar_function(self(**merged))
+            return vector_function(self(**merged))
 
         value = f(diff_values)    
         jac = jax.jacobian(f)(diff_values)
