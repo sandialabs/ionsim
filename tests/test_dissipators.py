@@ -229,8 +229,7 @@ class TestDissipators(unittest.TestCase):
             reference_function = test_case['reference function']
 
             if test_case['test name'] == 'Spin Flipping':
-                # These simulations are slow due to the highly-oscillitory dissipator 
-                # so, simply check equality of |0> population with reference
+                # Simply check equality of |0> population with the reference
                 P0_final = populations[-1, 0]
                 P0_final_ref = spin_flip_exp_decay(test_case['duration'], test_case['rabi rate'], 1./test_case['characteristic time'])
                 self.assertAlmostEqual(P0_final, P0_final_ref, places = 4)
