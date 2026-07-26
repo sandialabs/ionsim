@@ -79,39 +79,6 @@ class ParsedGate:
         q = ",".join(str(q) for q in self.qubits)
         return f"{self.name}:{q}"
 
-@dataclass(frozen=True)
-class Layer:
-    """ Represents a single time point (vertical line) in a quantum circuit, containing one 
-        or more gates acting on disjoint qubits simultaneously. 
-
-        For 1Q circuits, each layer has exactly one gate. For multi-qubit circuits, a layer can have 
-        parallel gates on different qubits.
-
-        Ex] Layer((Gate('Gxpi2', (0,) ) )) for X_pi/2 on qubit #1
-            Layer( (Gate('Gxpi2', (0,)), (Gate('Gypi2', (1,) )), ... ) )
-            Layer( (Gate('Gcnot', (0,1)),)) 
-
-    """
-    gates: tuple[ParsedGate, ...]
-
-    @property
-    def qubits_used(self):
-        """ All qubits involved in the layer """
-        qubits = set()
-        for g in self.gates:
-            qubits.update(g.qubits)
-        return qubits
-
-    @property
-    def is_single_gate(self):
-        return len(self.gates) == 1
-
-    def __repr__(self):
-        if self.is_single_gate:
-            return repr(self.gates[0])
-        inner = "".join(repr(g) for g in self.gates)
-        return f"[{inner}]"
-
 
 @dataclass
 class ParsedCircuit:
@@ -123,12 +90,9 @@ class ParsedCircuit:
     """
     # ParsedCircuit class should remain unfrozen so its measurement_data attribute can be modified by an experiment. 
     unparsed_data: str
-    fiducial_prep_layers: list[Layer]
-    germ_layers: list[Layer]
-    fiducial_measurement_layers: list[Layer]
-    #fiducial_prep_gates: list[ParsedGate]
-    #germ_gates: list[ParsedGate]
-    #fiducial_measurement_gates: list[ParsedGate]
+    fiducial_prep_gates: list[ParsedGate]
+    germ_gates: list[ParsedGate]
+    fiducial_measurement_gates: list[ParsedGate]
     germ_power: int 
 
     line_labels: list[int]   # not as important, TODO: delete?   
@@ -136,8 +100,10 @@ class ParsedCircuit:
 
 
     @property
-    def expanded_layers(self) -> list[Layer]:
-        return (self.prep_layers + self.germ_layers * self.germ_power + self.meas_layers)
+    def expanded_gates(self) -> list[ParsedGate]:
+        """ List of gates, expanded (no germ power included) """
+        return self.fiducial_prep_gates + self.germ_gates * self.germ_power + self.fiducial_measurement_gates
+
 
     @property
     def total_counts(self) -> int:
@@ -149,30 +115,7 @@ class ParsedCircuit:
     @property
     def depth(self) -> int:
         """ Number of total gates in the circuit """
-        return len(self.expanded_layers)
-        #return len(self.expanded_gates)
-
-    # Backward compatibility for 1Q GST code: 
-    # TODO: Should these check if we only have 1 qubit? 
-    @property
-    def expanded_gates(self) -> list[ParsedGate]:
-        """ List of gates, expanded (no germ power included); meant for 1Q GST only """
-        return [layer.gates[0] for layer in self.expanded_layers]
-        #return self.fiducial_prep_gates + self.germ_gates * self.germ_power + self.fiducial_measurement_gates
-
-    @property
-    def fiducial_prep_gates(self) -> list[Gate]:
-        return [layer.gates[0] for layer in self.prep_layers]
-
-
-    @property
-    def germ_gates(self) -> list[Gate]:
-        return [layer.gates[0] for layer in self.prep_layers]
-
-    @property
-    def fiducial_measurement_gates(self) -> list[Gate]:
-        return [layer.gates[0] for layer in self.fiducial_measurement_layers]
-
+        return len(self.expanded_gates)
 
 
     def __repr__(self):
