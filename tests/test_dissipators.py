@@ -35,8 +35,8 @@ def exponential_warmup(t, y0, gamma):
     return y0 + (0. - y0)*np.exp(-gamma*t)
 
 def spin_flip_exp_decay(t, Omega, gamma):
-    rabi_eff = np.sqrt(Omega**2 - (gamma**2)/4)
-    return 0.5 + 0.5 * np.exp(-1.5*gamma*t) * (np.cos(rabi_eff*t) - (gamma*0.5/rabi_eff)*np.sin(rabi_eff*t))
+    return 0.5 + 0.5 * np.exp(-2*gamma*t) * np.cos(Omega*t)
+
 
 class TestDissipators(unittest.TestCase):
 
@@ -135,7 +135,7 @@ class TestDissipators(unittest.TestCase):
                 frame_energies = [-state.energy for state in case['basis'].states] 
                 case['hamiltonian'] = Hamiltonian(case['basis'], [coupling_operator], frame_energies) 
 
-                case['duration'] = case['characteristic time']*0.125 
+                case['duration'] = case['characteristic time']*0.25 
                 # Dephasing with Lindblad operator L = Z on qubit 1:                 
                 flip_q1 = np.sqrt(decay_rate) * case['basis'].enlarge_matrix(Pauli.X , [case['qubits'][0]]) 
                 case['lindblad operators'] = [CouplingOperator.from_matrix(case['basis'], flip_q1, 0.)] 
@@ -183,7 +183,11 @@ class TestDissipators(unittest.TestCase):
                 case['lindblad operators'].append(CouplingOperator.from_matrix(case['basis'], raising_operator, 0.)) 
 
             # Create dissipator and lindbladian
-            case['dissipator'] = Dissipator(case['basis'], case['lindblad operators'], frame_energies) 
+            if case['test name'] == 'Spin Flipping':
+                # Lindblad operator is already in the interaction picture as specified 
+                case['dissipator'] = Dissipator(case['basis'], case['lindblad operators'], list(np.zeros_like(frame_energies))) 
+            else:
+                case['dissipator'] = Dissipator(case['basis'], case['lindblad operators'], frame_energies) 
             case['lindbladian'] = Lindbladian(hamiltonian = case['hamiltonian'], dissipator = case['dissipator'])
 
             # Set up initial state for master equation dynamics 
@@ -196,11 +200,7 @@ class TestDissipators(unittest.TestCase):
             times = np.linspace(0., test_case['duration'], 50)
 
             init_state = test_case['initial state']
-            if test_case['test name'] == 'Spin Flipping':
-                times = np.linspace(0., test_case['duration'], 3000)
-                times, rho_t = init_state.propagate_using_master_equation(test_case['lindbladian'], test_case['duration'], times, ode_solver='zvode', atol=1e-8, rtol=1e-5)
-            else:
-                rho_t = init_state.propagate_using_master_equation(test_case['lindbladian'], test_case['duration'], times) 
+            rho_t = init_state.propagate_using_master_equation(test_case['lindbladian'], test_case['duration'], times) 
 
             if test_case['test name'] == 'Ion Heating':
                 fock_dimension = test_case['fock dimension'] 
