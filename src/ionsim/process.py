@@ -405,7 +405,7 @@ class Circuit(Process):
         if self.process_matrix_function is None:
             return [None for _ in range(len(outcome_operators))] 
 
-        outcome_matrix = np.row_stack([outcome_op.superbra for outcome_op in outcome_operators])
+        outcome_matrix = np.vstack([outcome_op.superbra for outcome_op in outcome_operators])
         def vector_function(circuit_process_matrix):
             return predict_outcome_probabilities_from_process_matrix(initial_state, circuit_process_matrix, outcome_matrix)
 
