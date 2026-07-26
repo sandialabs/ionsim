@@ -123,9 +123,12 @@ class ParsedCircuit:
     """
     # ParsedCircuit class should remain unfrozen so its measurement_data attribute can be modified by an experiment. 
     unparsed_data: str
-    fiducial_prep_gates: list[ParsedGate]
-    germ_gates: list[ParsedGate]
-    fiducial_measurement_gates: list[ParsedGate]
+    fiducial_prep_layers: list[Layer]
+    germ_layers: list[Layer]
+    fiducial_measurement_layers: list[Layer]
+    #fiducial_prep_gates: list[ParsedGate]
+    #germ_gates: list[ParsedGate]
+    #fiducial_measurement_gates: list[ParsedGate]
     germ_power: int 
 
     line_labels: list[int]   # not as important, TODO: delete?   
@@ -137,12 +140,6 @@ class ParsedCircuit:
         return (self.prep_layers + self.germ_layers * self.germ_power + self.meas_layers)
 
     @property
-    def expanded_gates(self) -> list[ParsedGate]:
-        """ List of gates, expanded (no germ power included) """
-        return [layer.gates[0] for layer in self.expanded_layers]
-        #return self.fiducial_prep_gates + self.germ_gates * self.germ_power + self.fiducial_measurement_gates
-
-    @property
     def total_counts(self) -> int:
         """ Number of measurement counts """
         return self.measurement_data.total_counts 
@@ -152,7 +149,30 @@ class ParsedCircuit:
     @property
     def depth(self) -> int:
         """ Number of total gates in the circuit """
-        return len(self.expanded_gates)
+        return len(self.expanded_layers)
+        #return len(self.expanded_gates)
+
+    # Backward compatibility for 1Q GST code: 
+    # TODO: Should these check if we only have 1 qubit? 
+    @property
+    def expanded_gates(self) -> list[ParsedGate]:
+        """ List of gates, expanded (no germ power included); meant for 1Q GST only """
+        return [layer.gates[0] for layer in self.expanded_layers]
+        #return self.fiducial_prep_gates + self.germ_gates * self.germ_power + self.fiducial_measurement_gates
+
+    @property
+    def fiducial_prep_gates(self) -> list[Gate]:
+        return [layer.gates[0] for layer in self.prep_layers]
+
+
+    @property
+    def germ_gates(self) -> list[Gate]:
+        return [layer.gates[0] for layer in self.prep_layers]
+
+    @property
+    def fiducial_measurement_gates(self) -> list[Gate]:
+        return [layer.gates[0] for layer in self.fiducial_measurement_layers]
+
 
 
     def __repr__(self):
