@@ -94,17 +94,6 @@ class Dissipator(CompositeOperator):
 
             if isinstance(lindblad_operator, CouplingOperator) or isinstance(lindblad_operator, GeneralOperator):
                 # Must account for frame shifts in coupling operators 
-                # Form shift matrix 
- #                U_t = np.diag(np.exp(-1j * np.array(self.rotating_frame_energies) * t))
- #                
- #                if isinstance(lindblad_operator, GeneralOperator) and lindblad_operator.couplings:
- #                    offdiagonal_contribution = lindblad_operator.coupling_operator_contribution.static_matrix
- #                else:
- #                    offdiagonal_contribution = lindblad_operator.static_matrix
- #
- #                offdiagonal_contribution = U_t @ offdiagonal_contribution @ np.conjugate(U_t.T)
- #                #print(offdiagonal_contribution)
- #                L_matrix += offdiagonal_contribution
                 L_int, Rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(lindblad_operator) 
     
                 # Element-wise multiplication, compute L * exp(-1j * Rate * t)
@@ -114,7 +103,6 @@ class Dissipator(CompositeOperator):
                     L_matrix += Ltemp 
                 else:
                     L_matrix += (L_int.toarray() * np.exp(-1j * Rate.toarray() * t))
-                #print(Rate.toarray()/(2.*np.pi*1E9))
             return L_matrix
 
         return _lindblad_function
