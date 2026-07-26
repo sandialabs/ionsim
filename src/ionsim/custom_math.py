@@ -162,13 +162,13 @@ class ZVODE(OdeSolver):
         r.set_integrator('zvode', method='adams', with_jacobian=True, atol = self.atol, rtol = self.rtol, nsteps=self.nsteps) # use method='bdf' for stiff ode
         r.set_initial_value(initial_state, 0)
         dt = t_final/float(num_steps)
-        ctr = 0
-        io_freq = 1000 
+        #ctr = 0
+        #io_freq = 1000
         while r.successful() and r.t < t_final:
             r.integrate(r.t + dt)
             intermediate_states += [r.y]
             intermediate_times += [r.t]
-            ctr += 1
+            #ctr += 1
             #if ctr % io_freq == 0:
             #    print(f"Completed {ctr} steps.")
         return intermediate_times, intermediate_states
