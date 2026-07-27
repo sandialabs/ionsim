@@ -303,6 +303,8 @@ class Gate(Process):
 @dataclass(frozen=True, eq=False)
 class Circuit(Process):
     """A quantum circuit (i.e., a series of gates) in a basis of states."""
+    """ Note: Users should input the gate list in chronological order of operation. 
+        e.g. [X_pi, Y_pi] would apply an X_pi and then a Y_pi gate. """
     gates: list[Gate]
     process_matrix_function: Callable | None = None
     #parameters: None | dict[str, float] = field(default_factory=dict) 

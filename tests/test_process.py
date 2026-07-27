@@ -77,7 +77,6 @@ class TestProcess(unittest.TestCase):
         ramsey_circuit = Circuit.from_gates([noisy_R_gate, noisy_R_gate])
 
         #ramsey_circuit = Circuit.from_gates([noisy_R_gate, noisy_R_gate], self.theta_noise) # functions but not accurate  
-        ## Fixed a bug where a noisy process matrix function would not work with kwargs 
         circuit_pm_function = ramsey_circuit.process_matrix_function 
 
         # Test outcome probability function  
@@ -94,11 +93,44 @@ class TestProcess(unittest.TestCase):
 
         ### Test Jacobian functionality: Compute Jacobian when considering more than 1 outcome: 
         outcome_operator2 = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_0, Pauli.projector_0)) 
-
         probs_function = ramsey_circuit.build_outcome_probabilities_function(initial_state, [outcome_operator, outcome_operator2])
-
         probs, jacobian = circuit_pm_function.jacobian(probs_function, wrt = ["R__phi", "R__theta"], **circuit_parameters)
-        #print(f"Jacobian: \n{jacobian}")
+
+    def test_probability_gradient_functions(self):
+        """ Test the probability gradient functions and gate execution order in the circuit process matrix """ 
+        def Rx(theta: float):
+            return Unitary.R(0., theta)
+        Rx_gate = Gate.from_unitary_function(self.basis, Rx, {'theta': 0.3}, [self.spin_a]) 
+
+        def Ry(theta: float):
+            return Unitary.R(np.pi/2, theta)
+
+        Ry_gate = Gate.from_unitary_function(self.basis, Ry, {'theta': 1.1}, [self.spin_a]) 
+        def Rz(theta: float):
+            U = np.eye(2,dtype=complex)
+            U[0,0] = np.exp(-1j*theta/2.)
+            U[1,1] = np.exp(1j*theta/2.)
+            return U
+
+        Rz_gate = Gate.from_unitary_function(self.basis, Rz, {'theta': 0.7}, [self.spin_a]) 
+
+        test_circuit = Circuit.from_gates([Rx_gate, Ry_gate, Rz_gate, Rx_gate])
+        circuit_pm_function = test_circuit.process_matrix_function
+        outcome_operator = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_0, Pauli.projector_0)) 
+        initial_state = State.from_coefficients(self.basis, [1., 0., 0., 0.]) 
+
+        manual_prob_calc = (outcome_operator.superbra @ test_circuit.process_matrix @ initial_state.supervector).real 
+
+        prob_function = test_circuit.build_outcome_probability_function(initial_state, outcome_operator)
+        circuit_parameters = {'Rx__theta' : 0.3, 'Ry__theta' : 1.1, 'Rz__theta' : 0.7}
+        outcome_prob = prob_function(**circuit_parameters)
+        self.assertAlmostEqual(outcome_prob, manual_prob_calc, places = 8)
+        self.assertAlmostEqual(outcome_prob, 0.754638380036144, places = 8)
+        
+        prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = ["Rx__theta", "Ry__theta", "Rz__theta"], **circuit_parameters) 
+        self.assertAlmostEqual(prob_gradients["Rz__theta"], 0.12435021, places = 8)
+        
+
 
 
 if __name__ == '__main__':
