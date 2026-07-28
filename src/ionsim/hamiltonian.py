@@ -37,27 +37,6 @@ class Hamiltonian(CompositeOperator):
     def __post_init__(self):
         super().__post_init__()
 
-    @cached_property
-    def coupling_operators(self):
-        """ Returns a list of all Hermitian CouplingOperators in the operator list """
-        # The Hamiltonian class assumes coupling operators are only storing unique coupling elements by h.c. symmetry
-        # First extract all coupling operator types 
-        coupling_ops = []
-        for operator in self.operators:
-            if isinstance(operator, GeneralOperator):
-                if operator.couplings:
-                    coupling_ops.append(operator.coupling_operator_contribution) 
-            elif isinstance(operator, CouplingOperator):
-                coupling_ops.append(operator)
-
-        # Then collect the half-operators from Hermitian symmetry that is used throughout the Hamiltonian class  
-        # i.e. the Hamiltonian is built via coupling_operator.static_matrix + its h.c.  
-        hermitian_coupling_ops = []
-        for op in coupling_ops:
-            unique_couplings = op._unique_couplings_from_hermitian_coupling_matrix(op.basis, op.static_matrix, op.rate_matrix) 
-            hermitian_coupling_ops.append(CouplingOperator(op.basis, unique_couplings, op.modulation_function)) 
-        return hermitian_coupling_ops            
-
     @property
     def energies(self):
         return [state.energy + energy for state, energy in zip(self.basis.states, self.rotating_frame_energies)]
@@ -117,7 +96,9 @@ class Hamiltonian(CompositeOperator):
         # Coupling operators:  
         for operator in self.coupling_operators:
             # Extract offdiagonal elements --> Hint and Oscillation rate 
-            Hint, Rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(operator)
+            # Build Hint, Rate from half matrices since the operators are Hermitian and will be treated as such in subsequent functions  
+            unique_couplings = operator._unique_couplings_from_hermitian_coupling_matrix(operator.basis, operator.static_matrix, operator.rate_matrix) 
+            Hint, Rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(CouplingOperator(operator.basis, unique_couplings, operator.modulation_function))
             Hints.append(Hint)
             Rates.append(Rate)
 
