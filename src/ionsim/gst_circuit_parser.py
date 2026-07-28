@@ -76,8 +76,38 @@ class ParsedGate:
             return "[]"
         if not self.qubits:
             return self.name
-        q = ",".join(str(q) for q in self.qubits)
+        q = ":".join(str(q) for q in self.qubits)
+        #q = ",".join(str(q) for q in self.qubits)
         return f"{self.name}:{q}"
+
+
+    @classmethod
+    def from_string(cls, gate_str: str): #qubit_indices: list[int] | None=None):
+        """ Creates an instance using a gate string """  
+        parts = gate_str.split(':')
+        
+        gate_name = parts[0]
+        
+        if gate_name == 'idle' or gate_name == '[]':
+            return cls('idle', ())
+        
+        qubits = tuple(int(q) for q in parts[1:])
+        if len(parts) == 1 and len(qubit_indices) == 1:
+            qubits = (0, ) 
+        else:
+            qubits = tuple(int(q) for q in parts[1:])
+        
+        if len(parts) == 1 and len(qubits) > 1:
+            raise ValueError(f"For multi-qubit systems, the gate string must specify the qubit(s), except for idle gates.")
+        
+ #        mismatch = [q for q in qubits if q not in qubit_indices]
+ #        if mismatch:
+ #            raise ValueError(f"Qubit labels should match qubit indices specified. Found {mismatch} in the gate string, but not present in {qubit_indices}.")
+        
+        return cls(gate_name, qubits)
+
+
+
 
 
 @dataclass

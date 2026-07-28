@@ -37,7 +37,8 @@ class GSTCircuitPlanner:
             # Use standard 1Q GST fiducial choices 
             prep_fiducials, measure_fiducials = self.standard_1Q_fiducials()
         elif prep_fiducials is None and measure_fiducials is None and len(qubit_labels) > 1:
-            raise IonSimError(f"2-qubit GST circuit planning default options are currently not implemented in IonSim. Please specify a choice of fiducial prep circuits.")
+            prep_fiducials, measure_fiducials = self.standard_nQ_fiducials()
+            #raise IonSimError(f"2-qubit GST circuit planning default options are currently not implemented in IonSim. Please specify a choice of fiducial prep circuits.")
 
         if germs is None and len(qubit_labels) == 1: 
             germs = self.standard_1Q_germs(gate_names)
@@ -180,14 +181,13 @@ class GSTCircuitPlanner:
         #fiducials = [[], [X_pi2], [Y_pi2], [X_pi2, X_pi2], [Y_pi2, Y_pi2], [X_pi2, X_pi2, X_pi2], [Y_pi2, Y_pi2, Y_pi2] ]
         return fiducials, fiducials 
 
-    @staticmethod
-    def standard_nQ_fiducials() -> list:
+    def standard_nQ_fiducials(self) -> list:
         """N-qubit fiducial from tensor product of 1Q fiducial sets """
         from itertools import product as iter_product
         single_qubit_fids = {}
         for q in self.qubit_labels:
-            gx = Gate('Gxpi2', (q,)) 
-            gy = Gate('Gypi2', (q,)) 
+            gx = ParsedGate('Gxpi2', (q,)) 
+            gy = ParsedGate('Gypi2', (q,)) 
             single_qubit_fids[q] = [
                 [],
                 [gx], 
@@ -195,10 +195,11 @@ class GSTCircuitPlanner:
                 [gx, gx],
             ]
 
+        fiducials = []
         # Cartesian product across all qubits for N qubits 
-        for combo in iter_product(*(single_qubit_fids[q] for q in qubit_labels)):
+        for combo in iter_product(*(single_qubit_fids[q] for q in self.qubit_labels)):
             # Make gate lists from each qubit 
-            fir = []
+            fid = []
             for gate_list in combo:
                 fid.extend(gate_list)
             fiducials.append(fid)
