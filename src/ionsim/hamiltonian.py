@@ -54,7 +54,7 @@ class Hamiltonian(CompositeOperator):
         # i.e. the Hamiltonian is built via coupling_operator.static_matrix + its h.c.  
         hermitian_coupling_ops = []
         for op in coupling_ops:
-            unique_couplings = op.hermitian_couplings
+            unique_couplings = op._unique_couplings_from_hermitian_coupling_matrix(op.basis, op.static_matrix, op.rate_matrix) 
             hermitian_coupling_ops.append(CouplingOperator(op.basis, unique_couplings, op.modulation_function)) 
         return hermitian_coupling_ops            
 
