@@ -28,5 +28,10 @@ class TestNamedOperators(unittest.TestCase):
         assert_array_close(np.exp(1j*np.pi/2./2.)*Unitary.R_bloch([np.pi/2./2., 0, 0]), Unitary.sqrtX)
         assert_array_close(1j*Unitary.R_bloch([np.pi/2., 0, 0]), Pauli.X)
 
+    def test_CNOT_unitary(self):
+        """ Test the unitary CNOT function """ 
+        
+
+
 if __name__ == '__main__':
     unittest.main()
