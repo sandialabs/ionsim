@@ -149,7 +149,7 @@ class ZVODE(OdeSolver):
             initial_state[0] = 1.
 
         intermediate_states = [initial_state]
-        intermediate_times = [0.]
+        #intermediate_times = [0.]
         def schrodinger(t, y):
             return  -1.0j * hamiltonian(t).dot(y)
         def jacobian(t, y):
@@ -161,17 +161,18 @@ class ZVODE(OdeSolver):
         r = ode(schrodinger, jacobian)
         r.set_integrator('zvode', method='adams', with_jacobian=True, atol = self.atol, rtol = self.rtol, nsteps=self.nsteps) # use method='bdf' for stiff ode
         r.set_initial_value(initial_state, 0)
-        dt = t_final/float(num_steps)
-        #ctr = 0
-        #io_freq = 1000
-        while r.successful() and r.t < t_final:
-            r.integrate(r.t + dt)
+        for k, t in enumerate(self.time_evals[1:], start=1):
+            r.integrate(t)
             intermediate_states += [r.y]
-            intermediate_times += [r.t]
-            #ctr += 1
-            #if ctr % io_freq == 0:
-            #    print(f"Completed {ctr} steps.")
-        return intermediate_times, intermediate_states
+            if not r.successful():
+                raise RuntimeError(f"Integration failed at t={t}")
+
+        #dt = t_final/float(num_steps) 
+ #        while r.successful() and r.t < t_final:
+ #            r.integrate(r.t + dt)
+ #            intermediate_states += [r.y]
+ #            intermediate_times += [r.t]
+        return self.time_evals, intermediate_states
 
 # working version
 # @dataclass(frozen=True, eq=False)
