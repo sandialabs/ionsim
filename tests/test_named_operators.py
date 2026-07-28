@@ -30,8 +30,12 @@ class TestNamedOperators(unittest.TestCase):
 
     def test_CNOT_unitary(self):
         """ Test the unitary CNOT function """ 
-        
-
+        ideal_CNOT = np.zeros((4,4),dtype=complex)
+        ideal_CNOT[0,0] = 1.
+        ideal_CNOT[1,1] = 1.
+        ideal_CNOT[2,3] = 1.
+        ideal_CNOT[3,2] = 1.
+        assert_array_close(ideal_CNOT, Unitary.CNOT)
 
 if __name__ == '__main__':
     unittest.main()
