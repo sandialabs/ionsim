@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 
 from ionsim.gst_circuit_parser import ParsedCircuit, ParsedGate
 
-
 """ Circuit planner has 2 modes: 1) Gate model agnostic, 2) optimized planner based on gate models and germ sensitivies. """ 
 class GSTCircuitPlanner:
     def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials = None, measure_fiducials = None, germs = None, germ_powers: list[int]=[1,2,4,8,16], 
@@ -30,7 +29,7 @@ class GSTCircuitPlanner:
             self.germ_powers = [1]
 
         # Build Parsed Gate objects from gate names and store them in a dictionary  
-        self._construct_gate_name_to_object_mapping(gate_names, qubit_labels) 
+        self._construct_gate_name_to_object_mapping(gate_names) 
 
         # Set up prep/measure/germ circuits depending on user input. A default is used if none is supplied.  
         if prep_fiducials is None and measure_fiducials is None and len(qubit_labels) == 1:
@@ -82,14 +81,17 @@ class GSTCircuitPlanner:
 
 
 
-    def _construct_gate_name_to_object_mapping(self, gate_names: list[str], qubit_labels: list[str]): 
+    def _construct_gate_name_to_object_mapping(self, gate_names: list[str]): 
+    #def _construct_gate_name_to_object_mapping(self, gate_names: list[str], qubit_labels: list[str]): 
         """ Set up the gate name -> ParsedGate look up dictionary """ 
         self.gate_lookup = {}
         for name in gate_names:
-            if name == 'idle': # use empty qubit arguments 
-                self.gate_lookup[name] = ParsedGate(name, ())
-            else:
-                self.gate_lookup[name] = ParsedGate(name, tuple(qubit_labels))
+            gate = ParsedGate.from_string(name)
+            self.gate_lookup[name] = gate
+ #            if name == 'idle': # use empty qubit arguments 
+ #                self.gate_lookup[name] = ParsedGate(name, ())
+ #            else:
+ #                self.gate_lookup[name] = ParsedGate(name, tuple(qubit_labels))
 
     def generate_gst_circuits(self) -> list:
         """Generate GST circuits. Convert string gates to ParsedGate and avoid duplicates."""
@@ -276,8 +278,9 @@ class GSTCircuitPlanner:
 
 
     @staticmethod
-    def write_all_circuit_outcomes(filename: str, circuits: list[ParsedCircuit], N_qubits:int=1):
+    def write_all_circuit_outcomes(filename: str, circuits: list[ParsedCircuit]): 
         """ Writes all circuit information to a file """
+        N_qubits = circuits[0].num_qubits 
         d = 2**N_qubits # Hilbert space dimensionality 
         outcome_labels = [''.join(bits) for bits in product('01', repeat=N_qubits)] 
 
@@ -289,9 +292,9 @@ class GSTCircuitPlanner:
             for circ in circuits:
                 f.write(circ._format_circuit_line() + "\n")
 
-    @staticmethod
-    def create_circuit_outcomes_file(filename: str, N_qubits:int=1):
+    def create_circuit_outcomes_file(self, filename: str): 
         """ Creates a GST circuit file with appropriate header """ 
+        N_qubits = len(self.qubit_labels)
         d = 2**N_qubits # Hilbert space dimensionality 
         outcome_labels = [''.join(bits) for bits in product('01', repeat=N_qubits)] 
 
@@ -346,7 +349,6 @@ class GSTCircuitPlanner:
 
         return germ_process_matrix
 
-    #def compute_germ_sensitivities(self, germs: list[list[ParsedGate]], max_power: int=16):
     def compute_germ_sensitivities(self, germs: list[list[ParsedGate]]): 
         """Compute sensitivity of all gate model parameters to germ sequences.
 

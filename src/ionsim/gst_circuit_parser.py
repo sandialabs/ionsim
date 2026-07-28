@@ -77,36 +77,21 @@ class ParsedGate:
         if not self.qubits:
             return self.name
         q = ":".join(str(q) for q in self.qubits)
-        #q = ",".join(str(q) for q in self.qubits)
         return f"{self.name}:{q}"
 
 
     @classmethod
     def from_string(cls, gate_str: str): #qubit_indices: list[int] | None=None):
         """ Creates an instance using a gate string """  
-        parts = gate_str.split(':')
-        
-        gate_name = parts[0]
-        
-        if gate_name == 'idle' or gate_name == '[]':
+        if gate_str == 'idle' or gate_str == '[]':
             return cls('idle', ())
-        
-        qubits = tuple(int(q) for q in parts[1:])
-        if len(parts) == 1 and len(qubit_indices) == 1:
+        parts = gate_str.split(':')
+        name = parts[0]
+        if len(parts) == 1:
             qubits = (0, ) 
         else:
             qubits = tuple(int(q) for q in parts[1:])
-        
-        if len(parts) == 1 and len(qubits) > 1:
-            raise ValueError(f"For multi-qubit systems, the gate string must specify the qubit(s), except for idle gates.")
-        
- #        mismatch = [q for q in qubits if q not in qubit_indices]
- #        if mismatch:
- #            raise ValueError(f"Qubit labels should match qubit indices specified. Found {mismatch} in the gate string, but not present in {qubit_indices}.")
-        
-        return cls(gate_name, qubits)
-
-
+        return cls(name, qubits)
 
 
 
@@ -141,7 +126,6 @@ class ParsedCircuit:
         return self.measurement_data.total_counts 
         #return sum(self.measurement_counts.values())
 
-
     @property
     def depth(self) -> int:
         """ Number of total gates in the circuit """
@@ -151,6 +135,10 @@ class ParsedCircuit:
     def __repr__(self):
         gates_readable = " ".join(repr(gate) for gate in self.expanded_gates) or "(empty)"
         return f"ParsedCircuit({gates_readable}, data={self.measurement_data})"
+
+    @property
+    def num_qubits(self):
+        return len(self.line_labels)
 
 
     def build_circuit_string(self) -> str: 
@@ -197,7 +185,6 @@ class ParsedCircuit:
         planned_circ = ParsedCircuit("", prep_gates, germ_gates, measure_gates, germ_power, line_labels, measurement_data = None)
         planned_circ.unparsed_data = planned_circ.build_circuit_string()
         return planned_circ  
-
 
     def append_to_file(self, filename):
         """ Appends circuit information to a gstdata type file"""

@@ -28,19 +28,6 @@ def depth_bin(depth):
     return int(2**(np.ceil(np.log2(depth))))
 
 
-def _str_to_gate(s: str) -> ParsedGate:
-    """ Parse a gate string with qubits into a ParsedGate object """
-    if s == 'idle' or s == '[]':
-        return ParsedGate('idle', ())
-    parts = s.split(':')
-    name = parts[0]
-    if len(parts) == 1:
-        qubits = (0, ) 
-    else:
-        qubits = tuple(int(q) for q in parts[1:])
-    return ParsedGate(name, qubits)
-
-
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], 
                      gate_models: dict[str, Callable], parameter_bounds: dict[dict[str, tuple]] | None=None, circuit_design: GSTCircuitPlanner | None=None, ideal_gate_set: dict | None=None, verbose: bool=False): 
@@ -92,7 +79,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 self.user_key_gate_map[key] = key
                 self.gate_models[key] = model
             elif isinstance(key, str):
-                key_as_gate = _str_to_gate(key)
+                key_as_gate = ParsedGate.from_string(key) 
                 self.user_key_gate_map[key] = key_as_gate
                 self.gate_models[key_as_gate] = model
             else:
