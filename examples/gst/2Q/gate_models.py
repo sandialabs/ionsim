@@ -36,7 +36,8 @@ def X_pi2(X_rot, Z_rot):
     Rxpi2 = ism.Unitary.R_bloch([x_angle/2., 0./2., Z_rot/2.]) 
     
     # Promote to a d^2 x d^2 superoperator 
-    return basis.compute_superoperator_from_unitary_operator(Rxpi2) # superoperator 
+    #return basis.compute_superoperator_from_unitary_operator(Rxpi2) # superoperator 
+    return Rxpi2 
 
 
 def Y_pi2(Y_rot):
@@ -52,29 +53,38 @@ def Y_pi2(Y_rot):
     Rypi2 = ism.Unitary.R_bloch([0./2., y_angle/2., 0./2.]) 
 
     # Promote to a d^2 x d^2 superoperator 
-    return basis.compute_superoperator_from_unitary_operator(Rypi2)
+    #return basis.compute_superoperator_from_unitary_operator(Rypi2)
+    return Rypi2
 
 
 
 def X_pi2_q0(X_rot, Z_rot):
     I = np.eye(2)
-    return X_pi2(X_rot, Z_rot) @ I 
+    return basis.compute_superoperator_from_unitary_operator(np.kron(X_pi2(X_rot, Z_rot), I)) 
 
 def X_pi2_q1(X_rot, Z_rot):
     I = np.eye(2)
-    return I @ X_pi2(X_rot, Z_rot) 
+    return basis.compute_superoperator_from_unitary_operator(np.kron(I, X_pi2(X_rot, Z_rot)))
 
 def Y_pi2_q0(Y_rot):
     I = np.eye(2)
-    return Y_pi2(Y_rot) @ I 
+    return basis.compute_superoperator_from_unitary_operator(np.kron(Y_pi2(Y_rot), I)) 
 
 def Y_pi2_q1(Y_rot):
     I = np.eye(2)
-    return I @ Y_pi2(Y_rot)
+    return basis.compute_superoperator_from_unitary_operator(np.kron(I, Y_pi2(Y_rot))) 
 
 
 def cnot(d_theta_MS):
     # Jx MS unitary with under/over rotation  
-    ism.Unitary.MS(0., np.pi/2. + d_theta_MS)
+    # Assume perfect 1Q gate rotations for example  
+    g1 = Y_pi2_q0(0.)
+    MS = ism.Unitary.MS(0., np.pi/2. + d_theta_MS)
+    MS = basis.compute_superoperator_from_unitary_operator(MS)
+    g3 = X_pi2_q1(-np.pi, 0.) 
+    g4 = X_pi2_q0(-np.pi, 0.)
+    g5 = Y_pi2_q0(-np.pi)
+    phase = idle(0.)*np.exp(-1j*np.pi/4.)
 
+    return phase @ g5 @ g4 @ g3 @ MS @ g1
  

@@ -31,7 +31,7 @@ def depth_bin(depth):
 def _str_to_gate(s: str) -> ParsedGate:
     """ Parse a gate string with qubits into a ParsedGate object """
     if s == 'idle' or s == '[]':
-        return Gate('idle', ())
+        return ParsedGate('idle', ())
     parts = s.split(':')
     name = parts[0]
     if len(parts) == 1:
@@ -102,6 +102,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if missing:
             missing_strs = [repr(g) for g in missing]
             raise ValueError(f"Gates found in circuit data but no model, missing models for {missing_strs}")
+
+        if verbose:
+            print(f"Gate set tomography on gate set: {self.gate_set}")
 
         # 3. Parameters: 
         # Build a parameter look-up dictionary for organizing parameter indices. 
@@ -174,6 +177,11 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Organize a lookup table for fiducial prep/measure circuits; needed for linear GST 
         self._index_fiducials()
         self._initialize_likelihood_circuit_cache()
+
+
+    @property
+    def num_parameters(self):
+        return len(self.gst_parameters)
 
 
     def _build_parameter_organization(self) -> tuple[dict[str, slice], int]:
@@ -632,7 +640,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for label, effect in M_effects.items():
             print(f"\nMeasurement effect {label} vectors: {effect}")
 
-    def solve_for_gate_parameters(self, parameters_guess: Vector | dict | None, solver: str = 'MLE'):
+    def solve_for_gate_parameters(self, parameters_guess: Vector | dict | None, solver: str = 'MLE', **kwargs):
         """ Function to solve for the parametrization values of a particular gate. 
 
             - Parameters guess can be a list/vector of parameter values, or a dict: {gate name : {parameter name : initial value, ...}}
@@ -673,7 +681,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         if solver == 'MLE':
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
-            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds) 
+            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds, **kwargs) 
             self.solver_result = solver_result
             self.gst_parameters = solver_result.x
             return solver_result
@@ -683,7 +691,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             return self.gst_parameters 
         elif solver == 'staged MLE':
             # Do staged MLE --> MLE done in batches of increasing circuit depths. 
-            self.solver_result, results_by_stage = self.staged_objective_minimization(theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds) 
+            self.solver_result, results_by_stage = self.staged_objective_minimization(theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds, **kwargs) 
             self.results_by_stage = results_by_stage
             self.gst_parameters = self.solver_result.x
             return self.solver_result 
