@@ -78,13 +78,14 @@ def Y_pi2_q1(Y_rot):
 def cnot(d_theta_MS):
     # Jx MS unitary with under/over rotation  
     # Assume perfect 1Q gate rotations for example  
-    g1 = Y_pi2_q0(0.)
-    MS = ism.Unitary.MS(0., np.pi/2. + d_theta_MS)
-    MS = basis.compute_superoperator_from_unitary_operator(MS)
-    g3 = X_pi2_q1(-np.pi, 0.) 
-    g4 = X_pi2_q0(-np.pi, 0.)
-    g5 = Y_pi2_q0(-np.pi)
-    phase = idle(0.)*np.exp(-1j*np.pi/4.)
-
-    return phase @ g5 @ g4 @ g3 @ MS @ g1
+ #    g1 = Y_pi2_q0(0.)
+ #    MS = ism.Unitary.MS(0., np.pi/2. + d_theta_MS)
+ #    MS = basis.compute_superoperator_from_unitary_operator(MS)
+ #    g3 = X_pi2_q1(-np.pi, 0.) 
+ #    g4 = X_pi2_q0(-np.pi, 0.)
+ #    g5 = Y_pi2_q0(-np.pi)
+ #    phase = idle(0.)*np.exp(-1j*np.pi/4.)*np.exp(1j*np.pi/2.)
+ #
+ #    return phase @ g5 @ g4 @ g3 @ MS @ g1
+    return basis.compute_superoperator_from_unitary_operator(ism.Unitary.CNOT_from_MS(0., d_theta_MS + np.pi/2.))
  

@@ -22,7 +22,8 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
 
     # Run the main parsing function:  
     parsed_circuits = sm.parse_gst_circuit_file(fname)
-    parsed_circuits = parsed_circuits[:500]
+    parsed_circuits = parsed_circuits
+    #parsed_circuits = parsed_circuits[:2500]
 
     print_head = False 
     if print_head:
@@ -63,7 +64,7 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
     ism_gate_dictionary['Gxpi2:1'] = X_pi2_q1
     ism_gate_dictionary['Gypi2:0'] = Y_pi2_q0
     ism_gate_dictionary['Gypi2:1'] = Y_pi2_q1
-    ism_gate_dictionary['cnot:0:1'] = cnot
+    ism_gate_dictionary['Gcnot:0:1'] = cnot
 
     # For GST, define state and measurement parametrizations (models): 
     # Here, we choose deviations from an ideal prep state and ideal POVM effects: 
@@ -118,17 +119,18 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
     ideal_gate_set['Gypi2:0'] = Y_pi2_q0(-0.042)
     ideal_gate_set['Gypi2:1'] = Y_pi2_q1(-0.042)
     ideal_gate_set['idle'] = idle(0.0035248)
-    ideal_gate_set['cnot:0:1'] = cnot(0.0066)
+    ideal_gate_set['Gcnot:0:1'] = cnot(0.0066)
     #design_fname = 'circuit_design.yml'
     #gst_circuit_design = sm.GSTCircuitPlanner.load_design(design_fname)
-    GST_analyzer = sm.GateSetTomography(basis, prep_state_function, POVM_models, parsed_circuits, ism_gate_dictionary, circuit_design = None, ideal_gate_set = ideal_gate_set, verbose = False)
+    GST_analyzer = sm.GateSetTomography(basis, prep_state_function, POVM_models, parsed_circuits, ism_gate_dictionary, circuit_design = None, ideal_gate_set = ideal_gate_set, verbose = True)
 
     parameter_guess = np.ones(GST_analyzer.num_parameters)*1e-2
     #print(f"Number of model parameters: {GST_analyzer.num_parameters}")
     print(f"Parameter organization: {GST_analyzer.gst_parameter_indices}")
     start = time.perf_counter()
-    solver_options = {"maxfun" : 100000}
-    solver_results = GST_analyzer.solve_for_gate_parameters(parameter_guess, 'MLE', options = solver_options)
+    #solver_options = {"maxfun" : 10000}
+    solver_results = GST_analyzer.solve_for_gate_parameters(parameter_guess, 'staged MLE') 
+    #solver_results = GST_analyzer.solve_for_gate_parameters(parameter_guess, 'MLE', options = solver_options)
     #results_by_stage = GST_analyzer.circuit_depth_scaling_analysis()
     end = time.perf_counter()
     print(f"Ran staged GST in {end - start} seconds")

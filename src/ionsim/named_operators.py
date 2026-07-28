@@ -129,4 +129,4 @@ class Unitary:
 
     @staticmethod
     def CNOT_from_MS(phi: float, theta: float): 
-        return np.exp(1j*np.pi/2.)*np.exp(-1j*np.pi/4.)*(np.kron(np.conj(sqrtY).T,I)) @ (np.kron(np.conj(sqrtX).T,I)) @ (np.kron(I, np.conj(sqrtX).T)) @ MS(phi, theta) @ (np.kron(sqrtY, I))
+        return np.exp(1j*np.pi/2.)*np.exp(-1j*np.pi/4.)*(np.kron(np.conj(Unitary.sqrtY).T,Unitary.I)) @ (np.kron(np.conj(Unitary.sqrtX).T,Unitary.I)) @ (np.kron(Unitary.I, np.conj(Unitary.sqrtX).T)) @ Unitary.MS(phi, theta) @ (np.kron(Unitary.sqrtY, Unitary.I))

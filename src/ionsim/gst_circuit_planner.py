@@ -175,8 +175,36 @@ class GSTCircuitPlanner:
         #idle = ParsedGate('idle', ())
 
         # include empty list for "do nothing for no time" initial sequence 
-        fiducials = [[], [X_pi2], [Y_pi2], [X_pi2, X_pi2], [Y_pi2, Y_pi2], [X_pi2, X_pi2, X_pi2], [Y_pi2, Y_pi2, Y_pi2] ]
+        # We should only need 4 fiducials for informational completeness 
+        fiducials = [[], [X_pi2], [Y_pi2], [X_pi2, X_pi2]] 
+        #fiducials = [[], [X_pi2], [Y_pi2], [X_pi2, X_pi2], [Y_pi2, Y_pi2], [X_pi2, X_pi2, X_pi2], [Y_pi2, Y_pi2, Y_pi2] ]
         return fiducials, fiducials 
+
+    @staticmethod
+    def standard_nQ_fiducials() -> list:
+        """N-qubit fiducial from tensor product of 1Q fiducial sets """
+        from itertools import product as iter_product
+        single_qubit_fids = {}
+        for q in self.qubit_labels:
+            gx = Gate('Gxpi2', (q,)) 
+            gy = Gate('Gypi2', (q,)) 
+            single_qubit_fids[q] = [
+                [],
+                [gx], 
+                [gy],
+                [gx, gx],
+            ]
+
+        # Cartesian product across all qubits for N qubits 
+        for combo in iter_product(*(single_qubit_fids[q] for q in qubit_labels)):
+            # Make gate lists from each qubit 
+            fir = []
+            for gate_list in combo:
+                fid.extend(gate_list)
+            fiducials.append(fid)
+
+        return fiducials, fiducials 
+
 
     @staticmethod
     def standard_1Q_germs(gate_names: list[str]) -> list:
