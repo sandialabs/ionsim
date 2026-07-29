@@ -8,7 +8,7 @@
 #***************************************************************************************************
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from sympy.physics.wigner import wigner_3j, wigner_6j 
 import sympy 
@@ -25,6 +25,7 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     term_symbol: str
     fine_energy: float 
     hyperfine_A: float
+    alias: str | None = field(default=None, kw_only=True)
 
     @property
     @abstractmethod
