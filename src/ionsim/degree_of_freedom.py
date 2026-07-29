@@ -50,8 +50,8 @@ class AtomicStructure(DegreeOfFreedom):
         if term_symbols is not None:
             levels_data = cls.select_some_data(term_symbols, levels_data)
 
-        if level_aliases:
-            assert len(level_aliases) == len(level_names), 'Error: User should specify a level alias for each level in the atomic structure.'
+        if level_aliases and len(level_aliases) != len(level_names):
+            raise IonSimError(f'User should specify a level alias for each level in the atomic structure. Expected {len(level_names)} but have {level_aliases}')
 
         levels = []
         for level_data in levels_data:
