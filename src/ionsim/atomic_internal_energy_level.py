@@ -8,7 +8,7 @@
 #***************************************************************************************************
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from sympy.physics.wigner import wigner_3j, wigner_6j 
 import sympy 
@@ -25,6 +25,7 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     term_symbol: str
     fine_energy: float 
     hyperfine_A: float
+    alias: str | None = field(default=None, kw_only=True)
 
     @property
     @abstractmethod
@@ -62,7 +63,6 @@ class LSFineLevel(AtomicInternalEnergyLevel):
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
     lifetime: float | str='null'
     branching_ratios: dict[str, float] | None=None 
-    alias: str | None=None
     hyperfine_B: float | None=None
 
 
@@ -95,7 +95,6 @@ class LSHyperfineLevel(AtomicInternalEnergyLevel):
     external_energy_shift: float = 0.
     lifetime: float | str='null'
     branching_ratios: dict[str, float] | None=None 
-    alias: str | None=None
     hyperfine_B: float | None=None
 
     @property
@@ -119,7 +118,6 @@ class J1L2FineLevel(AtomicInternalEnergyLevel):
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
     lifetime: float | str='null'
     branching_ratios: dict[str, float] | None=None 
-    alias: str | None=None
     hyperfine_B: float | None=None
 
 
@@ -152,7 +150,6 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
     lifetime: float | str = 'null'
     branching_ratios: dict[str, float] | None = None 
-    alias: str | None=None
     hyperfine_B: float | None=None
 
 
