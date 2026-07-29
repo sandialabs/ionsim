@@ -191,17 +191,13 @@ class Basis(ABC):
 #=========================================================================================================================================================
 #=========================================================================================================================================================
     # TODO: Should this method go in a different class? 
-    def build_atom_laser_coupling_operators_for_ground_level(self, ground_level: AtomicInternalEnergyLevel, laser: Laser, multipole: str="E1", 
+    # Ultimately, we need operators to be built in the basis of interest, which may include several qubits, motional modes, etc.  
+    def build_atom_laser_coupling_operators_for_ground_level(self, ground_level: AtomicInternalEnergyLevel, laser: Laser, multipole_order: int, 
                                                             all_spins_are_same: bool = True) -> list[Operator]: 
         """ New helper method for building light-atom coupling operators from AMO physics - Atomic Structure details """ 
-
-        if multipole == 'E1' or multipole == 'dipole':
-            q = [-1, 0, 1] 
-        elif multipole == 'E2':
-            raise ValueError(f"Only E1 (dipole) transitions are implemented.")
-            q = [-2, -2, 0, 1, 2] 
-        else:
-            raise ValueError(f"Multipole value must be either 'E1' or 'E2', corresponding respectively to electric dipole or quadrupole transitions.")
+        q = list(np.arange(-multipole_order, multipole_order+1))
+        if multipole_order != 1 or multipole_order != 2:
+            raise ValueError(f"Multipole order be either 1 or 2, corresponding to E1 dipole or E2 quadrupole transitions. Received {multipole_order}.")
 
         for atom in self.atomic_structure_DOFs:        
             # Build coupling operator for each |g>, |e> pairing   
@@ -212,7 +208,7 @@ class Basis(ABC):
                     pass
                 coupling_amplitudes = {}
                 for _q in q: 
-                    coupling_amplitudes{_q} = compute_dipole_amplitude(ground_level, excited_level, _q) 
+                    coupling_amplitudes{_q} = compute_multipole_amplitude(ground_level, excited_level, multipole_order, _q) 
 
                 # Compute dot product with laser field polarization vector 
                 laser.polarization.spherical_components 
@@ -225,16 +221,12 @@ class Basis(ABC):
         return operators 
 
 
-    def build_atom_laser_coupling_operator(self, atom: AtomicSpin, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, laser: Laser, multipole: str = "E1"): 
+    def build_atom_laser_coupling_operator(self, atom: AtomicSpin, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, laser: Laser, multipole_order: int): 
         """ Builds a light-atom coupling operator between two atomic levels in the full basis """  
         # Need to build the operator with access to the full basis 
-        if multipole == 'E1' or multipole == 'dipole':
-            q = [-1, 0, 1] 
-        elif multipole == 'E2':
-            raise ValueError(f"Only E1 (dipole) transitions are implemented.")
-            q = [-2, -2, 0, 1, 2] 
-        else:
-            raise ValueError(f"Multipole value must be either 'E1' or 'E2', corresponding respectively to electric dipole or quadrupole transitions.")
+        q = list(np.arange(-multipole_order, multipole_order+1))
+        if multipole_order != 1 or multipole_order != 2:
+            raise ValueError(f"Multipole order be either 1 or 2, corresponding to E1 dipole or E2 quadrupole transitions. Received {multipole_order}.")
 
         atomic_levels = atom.energy_levels 
         if (not ground_level in atomic_levels) or (not excited_level in atomic_levels):
@@ -242,18 +234,20 @@ class Basis(ABC):
 
         coupling_amplitudes = {}
         for _q in q: 
-            coupling_amplitudes{_q} = compute_dipole_amplitude(ground_level, excited_level, _q) 
+            coupling_amplitudes{_q} = compute_multipole_amplitude(ground_level, excited_level, multipole_order, _q) 
 
         # Compute dot product with laser field polarization vector 
         # TODO: should we use vdot? 
         polarization = laser.polarization.spherical_components
         rabi_frequency = 2. * laser.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) / const.hbar 
 
+        # Buidl coupling operator matrix: 
         coupling_operator = np.zeros((2,2)) 
         ground_index = atomic_levels.index(ground_level) 
         excited_index = atomic_levels.index(excited_level) 
-        # Convention: We build a raising operator only; the Hamiltonian class will supply the h.c. lowering operator 
+
         coupling_operator[excited_index, ground_index] = 0.5 * rabi_frequency * np.exp(1j*laser.phase) 
+        coupling_operator[ground_index, excited_index] = 0.5 * rabi_frequency * np.exp(-1j*laser.phase) 
 
         # Retrieve modulation function from laser class 
         if laser.mod_functions is not None and None not in laser.mod_functions.values():
@@ -273,21 +267,9 @@ class Basis(ABC):
                 def mod_function(t: float):
                     return lambda t: np.exp(1j * frequency_mod(t) * t) 
 
-
-
                 mod_function = laser.modulation_function['amplitude']
 
-
-
-        return CouplingOperator.from_matrix(basis, coupling_operator, )
-
-        #for amplitude in coupling_amplitudes.values():
-            #if amplitude != 0.:
-                
-                 
-
-        
-
+        return CouplingOperator.from_matrix(basis, coupling_operator, oscillation_rate, mod_function)
 
 
     #def build_all_atom_light_coupling_operators
