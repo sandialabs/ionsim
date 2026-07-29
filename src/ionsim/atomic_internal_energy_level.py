@@ -51,7 +51,7 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     @property
     def energy(self):
         # Total energy: bare energy + external shifts (e.g. Zeeman, light shifts)
-        return self.bare_energy + self.external_energy_shift 
+        return self.bare_energy + self.external_energy_shift
 
 @dataclass(frozen=True, eq=False)
 class LSFineLevel(AtomicInternalEnergyLevel): 
@@ -63,6 +63,7 @@ class LSFineLevel(AtomicInternalEnergyLevel):
     lifetime: float | str='null'
     branching_ratios: dict[str, float] | None=None 
     alias: str | None=None
+    hyperfine_B: float | None=None
 
 
     @property
@@ -95,6 +96,7 @@ class LSHyperfineLevel(AtomicInternalEnergyLevel):
     lifetime: float | str='null'
     branching_ratios: dict[str, float] | None=None 
     alias: str | None=None
+    hyperfine_B: float | None=None
 
     @property
     def coupling_scheme(self):
@@ -118,6 +120,7 @@ class J1L2FineLevel(AtomicInternalEnergyLevel):
     lifetime: float | str='null'
     branching_ratios: dict[str, float] | None=None 
     alias: str | None=None
+    hyperfine_B: float | None=None
 
 
     @property
@@ -150,6 +153,7 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
     lifetime: float | str = 'null'
     branching_ratios: dict[str, float] | None = None 
     alias: str | None=None
+    hyperfine_B: float | None=None
 
 
     @property

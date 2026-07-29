@@ -37,8 +37,13 @@ class AtomicStructure(DegreeOfFreedom):
 
     @classmethod
     def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None, 
-            level_aliases: list[str] | None=None, name: str | None = None, magnetic_field: float=0.):
+            level_aliases: list[str] | None=None, name: str | None = None, magnetic_field: float=0., **kwargs):
         """Build the atomic structure degree of freedom for a particular species of atom."""
+ #=======
+ #    def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None,
+ #            name: str | None = None, magnetic_field: float=0., **kwargs):
+ #        """Build the atomic spin degree of freedom for a particular species of atom."""
+ #>>>>>>> main
         config_data = cls.get_config_data(species)
         nuclear_spin = config_data['nuclear_spin']
         levels_data = config_data['levels']
@@ -63,12 +68,17 @@ class AtomicStructure(DegreeOfFreedom):
             get_fine_data, FineLevel, HyperfineLevel = cls.get_level_factory(level_data['coupling_scheme'])
             fine_data = get_fine_data(level_data)
             j = fine_data['j']
-
             # ic(FineLevel.__annotations__, FineLevel(**fine_data, mj={'key': 1}))
             # TODO: why is mypy not catching this??
 
             # Use Zeeman Solver based on level manifold to compute Zeeman shifts 
             if magnetic_field != 0. :
+                # Hyperfine A coefficient is converted to rad/s prior to this function 
+                if fine_data['hyperfine_B'] is None:
+                    hyperfine_B = None
+                else:
+                    hyperfine_B = fine_data['hyperfine_B']/(2. * np.pi) 
+
                 if level_data['coupling_scheme'] == 'j1l2': 
                     s2 = fine_data['s2']
                     if fine_data['gj'] is None:
@@ -82,13 +92,12 @@ class AtomicStructure(DegreeOfFreedom):
                         gj = 2. * (gj1 - 1.) * (k*(k+1) + j1*(j1+1) - l2*(l2 + 1))/((2*j + 1)*(2*k + 1))
                         gj += (3*j*(j+1) - k*(k+1) + s2*(s2+1))/(2.*j*(j+1)) 
                         fine_data['gj'] = gj
-                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, None, s2, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z, gj = gj)
+                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, None, s2, fine_data['hyperfine_A']/(2.*np.pi), hyperfine_B, mass, magnetic_moment, z, gj = gj, **kwargs)
                 else:
                     s = fine_data['s']
                     l = fine_data['l']
-                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z)
+                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']/(2. * np.pi), hyperfine_B, mass, magnetic_moment, z, **kwargs)
                 zeeman_energy_shifts, zeeman_eigenvecs = Zeeman_solver.solve_at_field(magnetic_field)
-                zeeman_energy_shifts *= np.pi*2. # convert to rad/s 
 
             # Construct levels based on coupling structure 
             if structure == 'fine':
@@ -96,11 +105,10 @@ class AtomicStructure(DegreeOfFreedom):
                     # Extract any Zeeman shifts for this state 
                     zeeman_shift_energy = 0.
                     if magnetic_field != 0. :
-                        # For fine couplings, F = J since I = 0, so F <==> J and mf <==> mj labels are interchangable. 
-                        zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = j, mf = mj)
+                        # For fine couplings, F = J since I = 0, so F <==> J and mf <==> mj labels are interchangable.
+                        zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = j, mf = mj) 
                     # Create the level 
-                    level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy)
-                    # Append level if requested and include any specified aliases 
+                    level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy*np.pi*2.)
                     if level_names is None or level.name in level_names: 
                         if level_aliases:
                             level_name_index = level_names.index(level.name)
@@ -114,11 +122,11 @@ class AtomicStructure(DegreeOfFreedom):
                         # Extract any Zeeman shifts for this mF state 
                         zeeman_shift_energy = 0.
                         if magnetic_field != 0. :
-                            zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = f, mf = mf)
+                            # Hyperfine A shift is already accounted for in AtomicInternalEnergyLevel 
+                            zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = f, mf = mf, subtract_hyperfineA_shift=True)
 
                         # Create the level 
-                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy)
-                        # Append level if requested and include any specified aliases 
+                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy * np.pi * 2.)
                         if level_names is None or level.name in level_names:
                             if level_aliases:
                                 level_name_index = level_names.index(level.name)
@@ -145,6 +153,11 @@ class AtomicStructure(DegreeOfFreedom):
         fine_data = dict(level_data)
         fine_data['fine_energy'] = 2 * np.pi * fine_data['fine_energy'] # convert from Hz to rad./s
         fine_data['hyperfine_A'] = 2 * np.pi * fine_data['hyperfine_A'] # convert from Hz to rad./s
+        try: 
+            hyperfine_B = fine_data['hyperfine_B'] * 2. * np.pi
+        except:
+            hyperfine_B = None
+        fine_data['hyperfine_B'] = hyperfine_B 
         fine_data['l'] = cls.compute_l(level_data['term_symbol'])
         fine_data['j'] = cls.compute_j(level_data['term_symbol'])
         fine_data['term_symbol'] = level_data['unique_term_symbol']
@@ -158,6 +171,11 @@ class AtomicStructure(DegreeOfFreedom):
         fine_data = dict(level_data)
         fine_data['fine_energy'] = 2 * np.pi * fine_data['fine_energy'] # convert from Hz to rad./s
         fine_data['hyperfine_A'] = 2 * np.pi * fine_data['hyperfine_A'] # convert from Hz to rad./s
+        try: 
+            hyperfine_B = fine_data['hyperfine_B'] * np.pi * 2.
+        except:
+            hyperfine_B = None
+        fine_data['hyperfine_B'] = hyperfine_B 
         fine_data['k'] = cls.compute_k(level_data['term_symbol'])
         fine_data['j'] = cls.compute_j(level_data['term_symbol'])
         fine_data['gj'] = fine_data.get('gj', None)
