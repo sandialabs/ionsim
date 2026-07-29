@@ -39,7 +39,6 @@ class TestNoise(unittest.TestCase):
 
         # Test the noisy function at specific points
         zs = np.linspace(-1, 1, 3)
-
         # Check that the noisy function returns the same result as f(z)
         for z in zs:
             assert_array_close(noisy_f(z), f(z))

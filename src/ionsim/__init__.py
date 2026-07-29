@@ -20,7 +20,7 @@ def patched_kron(a, b, *args, **kwargs):
 np.kron = patched_kron
 
 from .basis import StandardBasis, XPauliBasis, XPauliAndFockBasis
-from .degree_of_freedom import AtomicSpin, MotionalMode
+from .degree_of_freedom import AtomicStructure, MotionalMode
 from .hamiltonian import Hamiltonian
 from .operator import Operator, EnergyShiftOperator, CouplingOperator, GeneralOperator
 from .state import State
@@ -29,4 +29,4 @@ from .process import Gate, Circuit
 from .noise import Noise
 from .zeeman_solver import ZeemanHyperfineSolver
 from .composite_operator import CompositeOperator
-from .dissipator import Dissipator, DissipatorSpontaneousEmission, Lindbladian 
+from .lindbladian import Dissipator, DissipatorSpontaneousEmission, Lindbladian 

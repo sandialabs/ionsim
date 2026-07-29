@@ -12,7 +12,7 @@ import numpy as np
 from scipy.linalg import expm
 from ionsim.zeeman_solver import ZeemanHyperfineSolver 
 from ionsim.testing import assert_array_close
-from ionsim.degree_of_freedom import AtomicSpin
+from ionsim.degree_of_freedom import AtomicStructure
 
 class TestZeemanSolver(unittest.TestCase):
 
@@ -27,6 +27,7 @@ class TestZeemanSolver(unittest.TestCase):
                 'L' : 0,
                 'S' : 0.5,
                 'hyperfine_A' : 3417.34 * 1E-3, # GHz
+                'hyperfine_B' : None,  
                 'mass' : 86.909, #daltons 
                 'gI' : -0.0009951414,
                 'Z' : 37, 
@@ -41,6 +42,7 @@ class TestZeemanSolver(unittest.TestCase):
                 'L' : 0,
                 'S' : 0.0,
                 'hyperfine_A' : 0., # 
+                'hyperfine_B' : None, 
                 'mass' : 170.936323, #daltons 
                 'gI' : None,
                 'Z' : 70, 
@@ -51,13 +53,15 @@ class TestZeemanSolver(unittest.TestCase):
         ]
         self.solvers = {
             case['test_name'] : ZeemanHyperfineSolver(
-                case['I'], case['J'], case['L'], case['S'], case['hyperfine_A'], case['mass'], z = case['Z'], nuclear_moment = case['magnetic moment'],
+                case['I'], case['J'], case['L'], case['S'], case['hyperfine_A'], case['hyperfine_B'], case['mass'], z = case['Z'], nuclear_moment = case['magnetic moment'],
                 gi = case['gI'], freq_units = case['frequency units'], approximation = case['approximation'])
                 for case in self.test_cases
             }
 
-        # Test 3: Use AtomicSpin from_species()  
-        self.spin = AtomicSpin.from_species(species='171Yb', term_symbols=['S0'], level_names=['S0,1/2,1/2', 'S0,1/2,-1/2'], magnetic_field = 400.) 
+        # Use AtomicStructure from_species()  
+        self.Yb = AtomicStructure.from_species(species='171Yb', term_symbols=['S0'], level_names=['S0,1/2,1/2', 'S0,1/2,-1/2'], magnetic_field = 400.) 
+        self.Rb87 = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2'], level_names=['S1/2,1,0', 'S1/2,2,0'], magnetic_field = 0.005) 
+        self.Rb87_P32 = AtomicStructure.from_species(species='87Rb', term_symbols=['P3/2'], level_names=['P3/2,1,0', 'P3/2,2,0'], magnetic_field = 5.0) 
 
     def test_explicit_zeeman_solvers(self):
         # Test functionality when using explicit construction of Zeeman Solver objects for each test case. 
@@ -103,14 +107,28 @@ class TestZeemanSolver(unittest.TestCase):
 
                 self.assertAlmostEqual(calculated_value, test['Zeeman shift'], places=6) 
 
-
-    def test_AtomicSpin_ZeemanShift(self): 
-        """Test the Zeemaen shift functionality within AtomicSpin class."""
+    def test_AtomicStructure_ZeemanShift(self): 
+        """Test the Zeemaen shift functionality within AtomicStructure class."""
         expected_frequency = 149.98214416459987*2. # kHz
-        qubit_frequency = self.spin.energy_levels[1].energy - self.spin.energy_levels[0].energy
+        qubit_frequency = self.Yb.energy_levels[1].energy - self.Yb.energy_levels[0].energy
         qubit_frequency /= (2.* np.pi) # convert from rad/s to Hz 
         self.assertAlmostEqual(expected_frequency, np.abs(qubit_frequency)*1E-3, places=6)
 
+    def test_Rb_AtomicStructure_ZeemanShift(self): 
+        """Test the Zeemaen shift functionality within AtomicSpin class."""
+        expected_frequency = 6.8346826166557095 # GHz
+        qubit_frequency = self.Rb87.energy_levels[1].energy - self.Rb87.energy_levels[0].energy
+        qubit_frequency /= (2.* np.pi) # convert from rad/s to Hz 
+        qubit_frequency *= 1E-9 # convert to GHz  
+        self.assertAlmostEqual(expected_frequency, np.abs(qubit_frequency), places=7)
+
+    def test_Rb_Hyperfine_Shift(self): 
+        """Test the Zeemaen shift functionality within AtomicSpin class."""
+        expected_frequency = 0.15619727909004 # GHz
+        qubit_frequency = self.Rb87_P32.energy_levels[1].energy - self.Rb87_P32.energy_levels[0].energy
+        qubit_frequency /= (2.* np.pi) # convert from rad/s to Hz 
+        qubit_frequency *= 1E-9 # convert to GHz  
+        self.assertAlmostEqual(expected_frequency, np.abs(qubit_frequency), places=7)
 
 if __name__ == '__main__':
     unittest.main()

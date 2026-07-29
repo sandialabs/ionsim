@@ -16,11 +16,11 @@ from scipy.sparse import kron as skron
 from ionsim.zeeman_solver import ZeemanHyperfineSolver 
 from ionsim.testing import assert_array_close
 from ionsim.basis import StandardBasis
-from ionsim.operator import CouplingOperator, EnergyShiftOperator
+from ionsim.operator import CouplingOperator, EnergyShiftOperator, GeneralOperator
 from ionsim.named_operators import Pauli, Fock
-from ionsim.degree_of_freedom import AtomicSpin, MotionalMode
+from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.dissipator import Dissipator, Lindbladian
+from ionsim.lindbladian import Dissipator, Lindbladian
 from ionsim.state import State
 
 TPI = 2*np.pi
@@ -78,7 +78,7 @@ class TestDissipators(unittest.TestCase):
         for case in self.test_cases:
             # Create spins and basis. Store for each case 
             case['qubits'] = [
-                AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+                AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
                 for _ in range(case['number of qubits'])
                 ]
 
@@ -100,7 +100,7 @@ class TestDissipators(unittest.TestCase):
                 case['duration'] = TPI * 4. / case['rabi rate'] 
                 # Dephasing with Lindblad operator L = Z on qubit 1:                 
                 dephase_q1 = np.sqrt(decay_rate) * case['basis'].enlarge_matrix(Pauli.Z , [case['qubits'][0]]) 
-                case['lindblad operators'] = [EnergyShiftOperator.from_matrix(case['basis'], dephase_q1)]                
+                case['lindblad operators'] = [GeneralOperator.from_matrix(case['basis'], dephase_q1)]                
             elif case['test name'] == 'Spontaneous Emission':
                 # Spontaneous emission of a qubit in the |1> state; Decay from |1> to |0>.
                 case['basis'] = StandardBasis([*case['qubits']])
