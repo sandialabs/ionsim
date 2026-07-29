@@ -39,11 +39,6 @@ class AtomicStructure(DegreeOfFreedom):
     def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None, 
             level_aliases: list[str] | None=None, name: str | None = None, magnetic_field: float=0., **kwargs):
         """Build the atomic structure degree of freedom for a particular species of atom."""
- #=======
- #    def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None,
- #            name: str | None = None, magnetic_field: float=0., **kwargs):
- #        """Build the atomic spin degree of freedom for a particular species of atom."""
- #>>>>>>> main
         config_data = cls.get_config_data(species)
         nuclear_spin = config_data['nuclear_spin']
         levels_data = config_data['levels']
