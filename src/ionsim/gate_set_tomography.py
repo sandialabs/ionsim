@@ -27,6 +27,7 @@ def depth_bin(depth):
         return 1
     return int(2**(np.ceil(np.log2(depth))))
 
+#TODO: Resolve inconsistent model function arguments: Gate models take in parameters one at a time, vs. prep and measure models take in a vector of parameters 
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], 
