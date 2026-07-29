@@ -686,12 +686,16 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             raise IonSimError('Invalid solver input.')
 
 
-    def _build_probability_matrix(self, target_gate: ParsedGate | None=None, outcome: str='0'):
+    def _build_probability_matrix(self, target_gate: ParsedGate | None=None, outcome: str | None=None):
         """ Builds the d^2 x d^2 matrix of observed probabilities 
             for a gate or empty gate (corresponding to the Gram Matrix).
 
             M[i,j] = p(outcome | measure_fid_i x gate x prep_fid_j ) 
         """
+        outcomes = list(self.POVM_effect_models.keys())
+        if outcome is None:
+            outcome = outcomes[0]
+
         N_prep_circuits = len(self.prep_fiducials)
         N_measure_circuits = len(self.measure_fiducials)
 
@@ -829,9 +833,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         theta[self.gst_parameter_indices['prep']] = prep_fit_parameters.real
 
         # Native measurement effects  
-        # TODO: Generalize for 2Q+ GST         
         # Need to choose the particular effect that corresponds with LGST's estimated effect   
-        effect_label = '0'
+        # As in the gram matrix construction, use convention of first outcome 
+        outcomes = list(self.POVM_effect_models.keys())
+        effect_label = outcomes[0] 
         effect_model = lambda theta: self.get_measurement_effects(theta)[effect_label] 
         measurement_parameters = self._fit_measurement_effect_model_to_lgst_estimate(effect_model, self.lgst_results['estimated_effect'])
         theta[self.gst_parameter_indices['measurement']] = measurement_parameters.real 
