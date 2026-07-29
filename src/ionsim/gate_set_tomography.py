@@ -615,7 +615,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
             # Package parameter names, values 
             gate_results = dict(zip(parameter_names, parameter_values)) 
-            print(f"\n Gate {gate.name} parameters: {gate_results}")
+            print(f"\n Gate {gate} parameters: {gate_results}")
 
         return self.gst_parameters 
 
