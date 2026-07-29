@@ -709,7 +709,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 #key = (prep_fid, gate, 1, measure_fid)
                 key = tuple(list(prep_fid) + target_list + list(measure_fid)) 
                 if key in self.circuit_lookup:
-                    M[i,j] = self.circuit_lookup[key].get(outcome, 0.)
+                    M[i,j] = self.circuit_lookup[key][outcome]
                 else:
                     print(f"Attempted key: {key}")
                     raise ValueError(f"Missing LGST circuit: prep = {prep_fid}" + 
