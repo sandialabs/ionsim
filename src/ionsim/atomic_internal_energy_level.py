@@ -163,14 +163,23 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
 #     """Check whether the term symbol corresponds to a single energy level in the configuration data."""
 #     return all([_check_uniqueness_of_term_symbol(term_symbol, levels_data) for term_symbol in term_symbols])
 
-def compute_dipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, q: int) -> float:
-    ''' Method to compute E1 dipole transition operator between two states using the Clebsch-Gordan
-        or Wigner-3,6j coefficients. 
+def compute_multipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, k:int, q: int) -> float: 
+    """ Return the angular amplitude for <e|T^(k)_q|g>, up to a common reduced matrix element. 
+
+        Method to compute 'Ek' transition operator between two states using the Clebsch-Gordan
+        or Wigner-3,6j coefficients.
+
+        e.g. k=1 corresponds to a dipole transition 
 
         Based on Steck conventions (https://steck.us/alkalidata/rubidium87numbers.pdf):
-            - 3j part (Eq. 35 style): (-1)^(Fp-1+mf) sqrt(2F+1) (Fp 1 F; mp q -mf)
-            - 6j part (Eq. 36 style): (-1)^(Fp+J+1+I) sqrt((2Fp+1)(2J+1)) {J Jp 1; Fp F I}
-    '''
+            - 3j part (Eq. 35 style): (-1)^(Fp-k+mf) sqrt(2F+1) (Fp k F; mp q -mf)
+            - 6j part (Eq. 36 style): (-1)^(Fp+J+k+I) sqrt((2Fp+1)(2J+1)) {J Jp k; Fp F I}
+    """
+    # Check possible q values are consistent with specified "k" value 
+    possible_q = list(np.arange(-k, k+1))
+    if q not in possible_q:
+        raise ValueError(f"Specified q={q} is not possible for transition k={k}; possible q values are {possible_q}")
+    
     # Extract angular momentum quantum numbers for each state: 
     i = ground_level.i
     assert i == excited_level.i, 'Error: Nuclear angular momentum should be the same in both excited and ground levels.'
@@ -197,6 +206,49 @@ def compute_dipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited_le
     else:
         jp = excited_level.j 
 
-    wigner_3j_term = (-1)**(fp - 1 + mf) * sympy.sqrt(2*f + 1) * wigner_3j(fp, 1, f, mp, sympy.Integer(q), -mf)
-    wigner_6j_term = (-1)**(fp + j + 1 + i) * sympy.sqrt((2*f + 1) * (2*j + 1)) * wigner_6j(j, jp, 1, fp, f, i)
+    wigner_3j_term = (-1)**(fp - k + mf) * sympy.sqrt(2*f + 1) * wigner_3j(fp, k, f, mp, sympy.Integer(q), -mf)
+    wigner_6j_term = (-1)**(fp + j + k + i) * sympy.sqrt((2*f + 1) * (2*j + 1)) * wigner_6j(j, jp, k, fp, f, i)
     return float(sympy.simplify(wigner_3j_term * wigner_6j_term))
+    
+
+
+
+def compute_dipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, q: int) -> float:
+    ''' Method to compute E1 dipole transition operator between two states using the Clebsch-Gordan
+        or Wigner-3,6j coefficients. 
+
+        Based on Steck conventions (https://steck.us/alkalidata/rubidium87numbers.pdf):
+            - 3j part (Eq. 35 style): (-1)^(Fp-1+mf) sqrt(2F+1) (Fp 1 F; mp q -mf)
+            - 6j part (Eq. 36 style): (-1)^(Fp+J+1+I) sqrt((2Fp+1)(2J+1)) {J Jp 1; Fp F I}
+    '''
+    # Extract angular momentum quantum numbers for each state: 
+    k = 1
+    compute_multipole_amplitude(ground_level, excited_level, k, q)
+ #    i = ground_level.i
+ #    assert i == excited_level.i, 'Error: Nuclear angular momentum should be the same in both excited and ground levels.'
+ #
+ #    if isinstance(ground_level, (LSFineLevel, J1L2FineLevel)): 
+ #        f, mf = ground_level.j, ground_level.mj
+ #        assert ground_level.i == 0.
+ #    else:
+ #        f, mf = ground_level.f, ground_level.mf 
+ #
+ #    if isinstance(excited_level, LSFineLevel) or isinstance(excited_level, J1L2FineLevel): 
+ #        fp, mp = excited_level.j, excited_level.mj
+ #        assert excited_level.i == 0.
+ #    else:
+ #        fp, mp = excited_level.f, excited_level.mf 
+ #
+ #    if isinstance(ground_level, J1L2HyperfineLevel): 
+ #        j = ground_level.k + ground_level.s2 
+ #    else:
+ #        j = ground_level.j 
+ #
+ #    if isinstance(excited_level, J1L2HyperfineLevel): 
+ #        jp = excited_level.k + excited_level.s2 
+ #    else:
+ #        jp = excited_level.j 
+ #
+ #    wigner_3j_term = (-1)**(fp - 1 + mf) * sympy.sqrt(2*f + 1) * wigner_3j(fp, 1, f, mp, sympy.Integer(q), -mf)
+ #    wigner_6j_term = (-1)**(fp + j + 1 + i) * sympy.sqrt((2*f + 1) * (2*j + 1)) * wigner_6j(j, jp, 1, fp, f, i)
+ #    return float(sympy.simplify(wigner_3j_term * wigner_6j_term))
