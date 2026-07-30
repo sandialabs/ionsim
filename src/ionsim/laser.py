@@ -10,7 +10,7 @@
 import numpy as _np
 from scipy import constants as const
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 #from scipy import integrate as _int
 #from scipy import interpolate as _interp
 #from numpy import linalg as lin
@@ -19,10 +19,11 @@ from dataclasses import dataclass
 #from scipy.special import comb 
 from numpy.typing import NDArray
 
-from ionsim.basis import StandardBasis
+from ionsim.basis import Basis 
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, compute_multipole_amplitude
 from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure
 from ionsim.custom_types import Matrix, Vector
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD, SMALLEST_ENERGY_SCALE 
 
 
 ## Vector helper operations
@@ -71,7 +72,7 @@ class PlaneWave(BeamProfile):
     intensity: float 
 
     def peak_electric_field_magnitude(self, power: float) -> float:
-    """ Peak electric field magnitude |E0| """ 
+        """ Peak electric field magnitude |E0| """ 
         return np.sqrt(2. * self.intensity / (const.c * const.epsilon_0))
 
     def relative_envelope(self, r, n_hat, k) -> complex:
@@ -86,7 +87,7 @@ class GaussianBeam(BeamProfile):
     """ Gaussian beam """  
     waist: float # meters  
     focus: Vector = field(default_factory=lambda: np.zeros(3)) 
-    wavelength: float  # meteres  
+    wavelength: float # meters  
 
     def peak_electric_field_magnitude(self, power: float) -> float:
         """ Peak electric field magnitude |E0| in free space """ 
@@ -123,7 +124,7 @@ class Laser():
     polarization: Polarization 
     beam_profile: BeamProfile 
     power: float
-    modulation_functions: dict | None=None ''' e.g. {'phase': Callable, 'amplitude' : Callable, 'frequency' : Callable}'''
+    modulation_functions: dict | None=None #e.g. {'phase': Callable, 'amplitude' : Callable, 'frequency' : Callable}
 
     def __post_init__(self):
         # Safety checks on propagation vector  
@@ -134,16 +135,16 @@ class Laser():
             raise TypeError(f"Propagation vector must be a vector (numpy array), received a {type(propagation_vector)}.") 
         assert len(self.propagation_vector) == 3
         
-        if np.abs(np.linalg.norm(self.propagation_unit_vector) - 1.) > 1E-8):
+        if np.abs(np.linalg.norm(self.propagation_unit_vector) - 1.) > NUMERICAL_ERROR_THRESHOLD:
             raise IonSimError(f"Propagation unit vector is not normalized! Norm = {np.linalg.norm(self.propagation_unit_vector)}")
 
-        if np.abs(np.dot(self.polarization,self.propagation_unit_vector)) > 1.e-6:
+        if np.abs(np.dot(self.polarization,self.propagation_unit_vector)) > NUMERICAL_ERROR_THRESHOLD :
             raise ValueError('Laser polarization is not perpendicular to k vector')
 
         # Check frequency - wavelength relationship 
         # TODO: Check necessary precision for this check to be meaningful 
         light_physics_deviation = np.abs(self.frequency - 2.*np.pi*const.c/self.wavelength)
-        if light_physics_deviation > 1E-9: 
+        if light_physics_deviation > NUMERICAL_ERROR_THRESHSOLD: 
             raise ValueError(f"Laser frequency and wavelength must satisfy speed of light in vacuum. This is violated with a deviation: {light_physics_deviation}")
 
     @classmethod
@@ -162,7 +163,7 @@ class Laser():
 
 
     @classmethod
-    def from_frequency(cls, frequency: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable,  
+    def from_frequency(cls, frequency: float, propagation_vector: Vector, phase: float, polarization: Polarization, beam_profile: Callable,  
                         power: float | None=None, modulation_functions: dict | None=None): 
         """ Constructs laser class from an input frequency in rad/s """ 
         wavelength = 2. * np.pi * const.c / frequency   # meters 
@@ -213,7 +214,7 @@ class Laser():
     @property
     def modulation_function(self, t: float):
         """ Modulation function g(t) of the laser profile """ 
-        if self.mod_functions is None 
+        if self.mod_functions is None: 
             return None
 
         if all(func is None for func in self.mod_functions.values()):
@@ -279,7 +280,7 @@ class Laser():
                     # Compute dot product w.r.t q of spherical polarization components and multipole amplitude components 
                     coupling_amplitudes = {}
                     for _q in q: 
-                        coupling_amplitudes{_q} = compute_multipole_amplitude(ground_level, excited_level, multipole_order, _q) 
+                        coupling_amplitudes[_q] = compute_multipole_amplitude(ground_level, excited_level, multipole_order, _q) 
             
                     # Compute dot product with laser field polarization vector 
                     # TODO: should we use vdot? 
@@ -778,7 +779,7 @@ class Polarization:
 
 
     @classmethod
-    def linear(cls, propagation_direction: Vector, angle: float = 0., ref_axis = Vector | None=None):
+    def linear(cls, propagation_direction: Vector, angle: float = 0., ref_axis: Vector | None=None):
         """ Linear polarization at an angle (radians) from a reference direction in the perpendicular plane. """ 
         e1, e2 = _perpendicular_basis(propagation_direction, ref_axis)
 
@@ -787,7 +788,7 @@ class Polarization:
 
 
     @classmethod
-    def circular(cls, propagation_direction: Vector, handedness: str, ref_axis = Vector | None=None):
+    def circular(cls, propagation_direction: Vector, handedness: str, ref_axis: Vector | None=None):
         """ Circular polarization built in the (e1, e2) plane perpendicular to the laser propagation direction (n hat)
 
             - handedness is specified by '+' or '-'
@@ -826,7 +827,7 @@ class Polarization:
         e_m1 = (x - 1j*y)/np.sqrt(2.)
 
         polarization_vector = e_p1 * epsilon_vector[0] + e_0 * epsilon_vector[1] + e_m1 * epsilon_vector[2] 
-        return cls(polarization_vector, propagation_direction
+        return cls(polarization_vector, propagation_direction)
 
     
     def spherical_components(self, quantization_axis: Vector = np.array([0., 0., 1.])) -> Vector: 

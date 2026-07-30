@@ -163,11 +163,11 @@ class DissipatorSpontaneousEmission(Dissipator):
                             if e_level.energy <= g_level.energy:
                                 raise IonSimError('Error: Excited level should be higher in energy than the lower level. Excited energy: {e_level.energy}, Ground energy: {g_level.energy}')
                                 
-                             for _q in q:
-                                 # Compute multipole amplitude between |e> and |g>, append if non-zero 
-                                 amplitude = compute_multipole_amplitude(g_level, e_level, k, _q)
-                                 if np.abs(amplitude) >  SMALLEST_ENERGY_SCALE:
-                                     g_amplitudes[(g_level, _q)] = np.abs(amplitude**2) 
+                            for _q in q:
+                                # Compute multipole amplitude between |e> and |g>, append if non-zero 
+                                amplitude = compute_multipole_amplitude(g_level, e_level, k, _q)
+                                if np.abs(amplitude) >  SMALLEST_ENERGY_SCALE:
+                                    g_amplitudes[(g_level, _q)] = np.abs(amplitude**2) 
 
                         # Get normalization by summing over amplitudes, necessary if we don't consider every decay path way  
                         amplitude_sum = sum(g_amplitudes.values())

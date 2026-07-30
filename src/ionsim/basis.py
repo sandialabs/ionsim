@@ -12,9 +12,7 @@ from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.custom_types import Vector, Matrix
-from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD, SMALLEST_ENERGY_SCALE 
-from ionsim.laser import Laser 
-from ionsim.operator import CouplingOperator 
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD
 
 import numpy as np
 from numpy.linalg import multi_dot
