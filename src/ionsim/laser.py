@@ -84,9 +84,9 @@ class PlaneWave(BeamProfile):
 @dataclass(frozen=True, eq=False)
 class GaussianBeam(BeamProfile):
     """ Gaussian beam """  
-    waist: float 
-    focus: Vector = np.zeros(3) 
-    wavelength: float  
+    waist: float # meters  
+    focus: Vector = field(default_factory=lambda: np.zeros(3)) 
+    wavelength: float  # meteres  
 
     def peak_electric_field_magnitude(self, power: float) -> float:
         """ Peak electric field magnitude |E0| in free space """ 
@@ -146,6 +146,20 @@ class Laser():
         if light_physics_deviation > 1E-9: 
             raise ValueError(f"Laser frequency and wavelength must satisfy speed of light in vacuum. This is violated with a deviation: {light_physics_deviation}")
 
+    @classmethod
+    def from_wavelength(cls, wavelength: float, propagation_vector: Vector, phase: float, polarization: Polarization, beam_profile: Callable,  
+                        power: float | None=None, modulation_functions: dict | None=None): 
+        """ Constructs laser class from an input wavelength in meters """ 
+        frequency = 2 * np.pi * const.c / wavelength  # rad/s 
+        return cls(wavelength, propagation_vector, phase, frequency, polarization, beam_profile, power, modulation_functions)
+
+
+    @classmethod
+    def gaussian_from_wavelength(cls, wavelength: float, power: float, waist: float, propagation_vector: Vector, polarization: Polarization, 
+                    phase: float, focus: Vector=np.zeros(3), modulation_functions: dict | None=None): 
+        profile = Gaussian(waist, focus, wavelength)
+        return cls.from_wavelength(wavelength, propagation_vector, phase, polarization, profile, power, modulation_functions) 
+
 
     @classmethod
     def from_frequency(cls, frequency: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable,  
@@ -154,13 +168,12 @@ class Laser():
         wavelength = 2. * np.pi * const.c / frequency   # meters 
         return cls(wavelength, propagation_vector, phase, frequency, polarization, beam_profile, power, modulation_functions)
 
-
     @classmethod
-    def from_wavelength(cls, wavelength: float, propagation_vector: Vector, phase: float, frequency: float, polarization: Polarization, beam_profile: Callable,  
-                        power: float | None=None, modulation_functions: dict | None=None): 
-        """ Constructs laser class from an input wavelength in meters """ 
-        frequency = 2 * np.pi * const.c / wavelength  # rad/s 
-        return cls(wavelength, propagation_vector, phase, frequency, polarization, beam_profile, power, modulation_functions)
+    def gaussian_from_frequency(cls, frequency: float, power: float, waist: float, propagation_vector: Vector, polarization: Polarization, 
+                    phase: float, focus: Vector=np.zeros(3), modulation_functions: dict | None=None): 
+        wavelength = 2. * np.pi * const.c / frequency   # meters 
+        profile = Gaussian(waist, focus, wavelength)
+        return cls.from_frequency(frequency, propagation_vector, phase, polarization, profile, power, modulation_functions) 
 
 
     @property
@@ -211,12 +224,14 @@ class Laser():
         if self.mod_functions.keys() != allowed_keys:
             raise ValueError("Modulation functions should be specified as callables for the allowed keys: {allowed_keys}. Received keys {self.mod_functions.keys()} instead.")
 
+ #                    if self.mod_functions is not None and None not in self.mod_functions.values():
         # Unpack modulation functions and check which exist 
         amplitude_mod = self.modulation_function['amplitude']
         phase_mod = self.modulation_function['phase']
         frequency_mod = self.modulation_function['phase']
         # Handle all combinations of the modulation functions and combine usage  
         # There are several combinations of None/not None to handle: 
+        mod_function = None
         if phase_mod is None and frequency_mod is None and amplitude_mod is not None:
             def mod_function(t: float):
                 return lambda t: amplitude_mod(t) 
@@ -227,6 +242,13 @@ class Laser():
         elif phase_mod is None and amplitude_mod is None and frequency_mod is not None:
             def mod_function(t: float):
                 return lambda t: np.exp(1j * frequency_mod(t) * t) 
+        else:
+            # IonSimError(f"Modulation function must be w.r.t to amplitude, phase, or frequency.")
+            # TODO: Decide, do we fail loudly in this case? 
+            mod_function = None
+
+        return mod_function
+
 
 
     def build_atom_laser_coupling_operators(self, basis: Basis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], 
@@ -265,7 +287,8 @@ class Laser():
                     # TODO: do we normalize the spherical polarization components? 
                     polarization = self.polarization.spherical_components
                     rabi_frequency = 0. + 1j*0.
-                    rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) / const.hbar 
+                    rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) 
+                    #rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) / const.hbar 
     
                     if np.abs(rabi_frequency) < SMALLEST_ENERGY_SCALE: 
                         continue 
@@ -283,28 +306,7 @@ class Laser():
                     coupling_matrix[excited_index, ground_index] = 0.5 * rabi_frequency * np.exp(1j*self.phase) 
                     coupling_matrix[ground_index, excited_index] = np.conj(coupling_matrix[excited_index,ground_index]) 
             
-                    # Retrieve modulation function from laser class 
-                    #laser.mod_function
-                    mod_function = None
-                    if self.mod_functions is not None and None not in self.mod_functions.values():
-                        # Unpack modulation functions and check which exist 
-                        amplitude_mod = self.modulation_function['amplitude']
-                        phase_mod = self.modulation_function['phase']
-                        frequency_mod = self.modulation_function['frequency']
-                        # There are several combinations of None/not None to handle: 
-                        if phase_mod is None and frequency_mod is None and amplitude_mod is not None:
-                            def mod_function(t: float):
-                                return lambda t: amplitude_mod(t) 
-                        elif phase_mod is None and amplitude_mod is None and frequency_mod is not None:
-                            def mod_function(t: float):
-                                return lambda t: np.exp(1j * frequency_mod(t) * t) 
-                        elif phase_mod is None and amplitude_mod is None and frequency_mod is not None:
-                            def mod_function(t: float):
-                                return lambda t: np.exp(1j * frequency_mod(t) * t) 
-                        else:
-                            mod_function = None
-                            # TODO: Decide, do we fail loudly in this case? 
-                            IonSimError(f"Modulation function must be w.r.t to amplitude, phase, or frequency.")
+                    mod_function = self.mod_function 
             
                     if not all_atoms_are_same:
                         enlarged_matrix = basis.enlarge_matrix(coupling_matrix, [atom]) 

@@ -32,7 +32,9 @@ class TestProcess(unittest.TestCase):
         laser_polarization = Polarization
 
         # Create Gaussian beam profile  
-
+        wavelength = 355*1E-9 # nm -> meters 
+        beam_waist = 20 * 1E-6 # µm -> meters 
+        beam_profile = GaussianBeam(beam_waist, , wavelength)
         laser_power = 1e-3 # mWatt -> Watt  
         self.laser = Laser.from_wavelength(355*1E-9, propagation_vector, phase,  
 
