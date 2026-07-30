@@ -29,17 +29,22 @@ class TestProcess(unittest.TestCase):
         propagation_vector = np.array([np.cos(np.pi/4.), np.sin(np.pi/4.), 0.])
         phase = np.pi 
         # Create polarization 
-        laser_polarization = Polarization
+        laser_polarization = Polarization.circular(propagation_vector, '+')
 
         # Create Gaussian beam profile  
         wavelength = 355*1E-9 # nm -> meters 
         beam_waist = 20 * 1E-6 # µm -> meters 
-        beam_profile = GaussianBeam(beam_waist, , wavelength)
         laser_power = 1e-3 # mWatt -> Watt  
-        self.laser = Laser.from_wavelength(355*1E-9, propagation_vector, phase,  
+        self.laser = Laser.gaussian_from_wavelength(wavelength, laser_power, beam_waist, propagation_vector, laser_polarization, phase) 
+
+
+
+
+
 
     def test_laser_coupling_builder(self):
         """Test the process fidelity of the extra noisy gate."""
+        print('test')
  #        extra_noisy_gate = Gate.from_process_matrix_function(
  #            self.basis, self.noisy_phi_gate.process_matrix_function, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.theta_noise,
  #        )
