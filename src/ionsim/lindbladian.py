@@ -21,8 +21,8 @@ from ionsim.custom_math import matrix_AYB_multiply_to_superoperator, solve_time_
 from ionsim.ionsim_error import IonSimError
 from ionsim.composite_operator import CompositeOperator
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, LSFineLevel, LSHyperfineLevel, J1L2FineLevel, J1L2HyperfineLevel
-from ionsim.atomic_internal_energy_level import compute_dipole_amplitude
+from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
+from ionsim.atomic_internal_energy_level import compute_multipole_amplitude
 from ionsim.config import SMALLEST_ENERGY_SCALE
 
 
@@ -132,7 +132,7 @@ class DissipatorSpontaneousEmission(Dissipator):
     """Subclass for including spontaneous emission dynamics for a known atomic structure."""
 
     @classmethod
-    def from_atomic_structure_data(cls, basis: StandardBasis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], frame_energies: list[float] | None=None, sparse: bool=False, all_spins_are_same: bool = True, select_DOFs: list[AtomicStructure] | None = None):
+    def from_atomic_structure_data(cls, basis: StandardBasis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], multipole_orders: list[int] = [1], frame_energies: list[float] | None=None, sparse: bool=False, all_atoms_are_same: bool = True, select_DOFs: list[AtomicStructure] | None = None):
         """ Builds dissipator for spontaneous emission from a user-specified list of excited and ground levels.  
             
 
@@ -151,56 +151,56 @@ class DissipatorSpontaneousEmission(Dissipator):
         for DOF in DOF_list: 
             if isinstance(DOF, AtomicStructure):
                 # For each excited level, loop through ground levels it can decay to  
-                for e_level in excited_levels:
+                for k in multipole_orders:
+                    q = np.arange(-k, k+1)
+                    for e_level in excited_levels:
+                        # Extract lifetime and branching ratio for this excited level
+                        e_lifetime = e_level.lifetime # dict with ground-manifold as key 
+                        e_branching_ratios = e_level.branching_ratios
+    
+                        g_amplitudes = {} 
+                        for g_level in ground_levels:
+                            if e_level.energy <= g_level.energy:
+                                raise IonSimError('Error: Excited level should be higher in energy than the lower level. Excited energy: {e_level.energy}, Ground energy: {g_level.energy}')
+                                
+                             for _q in q:
+                                 # Compute multipole amplitude between |e> and |g>, append if non-zero 
+                                 amplitude = compute_multipole_amplitude(g_level, e_level, k, _q)
+                                 if np.abs(amplitude) >  SMALLEST_ENERGY_SCALE:
+                                     g_amplitudes[(g_level, _q)] = np.abs(amplitude**2) 
 
-                    # Extract lifetime and branching ratio for this excited level
-                    e_lifetime = e_level.lifetime # dict with ground-manifold as key 
-                    e_branching_ratios = e_level.branching_ratios
-
-                    g_amplitudes = {} 
-                    for g_level in ground_levels:
-                        if e_level.energy <= g_level.energy:
-                            raise IonSimError('Error: Excited level should be higher in energy than the lower level. Excited energy: {e_level.energy}, Ground energy: {g_level.energy}')
-                            
-                        # E1 transition considers angular momentum transfer q: -1, 0, +1
-                        for q in [-1, 0, 1]:
-                            # Compute E1 dipole amplitude between |e> and |g>, append if non-zero 
-                            amplitude = compute_dipole_amplitude(g_level, e_level, q)
-                            if np.abs(amplitude) >  SMALLEST_ENERGY_SCALE:
-                                g_amplitudes[(g_level, q)] = np.abs(amplitude**2) 
-
-                    # Get normalization by summing over amplitudes, necessary if we don't consider every decay path way  
-                    amplitude_sum = sum(g_amplitudes.values())
-                    assert amplitude_sum > 0., 'Error: No decay pathways for excited state {e_level.name} '
-                    e_level_index = DOF.energy_levels.index(e_level)
-
-                    for (g_level, q), weight in g_amplitudes.items():
-                        if e_branching_ratios is None:
-                            e_g_branching_ratio = 1.
-                        else:
-                            e_g_branching_ratio = e_branching_ratios[g_level.term_symbol]
-
-                        # Spontaneous emission decay rate: 
-                        decay_rate = (1./e_lifetime) * e_g_branching_ratio * g_amplitudes[(g_level, q)] / amplitude_sum    
-
-                        # Create lowering operator  
-                        g_level_index = DOF.energy_levels.index(g_level)
-                        lowering_matrix = np.zeros((len(DOF.energy_levels), len(DOF.energy_levels)))
-                        lowering_matrix[g_level_index, e_level_index] = np.sqrt(decay_rate) 
-
-                        # Enlarge lowering opearator to live in entire basis 
-                        if not all_spins_are_same:
-                            enlarged_lowering_matrix = basis.enlarge_matrix(lowering_matrix, [DOF]) 
-                            decay_operator = np.sqrt(decay_rate) * enlarged_lowering_matrix
-                            lindblad_operators.append(CouplingOperator.from_matrix(basis, decay_operator, 0.))
-                        else:
-                            enlarged_lowering_matrices = [basis.enlarge_matrix(lowering_matrix, [spin]) for spin in basis.spin_DOFs]
-                            decay_operators = [large_matrix for large_matrix in enlarged_lowering_matrices] 
-                            for decay_operator in decay_operators:
+                        # Get normalization by summing over amplitudes, necessary if we don't consider every decay path way  
+                        amplitude_sum = sum(g_amplitudes.values())
+                        assert amplitude_sum > 0., 'Error: No decay pathways for excited state {e_level.name} '
+                        e_level_index = DOF.energy_levels.index(e_level)
+    
+                        for (g_level, q), weight in g_amplitudes.items():
+                            if e_branching_ratios is None:
+                                e_g_branching_ratio = 1.
+                            else:
+                                e_g_branching_ratio = e_branching_ratios[g_level.term_symbol]
+    
+                            # Spontaneous emission decay rate: 
+                            decay_rate = (1./e_lifetime) * e_g_branching_ratio * g_amplitudes[(g_level, q)] / amplitude_sum    
+    
+                            # Create lowering operator  
+                            g_level_index = DOF.energy_levels.index(g_level)
+                            lowering_matrix = np.zeros((len(DOF.energy_levels), len(DOF.energy_levels)))
+                            lowering_matrix[g_level_index, e_level_index] = np.sqrt(decay_rate) 
+    
+                            # Enlarge lowering opearator to live in entire basis 
+                            if not all_atoms_are_same:
+                                enlarged_lowering_matrix = basis.enlarge_matrix(lowering_matrix, [DOF]) 
+                                decay_operator = np.sqrt(decay_rate) * enlarged_lowering_matrix
                                 lindblad_operators.append(CouplingOperator.from_matrix(basis, decay_operator, 0.))
+                            else:
+                                enlarged_lowering_matrices = [basis.enlarge_matrix(lowering_matrix, [spin]) for spin in basis.spin_DOFs]
+                                decay_operators = [large_matrix for large_matrix in enlarged_lowering_matrices] 
+                                for decay_operator in decay_operators:
+                                    lindblad_operators.append(CouplingOperator.from_matrix(basis, decay_operator, 0.))
 
             # Break from the loop if all the AtomicStructure DOFs are the same 
-            if all_spins_are_same:
+            if all_atoms_are_same:
                 break 
 
         if not lindblad_operators:
