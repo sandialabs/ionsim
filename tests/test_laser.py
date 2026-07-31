@@ -22,8 +22,10 @@ class TestProcess(unittest.TestCase):
 
     def setUp(self):
         """Set up the necessary objects for testing and test constructors."""
-        self.atom_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        self.atom_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        levels = ['S1/2,0,0', 'S1/2,1,-1', 'S1/2,1,0', 'S1/2,1,1']
+        self.atom_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=levels)
+        #self.atom_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.atom_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=levels)
         self.basis = StandardBasis([self.atom_a, self.atom_b])
 
         propagation_vector = np.array([np.cos(np.pi/4.), np.sin(np.pi/4.), 0.])
@@ -48,11 +50,13 @@ class TestProcess(unittest.TestCase):
     #def build_atom_laser_coupling_operators(self, basis: Basis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], 
     #                                            multipole_order: int, all_atoms_are_same: bool = True) -> list[Operator]: 
         # Test building coupling operators between 
-        ground_levels = self.levels 
-        coupling_operators = self.laser.build_atom_laser_coupling_operators(self.basis,  
- #        self.assertAlmostEqual(fidelity, 0.9306176541502549, places=14)
+        ground_levels = [self.atom_a.energy_levels[0]] 
+        excited_levels = [*self.atom_a.energy_levels[1:]] 
+        atom_a_coupling_operators = self.laser.build_individual_atom_laser_coupling_operators(self.basis, self.atom_a, ground_levels, excited_levels, 1) 
+        all_atom_coupling_operators = self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, [self.atom_a, self.atom_b], ground_levels, excited_levels, 1, True) 
+
+        print(len(atom_a_coupling_operators))
         
-
-
+        
 if __name__ == '__main__':
     unittest.main()

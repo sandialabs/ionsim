@@ -10,8 +10,9 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from fractions import Fraction
-from sympy.physics.wigner import wigner_3j, wigner_6j 
+import numpy as np
 import sympy 
+from sympy.physics.wigner import wigner_3j, wigner_6j 
 from icecream import ic
 
 from ionsim.ionsim_error import IonSimError

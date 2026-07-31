@@ -25,6 +25,7 @@ from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure
 from ionsim.custom_types import Matrix, Vector
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD, SMALLEST_ENERGY_SCALE 
 from ionsim.ionsim_error import IonSimError
+from ionsim.operator import Operator, CouplingOperator
 
 
 ## Vector helper operations
@@ -213,24 +214,24 @@ class Laser():
     
 
     @property
-    def modulation_function(self, t: float):
-        """ Modulation function g(t) of the laser profile """ 
-        if self.mod_functions is None: 
+    def modulation_function(self) -> Callable: 
+        """ Returns the laser's modulation function f(t) of the laser profile """ 
+        if self.modulation_functions is None: 
             return None
 
-        if all(func is None for func in self.mod_functions.values()):
+        if all(func is None for func in self.modulation_functions.values()):
             return None 
 
         # Safety checks 
         allowed_keys = ['amplitude', 'phase', 'frequency']
-        if self.mod_functions.keys() != allowed_keys:
-            raise ValueError("Modulation functions should be specified as callables for the allowed keys: {allowed_keys}. Received keys {self.mod_functions.keys()} instead.")
+        if self.modulation_functions.keys() != allowed_keys:
+            raise ValueError("Modulation functions should be specified as callables for the allowed keys: {allowed_keys}. Received keys {self.modulation_functions.keys()} instead.")
 
  #                    if self.mod_functions is not None and None not in self.mod_functions.values():
         # Unpack modulation functions and check which exist 
-        amplitude_mod = self.modulation_function['amplitude']
-        phase_mod = self.modulation_function['phase']
-        frequency_mod = self.modulation_function['phase']
+        amplitude_mod = self.modulation_functions['amplitude']
+        phase_mod = self.modulation_functions['phase']
+        frequency_mod = self.modulation_functions['phase']
         # Handle all combinations of the modulation functions and combine usage  
         # There are several combinations of None/not None to handle: 
         mod_function = None
@@ -254,7 +255,8 @@ class Laser():
 
 
     # Method for IA laser  
-    def build_individual_atom_laser_coupling_operators(addressed_atom: AtomicStructure, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel]): 
+    def build_individual_atom_laser_coupling_operators(self, basis: Basis, addressed_atom: AtomicStructure, ground_levels: list[AtomicInternalEnergyLevel], 
+                                                        excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int): 
         if addressed_atom not in basis.atomic_structure_DOFs:
             raise ValueError(f"Addressed atom {addressed_atom} has not been included in the basis degrees of freedom.") 
 
@@ -274,10 +276,14 @@ class Laser():
                     raise ValueError(f"Excited level {excited_level.name} matches the ground level {ground_level.name}.")
                 
                 coupling_matrix = self.build_atom_laser_ge_coupling_matrix(ground_level, excited_level, atomic_levels, multipole_order) 
-                mod_function = self.mod_function 
-        
+
+                # Pass this loop iteration if there are no non-zero couplings for the requested transition  
+                print(coupling_matrix)
+                if np.count_nonzero(coupling_matrix) == 0 or np.all(np.abs(coupling_matrix) < SMALLEST_ENERGY_SCALE):
+                    continue 
+
                 enlarged_matrix = basis.enlarge_matrix(coupling_matrix, [addressed_atom]) 
-                coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, self.frequency, mod_function))
+                coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, self.frequency, modulation_function = self.modulation_function))
 
         return coupling_operators 
 
@@ -296,6 +302,7 @@ class Laser():
     def build_laser_coupling_operators_multiple_atoms(self, basis: Basis, atom_DOFs: list[AtomicStructure], ground_levels: list[AtomicInternalEnergyLevel], 
                                         excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, all_atoms_are_same: bool = True) -> list[Operator]: 
         """ Builds light-atom coupling operators for all atoms in the basis using AMO physics details for requested ground levels and excited levels via Atomic Structure details """ 
+        # TODO: Generalize for varied-species atom ensembles 
         coupling_operators = []
         for atom in atom_DOFs:        
             # Build coupling operator for each |g>, |e> pairing   
@@ -314,16 +321,18 @@ class Laser():
                         raise ValueError(f"Excited level {excited_level.name} matches the ground level {ground_level.name}.")
                     
                     coupling_matrix = self.build_atom_laser_ge_coupling_matrix(ground_level, excited_level, atomic_levels, multipole_order) 
-                    mod_function = self.mod_function 
+                    if np.count_nonzero(coupling_matrix) == 0 or np.all(np.abs(coupling_matrix) < SMALLEST_ENERGY_SCALE):
+                        continue 
             
+                    mod_function = self.modulation_function 
                     if not all_atoms_are_same:
                         enlarged_matrix = basis.enlarge_matrix(coupling_matrix, [atom]) 
-                        coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, self.frequency, mod_function))
+                        coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, self.frequency, modulation_function=mod_function))
                     else:
                         enlarged_coupling_matrices = [basis.enlarge_matrix(coupling_matrix, [atom]) for atom in basis.atomic_structure_DOFs]
                         coupling_matrices = [large_matrix for large_matrix in enlarged_coupling_matrices] 
                         for matrix in coupling_matrices:
-                            coupling_operators.append(CouplingOperator.from_matrix(basis, matrix, self.frequency, mod_function))
+                            coupling_operators.append(CouplingOperator.from_matrix(basis, matrix, self.frequency, modulation_function=mod_function))
 
             # Break from the loop if all the Atomic Structure DOFs are the same 
             if all_atoms_are_same:
@@ -333,7 +342,7 @@ class Laser():
 
 
     # TODO: Naming, remove "ge"? more readable but less precisely informative  
-    def build_atom_laser_ge_coupling_matrix(self, basis: Basis, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, 
+    def build_atom_laser_ge_coupling_matrix(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, 
                                             atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int) -> Matrix: 
         """ Builds a coupling matrix representing a laser light-atom coupling """ 
         if ground_level not in atomic_levels:
@@ -342,7 +351,7 @@ class Laser():
             raise ValueError(f"Excited level {excited_level.name} not found in the atomic structure {atomic_levels}.")
 
         q = list(np.arange(-multipole_order, multipole_order+1))
-        if multipole_order != 1 or multipole_order != 2:
+        if multipole_order != 1 and multipole_order != 2:
             raise ValueError(f"Multipole order be either 1 or 2, corresponding to E1 dipole or E2 quadrupole transitions. Received {multipole_order}.")
 
         # Estimate rabi frequency from laser polarization and multipole amplitude components  
@@ -355,18 +364,19 @@ class Laser():
         # TODO: should we use vdot? 
         # TODO: do we need hbar?  
         # TODO: do we normalize the spherical polarization components? 
-        polarization = self.polarization.spherical_components
+        polarization = self.polarization.spherical_components()
         rabi_frequency = 0. + 1j*0.
         rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) 
         #rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) / const.hbar 
+        print(f"Rabi frequency: {rabi_frequency}")
     
         # Build coupling operator matrix: 
         single_atom_matrix_size = len(atomic_levels)
         # TODO: dtype = complex? 
-        coupling_matrix_single_atom = np.zeros((single_atom_matrix_size,single_atom_matrix_size)) 
+        coupling_matrix = np.zeros((single_atom_matrix_size,single_atom_matrix_size)) 
 
         if np.abs(rabi_frequency) < SMALLEST_ENERGY_SCALE: 
-            return coupling_matrix_single_atom 
+            return coupling_matrix
         
         ground_index = atomic_levels.index(ground_level) 
         excited_index = atomic_levels.index(excited_level) 
