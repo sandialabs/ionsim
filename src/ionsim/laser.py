@@ -253,9 +253,8 @@ class Laser():
 
 
 
-    # We want a method to build all atom-laser coupling operators for a set of identitcal atom within a (multi-atom, i.e. complex) basis
-
-    def build_individual_atom_laser_coupling_operators(addressed_atom: AtomicStructure): # e.g. IA laser on one atom 
+    # Method for IA laser  
+    def build_individual_atom_laser_coupling_operators(addressed_atom: AtomicStructure, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel]): 
         if addressed_atom not in basis.atomic_structure_DOFs:
             raise ValueError(f"Addressed atom {addressed_atom} has not been included in the basis degrees of freedom.") 
 
@@ -282,22 +281,23 @@ class Laser():
 
         return coupling_operators 
 
-
-    #def build_atom_laser_coupling_operators_for_identical_atoms(addressed_atoms: list[AtomicStructure]): # global laser on a set of atoms, some are the same type  
-
+ #    def build_all_atom_laser_coupling_operators(self, basis: Basis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int): 
+ #
         # Find which atoms are the same, handle each list separately;
         # within each list, check if level structures are the same
 
         # If all atoms are the same, user only needs to specify the ground levels and excited levels for that atom since all structures are the same 
         # If atoms are different, user needs to specify a dictionary for which ground - excited couplings they want for each atom. 
 
+ #        atomic_DOFs = basis.atomic_structure_DOFs
+ #        atomic_species = [atom.species for atom in atomic_DOFs]
+ #        num_unique_species = 1
 
-
-    def build_atom_global_laser_coupling_operators(self, basis: Basis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], 
-                                                multipole_order: int, all_atoms_are_same: bool = True) -> list[Operator]: 
+    def build_laser_coupling_operators_multiple_atoms(self, basis: Basis, atom_DOFs: list[AtomicStructure], ground_levels: list[AtomicInternalEnergyLevel], 
+                                        excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, all_atoms_are_same: bool = True) -> list[Operator]: 
         """ Builds light-atom coupling operators for all atoms in the basis using AMO physics details for requested ground levels and excited levels via Atomic Structure details """ 
         coupling_operators = []
-        for atom in basis.atomic_structure_DOFs:        
+        for atom in atom_DOFs:        
             # Build coupling operator for each |g>, |e> pairing   
             atomic_levels = atom.energy_levels 
 
@@ -334,7 +334,7 @@ class Laser():
 
     # TODO: Naming, remove "ge"? more readable but less precisely informative  
     def build_atom_laser_ge_coupling_matrix(self, basis: Basis, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, 
-                                            atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int) -> list[Operator]: 
+                                            atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int) -> Matrix: 
         """ Builds a coupling matrix representing a laser light-atom coupling """ 
         if ground_level not in atomic_levels:
             raise ValueError(f"Ground level {ground_level.name} not found in the atomic structure {atomic_levels}.")
@@ -360,13 +360,14 @@ class Laser():
         rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) 
         #rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) / const.hbar 
     
-        if np.abs(rabi_frequency) < SMALLEST_ENERGY_SCALE: 
-            continue 
-        
         # Build coupling operator matrix: 
         single_atom_matrix_size = len(atomic_levels)
         # TODO: dtype = complex? 
         coupling_matrix_single_atom = np.zeros((single_atom_matrix_size,single_atom_matrix_size)) 
+
+        if np.abs(rabi_frequency) < SMALLEST_ENERGY_SCALE: 
+            return coupling_matrix_single_atom 
+        
         ground_index = atomic_levels.index(ground_level) 
         excited_index = atomic_levels.index(excited_level) 
         
