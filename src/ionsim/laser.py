@@ -7,7 +7,7 @@
 # http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
 #***************************************************************************************************
 
-import numpy as _np
+import numpy as np
 from scipy import constants as const
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -24,6 +24,7 @@ from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, compu
 from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure
 from ionsim.custom_types import Matrix, Vector
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD, SMALLEST_ENERGY_SCALE 
+from ionsim.ionsim_error import IonSimError
 
 
 ## Vector helper operations
@@ -86,8 +87,8 @@ class PlaneWave(BeamProfile):
 class GaussianBeam(BeamProfile):
     """ Gaussian beam """  
     waist: float # meters  
-    focus: Vector = field(default_factory=lambda: np.zeros(3)) 
     wavelength: float # meters  
+    focus: Vector = field(default_factory=lambda: np.zeros(3)) 
 
     def peak_electric_field_magnitude(self, power: float) -> float:
         """ Peak electric field magnitude |E0| in free space """ 
@@ -138,13 +139,13 @@ class Laser():
         if np.abs(np.linalg.norm(self.propagation_unit_vector) - 1.) > NUMERICAL_ERROR_THRESHOLD:
             raise IonSimError(f"Propagation unit vector is not normalized! Norm = {np.linalg.norm(self.propagation_unit_vector)}")
 
-        if np.abs(np.dot(self.polarization,self.propagation_unit_vector)) > NUMERICAL_ERROR_THRESHOLD :
+        if np.abs(np.dot(self.polarization.vector,self.propagation_unit_vector)) > NUMERICAL_ERROR_THRESHOLD :
             raise ValueError('Laser polarization is not perpendicular to k vector')
 
         # Check frequency - wavelength relationship 
         # TODO: Check necessary precision for this check to be meaningful 
         light_physics_deviation = np.abs(self.frequency - 2.*np.pi*const.c/self.wavelength)
-        if light_physics_deviation > NUMERICAL_ERROR_THRESHSOLD: 
+        if light_physics_deviation > NUMERICAL_ERROR_THRESHOLD: 
             raise ValueError(f"Laser frequency and wavelength must satisfy speed of light in vacuum. This is violated with a deviation: {light_physics_deviation}")
 
     @classmethod
@@ -158,7 +159,7 @@ class Laser():
     @classmethod
     def gaussian_from_wavelength(cls, wavelength: float, power: float, waist: float, propagation_vector: Vector, polarization: Polarization, 
                     phase: float, focus: Vector=np.zeros(3), modulation_functions: dict | None=None): 
-        profile = Gaussian(waist, focus, wavelength)
+        profile = GaussianBeam(waist, wavelength, focus)
         return cls.from_wavelength(wavelength, propagation_vector, phase, polarization, profile, power, modulation_functions) 
 
 
@@ -252,13 +253,49 @@ class Laser():
 
 
 
-    def build_atom_laser_coupling_operators(self, basis: Basis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], 
-                                                multipole_order: int, all_atoms_are_same: bool = True) -> list[Operator]: 
-        """ Builds light-atom coupling operators from AMO physics for requested ground levels and excited levels via Atomic Structure details """ 
-        q = list(np.arange(-multipole_order, multipole_order+1))
-        if multipole_order != 1 or multipole_order != 2:
-            raise ValueError(f"Multipole order be either 1 or 2, corresponding to E1 dipole or E2 quadrupole transitions. Received {multipole_order}.")
+    # We want a method to build all atom-laser coupling operators for a set of identitcal atom within a (multi-atom, i.e. complex) basis
 
+    def build_individual_atom_laser_coupling_operators(addressed_atom: AtomicStructure): # e.g. IA laser on one atom 
+        if addressed_atom not in basis.atomic_structure_DOFs:
+            raise ValueError(f"Addressed atom {addressed_atom} has not been included in the basis degrees of freedom.") 
+
+        atomic_levels = addressed_atom.energy_levels 
+        coupling_operators = []
+        # Build coupling operator for each |g>, |e> pairing   
+        for ground_level in ground_levels:
+            if ground_level not in atomic_levels:
+                raise ValueError(f"Ground level {ground_level.name} not found in the atomic structure {atomic_levels}.")
+
+            for excited_level in excited_levels: 
+                # Build coupling operator for this |g>, |e> pair and append 
+                if excited_level not in atomic_levels:
+                    raise ValueError(f"Excited level {excited_level.name} not found in the atomic structure {atomic_levels}.")
+
+                if ground_level.name == excited_level.name:
+                    raise ValueError(f"Excited level {excited_level.name} matches the ground level {ground_level.name}.")
+                
+                coupling_matrix = self.build_atom_laser_ge_coupling_matrix(ground_level, excited_level, atomic_levels, multipole_order) 
+                mod_function = self.mod_function 
+        
+                enlarged_matrix = basis.enlarge_matrix(coupling_matrix, [addressed_atom]) 
+                coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, self.frequency, mod_function))
+
+        return coupling_operators 
+
+
+    #def build_atom_laser_coupling_operators_for_identical_atoms(addressed_atoms: list[AtomicStructure]): # global laser on a set of atoms, some are the same type  
+
+        # Find which atoms are the same, handle each list separately;
+        # within each list, check if level structures are the same
+
+        # If all atoms are the same, user only needs to specify the ground levels and excited levels for that atom since all structures are the same 
+        # If atoms are different, user needs to specify a dictionary for which ground - excited couplings they want for each atom. 
+
+
+
+    def build_atom_global_laser_coupling_operators(self, basis: Basis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], 
+                                                multipole_order: int, all_atoms_are_same: bool = True) -> list[Operator]: 
+        """ Builds light-atom coupling operators for all atoms in the basis using AMO physics details for requested ground levels and excited levels via Atomic Structure details """ 
         coupling_operators = []
         for atom in basis.atomic_structure_DOFs:        
             # Build coupling operator for each |g>, |e> pairing   
@@ -275,38 +312,8 @@ class Laser():
 
                     if ground_level.name == excited_level.name:
                         raise ValueError(f"Excited level {excited_level.name} matches the ground level {ground_level.name}.")
-
-                    # Estimate rabi frequency from laser polarization and multipole amplitude components  
-                    # Compute dot product w.r.t q of spherical polarization components and multipole amplitude components 
-                    coupling_amplitudes = {}
-                    for _q in q: 
-                        coupling_amplitudes[_q] = compute_multipole_amplitude(ground_level, excited_level, multipole_order, _q) 
-            
-                    # Compute dot product with laser field polarization vector 
-                    # TODO: should we use vdot? 
-                    # TODO: do we need hbar?  
-                    # TODO: do we normalize the spherical polarization components? 
-                    polarization = self.polarization.spherical_components
-                    rabi_frequency = 0. + 1j*0.
-                    rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) 
-                    #rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) / const.hbar 
-    
-                    if np.abs(rabi_frequency) < SMALLEST_ENERGY_SCALE: 
-                        continue 
-            
-                    # Build coupling operator matrix: 
-                    single_atom_matrix_size = len(atomic_levels)
-                    # TODO: dtype = complex? 
-                    coupling_matrix_single_atom = np.zeros((single_atom_matrix_size,single_atom_matrix_size)) 
-                    ground_index = atomic_levels.index(ground_level) 
-                    excited_index = atomic_levels.index(excited_level) 
-            
-                    if ground_index == excited_index:
-                        raise ValueError(f"Ground level and excited level should not be the same.")
-    
-                    coupling_matrix[excited_index, ground_index] = 0.5 * rabi_frequency * np.exp(1j*self.phase) 
-                    coupling_matrix[ground_index, excited_index] = np.conj(coupling_matrix[excited_index,ground_index]) 
-            
+                    
+                    coupling_matrix = self.build_atom_laser_ge_coupling_matrix(ground_level, excited_level, atomic_levels, multipole_order) 
                     mod_function = self.mod_function 
             
                     if not all_atoms_are_same:
@@ -323,6 +330,52 @@ class Laser():
                 break 
 
         return coupling_operators 
+
+
+    # TODO: Naming, remove "ge"? more readable but less precisely informative  
+    def build_atom_laser_ge_coupling_matrix(self, basis: Basis, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, 
+                                            atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int) -> list[Operator]: 
+        """ Builds a coupling matrix representing a laser light-atom coupling """ 
+        if ground_level not in atomic_levels:
+            raise ValueError(f"Ground level {ground_level.name} not found in the atomic structure {atomic_levels}.")
+        if excited_level not in atomic_levels:
+            raise ValueError(f"Excited level {excited_level.name} not found in the atomic structure {atomic_levels}.")
+
+        q = list(np.arange(-multipole_order, multipole_order+1))
+        if multipole_order != 1 or multipole_order != 2:
+            raise ValueError(f"Multipole order be either 1 or 2, corresponding to E1 dipole or E2 quadrupole transitions. Received {multipole_order}.")
+
+        # Estimate rabi frequency from laser polarization and multipole amplitude components  
+        # Compute dot product w.r.t q of spherical polarization components and multipole amplitude components 
+        coupling_amplitudes = {}
+        for _q in q: 
+            coupling_amplitudes[_q] = compute_multipole_amplitude(ground_level, excited_level, multipole_order, _q) 
+        
+        # Compute dot product with laser field polarization vector 
+        # TODO: should we use vdot? 
+        # TODO: do we need hbar?  
+        # TODO: do we normalize the spherical polarization components? 
+        polarization = self.polarization.spherical_components
+        rabi_frequency = 0. + 1j*0.
+        rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) 
+        #rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) / const.hbar 
+    
+        if np.abs(rabi_frequency) < SMALLEST_ENERGY_SCALE: 
+            continue 
+        
+        # Build coupling operator matrix: 
+        single_atom_matrix_size = len(atomic_levels)
+        # TODO: dtype = complex? 
+        coupling_matrix_single_atom = np.zeros((single_atom_matrix_size,single_atom_matrix_size)) 
+        ground_index = atomic_levels.index(ground_level) 
+        excited_index = atomic_levels.index(excited_level) 
+        
+        if ground_index == excited_index:
+            raise ValueError(f"Ground level and excited level should not be the same.")
+    
+        coupling_matrix[excited_index, ground_index] = 0.5 * rabi_frequency * np.exp(1j*self.phase) 
+        coupling_matrix[ground_index, excited_index] = np.conj(coupling_matrix[excited_index,ground_index]) 
+        return coupling_matrix
 
 
     #==============================================================================================
@@ -752,27 +805,28 @@ class Laser():
 @dataclass(frozen=True, eq=False)
 class Polarization:
     """ Complex Cartesian polarization (Jones) Vector in the lab frame. This is set to be perpendicular to a reference propagation direction (e.g. of a laser) """
-    # TODO: For naming, Should we use "components" or "vector" to refer to the polarization vector? 
     # TODO: make quantization axis an attribute; make resulting basis vectors a property? 
-    vector: Vector
+    # TODO: For naming, Should we use "components" or "vector" to refer to the polarization vector? 
+    vector: Vector # input polarization vector; normalized in post init 
     EM_field_propagation_direction: Vector
-    normalized: bool=True
 
     def __post_init__(self):
-        # Convert EM field to a unit vector and normalize the polarization vector if desired 
-        self.EM_field_propagation_direction = _unit_vector(EM_field_propagation_direction) 
+        #self.normalized_EM_field_propagation_direction = _unit_vector(self.EM_field_propagation_direction) 
+        normalized_EM_field_propagation_direction = _unit_vector(self.EM_field_propagation_direction) 
 
         # Safety check: 
-        projection = np.dot(self.vector, self.EM_field_propagation-direction)
+        projection = np.dot(self.vector, normalized_EM_field_propagation_direction)
         if np.abs(projection) > 1E-6: 
             raise ValueError(f"Polarization vector is not perpendicular to the reference propagation direction. Dot product = {projection}, should be zero.")
 
-        # Normalize if necessary 
-        if self.normalized:
-            norm = np.sqrt(np.vdot(self.vector, self.vector).real)
-            if norm < 1E-9: 
-                raise ValueError("Cannot normalize a vector with norm near zero. Computed norm {norm}")
-            self.vector /= norm
+        # Normalize the vector if is not normalized 
+        norm = np.sqrt(np.vdot(self.vector, self.vector).real)
+        if norm < 1E-9: 
+            raise ValueError("Cannot normalize a vector with norm near zero. Computed norm {norm}")
+
+        if np.abs(norm - 1.) > NUMERICAL_EQUIVALENCE_THRESHOLD: 
+            normalized_vector = self.vector / norm
+            object.__setattr__(self, "vector", normalized_vector)
 
     def __repr__(self):
         return f"Polarization(vec = {self.vec}, propagation_direction={self.propagation_direction})" 
@@ -801,9 +855,9 @@ class Polarization:
         e1, e2 = _perpendicular_basis(propagation_direction, ref_axis)
 
         if handedness == '+':
-            polarization_vector = (e1 + 1j * sign * e2)/np.sqrt(2.)
-        if handedness == '-':
-            polarization_vector = (e1 - 1j * sign * e2)/np.sqrt(2.)
+            polarization_vector = (e1 + 1j * e2)/np.sqrt(2.)
+        elif handedness == '-':
+            polarization_vector = (e1 - 1j * e2)/np.sqrt(2.)
         else:
             raise IonSimError("Handedness must be specified either by a string, e.g. '+' or '-'.")
 

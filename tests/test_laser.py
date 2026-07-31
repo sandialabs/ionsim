@@ -14,7 +14,7 @@ import numpy as np
 from ionsim.process import Gate, Circuit
 from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis
-from ionsim.laser import Laser, Polarization, BeamProfile 
+from ionsim.laser import Laser, Polarization 
 from ionsim.named_operators import Unitary
 from ionsim.noise import Noise
 
@@ -24,7 +24,7 @@ class TestProcess(unittest.TestCase):
         """Set up the necessary objects for testing and test constructors."""
         self.atom_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.atom_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        self.basis = StandardBasis([self.spin_a, self.spin_b])
+        self.basis = StandardBasis([self.atom_a, self.atom_b])
 
         propagation_vector = np.array([np.cos(np.pi/4.), np.sin(np.pi/4.), 0.])
         phase = np.pi 
@@ -37,19 +37,22 @@ class TestProcess(unittest.TestCase):
         laser_power = 1e-3 # mWatt -> Watt  
         self.laser = Laser.gaussian_from_wavelength(wavelength, laser_power, beam_waist, propagation_vector, laser_polarization, phase) 
 
-
-
+        # Test attributes:
+        self.assertAlmostEqual(beam_waist, self.laser.beam_profile.waist, places=10)
 
 
 
     def test_laser_coupling_builder(self):
         """Test the process fidelity of the extra noisy gate."""
         print('test')
- #        extra_noisy_gate = Gate.from_process_matrix_function(
- #            self.basis, self.noisy_phi_gate.process_matrix_function, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.theta_noise,
- #        )
- #        fidelity = extra_noisy_gate.compute_process_fidelity(self.Sx.process_matrix)
+    #def build_atom_laser_coupling_operators(self, basis: Basis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], 
+    #                                            multipole_order: int, all_atoms_are_same: bool = True) -> list[Operator]: 
+        # Test building coupling operators between 
+        ground_levels = self.levels 
+        coupling_operators = self.laser.build_atom_laser_coupling_operators(self.basis,  
  #        self.assertAlmostEqual(fidelity, 0.9306176541502549, places=14)
+        
+
 
 if __name__ == '__main__':
     unittest.main()
