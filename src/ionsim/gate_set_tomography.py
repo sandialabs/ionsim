@@ -212,7 +212,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
     def _index_fiducials(self):
         """ Identify unique prep/measure fiducials and build lookup to get observed probabilities. """
-
         combined_counts = {}
         # Create keys by full circuit representation and average over duplicates (TODO: Update/change for non-Markovian GST)
         for circ in self.parsed_circuits:
@@ -247,7 +246,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         """ Returns measurement effects given the parameter values theta. 
 
             - Effects are stored in a dictionary {'outcome' : Effect_vector with superoperator d^2 x d^2 shape} 
-            - e.g. E_0 vector is d^2 x 1 corresponding to |0><0|
+            - e.g. E_0 vector is d^2 x 1 corresponding to |0><0| (for d = 2)
             - There is a completeness constraint to enforce: sum_m E_m = identity
             - By convention, the last effect is constrained. ==> d^2 parameters are constrained. 
             - Therefore, there are d^2 (d-1) independent parameters for measurment.  
@@ -361,19 +360,15 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         return metadata
 
-    def _build_probability_context(self, theta: Vector) -> tuple[np.ndarray, np.ndarray]:
+    def _refresh_prep_and_measure_elements(self, theta: Vector) -> tuple[np.ndarray, np.ndarray]:
         """ Build theta-dependent prep/effect matrices once per objective evaluation. """
         # Prep state and measurement effects do not depend on circuit identity,
         # so compute them once and reuse for all circuits in this theta evaluation.
-        rho_supervector = np.asarray(self.get_prep_state(theta)).reshape(-1)
+        rho_supervector = self.get_prep_state(theta)
         measurement_effects = self.get_measurement_effects(theta)
-        effect_matrix = np.vstack([
-            np.asarray(measurement_effects[label]).reshape(-1)
-            for label in self.outcome_labels
-        ])
+        effect_matrix = np.vstack([np.asarray(measurement_effects[label]) for label in self.outcome_labels])
         return rho_supervector, effect_matrix
 
-    #def _compose_quantum_map(self, gate_names: tuple[str, ...], circuit_map_cache: dict) -> np.ndarray:
     def _compose_quantum_map(self, gates: tuple[ParsedGate, ...], circuit_map_cache: dict) -> np.ndarray:
         """ Compose the circuit map once for each unique gate sequence in an evaluation. """
         # Many circuits can share the same expanded gate sequence; cache the full
@@ -403,7 +398,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         """ Predicts outcome probabilities for a GST circuit with gates parametrized by theta """
         # Compatibility helper for existing callers that still expect a dict.
         self._refresh_gate_process_matrix_cache(theta)
-        rho_supervector, effect_matrix = self._build_probability_context(theta)
+        rho_supervector, effect_matrix = self._refresh_prep_and_measure_elements(theta)
         metadata = self._get_likelihood_circuit_metadata(circ)
         probability_values = self._predict_probability_vector(metadata['gates'], rho_supervector, effect_matrix, circuit_map_cache={})
         outcome_probabilities = dict(zip(self.outcome_labels, probability_values))
@@ -460,7 +455,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Build theta-dependent context once, then reuse cached circuit metadata
         # and map compositions across the full circuit set.
-        rho_supervector, effect_matrix = self._build_probability_context(theta)
+        rho_supervector, effect_matrix = self._refresh_prep_and_measure_elements(theta)
         circuit_map_cache = {}
 
         # Compute log likelihood for each GST circuit, accumulating over all GST circuits 
@@ -470,7 +465,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 raise IonSimError("Cannot evaluate log-likelihood with circuits that have no measurement data.")
 
             probability_values = self._predict_probability_vector(metadata['gates'], rho_supervector, effect_matrix, circuit_map_cache, probability_TOL)
-            # Clip is already handled in _predict_probability_vector.
             log_probability_values = np.log(probability_values)
 
             if metadata['has_counts']:
@@ -503,7 +497,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Reuse the same probability context/circuit-map cache strategy as in
         # log_likelihood for consistent performance behavior.
-        rho_supervector, effect_matrix = self._build_probability_context(theta)
+        rho_supervector, effect_matrix = self._refresh_prep_and_measure_elements(theta)
         circuit_map_cache = {}
 
         # Compute log likelihood for each GST circuit, accumulating over all GST circuits 
@@ -839,6 +833,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         outcomes = list(self.POVM_effect_models.keys())
         effect_label = outcomes[0] 
         effect_model = lambda theta: self.get_measurement_effects(theta)[effect_label] 
+        # TODO: For N>1 qubit GST, do we need to fit all the mesaurement effects?  
         measurement_parameters = self._fit_measurement_effect_model_to_lgst_estimate(effect_model, self.lgst_results['estimated_effect'])
         theta[self.gst_parameter_indices['measurement']] = measurement_parameters.real 
 
@@ -858,7 +853,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             return np.linalg.norm(prep_state - lgst_native_prep)**2
 
         N_parameters = len(self.gst_parameters[prep_indices]) 
-        #N_parameters = len(self.gst_parameters) 
         p0 = np.zeros(N_parameters, dtype=complex) 
         if self.parameter_bounds is not None:
             model_bounds = self.parameter_bounds[prep_indices]
