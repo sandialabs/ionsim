@@ -838,12 +838,13 @@ class Polarization:
     EM_field_propagation_direction: Vector
 
     def __post_init__(self):
+        """ Check that polarization vector is perpendicular to propagation vector """  
         #self.normalized_EM_field_propagation_direction = _unit_vector(self.EM_field_propagation_direction) 
         normalized_EM_field_propagation_direction = _unit_vector(self.EM_field_propagation_direction) 
 
         # Safety check: 
         projection = np.dot(self.vector, normalized_EM_field_propagation_direction)
-        if np.abs(projection) > 1E-6: 
+        if np.abs(projection) > 1E-9: 
             raise ValueError(f"Polarization vector is not perpendicular to the reference propagation direction. Dot product = {projection}, should be zero.")
 
         # Normalize the vector if is not normalized 
