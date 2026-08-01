@@ -22,14 +22,16 @@ class TestProcess(unittest.TestCase):
 
     def setUp(self):
         """Set up the necessary objects for testing and test constructors."""
-        levels = ['S1/2,0,0', 'S1/2,1,-1', 'S1/2,1,0', 'S1/2,1,1']
+        a_levels = ['S1/2,0,0', 'S1/2,1,-1', 'S1/2,1,0', 'S1/2,1,1']
         #levels = ['S1/2,1,0', 'P1/2,1,-1', 'P1/2,1,0', 'P1/2,1,1']
-        self.atom_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=levels)
+        self.atom_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=a_levels)
         #self.atom_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        self.atom_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=levels)
+        b_levels = ['S1/2,1,0', 'P1/2,1,-1', 'P1/2,1,0', 'P1/2,1,1']
+        self.atom_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'P1/2'], level_names=b_levels)
         self.basis = StandardBasis([self.atom_a, self.atom_b])
 
-        propagation_vector = np.array([np.cos(np.pi/4.), np.sin(np.pi/4.), 0.])
+        propagation_vector = np.array([0., 0., 1.])
+        #propagation_vector = np.array([np.cos(np.pi/4.), np.sin(np.pi/4.), 0.])
         phase = np.pi 
         # Create polarization 
         laser_polarization = Polarization.circular(propagation_vector, '+')
@@ -52,15 +54,28 @@ class TestProcess(unittest.TestCase):
         ground_levels = [self.atom_a.energy_levels[0]] 
         excited_levels = [*self.atom_a.energy_levels[1:]] 
         atom_a_coupling_operators = self.laser.build_individual_atom_laser_coupling_operators(self.basis, self.atom_a, ground_levels, excited_levels, 1) 
-        all_atom_coupling_operators = self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, [self.atom_a, self.atom_b], ground_levels, excited_levels, 1, True) 
+        self.assertEqual(len(atom_a_coupling_operators), 0)
 
-        print(len(atom_a_coupling_operators))
-        for op in atom_a_coupling_operators:
-            print(f"Coupling operator contains {len(op.couplings)} couplings.")
-            for coupling in op.couplings:
-                print(f"Coupling between {coupling.row_state.name} and {coupling.column_state.name}.")
-                print(f"Strength: {coupling.strength}\n")
-            print()
+        ground_levels = [self.atom_b.energy_levels[0]] 
+        excited_levels = [*self.atom_b.energy_levels[1:]] 
+        atom_b_coupling_operators = self.laser.build_individual_atom_laser_coupling_operators(self.basis, self.atom_b, ground_levels, excited_levels, 1) 
+        #all_atom_coupling_operators = self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, [self.atom_a, self.atom_b], ground_levels, excited_levels, 1, True) 
+
+ #        print(len(atom_a_coupling_operators))
+ #        for op in atom_a_coupling_operators:
+ #            print(f"Coupling operator contains {len(op.couplings)} couplings.")
+ #            for coupling in op.couplings:
+ #                print(f"Coupling between {coupling.row_state.name} and {coupling.column_state.name}.")
+ #                print(f"Strength: {coupling.strength}\n")
+ #            print()
+ #
+ #        print(len(atom_b_coupling_operators))
+ #        for op in atom_b_coupling_operators:
+ #            print(f"Coupling operator contains {len(op.couplings)} couplings.")
+ #            for coupling in op.couplings:
+ #                print(f"Coupling between {coupling.row_state.name} and {coupling.column_state.name}.")
+ #                print(f"Strength: {coupling.strength}\n")
+ #            print()
         
         
 if __name__ == '__main__':

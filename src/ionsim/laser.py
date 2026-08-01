@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 #from ionsim.tools import constants as const
 #from scipy.special import comb 
 from numpy.typing import NDArray
+import sympy 
+from sympy.physics.wigner import wigner_3j, wigner_6j 
 
 from ionsim.basis import Basis 
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, compute_multipole_amplitude
@@ -278,7 +280,6 @@ class Laser():
                 coupling_matrix = self.build_atom_laser_ge_coupling_matrix(ground_level, excited_level, atomic_levels, multipole_order) 
 
                 # Pass this loop iteration if there are no non-zero couplings for the requested transition  
-                print(coupling_matrix)
                 if np.count_nonzero(coupling_matrix) == 0 or np.all(np.abs(coupling_matrix) < SMALLEST_ENERGY_SCALE):
                     continue 
 
@@ -368,7 +369,7 @@ class Laser():
         rabi_frequency = 0. + 1j*0.
         rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) 
         #rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) / const.hbar 
-        print(f"Rabi frequency: {rabi_frequency}")
+        #print(f"Rabi frequency: {rabi_frequency}")
     
         # Build coupling operator matrix: 
         single_atom_matrix_size = len(atomic_levels)
@@ -811,6 +812,22 @@ class Laser():
     #==============================================================================================
     #==============================================================================================
 
+#TODO: Should we factor these methods out of this class since it may be used elsewhere in ionsim?
+def _spherical_basis_vectors(quantization_axis: Vector) -> Dict[int, Vector]:
+    z = _unit_vector(quantization_axis)
+    x, y = _perpendicular_basis(z)
+
+    return {1: -(x + 1j*y)/np.sqrt(2.), 0: z.astype(complex), -1 : (x - 1j*y)/np.sqrt(2.)}
+
+
+def _project_spherical(v: Vector, quantization_axis: Vector) -> dict[int, complex]:
+    """ Spherical components v_+1, v_0, v_-1 of a lab-frame vector "v", relative to the 
+        quantization axis."""
+
+    v = np.asarray(v, dtype=complex)
+    sph_basis = _spherical_basis_vectors(quantization_axis) 
+    return {q: np.vdot(basis[q], vec) for q in (1, 0, -1)} 
+
 
 @dataclass(frozen=True, eq=False)
 class Polarization:
@@ -883,17 +900,20 @@ class Polarization:
             epsilon vector specified with 3 componenets: eps_+1, eps_0, eps_-1, 
 
         """
+        # TODO: factor this using _spherical_basis_vectors method 
         z = _unit_vector(quantization_axis)
         x, y = _perpendicular_basis(z)
         # See eq. 7.188 from "Quantum and Atom Optics by Daniel Steck"  
         e_p1 = -(x + 1j*y)/np.sqrt(2.)
         e_0 = z.astype(complex) 
         e_m1 = (x - 1j*y)/np.sqrt(2.)
+        #sph_basis_vectors = _spherical_basis_vectors(quantization_axis)
 
+        #polarization_vector = np.array([epsilon_vector, np.array(list(sph_basis_vectors.values())) for  ]) 
         polarization_vector = e_p1 * epsilon_vector[0] + e_0 * epsilon_vector[1] + e_m1 * epsilon_vector[2] 
         return cls(polarization_vector, propagation_direction)
 
-    
+    # TODO: make quantization axis an attribute of the class?     
     def spherical_components(self, quantization_axis: Vector = np.array([0., 0., 1.])) -> Vector: 
         """ Projects the polarization vector's components along a specified quantization axis. """ 
         # TODO Decide - return as a tuple or a Vector? 
@@ -908,3 +928,37 @@ class Polarization:
         eps_m1 = np.vdot(e_m1, self.vector)
         return np.array([eps_p1, eps_0, eps_m1])
 
+ #    def quadrupole_tensor_components(self, quantization_axis: Vector) -> dict[int, complex]:
+ #        """ Rank-2 spherical tensor T_q(n_hat, eps), q = -2, -1, 0, 1, 2, which is built
+ #            by the Clebsch-Gordan coefficients coupling of the spherical components of the polarization
+ #            vector and the propagation vector. 
+ #
+ #            This represents the geometric factor governing E2 transitions. 
+ #        """ 
+    # TODO: Do these actually get used? 
+    def rank2_spherical_basis(self, quantization_axis: Vector) -> dict: 
+        # TODO: Add docstring w. reference ideally 
+        eps = self.spherical_components(quantization_axis)
+        propagation_in_spherical = _project_spherical(self.propagation_direction, quantization_axis)
+
+        cq_ij = {}
+        sph_basis_vectors = _spherical_basis_vectors(quantization_axis)
+        for q in (-2, -1, 0, 1, 2):
+            T = np.zeros((3,3),dtype=complex) 
+            for m1 in (-1, 0, 1):
+                for m2 in (-1, 0, 1):
+                    w = complex(sp.N(wigner_3j(1, 1, 2, m1, m2, -q)) )
+                    T += w * np.outer(sph_basis_vectors[m1], spherical_basis_vectors[m2])
+
+                cq_ij[q] = np.sqrt(10/3) * ((-1)**q) * T
+
+        return cq_ij
+
+    def e2_q_components(self, quantization_axis: Vector) -> dict:
+        # TODO: add doc strings 
+        cq_ij = self.rank2_spherical_basis(quantization_axis)
+        eps = self.vector
+        n_hat = self.EM_field_propagation_direction
+        return {q: np.einsum('ij,i,j->', cq_ij[q], self.vector, self.EM_field_propagation_direction) for q in range(-2,3)}
+
+     
