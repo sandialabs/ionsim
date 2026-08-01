@@ -191,7 +191,7 @@ def compute_multipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited
     i = ground_level.i
     assert i == excited_level.i, 'Error: Nuclear angular momentum should be the same in both excited and ground levels.'
 
-    if isinstance(ground_level, (LSFineLevel, J1L2FineLevel)): 
+    if isinstance(ground_level, LSFineLevel) or isinstance(ground_level, J1L2FineLevel): 
         f, mf = ground_level.j, ground_level.mj
         assert ground_level.i == 0.
     else:
@@ -213,9 +213,32 @@ def compute_multipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited
     else:
         jp = excited_level.j 
 
-    wigner_3j_term = (-1)**(fp - k + mf) * sympy.sqrt(2*f + 1) * wigner_3j(fp, k, f, mp, sympy.Integer(q), -mf)
-    wigner_6j_term = (-1)**(fp + j + k + i) * sympy.sqrt((2*f + 1) * (2*j + 1)) * wigner_6j(j, jp, k, fp, f, i)
-    return float(sympy.simplify(wigner_3j_term * wigner_6j_term))
+    f = sympy.S(f)
+    mf = sympy.S(mf)
+    fp = sympy.S(fp)
+    mp = sympy.S(mp)
+
+    k = sympy.S(k)
+    q = sympy.S(q)
+
+    j = sympy.S(j)
+    jp = sympy.S(jp)
+    i = sympy.S(i)
+
+    wigner_3j_term = ((-1)**(fp - k + mf)) * sympy.sqrt(2*f + 1) * wigner_3j(fp, k, f, mp, sympy.Integer(q), -mf)
+    wigner_6j_term = ((-1)**(fp + j + k + i)) * sympy.sqrt((2*fp + 1) * (2*j + 1)) * wigner_6j(j, jp, k, fp, f, i)
+    
+    # TODO: Generalize to non LS Fine/hyperfine couplings 
+
+    l = ground_level.l
+    s = ground_level.s
+    lp = excited_level.l
+    l = sympy.S(l)
+    lp = sympy.S(lp)
+    s = sympy.S(s)
+
+    J_L_wigner_6j_term = ((-1)**(jp + l + k + s)) * sympy.sqrt((2*jp + 1) * (2*l + 1)) * wigner_6j(l, lp, k, jp, j, s)
+    return float(sympy.simplify(J_L_wigner_6j_term * wigner_3j_term * wigner_6j_term))
     
 
 

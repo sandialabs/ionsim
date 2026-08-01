@@ -372,8 +372,7 @@ class Laser():
     
         # Build coupling operator matrix: 
         single_atom_matrix_size = len(atomic_levels)
-        # TODO: dtype = complex? 
-        coupling_matrix = np.zeros((single_atom_matrix_size,single_atom_matrix_size)) 
+        coupling_matrix = np.zeros((single_atom_matrix_size,single_atom_matrix_size), dtype=complex) 
 
         if np.abs(rabi_frequency) < SMALLEST_ENERGY_SCALE: 
             return coupling_matrix

@@ -23,6 +23,7 @@ class TestProcess(unittest.TestCase):
     def setUp(self):
         """Set up the necessary objects for testing and test constructors."""
         levels = ['S1/2,0,0', 'S1/2,1,-1', 'S1/2,1,0', 'S1/2,1,1']
+        #levels = ['S1/2,1,0', 'P1/2,1,-1', 'P1/2,1,0', 'P1/2,1,1']
         self.atom_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=levels)
         #self.atom_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.atom_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=levels)
@@ -32,11 +33,12 @@ class TestProcess(unittest.TestCase):
         phase = np.pi 
         # Create polarization 
         laser_polarization = Polarization.circular(propagation_vector, '+')
+        #laser_polarization = Polarization.linear(propagation_vector, angle=np.pi/2.)
 
         # Create Gaussian beam profile  
         wavelength = 355*1E-9 # nm -> meters 
-        beam_waist = 20 * 1E-6 # µm -> meters 
-        laser_power = 1e-3 # mWatt -> Watt  
+        beam_waist = 3 * 1E-6 # 3 µm -> meters 
+        laser_power = 20e-3 # 20 mWatt -> Watt  
         self.laser = Laser.gaussian_from_wavelength(wavelength, laser_power, beam_waist, propagation_vector, laser_polarization, phase) 
 
         # Test attributes:
@@ -46,9 +48,6 @@ class TestProcess(unittest.TestCase):
 
     def test_laser_coupling_builder(self):
         """Test the process fidelity of the extra noisy gate."""
-        print('test')
-    #def build_atom_laser_coupling_operators(self, basis: Basis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], 
-    #                                            multipole_order: int, all_atoms_are_same: bool = True) -> list[Operator]: 
         # Test building coupling operators between 
         ground_levels = [self.atom_a.energy_levels[0]] 
         excited_levels = [*self.atom_a.energy_levels[1:]] 
@@ -56,6 +55,12 @@ class TestProcess(unittest.TestCase):
         all_atom_coupling_operators = self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, [self.atom_a, self.atom_b], ground_levels, excited_levels, 1, True) 
 
         print(len(atom_a_coupling_operators))
+        for op in atom_a_coupling_operators:
+            print(f"Coupling operator contains {len(op.couplings)} couplings.")
+            for coupling in op.couplings:
+                print(f"Coupling between {coupling.row_state.name} and {coupling.column_state.name}.")
+                print(f"Strength: {coupling.strength}\n")
+            print()
         
         
 if __name__ == '__main__':
