@@ -236,9 +236,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - Enforces the constraint Tr[rho] = 1, eliminating 1 parameter.
         """ 
         prep_params = theta[self.gst_parameter_indices["prep"]] # d^2 - 1 column vector  
-
         assert len(prep_params) == (self.d2 - 1)
-
         prep_state = self.prep_state_model(prep_params)
         return prep_state
 
@@ -450,7 +448,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         probability_TOL = 1E-12
 
         # Improve speed by building gate process matrices once 
-        #process_matrix_cache = self._build_gate_process_matrix_cache(theta)
         self._refresh_gate_process_matrix_cache(theta)
 
         # Build theta-dependent context once, then reuse cached circuit metadata
