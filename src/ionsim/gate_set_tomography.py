@@ -382,7 +382,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         circuit_map_cache[gates] = quantum_map
         return quantum_map
 
-    def _predict_probability_vector(self, gates: tuple[ParsedGate, ...], rho_supervector: np.ndarray, effect_matrix: np.ndarray, 
+    def _predict_probability_vector(self, gates: tuple[ParsedGate, ...], rho_supervector: Vector, effect_matrix: Matrix, 
                                         circuit_map_cache: dict, probability_TOL: float = 1E-12) -> np.ndarray:
         """ Predict clipped outcome probabilities as a dense vector in outcome-label order. """
         # Return dense probabilities in self.outcome_labels order so downstream
@@ -843,7 +843,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         prep_indices = self.gst_parameter_indices['prep']
         def cost(theta: Vector) -> float:
             # Frobenius norm of the process matrix difference bt. model and LGST-predicted
-            #M = self.get_prep_state(*theta)
             prep_state = self.prep_state_model(theta)
             return np.linalg.norm(prep_state - lgst_native_prep)**2
 
@@ -906,8 +905,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         else:
             gate_parameter_bounds = None 
 
-        #result = opt.least_squares(matrix_residuals, p0, bounds = gate_parameter_bounds) 
-        #result = opt.minimize(cost, p0, method='L-BFGS-B', bounds = gate_parameter_bounds) # not so good  
         result = opt.minimize(cost, p0, method='Nelder-Mead', bounds = gate_parameter_bounds) 
         return result.x
 
