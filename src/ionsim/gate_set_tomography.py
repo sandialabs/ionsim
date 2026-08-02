@@ -796,10 +796,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Extract effects:
         # Measurement effect matrix A = Gram B+ (right pseudoinverse of B)
         measurement_effects = gram_matrix @ np.linalg.pinv(prep_states)
-        estimated_effect = measurement_effects[measure_idx, :]  # 1 x d^2
+        estimated_effects = {}
+        for outcome in self.outcome_labels:
+            gram_k = self._build_probability_matrix(outcome = outcome) 
+            A_k = gram_k @ Pi.conj().T @ B0_inv
+            estimated_effects[outcome] = A_k[measure_idx, :]
 
         self.lgst_results = {'gate_estimates' : gate_estimates, 'gram_matrix' : gram_matrix, 
-                        'native_prep_state' : estimated_rho, 'estimated_effect' : estimated_effect, 
+                        'native_prep_state' : estimated_rho, 'estimated_effects' : estimated_effects, 
                         'prep_states' : prep_states, 'measurement_effects' : measurement_effects}
         return self.lgst_results 
 
@@ -825,13 +829,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         theta[self.gst_parameter_indices['prep']] = prep_fit_parameters.real
 
         # Native measurement effects  
-        # Need to choose the particular effect that corresponds with LGST's estimated effect   
-        # As in the gram matrix construction, use convention of first outcome 
-        outcomes = list(self.POVM_effect_models.keys())
-        effect_label = outcomes[0] 
-        effect_model = lambda theta: self.get_measurement_effects(theta)[effect_label] 
-        # TODO: For N>1 qubit GST, do we need to fit all the mesaurement effects?  
-        measurement_parameters = self._fit_measurement_effect_model_to_lgst_estimate(effect_model, self.lgst_results['estimated_effect'])
+        measurement_parameters = self._fit_measurement_effect_models_to_lgst_estimate(self.lgst_results['estimated_effects'])
         theta[self.gst_parameter_indices['measurement']] = measurement_parameters.real 
 
         # Set gst parameters attribute to extracted parameters 
@@ -859,13 +857,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         result = opt.minimize(cost, p0, method='Nelder-Mead', bounds = model_bounds) 
         return result.x
 
-    def _fit_measurement_effect_model_to_lgst_estimate(self, measurement_effect_model, lgst_native_measurement: Vector) -> Vector:
+    def _fit_measurement_effect_models_to_lgst_estimate(self, lgst_native_measurements: dict[str, Vector]) -> Vector:
         """ Fits a measurement effect's model's parameters given the lgst results for the prep state. """
-
         def cost(theta: Vector) -> float:
-            # Frobenius norm of the process matrix difference bt. model and LGST-predicted
-            modeled_effect = measurement_effect_model(theta)
-            return np.linalg.norm(modeled_effect - lgst_native_measurement)**2
+            # Fit measurement effects for each outcome 
+            # Cost is Frobenius norm of the process matrix difference bt. model and LGST-predicted
+            modeled_effect_matrix = np.vstack([np.asarray(self.get_measurement_effects(theta)[label]) for label in self.outcome_labels])
+            lgst_native_measurements_matrix = np.vstack([np.asarray(lgst_native_measurements[outcome]) for outcome in self.outcome_labels])
+            return np.linalg.norm(modeled_effect_matrix - lgst_native_measurements_matrix)**2
 
         measurement_indices = self.gst_parameter_indices["measurement"] 
         N_parameters = len(self.gst_parameters[measurement_indices]) 
