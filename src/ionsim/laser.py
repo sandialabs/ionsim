@@ -367,7 +367,7 @@ class Laser():
         # TODO: do we normalize the spherical polarization components? 
         polarization = self.polarization.spherical_components()
         rabi_frequency = 0. + 1j*0.
-        rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) 
+        rabi_frequency = np.abs(2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values())))) 
         #rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) / const.hbar 
         #print(f"Rabi frequency: {rabi_frequency}")
     
@@ -375,7 +375,7 @@ class Laser():
         single_atom_matrix_size = len(atomic_levels)
         coupling_matrix = np.zeros((single_atom_matrix_size,single_atom_matrix_size), dtype=complex) 
 
-        if np.abs(rabi_frequency) < SMALLEST_ENERGY_SCALE: 
+        if rabi_frequency < SMALLEST_ENERGY_SCALE: 
             return coupling_matrix
         
         ground_index = atomic_levels.index(ground_level) 
