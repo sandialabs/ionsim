@@ -226,6 +226,8 @@ class Lindbladian:
         if (self.hamiltonian, self.dissipator) == None:
             raise IonSimError('Input error: Both Hamiltonian and Dissipator inputs are None')
 
+        # TODO: Check Dissipators and Hamiltonian need to be in the same frame 
+
     @property
     def size(self):
         # Lindbladian size is N^2, corresponding to an N^2 x N^2 superoperator representation

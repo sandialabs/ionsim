@@ -149,7 +149,6 @@ class ZVODE(OdeSolver):
             initial_state[0] = 1.
 
         intermediate_states = [initial_state]
-        #intermediate_times = [0.]
         def schrodinger(t, y):
             return  -1.0j * hamiltonian(t).dot(y)
         def jacobian(t, y):
@@ -167,11 +166,6 @@ class ZVODE(OdeSolver):
             if not r.successful():
                 raise RuntimeError(f"Integration failed at t={t}")
 
-        #dt = t_final/float(num_steps) 
- #        while r.successful() and r.t < t_final:
- #            r.integrate(r.t + dt)
- #            intermediate_states += [r.y]
- #            intermediate_times += [r.t]
         return self.time_evals, intermediate_states
 
 # working version
