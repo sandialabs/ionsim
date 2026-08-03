@@ -96,7 +96,9 @@ class Hamiltonian(CompositeOperator):
         # Coupling operators:  
         for operator in self.coupling_operators:
             # Extract offdiagonal elements --> Hint and Oscillation rate 
-            Hint, Rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(operator)
+            # Build Hint, Rate from half matrices since the operators are Hermitian and will be treated as such in subsequent functions  
+            unique_couplings = operator._unique_couplings_from_hermitian_coupling_matrix(operator.basis, operator.static_matrix, operator.rate_matrix) 
+            Hint, Rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(CouplingOperator(operator.basis, unique_couplings, operator.modulation_function))
             Hints.append(Hint)
             Rates.append(Rate)
 

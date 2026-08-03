@@ -78,7 +78,7 @@ class Dissipator(CompositeOperator):
 
     def create_lindblad_matrix_function(self, lindblad_operator: Operator) -> Callable:
         """Converts a lindblad Operator object to a callable that returns a matrix at a given time point"""
-        
+
         def _lindblad_function(t: float) -> AnyMatrix:
             if self.sparse:
                 L_matrix = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex') 
@@ -87,7 +87,8 @@ class Dissipator(CompositeOperator):
             
             # Static, diagonal contribution 
             if isinstance(lindblad_operator, GeneralOperator):
-                L_matrix += lindblad_operator.energy_shift_operator_contribution.static_matrix
+                if lindblad_operator.energy_shift_operator_contribution:
+                    L_matrix += lindblad_operator.energy_shift_operator_contribution.static_matrix
             elif isinstance(lindblad_operator, EnergyShiftOperator):
                 L_matrix += lindblad_operator.static_matrix
 

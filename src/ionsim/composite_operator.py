@@ -11,7 +11,7 @@ import numpy as np
 from dataclasses import dataclass
 from scipy.sparse import csr_matrix
 from functools import cached_property
-from abc import ABC 
+from abc import ABC
 
 from ionsim.basis import StandardBasis
 from ionsim.operator import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
