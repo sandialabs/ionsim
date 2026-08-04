@@ -74,7 +74,8 @@ class TestDegreeOfFreedom(unittest.TestCase):
                 cg_coeffs[(ground_level.name, excited_level.name)] = {} 
                 for q in range(-1,2):
                     cg_coeffs[(ground_level.name, excited_level.name)][q] = compute_hyperfine_clebsch_gordan_coefficient(ground_level, excited_level, q) 
-            
+
+        # Using this arxiv for CG coefficient tests: https://arxiv.org/pdf/2509.04416v1            
         self.assertAlmostEqual(cg_coeffs[('S0,1/2,-1/2','P1,1/2,-1/2')][0], -1/3, places = 8)
         self.assertAlmostEqual(cg_coeffs[('S0,1/2,-1/2','P1,1/2,-1/2')][1], 0., places = 8)
         # TODO: do we need to flip the q sign convention? 
