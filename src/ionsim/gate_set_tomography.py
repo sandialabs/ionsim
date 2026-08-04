@@ -216,7 +216,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Create keys by full circuit representation and average over duplicates (TODO: Update/change for non-Markovian GST)
         for circ in self.parsed_circuits:
             key = tuple(circ.expanded_gates)
-            counts = circ.measurement_data.to_counts()
+            counts = circ.measurement_data.to_counts().copy()
+            #counts = circ.measurement_data.to_counts()
 
             if key in combined_counts:
                 for label, n in counts.items():
