@@ -169,7 +169,8 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
 #     """Check whether the term symbol corresponds to a single energy level in the configuration data."""
 #     return all([_check_uniqueness_of_term_symbol(term_symbol, levels_data) for term_symbol in term_symbols])
 
-def compute_multipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, multipole_order:int, q: int) -> float: 
+def compute_multipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, 
+                                multipole_order:int, q: int, include_J_J_prime_matrix_element: bool=True) -> float: 
     """ Return the angular amplitude for <e|T^(k)_q|g>, up to a common reduced matrix element. 
 
         Method to compute 'E-multipole-order' transition operator between two states using the Clebsch-Gordan
@@ -227,18 +228,19 @@ def compute_multipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited
 
     wigner_3j_term = ((-1)**(fp - k + mf)) * sympy.sqrt(2*f + 1) * wigner_3j(fp, k, f, mp, sympy.Integer(q), -mf)
     wigner_6j_term = ((-1)**(fp + j + k + i)) * sympy.sqrt((2*fp + 1) * (2*j + 1)) * wigner_6j(j, jp, k, fp, f, i)
-    
     # TODO: Generalize to non LS Fine/hyperfine couplings 
-
-    l = ground_level.l
-    s = ground_level.s
-    lp = excited_level.l
-    l = sympy.S(l)
-    lp = sympy.S(lp)
-    s = sympy.S(s)
-
-    J_L_wigner_6j_term = ((-1)**(jp + l + k + s)) * sympy.sqrt((2*jp + 1) * (2*l + 1)) * wigner_6j(l, lp, k, jp, j, s)
-    return float(sympy.simplify(J_L_wigner_6j_term * wigner_3j_term * wigner_6j_term))
+    if include_J_J_prime_matrix_element:
+        l = ground_level.l
+        s = ground_level.s
+        lp = excited_level.l
+        l = sympy.S(l)
+        lp = sympy.S(lp)
+        s = sympy.S(s)
+    
+        J_L_wigner_6j_term = ((-1)**(jp + l + k + s)) * sympy.sqrt((2*jp + 1) * (2*l + 1)) * wigner_6j(l, lp, k, jp, j, s)
+        return float(sympy.simplify(J_L_wigner_6j_term * wigner_3j_term * wigner_6j_term))
+    else:
+        return float(sympy.simplify(wigner_3j_term * wigner_6j_term))
     
 
 
@@ -253,3 +255,16 @@ def compute_dipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited_le
     '''
     # Extract angular momentum quantum numbers for each state: 
     compute_multipole_amplitude(ground_level, excited_level, 1, q)
+
+
+def compute_hyperfine_clebsch_gordan_coefficient(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, q: int) -> float:
+    ''' Method to compute E1 dipole transition operator between two states using the Clebsch-Gordan
+        or Wigner-3,6j coefficients. 
+
+        Based on Steck conventions (https://steck.us/alkalidata/rubidium87numbers.pdf):
+            - 3j part (Eq. 35 style): (-1)^(Fp-1+mf) sqrt(2F+1) (Fp 1 F; mp q -mf)
+            - 6j part (Eq. 36 style): (-1)^(Fp+J+1+I) sqrt((2Fp+1)(2J+1)) {J Jp 1; Fp F I}
+    '''
+    # Extract angular momentum quantum numbers for each state: 
+    return compute_multipole_amplitude(ground_level, excited_level, 1, q, False)
+
