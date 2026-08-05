@@ -108,7 +108,8 @@ class TestDissipators(unittest.TestCase):
                 raise_qubit = case['rabi rate'] * 0.5 * case['basis'].enlarge_matrix(Pauli.plus, [case['qubits'][0]]) 
                 coupling_operator = CouplingOperator.from_matrix(case['basis'], raise_qubit, case['omega_laser']) 
                 frame_energies = [-state.energy for state in case['basis'].states] 
-                case['hamiltonian'] = Hamiltonian(case['basis'], [coupling_operator], frame_energies) 
+                H0_operator = EnergyShiftOperator.from_matrix(case['basis'], case['basis'].H0)
+                case['hamiltonian'] = Hamiltonian(case['basis'], [H0_operator, coupling_operator], frame_energies) 
 
                 case['duration'] = TPI * 4. / case['rabi rate'] 
                 # Dephasing with Lindblad operator L = Z on qubit 1:                 
@@ -133,7 +134,8 @@ class TestDissipators(unittest.TestCase):
                 raise_qubit = case['rabi rate'] * 0.5 * case['basis'].enlarge_matrix(Pauli.plus, [case['qubits'][0]]) 
                 coupling_operator = CouplingOperator.from_matrix(case['basis'], raise_qubit, case['omega_laser']) 
                 frame_energies = [-state.energy for state in case['basis'].states] 
-                case['hamiltonian'] = Hamiltonian(case['basis'], [coupling_operator], frame_energies) 
+                H0_operator = EnergyShiftOperator.from_matrix(case['basis'], case['basis'].H0)
+                case['hamiltonian'] = Hamiltonian(case['basis'], [H0_operator, coupling_operator], frame_energies) 
 
                 case['duration'] = case['characteristic time']*0.25 
                 # Dephasing with Lindblad operator L = Z on qubit 1:                 
