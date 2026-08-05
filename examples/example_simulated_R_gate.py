@@ -43,6 +43,8 @@ def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
         sm.CouplingOperator.from_matrix(basis, operator, omega, modulation_function=mod),
     ]
     interaction_frame_energies = [-state.energy for state in basis.states] # implement arbitrary hamiltonian (with time-dependence? need an adiabatic intertwiner)
+    H0_operator = sm.EnergyShiftOperator.from_matrix(basis, basis.H0)
+    operators.append(H0_operator)
     return sm.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
 
 rabi_rate = 100e3 * 2*np.pi # rad./s
