@@ -27,8 +27,8 @@ class CompositeOperator(ABC):
         - operators: a list of Operator objects that comprise the "composite" Operator object (this class) 
         - frame_rotation_energies: a list of energies that shift the frame in which the operators are defined  
 
-            - the frame rotation energies list will impart a unitary frame transformation: 
-                U = exp(it diag(frame_rotation_energies) ), where "t" is time 
+        - the frame rotation energies list will impart a unitary frame transformation (psi' = U psi or rho' = U rho U†): 
+                U = exp(-it diag(frame_rotation_energies) ), where "t" is time 
         - sparse: a bool for using CSR (sparse) matrices 
     """
     
