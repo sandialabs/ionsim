@@ -63,7 +63,9 @@ class TestOperator(unittest.TestCase):
 
         # Create the Hamiltonian from the general operator 
         frame_energies = [-state.energy for state in self.basis.states]
-        test_hamiltonian = Hamiltonian(self.basis, [self.general_op], frame_energies, sparse = False) 
+    
+        H0_operator = EnergyShiftOperator.from_matrix(self.basis, self.basis.H0)
+        test_hamiltonian = Hamiltonian(self.basis, [H0_operator, self.general_op], frame_energies, sparse = False) 
 
         # Test time propagation of the initial state: 
         duration = 1.0E-5
