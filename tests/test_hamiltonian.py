@@ -33,7 +33,7 @@ class TestHamiltonian(unittest.TestCase):
         operator_b = CouplingOperator.from_matrix(self.basis, static_operator, omega, [spin_b])
         
         interaction_frame_energies = [-1 * state.energy for state in self.basis.states]
-        self.hamiltonian = Hamiltonian(self.basis, [operator_a, operator_b], interaction_frame_energies, sparse=False)
+        self.hamiltonian = Hamiltonian(self.basis, [H0_operator, operator_a, operator_b], interaction_frame_energies, sparse=False)
 
     def test_hamiltonian_function(self):
         """Test the Hamiltonian function at time t=0."""
