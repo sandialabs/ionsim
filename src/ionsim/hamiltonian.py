@@ -39,7 +39,7 @@ class Hamiltonian(CompositeOperator):
 
     @property
     def energies(self):
-        return [state.energy + energy for state, energy in zip(self.basis.states, self.rotating_frame_energies)]
+        return [state.energy + energy for state, energy in zip(self.basis.states, self.frame_rotation_energies)]
 
     @property
     def coupling_modulation_functions(self):

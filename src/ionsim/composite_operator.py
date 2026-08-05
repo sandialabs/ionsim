@@ -21,11 +21,20 @@ from ionsim.config import SMALLEST_ENERGY_SCALE
 
 @dataclass(frozen=True, eq=False)
 class CompositeOperator(ABC):
-    """Abstract class for a composite operator object, which represents an operator that contains multiple bare operator contributions"""
+    """Abstract class for a composite operator object, which represents an operator that contains multiple bare operator contributions
+        
+        - basis: A basis object representing the basis of states that the composite operator is defined with 
+        - operators: a list of Operator objects that comprise the "composite" Operator object (this class) 
+        - frame_rotation_energies: a list of energies that shift the frame in which the operators are defined  
+
+            - the frame rotation energies list will impart a unitary frame transformation: 
+                U = exp(it diag(frame_rotation_energies) ), where "t" is time 
+        - sparse: a bool for using CSR (sparse) matrices 
+    """
     
     basis: StandardBasis
     operators: list[Operator] 
-    rotating_frame_energies: list[float]
+    frame_rotation_energies: list[float]
     sparse: bool = False
 
     def __post_init__(self):
@@ -93,8 +102,8 @@ class CompositeOperator(ABC):
                         op_ints.append(csr_matrix(([coupling.strength], ([row], [column])), shape=(self.size, self.size)))
                         total_rate = (
                             + coupling.oscillation_rate
-                            + self.rotating_frame_energies[row]
-                            - self.rotating_frame_energies[column]
+                            + self.frame_rotation_energies[row]
+                            - self.frame_rotation_energies[column]
                             )
                         total_rate = total_rate if abs(total_rate) > SMALLEST_ENERGY_SCALE else 0
                         op_Rates.append(csr_matrix(([total_rate], ([row], [column])), shape=(self.size, self.size)))
