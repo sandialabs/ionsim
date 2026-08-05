@@ -200,6 +200,11 @@ class StandardBasis(Basis):
         """ Returns list of atomic structure degrees of freedom or empty list if none. """
         return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicStructure)]
 
+    @property
+    def H0(self) -> Matrix:
+        """ Returns energy contributions from each energy eigenstate as a diagonal matrix """ 
+        return np.diag([state.energy for state in self.states])
+
 
 @dataclass(frozen=True, eq=False)
 class ZPauliBasis(StandardBasis):

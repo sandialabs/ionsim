@@ -10,7 +10,7 @@
 import unittest
 import numpy as np
 from ionsim.basis import StandardBasis
-from ionsim.operator import CouplingOperator
+from ionsim.operator import CouplingOperator, EnergyShiftOperator
 from ionsim.named_operators import Pauli
 from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.hamiltonian import Hamiltonian
@@ -28,6 +28,7 @@ class TestHamiltonian(unittest.TestCase):
         omega = spin_a.energy_levels[1].energy - spin_a.energy_levels[0].energy
         static_operator = rabi_rate / 2 * Pauli.plus
 
+        H0_operator = EnergyShiftOperator.from_matrix(self.basis, self.basis.H0)
         operator_a = CouplingOperator.from_matrix(self.basis, static_operator, omega, [spin_a])
         operator_b = CouplingOperator.from_matrix(self.basis, static_operator, omega, [spin_b])
         
