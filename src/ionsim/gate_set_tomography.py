@@ -188,13 +188,18 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Index i will incriment as we increase the number of tracked parameters 
         i = 0
 
-        # Prep: there are d^2 - 1 independent parameters due to the Trace[rho] = 1 constraint. 
-        N = self.d2 - 1 
+        # Prep: there are at most d^2 - 1 independent parameters due to the Trace[rho] = 1 constraint. 
+        # For physical GST, we read the prep state function and inspect the number of parameters 
+        prep_model_sig = inspect.signature(self.prep_state_model)
+        N = len(prep_model_sig.parameters)
+        if N > (self.d2 - 1):
+            IonSimError(f"Warning: The prep model has more parameters than the maximum number of independent parameters (with normalization constraint): {self.d2 - 1}")
         parameter_indices["prep"] = slice(i, i + N) 
         i += N
 
         # Measure: there are d - 1 independent measurement effects from the completeness constraint.
         #   - each effect is a d x d matrix, so there are d^2(d-1) indepenent parameters  
+        #for outcome, effect_model in self.POVM_effect_models.items():
         N = self.d2 * (self.d - 1) 
         parameter_indices["measurement"] = slice(i, i + N) 
         i += N
@@ -217,7 +222,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for circ in self.parsed_circuits:
             key = tuple(circ.expanded_gates)
             counts = circ.measurement_data.to_counts().copy()
-            #counts = circ.measurement_data.to_counts()
 
             if key in combined_counts:
                 for label, n in counts.items():
@@ -230,15 +234,13 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for key, counts in combined_counts.items(): 
             total_counts = sum(counts.values())
             self.circuit_lookup[key] = {outcome: count / total_counts for outcome, count in counts.items()}
-            #total_counts = circ.measurement_data.total_counts
 
     def get_prep_state(self, theta) -> Vector:
         """ Returns prep state supervector (d^2 x 1) given the parameter values theta.
             - Enforces the constraint Tr[rho] = 1, eliminating 1 parameter.
         """ 
         prep_params = theta[self.gst_parameter_indices["prep"]] # d^2 - 1 column vector  
-        assert len(prep_params) == (self.d2 - 1)
-        prep_state = self.prep_state_model(prep_params)
+        prep_state = self.prep_state_model(*prep_params)
         return prep_state
 
     def get_measurement_effects(self, theta) -> dict[str, Vector]:
@@ -293,7 +295,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         """ Build cached indexing data used by likelihood and chi-squared loops. """
         # Use gate names instead of ParsedGate objects so map-composition cache keys
         # are lightweight and hash quickly.
-        gates = tuple(gate for gate in circ.expanded_gates)
+        #gates = tuple(gate for gate in circ.expanded_gates)
+        gates = tuple(circ.expanded_gates)
+
         #gate_names = tuple(gate.name for gate in circ.expanded_gates)
         measurement_data = circ.measurement_data
 
@@ -318,7 +322,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             count_indices = []
             count_values = []
             for outcome, count in measurement_data.counts.items():
-                if count <= 0:
+                #if count <= 0:
+                #    continue
+                if count < 0:
                     continue
                 if outcome not in self.outcome_to_index:
                     raise IonSimError(f"Unexpected measurement outcome '{outcome}' in circuit data.")
@@ -467,9 +473,11 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
             if metadata['has_counts']:
                 if metadata['count_values'].size > 0:
+                    assert len(metadata['count_values']) == len(log_probability_values)
                     # Weighted log-likelihood contribution from count data.
-                    l_likelihood += np.dot(metadata['count_values'], log_probability_values[metadata['count_indices']])
+                    l_likelihood += np.dot(metadata['count_values'], log_probability_values)
             else:
+                print(f"THIS TOO SHOULD NOT PRINT!")
                 # Time-series data: each shot contributes one log-probability term.
                 if metadata['shot_indices'].size > 0:
                     l_likelihood += np.sum(log_probability_values[metadata['shot_indices']])
@@ -637,8 +645,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if parameters_guess is None:
             # If no initial guess is specified, we use linear GST to generate a good guess for the gate set parameters  
             self.solver_result = self.run_linear_gst(self.ideal_gate_set)
-            self.parameters_from_lgst_results()
-            theta_0 = self.gst_parameters 
+            theta_0 = self.parameters_from_lgst_results()
             self.solver_result = None
         else:
             if isinstance(parameters_guess, dict):
@@ -844,11 +851,11 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         prep_indices = self.gst_parameter_indices['prep']
         def cost(theta: Vector) -> float:
             # Frobenius norm of the process matrix difference bt. model and LGST-predicted
-            prep_state = self.prep_state_model(theta)
+            prep_state = self.prep_state_model(*theta)
             return np.linalg.norm(prep_state - lgst_native_prep)**2
 
         N_parameters = len(self.gst_parameters[prep_indices]) 
-        p0 = np.zeros(N_parameters, dtype=complex) 
+        p0 = np.zeros(N_parameters) 
         if self.parameter_bounds is not None:
             model_bounds = self.parameter_bounds[prep_indices]
         else:
@@ -868,7 +875,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         measurement_indices = self.gst_parameter_indices["measurement"] 
         N_parameters = len(self.gst_parameters[measurement_indices]) 
-        p0 = np.zeros(N_parameters, dtype=complex) 
+        p0 = np.zeros(self.num_gst_parameters, dtype=complex) 
 
         if self.parameter_bounds is not None:
             model_bounds = self.parameter_bounds[measurement_indices]
@@ -876,7 +883,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             model_bounds = None
 
         result = opt.minimize(cost, p0, method='Nelder-Mead', bounds = model_bounds) 
-        return result.x
+        return result.x[measurement_indices]
 
 
     def _fit_gate_model_to_lgst_estimate(self, gate: ParsedGate, target_gate_matrix: Matrix) -> Vector:
