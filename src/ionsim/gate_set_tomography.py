@@ -20,6 +20,7 @@ from ionsim.custom_types import Vector, Matrix
 from ionsim.gst_circuit_planner import GSTCircuitPlanner
 from ionsim.state import State
 from ionsim.io import *
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD 
 
 def depth_bin(depth):
     """ Bins a circuit depth to the nearest power of 2 """
@@ -163,26 +164,31 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             normalized_bounds = [
                 (None, None) for _ in range(self.num_gst_parameters)
             ]
-            for gate_name, gate_bounds in parameter_bounds.items():
-                if (gate_name == "prep" or gate_name == "measurement"):
+            for name, bound_info in parameter_bounds.items():
+                if (name == "prep"): 
                     continue  
 
-                if gate_name not in self.gate_models:
-                    raise ValueError(f"Unknown gate in parameter bounds: {gate_name!r}.")
-                if not isinstance(gate_bounds, dict):
+                if name not in self.gate_models and name not in self.POVM_effect_models.keys():
+                    raise ValueError(f"Unknown model in parameter bounds: {name!r}.")
+
+                if not isinstance(bound_info, dict):
                     raise TypeError(
-                        "Bounds for each gate must be a dictionary mapping "
+                        "Bounds for each model must be a dictionary mapping "
                         "parameter names to (lower, upper) pairs."
                     )
 
-                for parameter_name, bounds in gate_bounds.items():
-                    if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+                for parameter_name, param_bounds in bound_info.items():
+                    if not isinstance(param_bounds, (list, tuple)) or len(param_bounds) != 2:
                         raise ValueError(
-                            f"Bounds for {gate_name}.{parameter_name} must be "
+                            f"Bounds for model {name}.{parameter_name} must be "
                             "a (lower, upper) pair."
                         )
-                    parameter_index = self.get_parameter_index_by_name_in_gate(gate_name, parameter_name)
-                    normalized_bounds[parameter_index] = tuple(bounds)
+                    if name not in self.POVM_effect_models.keys():
+                        parameter_index = self.get_parameter_index_by_name_in_gate(name, parameter_name)
+                        normalized_bounds[parameter_index] = tuple(param_bounds)
+                    else:
+                        parameter_index = self.get_parameter_index_by_name_in_effect_model(name, parameter_name)
+                        normalized_bounds[parameter_index] = tuple(param_bounds)
 
             if "prep" in list(parameter_bounds.keys()):
                 for parameter_name, bounds in parameter_bounds["prep"].items():
@@ -193,6 +199,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                         )
                     parameter_index = self.get_parameter_index_by_name_in_prep_model(parameter_name)
                     normalized_bounds[parameter_index] = tuple(bounds)
+
             # TODO: add measurement models 
             self.parameter_bounds = normalized_bounds
         elif isinstance(parameter_bounds, list):
@@ -211,7 +218,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         """ Builds and organizes the independent parameters for GST. This organizes parameters based on:
             1) Prep state 
             2) Each Gate model, for all gates in the set  
-            3) Native measurement
+            3) Native measurements, by outcome label (e.g. '00')
 
             - Parameter indexing are organized in a dictionary for easy retrieval, e.g. {'prep state' : prep_state_parameter_indexing (as slice)} 
             - Returns the layout dictionary and the total number of parameters 
@@ -234,10 +241,15 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Measure: there are d - 1 independent measurement effects from the completeness constraint.
         #   - each effect is a d x d matrix, so there are d^2(d-1) indepenent parameters  
-        #for outcome, effect_model in self.POVM_effect_models.items():
-        N = self.d2 * (self.d - 1) 
-        parameter_indices["measurement"] = slice(i, i + N) 
-        i += N
+        for outcome, effect_model in self.POVM_effect_models.items():
+            effect_model_sig = inspect.signature(effect_model)
+            N = len(effect_model_sig.parameters)
+            parameter_indices[outcome] = slice(i, i + N)
+            i += N
+
+ #        N = self.d2 * (self.d - 1) 
+ #        parameter_indices["measurement"] = slice(i, i + N) 
+ #        i += N
 
         for gate, gate_model in self.gate_models.items():
             gate_model_sig = inspect.signature(gate_model)
@@ -288,33 +300,46 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - Therefore, there are d^2 (d-1) independent parameters for measurment.  
         """ 
         M_effects = {}
-        N_effects = len(self.POVM_effect_models) 
-        measurement_params = theta[self.gst_parameter_indices["measurement"]]
-        assert N_effects == (self.d) 
-        N_params_per_op = self.d2
+        for outcome, effect_model in self.POVM_effect_models.items():
+            # Evaluate each model at the parameters 
+            effect_params = theta[self.gst_parameter_indices[outcome]]
+            # Effect model returns a d2 x 1 row vector (Superbra) representation 
+            M_effects[outcome] = effect_model(*effect_params)
+            assert M_effects[outcome].shape == (self.d2, )
 
-        # 1. Evaluate unconstrained effect models 
-        for i, (label, effect_model) in enumerate(self.POVM_effect_models.items()):
-            if i == (N_effects - 1): # skip last index
-                break
-            # Retrieve model parameters for this effect and plug into effect's model function 
-            model_parameters = np.array(measurement_params[i * N_params_per_op : (i + 1) * N_params_per_op]) 
-            M_effects[label] = effect_model(model_parameters)
-
-        # 2. Determine Final effect, constrained to be E_last = I - sum(E) over all other effects E 
-        last_label = list(self.POVM_effect_models.keys())[-1]
-        constrained_effect = np.eye(self.d, dtype=complex).flatten()
-        assert last_label not in list(M_effects.keys()) 
-        assert self.POVM_effect_models[last_label] == None 
+ #        N_effects = len(self.POVM_effect_models) 
+ #        measurement_params = theta[self.gst_parameter_indices["measurement"]]
+ #        assert N_effects == (self.d) 
+ #        N_params_per_op = self.d2
+ #
+ #        # 1. Evaluate unconstrained effect models 
+ #        for i, (label, effect_model) in enumerate(self.POVM_effect_models.items()):
+ #            if i == (N_effects - 1): # skip last index
+ #                break
+ #            # Retrieve model parameters for this effect and plug into effect's model function 
+ #            model_parameters = np.array(measurement_params[i * N_params_per_op : (i + 1) * N_params_per_op]) 
+ #            M_effects[label] = effect_model(model_parameters)
+ #
+ #        # 2. Determine Final effect, constrained to be E_last = I - sum(E) over all other effects E 
+ #        last_label = list(self.POVM_effect_models.keys())[-1]
+ #        constrained_effect = np.eye(self.d, dtype=complex).flatten()
+ #        assert last_label not in list(M_effects.keys()) 
+ #        assert self.POVM_effect_models[last_label] == None 
         # TODO: Instead of having the last effect be None by arbitrary convention, have this code find which effect is constrained by checking if its function is None.
 
         # Loop over all independent effects to compute the constrained effect: 
-        for i, effect_op in enumerate(M_effects.values()): 
-            if i == (N_effects - 1): # skip last index
-                break
-            constrained_effect -= effect_op 
+ #        for i, effect_op in enumerate(M_effects.values()): 
+ #            if i == (N_effects - 1): # skip last index
+ #                break
+ #            constrained_effect -= effect_op 
 
-        M_effects[last_label] = constrained_effect
+        #M_effects[last_label] = constrained_effect
+
+        # Check completeness constraint: 
+        #effects_sum = M
+        completeness_violation = np.linalg.norm(sum(M_effects.values()).reshape(self.d, self.d) - np.eye(self.d))
+        #if np.abs(completeness_violation) > 0.1:
+        #    raise IonSimError(f"Measurement effect models are violating completenss constraint with residual {np.abs(completeness_violation)}") 
         return M_effects 
 
     def _initialize_likelihood_circuit_cache(self):
@@ -512,7 +537,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                     # Weighted log-likelihood contribution from count data.
                     l_likelihood += np.dot(metadata['count_values'], log_probability_values)
             else:
-                print(f"THIS TOO SHOULD NOT PRINT!")
+                raise IonSimError(f"Time-dependent GST is not available in this version of IonSim.") 
                 # Time-series data: each shot contributes one log-probability term.
                 if metadata['shot_indices'].size > 0:
                     l_likelihood += np.sum(log_probability_values[metadata['shot_indices']])
@@ -625,6 +650,15 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         indx_in_prep_model = parameter_names.index(parameter_name)
         slice_from_global_parameters_list = self.gst_parameter_indices["prep"]
         return slice_from_global_parameters_list.start + indx_in_prep_model
+
+    def get_parameter_index_by_name_in_effect_model(self, outcome: str, parameter_name: str) -> int:
+        """ Return index in gate parameters where parameter from a gate mdoel appears. Return -1 if not found """
+        effect_model = self.POVM_effect_models[outcome]
+        effect_model_sig = inspect.signature(effect_model)
+        parameter_names = list(effect_model_sig.parameters.keys())  
+        indx_in_effect_model = parameter_names.index(parameter_name)
+        slice_from_global_parameters_list = self.gst_parameter_indices[outcome]
+        return slice_from_global_parameters_list.start + indx_in_effect_model
         
     def get_parameter_value_by_name(self, gate: ParsedGate, parameter_name: str) -> float:
         """ Return the parameter value for a requested parameter in a gate model"""
@@ -648,8 +682,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         prep_params = self.gst_parameters[self.gst_parameter_indices["prep"]] # d^2 - 1 column vector  
         print(f"Prep state parameters: {prep_params}")
 
-        measurement_params = self.gst_parameters[self.gst_parameter_indices["measurement"]] # d^2 - 1 column vector  
-        print(f"\nMeasurement effect parameters: {measurement_params}")
+        for outcome in self.POVM_effect_models.keys():
+            outcome_params = self.gst_parameters[self.gst_parameter_indices[outcome]] # d^2 - 1 column vector  
+            print(f"\nMeasurement outcome effect {outcome} parameters: {outcome_params}")
 
         for gate in self.gate_set:
             gate_model = self.gate_models[gate]
@@ -878,11 +913,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Extract SPAM parameters:
         # Native prep state         
         prep_fit_parameters = self._fit_prep_model_to_lgst_estimate(self.lgst_results['native_prep_state'])
-        theta[self.gst_parameter_indices['prep']] = prep_fit_parameters.real
+        theta[self.gst_parameter_indices['prep']] = prep_fit_parameters
 
         # Native measurement effects  
-        measurement_parameters = self._fit_measurement_effect_models_to_lgst_estimate(self.lgst_results['estimated_effects'])
-        theta[self.gst_parameter_indices['measurement']] = measurement_parameters.real 
+        for outcome in self.POVM_effect_models.keys():
+            outcome_parameters = self._fit_measurement_effect_model_to_lgst_estimate(outcome, self.lgst_results['estimated_effects'])
+            theta[self.gst_parameter_indices[outcome]] = outcome_parameters
 
         # Set gst parameters attribute to extracted parameters 
         self.gst_parameters = theta
@@ -908,17 +944,20 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         result = opt.minimize(cost, p0, method='Nelder-Mead', bounds = model_bounds) 
         return result.x
 
-    def _fit_measurement_effect_models_to_lgst_estimate(self, lgst_native_measurements: dict[str, Vector]) -> Vector:
+    def _fit_measurement_effect_model_to_lgst_estimate(self, outcome: str, lgst_native_measurements: dict[str, Vector]) -> Vector:
         """ Fits a measurement effect's model's parameters given the lgst results for the prep state. """
         def cost(theta: Vector) -> float:
-            # Fit measurement effects for each outcome 
+            # Fit measurement effects for an outcome 
             # Cost is Frobenius norm of the process matrix difference bt. model and LGST-predicted
-            modeled_effect_matrix = np.vstack([np.asarray(self.get_measurement_effects(theta)[label]) for label in self.outcome_labels])
-            lgst_native_measurements_matrix = np.vstack([np.asarray(lgst_native_measurements[outcome]) for outcome in self.outcome_labels])
+            #modeled_effect_matrix = np.vstack([np.asarray(self.get_measurement_effects(theta)[label]) for label in self.outcome_labels])
+            #lgst_native_measurements_matrix = np.vstack([np.asarray(lgst_native_measurements[outcome]) for outcome in self.outcome_labels])
+            modeled_effect_matrix = self.get_measurement_effects(theta)[outcome]
+            lgst_native_measurements_matrix = lgst_native_measurements[outcome]
             return np.linalg.norm(modeled_effect_matrix - lgst_native_measurements_matrix)**2
 
-        measurement_indices = self.gst_parameter_indices["measurement"] 
+        measurement_indices = self.gst_parameter_indices[outcome] 
         N_parameters = len(self.gst_parameters[measurement_indices]) 
+        # TODO: Fix the optimization to only vary parameters for this measurement outcome 
         p0 = np.zeros(self.num_gst_parameters, dtype=complex) 
 
         if self.parameter_bounds is not None:
@@ -1193,11 +1232,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         prep_model_sig = inspect.signature(prep_model)
         parameter_names = list(prep_model_sig.parameters.keys())
         prep_param_values = uncertainties[self.gst_parameter_indices['prep']]
-        uncertainty_results['Prep'] = dict(zip(parameter_names, prep_param_values)) 
+        uncertainty_results['prep'] = dict(zip(parameter_names, prep_param_values)) 
 
         # Currently only the independent measurement parameters are returned; TODO: generalize as much as possible  
-        meas_param_values = uncertainties[self.gst_parameter_indices['measurement']]
-        uncertainty_results['Measurement'] = meas_param_values 
+        for outcome in self.POVM_effect_models.keys():
+            meas_param_values = uncertainties[self.gst_parameter_indices[outcome]]
+            uncertainty_results[outcome] = meas_param_values 
 
         return uncertainty_results              
 
