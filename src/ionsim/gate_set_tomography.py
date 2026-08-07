@@ -104,26 +104,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self.LL_eval = 0 
         self.nll_data = []
 
-        self.parameter_bounds = None 
-        if parameter_bounds is not None:
-            # Set up list of parameter bounds and assign accordingly 
-            self.parameter_bounds = [(None, None) for i in range(len(self.gst_parameters))]
-            # Parse user input from dictionary format to a list of tuples 
-            # Unpack parameter bounding information
-            if isinstance(parameter_bounds, dict):
-                # Parse input for parameter bounds; keys should be strings or Parsed Gate 
-                for key in parameter_bounds.keys():  
-                    # Gate model dictionary expects ParsedGate keys 
-                    gate = self.user_key_gate_map[key]
-                    index_of_gate_in_GS = list(self.gate_models.keys()).index(gate)
-                    for parameter, bounds in parameter_bounds[key].items():
-                        param_indx = self.get_parameter_index_by_name_in_gate(gate, parameter)
-                        self.parameter_bounds[param_indx] = parameter_bounds[key][parameter]
-            else:
-                if not isinstance(parameter_bounds, list):
-                    raise TypeError(f"Parameter bounds must be a `list' or 'dict' type.")
-                self.parameter_bounds = parameter_bounds 
-
         # Set up cached parameters and process matrices 
         self.cached_theta = None 
         self.process_matrix_cache = None 
@@ -165,11 +145,66 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Organize a lookup table for fiducial prep/measure circuits; needed for linear GST 
         self._index_fiducials()
         self._initialize_likelihood_circuit_cache()
+        self._normalize_parameter_bounds(parameter_bounds)
 
 
     @property
     def num_parameters(self):
         return len(self.gst_parameters)
+
+
+    def _normalize_parameter_bounds(self, parameter_bounds) -> list[tuple[float | None, float | None]] | None:
+        # Normalize the documented dictionary form to the flat list of
+        # ``(lower, upper)`` pairs expected by SciPy optimizers. Parameters not
+        # named in the dictionary remain unbounded.
+        if parameter_bounds is None:
+            self.parameter_bounds = None
+        elif isinstance(parameter_bounds, dict):
+            normalized_bounds = [
+                (None, None) for _ in range(self.num_gst_parameters)
+            ]
+            for gate_name, gate_bounds in parameter_bounds.items():
+                if (gate_name == "prep" or gate_name == "measurement"):
+                    continue  
+
+                if gate_name not in self.gate_models:
+                    raise ValueError(f"Unknown gate in parameter bounds: {gate_name!r}.")
+                if not isinstance(gate_bounds, dict):
+                    raise TypeError(
+                        "Bounds for each gate must be a dictionary mapping "
+                        "parameter names to (lower, upper) pairs."
+                    )
+
+                for parameter_name, bounds in gate_bounds.items():
+                    if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+                        raise ValueError(
+                            f"Bounds for {gate_name}.{parameter_name} must be "
+                            "a (lower, upper) pair."
+                        )
+                    parameter_index = self.get_parameter_index_by_name_in_gate(gate_name, parameter_name)
+                    normalized_bounds[parameter_index] = tuple(bounds)
+
+            if "prep" in list(parameter_bounds.keys()):
+                for parameter_name, bounds in parameter_bounds["prep"].items():
+                    if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+                        raise ValueError(
+                            f"Bounds for {gate_name}.{parameter_name} must be "
+                            "a (lower, upper) pair."
+                        )
+                    parameter_index = self.get_parameter_index_by_name_in_prep_model(parameter_name)
+                    normalized_bounds[parameter_index] = tuple(bounds)
+            # TODO: add measurement models 
+            self.parameter_bounds = normalized_bounds
+        elif isinstance(parameter_bounds, list):
+            if len(parameter_bounds) != self.num_gst_parameters:
+                raise ValueError(
+                    "Parameter bounds must contain one (lower, upper) pair "
+                    f"per GST parameter; expected {self.num_gst_parameters}, "
+                    f"received {len(parameter_bounds)}."
+                )
+            self.parameter_bounds = parameter_bounds
+        else:
+            raise TypeError("Parameter bounds must be a list, dictionary, or None.")
 
 
     def _build_parameter_organization(self) -> tuple[dict[str, slice], int]:
@@ -581,6 +616,15 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         indx_in_gate_model = parameter_names.index(parameter_name)
         slice_from_global_parameters_list = self.gst_parameter_indices[gate]
         return slice_from_global_parameters_list.start + indx_in_gate_model
+
+    def get_parameter_index_by_name_in_prep_model(self, parameter_name: str) -> int:
+        """ Return index in gate parameters where parameter from a gate mdoel appears. Return -1 if not found """
+        prep_model = self.prep_state_model
+        prep_model_sig = inspect.signature(prep_model)
+        parameter_names = list(prep_model_sig.parameters.keys())  
+        indx_in_prep_model = parameter_names.index(parameter_name)
+        slice_from_global_parameters_list = self.gst_parameter_indices["prep"]
+        return slice_from_global_parameters_list.start + indx_in_prep_model
         
     def get_parameter_value_by_name(self, gate: ParsedGate, parameter_name: str) -> float:
         """ Return the parameter value for a requested parameter in a gate model"""
@@ -878,7 +922,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         p0 = np.zeros(self.num_gst_parameters, dtype=complex) 
 
         if self.parameter_bounds is not None:
-            model_bounds = self.parameter_bounds[measurement_indices]
+            model_bounds = self.parameter_bounds
+            #model_bounds = self.parameter_bounds[measurement_indices]
         else:
             model_bounds = None
 
