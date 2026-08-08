@@ -17,6 +17,8 @@ from ionsim.dissipator import Dissipator, Lindbladian
 from ionsim.named_operators import Fock 
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel 
 
+from numpy.fft import fft2, fftshift, ifftshift 
+
 import numpy as np
 from dataclasses import dataclass
 from numpy.linalg import multi_dot
@@ -308,5 +310,30 @@ class State:
             wigner_distributions.append(wigner(Qobj(mode_state.density_matrix, dims=[[N_fock], [N_fock]]), x_grid, p_grid))
 
         return wigner_distributions 
+
+    def compute_characteristic_functions(self, x_grid: Vector, p_grid: Vector):
+        """ Computes characteristic function X(beta) for each motional mode in the basis """ 
+        # First compute the Wigner distribution, then use a discrete Fourier Transform to
+        #    obtain the characteristic function. 
+        dx = x_grid[1] - x_grid[0]
+        dp = p_grid[1] - p_grid[0]
+        N = len(x_grid)
+
+        assert dx == dp 
+
+        freq = fftshift(np.fft.fftfreq(N, d = dx))
+        beta = np.pi * freq
+
+        W_distributions = self.compute_wigner_distribution(x_grid, p_grid)
+        characteristic_functions = [np.zeros((len(x_grid), len(p_grid)), dtype=complex) for _ in len(self.basis.motional_modes)]
+
+        normalization = 1./np.pi**2
+        for i, W in enumerate(W_distribution):
+            characteristic_functions[i] = fftshift(fft2(ifftshift(W))) * (dx**2)
+            #characteristic_functions[i] = np.fft(np.fft(W/normalization))) 
+
+        return beta, characteristic_functions 
+
+
 
     # def transform_to_spin_eigenbasis(self):
