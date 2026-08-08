@@ -299,6 +299,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - By convention, the last effect is constrained. ==> d^2 parameters are constrained. 
             - Therefore, there are d^2 (d-1) independent parameters for measurment.  
         """ 
+        # TODO: Overhaul further? Just have user give 1 function that takes in parameters returns all outcome POVMs? 
         M_effects = {}
         for outcome, effect_model in self.POVM_effect_models.items():
             # Evaluate each model at the parameters 

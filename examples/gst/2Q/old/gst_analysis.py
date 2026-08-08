@@ -86,7 +86,6 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
         return M
 
 
-    ############ Option 1 for POVMs: Give a dictionary of models (callables) ############
     POVM_models = {}
     # Simple parametrized measurement effect models 
     def effect_00(prob_false_bright: float, prob_false_dark: float): 
@@ -119,40 +118,6 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
     POVM_models["01"] = effect_01
     POVM_models["10"] = effect_10
     POVM_models["11"] = effect_11
-
-    ############ Option 2 for POVMs: Give a callable returning a dictionary of model evaluations ############
-    # instead of a dict that has outcome; callable pairs, try a POVM models that is a callable that returns a dict 
- #    def POVM_models(prob_false_bright: float, prob_false_dark: float) -> dict:
- #        """ Dictionary of POVMs evaluated at the function parameters: """ 
- #        POVMs = {}
- #
- #        # 00
- #        M0 = E0_1Q(prob_false_bright, prob_false_dark)
- #        matrix = np.kron(M0,M0)
- #        operator = sm.EnergyShiftOperator.from_matrix(basis, matrix)
- #        POVMs["00"] = operator.superbra 
- #
- #        # 01
- #        M0 = E0_1Q(prob_false_bright, prob_false_dark)
- #        M1 = E1_1Q(prob_false_bright, prob_false_dark)
- #        matrix = np.kron(M0,M1)
- #        operator = sm.EnergyShiftOperator.from_matrix(basis, matrix) 
- #        POVMs["01"] = operator.superbra 
- #
- #        # 10
- #        M0 = E0_1Q(prob_false_bright, prob_false_dark)
- #        M1 = E1_1Q(prob_false_bright, prob_false_dark)
- #        matrix = np.kron(M1,M0)
- #        operator = sm.EnergyShiftOperator.from_matrix(basis, matrix) 
- #        POVMs["10"] = operator.superbra 
- #
- #        # 11
- #        M1 = E1_1Q(prob_false_bright, prob_false_dark)
- #        matrix = np.kron(M1,M1)
- #        operator = sm.EnergyShiftOperator.from_matrix(basis, matrix) 
- #        POVMs["11"] = operator.superbra 
- #
- #        return POVMs
 
     # 7 parameters in the gate set; 7 for SPAM 
     # Construct ideal gate set to compute error metric of GST analysis & gate modeling 
