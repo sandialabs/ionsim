@@ -17,7 +17,7 @@ from ionsim.dissipator import Dissipator, Lindbladian
 from ionsim.named_operators import Fock 
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel 
 
-from numpy.fft import fft2, fftshift, ifftshift 
+from numpy.fft import ifft, fft, fft2, fftshift, ifftshift 
 
 import numpy as np
 from dataclasses import dataclass
@@ -315,24 +315,34 @@ class State:
         """ Computes characteristic function X(beta) for each motional mode in the basis """ 
         # First compute the Wigner distribution, then use a discrete Fourier Transform to
         #    obtain the characteristic function. 
-        dx = x_grid[1] - x_grid[0]
-        dp = p_grid[1] - p_grid[0]
-        N = len(x_grid)
+        dx = np.abs(x_grid[1] - x_grid[0])
+        dp = np.abs(p_grid[1] - p_grid[0])
+        Nx = len(x_grid)
+        Np = len(p_grid)
 
-        assert dx == dp 
+        #assert dx == dp 
+        #freq = fftshift(np.fft.fftfreq(N, d = dx))
+        #re_beta = np.pi * fftshift(np.fft.fftfreq(Np, d=dp))
+        #im_beta = np.pi * fftshift(np.fft.fftfreq(Nx, d=dx))
+        re_beta = 2.*np.pi * fftshift(np.fft.fftfreq(Np, d=dp))
+        im_beta = 2.*np.pi * fftshift(np.fft.fftfreq(Nx, d=dx))
 
-        freq = fftshift(np.fft.fftfreq(N, d = dx))
-        beta = np.pi * freq
+        #re_beta = np.pi * fftshift(np.fft.fftfreq(Np, d=dp))
+        #im_beta = np.pi * fftshift(np.fft.fftfreq(Nx, d=dx))
+        #beta = re_beta + 1j*im_beta
 
         W_distributions = self.compute_wigner_distribution(x_grid, p_grid)
-        characteristic_functions = [np.zeros((len(x_grid), len(p_grid)), dtype=complex) for _ in len(self.basis.motional_modes)]
+        characteristic_functions = [np.zeros((len(p_grid), len(x_grid)), dtype=complex) for _ in range(len(self.basis.motional_modes))]
 
-        normalization = 1./np.pi**2
-        for i, W in enumerate(W_distribution):
-            characteristic_functions[i] = fftshift(fft2(ifftshift(W))) * (dx**2)
+        for i, W in enumerate(W_distributions):
+            chi = fftshift(fft(ifftshift(W, axes=0), axis=0), axes=0)
+            chi = fftshift(ifft(ifftshift(chi, axes=1), axis=1), axes=1) * Nx 
+            characteristic_functions[i] = chi * dx * dp 
+            #characteristic_functions[i] = fftshift(np.fft.ifft2(ifftshift(W))) * (dx*dp*Nx*Np)
+            #characteristic_functions[i] = fftshift(fft2(ifftshift(W))) * (dx*dp)
             #characteristic_functions[i] = np.fft(np.fft(W/normalization))) 
 
-        return beta, characteristic_functions 
+        return re_beta, im_beta, characteristic_functions 
 
 
 
