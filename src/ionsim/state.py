@@ -320,16 +320,8 @@ class State:
         Nx = len(x_grid)
         Np = len(p_grid)
 
-        #assert dx == dp 
-        #freq = fftshift(np.fft.fftfreq(N, d = dx))
-        #re_beta = np.pi * fftshift(np.fft.fftfreq(Np, d=dp))
-        #im_beta = np.pi * fftshift(np.fft.fftfreq(Nx, d=dx))
-        re_beta = 2.*np.pi * fftshift(np.fft.fftfreq(Np, d=dp))
-        im_beta = 2.*np.pi * fftshift(np.fft.fftfreq(Nx, d=dx))
-
-        #re_beta = np.pi * fftshift(np.fft.fftfreq(Np, d=dp))
-        #im_beta = np.pi * fftshift(np.fft.fftfreq(Nx, d=dx))
-        #beta = re_beta + 1j*im_beta
+        re_beta = np.pi * fftshift(np.fft.fftfreq(Np, d=dp))*np.sqrt(2.)
+        im_beta = np.pi * fftshift(np.fft.fftfreq(Nx, d=dx))*np.sqrt(2.)
 
         W_distributions = self.compute_wigner_distribution(x_grid, p_grid)
         characteristic_functions = [np.zeros((len(p_grid), len(x_grid)), dtype=complex) for _ in range(len(self.basis.motional_modes))]
@@ -338,12 +330,5 @@ class State:
             chi = fftshift(fft(ifftshift(W, axes=0), axis=0), axes=0)
             chi = fftshift(ifft(ifftshift(chi, axes=1), axis=1), axes=1) * Nx 
             characteristic_functions[i] = chi * dx * dp 
-            #characteristic_functions[i] = fftshift(np.fft.ifft2(ifftshift(W))) * (dx*dp*Nx*Np)
-            #characteristic_functions[i] = fftshift(fft2(ifftshift(W))) * (dx*dp)
-            #characteristic_functions[i] = np.fft(np.fft(W/normalization))) 
 
         return re_beta, im_beta, characteristic_functions 
-
-
-
-    # def transform_to_spin_eigenbasis(self):
