@@ -191,7 +191,9 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
     GST_analyzer.print_state_and_POVMs()
 
     print()
-    gate_set_error = GST_analyzer.compute_gate_set_error(solver_results.x, ideal_gate_set, include_SPAM_error=include_SPAM_error) 
+    #gate_set_error = GST_analyzer.compute_gate_set_error(solver_results.x, ideal_gate_set, include_SPAM_error=include_SPAM_error) 
+    gate_set_error = GST_analyzer.compute_gate_set_error_by_element(solver_results.x, ideal_gate_set, include_SPAM_error=include_SPAM_error)
+    print(gate_set_error) 
     return gate_set_error
 
 
