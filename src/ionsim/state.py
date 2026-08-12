@@ -12,7 +12,6 @@ from ionsim.degree_of_freedom import DegreeOfFreedom
 from ionsim.custom_types import Vector, Matrix
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.dissipator import Dissipator, Lindbladian
 from ionsim.lindbladian import Dissipator, Lindbladian
 from ionsim.named_operators import Fock 
 

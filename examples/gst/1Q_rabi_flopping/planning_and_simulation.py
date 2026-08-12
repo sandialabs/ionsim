@@ -17,7 +17,7 @@ from gate_models import *
 def main():
 
     # 1. Given the gate set, run the GST circuit planner if it has not been ran yet.  
-    gate_names = ['Gxpi8'] 
+    gate_names = ['Gxpi8:0'] 
     gates = [] 
     qubit_indices = [0] # index of each qubit  
 
@@ -36,16 +36,16 @@ def main():
     else:
         print(f"Writing GST Circuit plan.")
         #powers = [1]
-        #powers = [1, 2, 4, 8, 16, 32]
+        powers = [1, 2, 4, 8, 16, 32]
         #powers = [1, 2, 4, 8, 16, 24, 32, 64, 128]
-        powers = list(np.arange(1, 32+1))
+        powers = list(range(1, 32+1))
         #germs = [[Gxpi2_q0], [Gxpi2_q1], [Gypi2_q0], [Gypi2_q1], [cnot_gate], [Gxpi2_q1, cnot_gate,Gxpi2_q0], [Gypi2_q1, cnot_gate, cnot_gate, Gypi2_q0]] 
         #gate_models = {"Gxpi8" : }
         #gate_models = {Gxpi8_q0 : X_pi_8_co_prop} # from the gate_models module 
 
-        fiducials = []
+        fiducials = [[]]
         germs = [[Gxpi8_q0]] 
-        gst_circuit_planner = ism.GSTCircuitPlanner(gate_names, qubit_indices, prep_fiducials = [], measure_fiducials = [], germ_powers = powers, germs = germs) 
+        gst_circuit_planner = ism.GSTCircuitPlanner(gate_names, qubit_indices, prep_fiducials = fiducials, measure_fiducials = fiducials, germ_powers = powers, germs = germs) 
         gst_circuit_planner.write_circuit_plan(gst_circuit_filename, num_qubits) # writes gst circuits to a file  
 
         design_file = './circuit_design.yml'
@@ -54,15 +54,19 @@ def main():
     # 2. Using the GST circuit list from a file, read those circuits in.  
     gst_circuits = ism.parse_gst_circuit_file(gst_circuit_filename)
 
-    # 3. Specify the relationship between GST gate names (e.g. "Gxpi2") and your simulation name (e.g. "run_noisy_Xpi2_simulation()")
-    evaluated_gate_models = { Gxpi8_q0 : X_pi_8_co_prop(0.1)} 
+    # 3. Specify the relationship between GST gate names (e.g. "Gxpi2") and the gate simulation/process matrix model name (e.g. "run_noisy_Xpi2_simulation()")
+    rabi_rate = 100e3 * 2*np.pi # rad./s
+    pi_time = abs(np.pi)/rabi_rate
+    rabi_duration = 16 * pi_time
+    spin_flip_rate = 1 / rabi_duration 
+    evaluated_gate_models = { Gxpi8_q0 : X_pi_8_co_prop(spin_flip_rate)} 
 
     # 4. Loop over all circuits in the plan and run the corresponding simulations, recording circuit outcomes  
     outcomes = []
     circuit_simulation_output_file = 'simulated_gst_experimental_data.gstdata' # the file you would like to write results to 
 
     # For the IonSim simulations, set up the 1-qubit (1Q) basis and initial state.  
-    spins = [ism.AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0']) for _ in range(num_qubits)]
+    spins = [ism.AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0']) for _ in range(num_qubits)]
     basis = ism.StandardBasis([*spins])
 
     # Construct initial state 
@@ -94,7 +98,7 @@ def main():
             # For each gate in the simulator, evolve the state forward according to the gate dynamics         
             for gate in circuit.expanded_gates:
                 # Run IonSim simulation of the gate 
-                rho = rho.propagate_using_process_matrix(evaluated_gate_mdoels[gate])
+                rho = rho.propagate_using_process_matrix(evaluated_gate_models[gate])
     
             # Estimate and record circuit outcomes in a dictionary to create ParsedCircuit object: 
             outcome_probabilities = rho.compute_basis_state_probabilities() 

@@ -13,7 +13,7 @@ spins = [
     sm.AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
     for _ in range(num_spins)
 ]
-spin_basis = sm.StandardBasis([*spins])
+basis = sm.StandardBasis([*spins])
 target_spins = [spins[0]]
 rabi_rate = 100e3 * 2*np.pi # rad./s
 pi_time = abs(np.pi)/rabi_rate
@@ -110,13 +110,13 @@ def X_pi_8_co_prop(spin_flip_rate: float):
     rotation_angle = np.pi/8.
     phi = 0.
     spin_dephasing_rate = 0.
-    ham = R_hamiltonian(basis, phi, rabi_rate, omega, False, mod)
+    ham = R_hamiltonian(basis, phi, rabi_rate, omega, False, amp_mod)
     dissipator = spin_dissipator(basis, spin_dephasing_rate, spin_flip_rate)
     rabi_lindbladian = sm.Lindbladian(ham, dissipator) 
 
     # rotation angle = pi/8 = Omega*duration
     duration = rotation_angle/rabi_rate 
-    gate = sm.Gate.from_lindbladian(basis, rabi_lindbladian, rabi_duration, lindbladian_time_independent=True) # see doc string 
+    gate = sm.Gate.from_lindbladian(basis, rabi_lindbladian, duration, lindbladian_time_independent=True) # see doc string 
     return gate.process_matrix 
 
 
@@ -234,132 +234,132 @@ def ramsey(basis, delay, energy_shift, spin_dephasing_rate, heating_rate, plot_p
 
     return times, psis
 
-def main():
-    import time
-    from matplotlib import pyplot as plt
-
-    ### Control parameters ###
-    rabi_duration = 16 * pi_time
-    ramsey_delays = np.linspace(0, 50e-3, 21)
-
-    ### Error parameters ###
-
-    heating_rate = 1e3 # q/s
-    spin_flip_rate = 1 / rabi_duration # For counter-prop, Debye-Waller effect would amplify the impact.
-    rabi_noise_mean, rabi_noise_width = 0, 0.05 * rabi_rate # Only implement for quasi-static noise model.
-    energy_shift = 0 
-    co_prop_spin_dephasing_rate = 0
-    counter_prop_spin_dephasing_rate = 1 / (2*83.3e-3) # Debye-Waller effect will amplify the impact.
-
-    ### Rabi flopping, co-prop on carrier -> intensity fluctuations (white noise) ###
-
-    times, psis = rabi(spin_basis, rabi_duration, co_prop_spin_dephasing_rate, spin_flip_rate, heating_rate)
-    probs = np.array([psi.compute_basis_state_probabilities() for psi in psis])
-    for i,state in enumerate(spin_basis.states):
-        plt.plot(times*1e6, probs[:, i], '.', label=state.name)
-    if co_prop_spin_dephasing_rate != 0 and spin_flip_rate == 0:
-        plt.plot(times*1e6, [rabi_initial_state_probability_with_spin_dephasing(t, co_prop_spin_dephasing_rate) for t in times], '-', label='analytic')
-    if co_prop_spin_dephasing_rate == 0 and spin_flip_rate != 0:
-        plt.plot(times*1e6, [rabi_initial_state_probability_with_spin_flipping(t, spin_flip_rate) for t in times], '-', label='analytic')
-    plt.title('Rabi Flopping (White Noise)')
-    plt.ylabel('Probabilities')
-    plt.xlabel('Time ' r'($\mu$s)')
-    plt.legend()
-    plt.show()
-    ic(probs[-1,:])
-
-    ### Rabi flopping, co-prop on carrier -> intensity fluctuations (quasi-static noise) ###
-
-    psis_for_each_shift = {}
-    rabi_shifts = np.linspace(-3*rabi_noise_width, 3*rabi_noise_width, 21)
-    times = np.linspace(0, rabi_duration, 201)
-    for ish, shift in enumerate(rabi_shifts):
-        psis = []
-        coefs = np.zeros(len(spin_basis.states))
-        coefs[0] = 1
-        initial_state = sm.State.from_coefficients(spin_basis, list(coefs))
-        hamiltonian = R_hamiltonian(spin_basis, phi=0, rabi_rate=rabi_rate + rabi_noise_mean + shift, omega=omega)
-        psis = initial_state.propagate_using_schrodinger_equation(hamiltonian, rabi_duration, times)
-        psis_for_each_shift[ish] = psis
-
-    rabi_noise = sm.Noise.from_named_pdf('rabi_shift', 'gaussian', {'standard_deviation': rabi_noise_width}, rabi_shifts)
-    psis = []
-    for it, time in enumerate(times):
-        ys = np.array(
-            [rabi_noise.probability_density_function(shift) * psis_for_each_shift[ish][it].density_matrix
-            for ish, shift in enumerate(rabi_shifts)]
-        )
-        rho = trapz_for_matrix(ys, rabi_shifts)
-        psis.append(sm.State.from_density_matrix(spin_basis, rho))
-
-    probs = np.array([psi.compute_basis_state_probabilities() for psi in psis])
-    for i,state in enumerate(spin_basis.states):
-        plt.plot(times*1e6, probs[:, i], '.', label=state.name)
-    plt.title('Rabi Flopping (Quasi-Static Noise)')
-    plt.ylabel('Probabilities')
-    plt.xlabel('Time ' r'($\mu$s)')
-    plt.legend()
-    plt.show()
-    ic(probs[-1,:])
-
-    ### Ramsey decay, counter-prop on carrier ###
-
-    psis = []
-    for delay in ramsey_delays:
-        times, psis_at_times = ramsey(spin_basis, delay, energy_shift, counter_prop_spin_dephasing_rate, 0)
-        psis.append(psis_at_times[-1])
-    probs = np.array([psi.compute_basis_state_probabilities() for psi in psis])
-    for i,state in enumerate(spin_basis.states):
-        plt.plot(ramsey_delays*1e3, probs[:,i], '.', label=f'{state.name}; heating rate = {0} q/s')
-    if counter_prop_spin_dephasing_rate != 0:
-        plt.plot(
-            ramsey_delays*1e3, 
-            [ramsey_excited_state_probability_with_spin_dephasing(t, counter_prop_spin_dephasing_rate) for t in ramsey_delays], 
-            '-', 
-            label='analytic'
-         )
-    plt.title('Ramsey Decay')
-    plt.ylabel('Probabilities')
-    plt.xlabel('Delay (ms)')
-    plt.legend()
-    plt.show()
-
-    for hr, style in [[0, '.'], [heating_rate, '.']]:
-        psis = []
-        for delay in ramsey_delays:
-            times, psis_at_times = ramsey(spin_basis, delay, energy_shift, counter_prop_spin_dephasing_rate, hr)
-            psis.append(psis_at_times[-1])
-        probs = np.array([psi.compute_basis_state_probabilities() for psi in psis])
-        contrasts = np.abs(probs[:, 1] - probs[:, 0])
-        plt.plot(ramsey_delays*1e3, contrasts, style, label=f'heating rate = {hr} q/s')
-        if counter_prop_spin_dephasing_rate != 0:
-            plt.plot(
-                ramsey_delays*1e3, 
-                [2*ramsey_excited_state_probability_with_spin_dephasing(t, counter_prop_spin_dephasing_rate, nbar=hr*t) - 1 for t in ramsey_delays], 
-                '-', 
-                label=f'analytic; heating rate = {hr} q/s'
-             )
-    # hot_spin_dephasing_rate = 1 / (2*49.7e-3)
-    # plt.plot(
-    #     ramsey_delays*1e3, 
-    #     [2*ramsey_excited_state_probability_with_spin_dephasing(t, hot_spin_dephasing_rate) - 1 for t in ramsey_delays], 
-    #     '-', 
-    #     label='analytic; measured rate with heating'
-    #  )
-    plt.title('Ramsey Decay')
-    plt.ylabel('Fringe Contrast')
-    plt.xlabel('Delay (ms)')
-    plt.legend()
-    plt.show()
-    ic(probs[-1,:])
- 
-
-
-
-
-
-
-
-
-if __name__ == '__main__':
-    main()
+ #def main():
+ #    import time
+ #    from matplotlib import pyplot as plt
+ #
+ #    ### Control parameters ###
+ #    rabi_duration = 16 * pi_time
+ #    ramsey_delays = np.linspace(0, 50e-3, 21)
+ #
+ #    ### Error parameters ###
+ #
+ #    heating_rate = 1e3 # q/s
+ #    spin_flip_rate = 1 / rabi_duration # For counter-prop, Debye-Waller effect would amplify the impact.
+ #    rabi_noise_mean, rabi_noise_width = 0, 0.05 * rabi_rate # Only implement for quasi-static noise model.
+ #    energy_shift = 0 
+ #    co_prop_spin_dephasing_rate = 0
+ #    counter_prop_spin_dephasing_rate = 1 / (2*83.3e-3) # Debye-Waller effect will amplify the impact.
+ #
+ #    ### Rabi flopping, co-prop on carrier -> intensity fluctuations (white noise) ###
+ #
+ #    times, psis = rabi(spin_basis, rabi_duration, co_prop_spin_dephasing_rate, spin_flip_rate, heating_rate)
+ #    probs = np.array([psi.compute_basis_state_probabilities() for psi in psis])
+ #    for i,state in enumerate(spin_basis.states):
+ #        plt.plot(times*1e6, probs[:, i], '.', label=state.name)
+ #    if co_prop_spin_dephasing_rate != 0 and spin_flip_rate == 0:
+ #        plt.plot(times*1e6, [rabi_initial_state_probability_with_spin_dephasing(t, co_prop_spin_dephasing_rate) for t in times], '-', label='analytic')
+ #    if co_prop_spin_dephasing_rate == 0 and spin_flip_rate != 0:
+ #        plt.plot(times*1e6, [rabi_initial_state_probability_with_spin_flipping(t, spin_flip_rate) for t in times], '-', label='analytic')
+ #    plt.title('Rabi Flopping (White Noise)')
+ #    plt.ylabel('Probabilities')
+ #    plt.xlabel('Time ' r'($\mu$s)')
+ #    plt.legend()
+ #    plt.show()
+ #    ic(probs[-1,:])
+ #
+ #    ### Rabi flopping, co-prop on carrier -> intensity fluctuations (quasi-static noise) ###
+ #
+ #    psis_for_each_shift = {}
+ #    rabi_shifts = np.linspace(-3*rabi_noise_width, 3*rabi_noise_width, 21)
+ #    times = np.linspace(0, rabi_duration, 201)
+ #    for ish, shift in enumerate(rabi_shifts):
+ #        psis = []
+ #        coefs = np.zeros(len(spin_basis.states))
+ #        coefs[0] = 1
+ #        initial_state = sm.State.from_coefficients(spin_basis, list(coefs))
+ #        hamiltonian = R_hamiltonian(spin_basis, phi=0, rabi_rate=rabi_rate + rabi_noise_mean + shift, omega=omega)
+ #        psis = initial_state.propagate_using_schrodinger_equation(hamiltonian, rabi_duration, times)
+ #        psis_for_each_shift[ish] = psis
+ #
+ #    rabi_noise = sm.Noise.from_named_pdf('rabi_shift', 'gaussian', {'standard_deviation': rabi_noise_width}, rabi_shifts)
+ #    psis = []
+ #    for it, time in enumerate(times):
+ #        ys = np.array(
+ #            [rabi_noise.probability_density_function(shift) * psis_for_each_shift[ish][it].density_matrix
+ #            for ish, shift in enumerate(rabi_shifts)]
+ #        )
+ #        rho = trapz_for_matrix(ys, rabi_shifts)
+ #        psis.append(sm.State.from_density_matrix(spin_basis, rho))
+ #
+ #    probs = np.array([psi.compute_basis_state_probabilities() for psi in psis])
+ #    for i,state in enumerate(spin_basis.states):
+ #        plt.plot(times*1e6, probs[:, i], '.', label=state.name)
+ #    plt.title('Rabi Flopping (Quasi-Static Noise)')
+ #    plt.ylabel('Probabilities')
+ #    plt.xlabel('Time ' r'($\mu$s)')
+ #    plt.legend()
+ #    plt.show()
+ #    ic(probs[-1,:])
+ #
+ #    ### Ramsey decay, counter-prop on carrier ###
+ #
+ #    psis = []
+ #    for delay in ramsey_delays:
+ #        times, psis_at_times = ramsey(spin_basis, delay, energy_shift, counter_prop_spin_dephasing_rate, 0)
+ #        psis.append(psis_at_times[-1])
+ #    probs = np.array([psi.compute_basis_state_probabilities() for psi in psis])
+ #    for i,state in enumerate(spin_basis.states):
+ #        plt.plot(ramsey_delays*1e3, probs[:,i], '.', label=f'{state.name}; heating rate = {0} q/s')
+ #    if counter_prop_spin_dephasing_rate != 0:
+ #        plt.plot(
+ #            ramsey_delays*1e3, 
+ #            [ramsey_excited_state_probability_with_spin_dephasing(t, counter_prop_spin_dephasing_rate) for t in ramsey_delays], 
+ #            '-', 
+ #            label='analytic'
+ #         )
+ #    plt.title('Ramsey Decay')
+ #    plt.ylabel('Probabilities')
+ #    plt.xlabel('Delay (ms)')
+ #    plt.legend()
+ #    plt.show()
+ #
+ #    for hr, style in [[0, '.'], [heating_rate, '.']]:
+ #        psis = []
+ #        for delay in ramsey_delays:
+ #            times, psis_at_times = ramsey(spin_basis, delay, energy_shift, counter_prop_spin_dephasing_rate, hr)
+ #            psis.append(psis_at_times[-1])
+ #        probs = np.array([psi.compute_basis_state_probabilities() for psi in psis])
+ #        contrasts = np.abs(probs[:, 1] - probs[:, 0])
+ #        plt.plot(ramsey_delays*1e3, contrasts, style, label=f'heating rate = {hr} q/s')
+ #        if counter_prop_spin_dephasing_rate != 0:
+ #            plt.plot(
+ #                ramsey_delays*1e3, 
+ #                [2*ramsey_excited_state_probability_with_spin_dephasing(t, counter_prop_spin_dephasing_rate, nbar=hr*t) - 1 for t in ramsey_delays], 
+ #                '-', 
+ #                label=f'analytic; heating rate = {hr} q/s'
+ #             )
+ #    # hot_spin_dephasing_rate = 1 / (2*49.7e-3)
+ #    # plt.plot(
+ #    #     ramsey_delays*1e3, 
+ #    #     [2*ramsey_excited_state_probability_with_spin_dephasing(t, hot_spin_dephasing_rate) - 1 for t in ramsey_delays], 
+ #    #     '-', 
+ #    #     label='analytic; measured rate with heating'
+ #    #  )
+ #    plt.title('Ramsey Decay')
+ #    plt.ylabel('Fringe Contrast')
+ #    plt.xlabel('Delay (ms)')
+ #    plt.legend()
+ #    plt.show()
+ #    ic(probs[-1,:])
+ # 
+ #
+ #
+ #
+ #
+ #
+ #
+ #
+ #
+ #if __name__ == '__main__':
+ #    main()

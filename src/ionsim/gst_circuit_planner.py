@@ -38,6 +38,11 @@ class GSTCircuitPlanner:
         elif prep_fiducials is None and measure_fiducials is None and len(qubit_labels) > 1:
             prep_fiducials, measure_fiducials = self.standard_nQ_fiducials()
             #raise IonSimError(f"2-qubit GST circuit planning default options are currently not implemented in IonSim. Please specify a choice of fiducial prep circuits.")
+        elif prep_fiducials is not None and len(prep_fiducials) == 0:
+            prep_fiducials = []
+
+        if measure_fiducials is not None and len(measure_fiducials) == 0:
+            measure_fiducials = []
 
         if germs is None and len(qubit_labels) == 1: 
             germs = self.standard_1Q_germs(gate_names)

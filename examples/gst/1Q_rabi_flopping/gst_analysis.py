@@ -22,9 +22,9 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
     parsed_circuits = sm.parse_gst_circuit_file(fname)
     parsed_circuits = parsed_circuits
 
-    num_spins = 2
+    num_spins = 1
     spins = [
-        sm.AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        sm.AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         for _ in range(num_spins)
     ]
     basis = sm.StandardBasis([*spins])
@@ -35,15 +35,11 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
     # Define dictionary mappings for GST gate name to ionsim gate function 
     ism_gate_dictionary = {}    
     #ism_gate_dictionary['idle'] = idle
-    ism_gate_dictionary['Gxpi2:0'] = X_pi2_q0
-    ism_gate_dictionary['Gxpi2:1'] = X_pi2_q1
-    ism_gate_dictionary['Gypi2:0'] = Y_pi2_q0
-    ism_gate_dictionary['Gypi2:1'] = Y_pi2_q1
-    ism_gate_dictionary['MS:0:1'] = MS_pm 
+    ism_gate_dictionary['Gxpi8:0'] = X_pi_8_co_prop 
 
     # For GST, define state and measurement parametrizations (models): 
     # Here, we choose deviations from an ideal prep state and ideal POVM effects: 
-    ideal_rho_prep = sm.State.from_coefficients(basis, list([1., 0., 0., 0.]))
+    ideal_rho_prep = sm.State.from_coefficients(basis, list([1., 0.]))
 
     ##### Define a parametrization (model) for prep state as a function:  ##### 
     d = len(basis.states)
@@ -55,19 +51,13 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
         rho_q1 = np.zeros((2,2), dtype=complex)
         rho_q1[0,0] = (1. - q1_probability_of_wrong_prep)
         rho_q1[1,1] = q1_probability_of_wrong_prep
-        rho_q2 = np.zeros((2,2), dtype=complex)
-        rho_q2[0,0] = (1. - q2_probability_of_wrong_prep)
-        rho_q2[1,1] = q2_probability_of_wrong_prep
-        rho_2Q = np.kron(rho_q1, rho_q2)
-        state = sm.State.from_density_matrix(basis, rho_2Q)
+        state = sm.State.from_density_matrix(basis, rho_q1)
         #rho_2Q.flatten("F")
         return state.supervector 
 
     ideal_POVM_effects = {} 
-    ideal_POVM_effects['00'] = sm.EnergyShiftOperator.from_matrix(basis, np.kron(sm.Pauli.projector_0, sm.Pauli.projector_0)) 
-    ideal_POVM_effects['01'] = sm.EnergyShiftOperator.from_matrix(basis, np.kron(sm.Pauli.projector_0, sm.Pauli.projector_1)) 
-    ideal_POVM_effects['10'] = sm.EnergyShiftOperator.from_matrix(basis, np.kron(sm.Pauli.projector_1, sm.Pauli.projector_0)) 
-    ideal_POVM_effects['11'] = sm.EnergyShiftOperator.from_matrix(basis, np.kron(sm.Pauli.projector_1, sm.Pauli.projector_1)) 
+    ideal_POVM_effects['0'] = sm.EnergyShiftOperator.from_matrix(basis, sm.Pauli.projector_0)
+    ideal_POVM_effects['1'] = sm.EnergyShiftOperator.from_matrix(basis, sm.Pauli.projector_1) 
 
     N_effects = len(ideal_POVM_effects)
     assert N_effects == d
@@ -85,8 +75,7 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
         M[1,1] = (1. - prob_false_dark)
         return M
 
-
-    ############ Option 1 for POVMs: Give a dictionary of models (callables) ############
+############ Option 1 for POVMs: Give a dictionary of models (callables) ############
  #    POVM_models = {}
  #    # Simple parametrized measurement effect models 
  #    def effect_00(prob_false_bright: float, prob_false_dark: float): 
@@ -126,31 +115,15 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
         """ Dictionary of POVMs evaluated at the function parameters: """ 
         POVMs = {}
 
-        # 00
+        # 0
         M0 = E0_1Q(prob_false_bright, prob_false_dark)
-        matrix = np.kron(M0,M0)
-        operator = sm.EnergyShiftOperator.from_matrix(basis, matrix)
-        POVMs["00"] = operator.superbra 
+        operator = sm.EnergyShiftOperator.from_matrix(basis, M0)
+        POVMs["0"] = operator.superbra 
 
-        # 01
-        M0 = E0_1Q(prob_false_bright, prob_false_dark)
+        # 1
         M1 = E1_1Q(prob_false_bright, prob_false_dark)
-        matrix = np.kron(M0,M1)
-        operator = sm.EnergyShiftOperator.from_matrix(basis, matrix) 
-        POVMs["01"] = operator.superbra 
-
-        # 10
-        M0 = E0_1Q(prob_false_bright, prob_false_dark)
-        M1 = E1_1Q(prob_false_bright, prob_false_dark)
-        matrix = np.kron(M1,M0)
-        operator = sm.EnergyShiftOperator.from_matrix(basis, matrix) 
-        POVMs["10"] = operator.superbra 
-
-        # 11
-        M1 = E1_1Q(prob_false_bright, prob_false_dark)
-        matrix = np.kron(M1,M1)
-        operator = sm.EnergyShiftOperator.from_matrix(basis, matrix) 
-        POVMs["11"] = operator.superbra 
+        operator = sm.EnergyShiftOperator.from_matrix(basis, M1) 
+        POVMs["1"] = operator.superbra 
 
         return POVMs ## POVMs["00"] -> row vector 
 
@@ -159,33 +132,38 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
     ideal_gate_set = {}
     ideal_gate_set['prep'] = ideal_rho_prep 
     ideal_gate_set['POVM'] = ideal_POVM_effects 
-    ideal_gate_set['Gxpi2:0'] = X_pi2_q0(0.01, 0.0) 
-    ideal_gate_set['Gxpi2:1'] = X_pi2_q1(0.02, 0.0) 
-    ideal_gate_set['Gypi2:0'] = Y_pi2_q0(0.005)
-    ideal_gate_set['Gypi2:1'] = Y_pi2_q1(0.005)
-    #ideal_gate_set['idle'] = idle(0.0035248)
-    ideal_gate_set['MS:0:1'] = MS_pm(0.02, 0.001)
+    # set up reference (true) gate 
+    rabi_rate = 100e3 * 2*np.pi # rad./s
+    pi_time = abs(np.pi)/rabi_rate
+    rabi_duration = 16 * pi_time
+    spin_flip_rate = 1 / rabi_duration 
+    ideal_gate_set['Gxpi8:0'] = X_pi_8_co_prop(spin_flip_rate)
+
     design_fname = 'circuit_design.yml'
     gst_circuit_design = sm.GSTCircuitPlanner.load_design(design_fname)
- #    parameter_bounds = {
- #        "prep" : {"q1_probability_of_wrong_prep" : (0., 1.), "q2_probability_of_wrong_prep" : (0., 1.)},
- #        "00" : {"prob_false_bright" : (0., 1.), "prob_false_dark" : (0., 1.)},
- #        "01" : {"prob_false_bright" : (0., 1.), "prob_false_dark" : (0., 1.)},
- #        "10" : {"prob_false_bright" : (0., 1.), "prob_false_dark" : (0., 1.)},
- #        "11" : {"prob_false_bright" : (0., 1.), "prob_false_dark" : (0., 1.)},
- #    } 
+    #parameters_guess = {
+    #    "prep" : {"q1_probability_of_wrong_prep" : 0.001, "q2_probability_of_wrong_prep" : 0.001},
+    #    "POVM" : {"prob_false_bright" : 0.001, "prob_false_dark" : 0.001},
+    #    "Gxpi8" : {"spin_flip_rate" : 100}
+    #}
+    parameters_guess = {"Gxpi8:0" : {"spin_flip_rate" : 20000}}
+    # TODO: add parameters guess for prep and measure 
+
+    G = sm.ParsedGate.from_string("Gxpi8:0")
     parameter_bounds = {
         "prep" : {"q1_probability_of_wrong_prep" : (0., 1.), "q2_probability_of_wrong_prep" : (0., 1.)},
-        "POVM" : {"prob_false_bright" : (0., 1.), "prob_false_dark" : (0., 1.)}
+        "POVM" : {"prob_false_bright" : (0., 1.), "prob_false_dark" : (0., 1.)},
+        G : {"spin_flip_rate" : (0, 200000)}
+        #"Gxpi8" : {"spin_flip_rate" : (0, 200000)}
     } 
     GST_analyzer = sm.GateSetTomography(basis, prep_state_function, POVM_models, parsed_circuits, ism_gate_dictionary, circuit_design = gst_circuit_design, 
-                                    parameter_bounds = parameter_bounds, ideal_gate_set = ideal_gate_set, verbose = False)
+                                    parameter_bounds = parameter_bounds, ideal_gate_set = ideal_gate_set, verbose = True)
     print(f"Num parameters: {GST_analyzer.num_parameters}")
 
     #parameter_guess = np.ones(GST_analyzer.num_parameters)*1e-2
     start = time.perf_counter()
-    #solver_results = GST_analyzer.solve_for_gate_parameters(None, 'linear') 
-    solver_results = GST_analyzer.solve_for_gate_parameters(None, 'MLE') 
+    #solver_results = GST_analyzer.solve_for_gate_parameters(parameters_guess, 'linear') 
+    solver_results = GST_analyzer.solve_for_gate_parameters(parameters_guess, 'MLE') 
     #solver_results = GST_analyzer.solve_for_gate_parameters(parameter_guess, 'staged MLE') 
     end = time.perf_counter()
     print(f"Ran GST in {end - start} seconds")
@@ -203,4 +181,4 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
 
 
 if __name__ == '__main__':
-    error = run_GST("Ncounts_25000.gstdata", True)
+    error = run_GST("Ncounts_500.gstdata", True)

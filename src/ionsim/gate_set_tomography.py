@@ -170,8 +170,11 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 if (name == "prep" or name == "POVM"): 
                     continue  
 
-                if name not in self.gate_models: 
-                    raise ValueError(f"Unknown model in parameter bounds: {name!r}.")
+                # TODO: This needs to be cleaned up. Should the user specify gate names vs. gate objects in a dictionary of parameter bounds   
+                available_gates = [g for g in self.gate_models.keys()]
+                available_gate_names = [g.name for g in available_gates]
+                if name not in available_gates and name not in available_gate_names: 
+                    raise ValueError(f"Unknown model in parameter bounds: {name!r}. Available gate models: {list(self.gate_models.keys())}")
                 #if name not in self.gate_models and name not in self.POVM_effect_models.keys():
                 #    raise ValueError(f"Unknown model in parameter bounds: {name!r}.")
 
@@ -188,17 +191,16 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                             "a (lower, upper) pair."
                         )
                     #if name not in self.POVM_effect_models.keys():
- #                        parameter_index = self.get_parameter_index_by_name_in_gate(name, parameter_name)
- #                        normalized_bounds[parameter_index] = tuple(param_bounds)
- #                    else:
-                    parameter_index = self.get_parameter_index_by_name_in_effect_model(name, parameter_name)
+                    parameter_index = self.get_parameter_index_by_name_in_gate(name, parameter_name)
+                    #parameter_index = self.get_parameter_index_by_name_in_effect_model(parameter_name)
+                    #parameter_index = self.get_parameter_index_by_name_in_effect_model(name, parameter_name)
                     normalized_bounds[parameter_index] = tuple(param_bounds)
 
             if "prep" in list(parameter_bounds.keys()):
                 for parameter_name, bounds in parameter_bounds["prep"].items():
                     if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
                         raise ValueError(
-                            f"Bounds for {gate_name}.{parameter_name} must be "
+                            f"Bounds for {name}.{parameter_name} must be "
                             "a (lower, upper) pair."
                         )
                     parameter_index = self.get_parameter_index_by_name_in_prep_model(parameter_name)
@@ -208,7 +210,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 for parameter_name, bounds in parameter_bounds["POVM"].items():
                     if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
                         raise ValueError(
-                            f"Bounds for {gate_name}.{parameter_name} must be "
+                            f"Bounds for {name}.{parameter_name} must be "
                             "a (lower, upper) pair."
                         )
                     parameter_index = self.get_parameter_index_by_name_in_effect_model(parameter_name)

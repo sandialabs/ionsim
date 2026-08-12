@@ -13,7 +13,7 @@ from ionsim.noise import Noise
 from ionsim.basis import DegreeOfFreedom, Basis, StandardBasis
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.dissipator import Lindbladian 
+from ionsim.lindbladian import Lindbladian 
 from ionsim.operator import Operator
 from ionsim.state import State
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
