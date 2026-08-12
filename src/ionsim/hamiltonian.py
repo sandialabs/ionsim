@@ -1,3 +1,12 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 from dataclasses import dataclass
 import numpy as np
 from scipy.sparse import csr_matrix
@@ -87,7 +96,9 @@ class Hamiltonian(CompositeOperator):
         # Coupling operators:  
         for operator in self.coupling_operators:
             # Extract offdiagonal elements --> Hint and Oscillation rate 
-            Hint, Rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(operator)
+            # Build Hint, Rate from half matrices since the operators are Hermitian and will be treated as such in subsequent functions  
+            unique_couplings = operator._unique_couplings_from_hermitian_coupling_matrix(operator.basis, operator.static_matrix, operator.rate_matrix) 
+            Hint, Rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(CouplingOperator(operator.basis, unique_couplings, operator.modulation_function))
             Hints.append(Hint)
             Rates.append(Rate)
 

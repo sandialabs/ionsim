@@ -1,3 +1,12 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 import numpy as np
 from scipy import constants
 from scipy.linalg import eigh 
@@ -6,13 +15,14 @@ from numpy.typing import NDArray
 import pint 
 import math
 
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
 class ZeemanHyperfineSolver():
     """ Solver to compute state Zeeman splittings under the combined Zeeman + Hyperfine Hamiltonian
     Uses the uncoupled basis |J, m_{J}, I, m_{I} > to construct a matrix, which is numerically diagonalized.
     """ 
 
-    def __init__(self, i: float, j: float, l: int, s: float, hyperfine_a:float, atomic_mass: float | None=None, 
+    def __init__(self, i: float, j: float, l: int, s: float, hyperfine_a:float, hyperfine_b: float | None=None, atomic_mass: float | None=None, 
                 nuclear_moment: float | None = None, z: int | None = None, gi: float | None = None, gj: float | None=None, 
                 freq_units: str = 'Hz', magnetic_field_units = 'gauss', approximation: str | None=None):
         """ Initialize the solver. 
@@ -33,6 +43,7 @@ class ZeemanHyperfineSolver():
         self.s = s
         self.j = j
         self.hyperfine_a = hyperfine_a # input units should match freq_units specification; default expected in Hz 
+        self.hyperfine_b = hyperfine_b # input units should match freq_units specification; default expected in Hz 
         self.atomic_mass = atomic_mass # in Daltons 
         self.nuclear_moment = nuclear_moment # in mu_{N} units
         self.gi = gi
@@ -78,6 +89,8 @@ class ZeemanHyperfineSolver():
 
         # Hyperfine constant 
         self.hyperfine_a *= self.internal_freq_units 
+        if self.hyperfine_b is not None:
+            self.hyperfine_b *= self.internal_freq_units 
 
         # mu_n and mu_b. Convert to desired magnetic field units 
         self.mu_n *= self.unit_reg.joule / self.unit_reg.tesla
@@ -148,16 +161,34 @@ class ZeemanHyperfineSolver():
 
     def hyperfine_hamiltonian(self) -> NDArray: 
         """ Constructs Hyperfine Hamiltonian: 
-        H = (1/2) hyperfineA I dot J
+        H = (1/2) hyperfineA I dot J + hyperfineB (3 (I dot J)^2 + 1.5 (I dot J) - I(I + 1)J(J+1))/(2I(2I-1)J(2J-1))
         
         Returns a d x d array representing a d-dimensional Hamiltonian for d basis states. 
         """ 
         H = np.zeros((self.dim, self.dim))
 
+        i_dot_j = np.zeros((self.dim, self.dim))
         for i, (mj1, mi1) in enumerate(self.basis_states):
             for j, (mj2, mi2) in enumerate(self.basis_states):
-                H[i,j] = self.hyperfine_matrix_element(mj1, mi1, mj2, mi2)
-        return H * self.hyperfine_a 
+                i_dot_j[i,j] = self.hyperfine_matrix_element(mj1, mi1, mj2, mi2)
+        H = i_dot_j * self.hyperfine_a 
+
+        if self.hyperfine_b is None:
+            return H 
+        else:
+            if self.hyperfine_b == 0.:
+                return H
+            i_dot_j_sq = i_dot_j @ i_dot_j
+            # Denominator: 
+            denom = 2*self.i*(2 * self.i - 1)*self.j*(2 * self.j - 1)
+
+            if np.abs(denom) < NUMERICAL_EQUIVALENCE_THRESHOLD or denom == 0. or (self.j == 0.5 or self.j == 0.5) or (self.i == 0.):
+                # Quadrapole moment requires I > 1 and J > 1  
+                return H
+                    
+            H += self.hyperfine_b * (3. * i_dot_j_sq + 1.5 * i_dot_j - self.i*(self.i + 1)*self.j*(self.j + 1)*np.eye(self.dim)) / denom
+            return H
+
 
     def zeeman_hamiltonian(self, magnetic_field: float) -> NDArray:
         """ Constructs the Zeeman Hamiltonian: 
@@ -362,7 +393,7 @@ class ZeemanHyperfineSolver():
 
     
     def get_state_energy(self, energies: NDArray, eigenvectors: NDArray, f: float, 
-                            mf: float, tolerance: float = 1e-6) -> float:
+                            mf: float, tolerance: float = 1e-6, subtract_hyperfineA_shift: bool=False) -> float:
         """ Returns the energy for an angular momentum state of interest |F, mF> 
         At zero or low field, F is a good quantum number. At finite field, mf is conserved but F is not. 
         Assumes energies and eigenvectors at one magnetic field condition.
@@ -394,8 +425,17 @@ class ZeemanHyperfineSolver():
         
         if state_indx == -1:
             raise ValueError(f"Basis state mF = {mf} not found in list of basis states: {mf_values}.")
+        if subtract_hyperfineA_shift:
+            return (energies[state_indx]*self.internal_freq_units - self.hyperfine_energy_shift(f)).magnitude
         return energies[state_indx]
 
+    def hyperfine_energy_shift(self, f: float):
+        """The energy shift of the level from the hyperfine interaction."""
+        return self.hyperfine_a/2 * (
+            + f * (f + 1)
+            - self.j * (self.j + 1)
+            - self.i * (self.i + 1)
+        )
 
     def get_state_energy_from_mjmi_pair(self, energies: NDArray, eigenvectors: NDArray, mj: float, mi: float) -> float:
         """ Returns the energy for a basis angular momentum state of interest: |mj, mi> 

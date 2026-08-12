@@ -1,6 +1,15 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 import unittest
 import numpy as np
-from ionsim.degree_of_freedom import AtomicSpin
+from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.basis import StandardBasis
 from ionsim.named_operators import Pauli
@@ -11,8 +20,8 @@ class TestCouplingOperator(unittest.TestCase):
 
     def setUp(self):
         """Set up the necessary objects for testing."""
-        self.spin_a = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        self.spin_b = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.basis = StandardBasis([self.spin_a, self.spin_b])  # 00, 01, 10, 11
 
         self.rabi_rate = 100e3 * 2 * np.pi  # rad/s
@@ -54,14 +63,14 @@ class TestCouplingOperator(unittest.TestCase):
         expected_big_X_matrix[0,2] = 1.
         expected_big_X_matrix[1,3] = 1.
 
-        assert_array_close(big_X_matrix, expected_big_X_matrix)
+        assert_array_close(big_X_matrix, expected_big_X_matrix + np.conj(expected_big_X_matrix.T))
         
         # When creating a CouplingOperator, the upper-right half of the Pauli Y matrix will be seen first to create unique couplings:  
         big_Y_matrix = self.Y_spin_b.static_matrix.toarray() 
         expected_big_Y_matrix = np.zeros_like(big_Y_matrix) 
         expected_big_Y_matrix[0,1] = -1j 
         expected_big_Y_matrix[2,3] = -1j 
-        assert_array_close(big_Y_matrix, expected_big_Y_matrix)
+        assert_array_close(big_Y_matrix, expected_big_Y_matrix + np.conj(expected_big_Y_matrix.T))
 
         # Test that raising and lowering operators have correct relationship to Pauli X: X = Raise + lower  
         big_Pauli_X = np.kron(Pauli.X, np.eye(2))

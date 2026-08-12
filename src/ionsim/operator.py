@@ -1,3 +1,12 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from scipy.sparse import csr_matrix, diags
@@ -127,10 +136,27 @@ class Operator(ABC):
 
     @staticmethod
     def _couplings_from_coupling_matrix(basis: StandardBasis, coupling_matrix: csr_matrix, rate: csr_matrix):
-        """ Builds and return list of unique Couplings from the matrix representation of a static operator acting on some DoFs in the basis.
-            Assumes matrix input is of the "Coupling" form (purely off-diagonal) and Hermitian."""
+        """ Builds and return list of Couplings from the matrix representation of a static operator acting on some DoFs in the basis. """
         rows, columns = coupling_matrix.nonzero()
-        # For Hermitian inputs, the upper-right portion of the matrix is handled first by convention of the nonzero() operation output for a csr matrix 
+        indices_list = [(row, column) for row, column in zip(rows, columns)]
+        #included_indices = []
+        couplings = []
+        for row, column in indices_list:
+            assert row != column, 'Input error: Input should be a purely off-diagonal matrix.' 
+            row_state, column_state = basis.states[row], basis.states[column]
+            #if (column,row) not in included_indices:
+            coupling = Coupling(row_state = row_state, column_state = column_state, strength = coupling_matrix[row, column], oscillation_rate = rate[row, column])
+            couplings.append(coupling)
+            #included_indices.append((row, column))
+            if column == row:
+                raise IonSimError('Diagonal elements of oscillating (coupling) operators are not currently allowed.')
+
+        return couplings
+
+    @staticmethod
+    def _unique_couplings_from_hermitian_coupling_matrix(basis: StandardBasis, coupling_matrix: csr_matrix, rate: csr_matrix):
+        """ Builds and return list of Couplings from the matrix representation of a static operator acting on some DoFs in the basis. """
+        rows, columns = coupling_matrix.nonzero()
         indices_list = [(row, column) for row, column in zip(rows, columns)]
         included_indices = []
         couplings = []
@@ -141,9 +167,8 @@ class Operator(ABC):
                 coupling = Coupling(row_state = row_state, column_state = column_state, strength = coupling_matrix[row, column], oscillation_rate = rate[row, column])
                 couplings.append(coupling)
                 included_indices.append((row, column))
-            elif column == row:
+            if column == row:
                 raise IonSimError('Diagonal elements of oscillating (coupling) operators are not currently allowed.')
-
         return couplings
 
     def _check_for_one_oscillation_rate(self):
@@ -357,6 +382,7 @@ class GeneralOperator(Operator): # is there a better name? We avoid "DenseOperat
         matrix_elements = [] 
         matrix_elements = energy_shift_elements + couplings
 
+        assert len(matrix_elements) == input_operator.count_nonzero(), f"Expected {input_operator.count_nonzero()} elements but have {len(matrix_elements)} instead."
         return cls(basis, matrix_elements, modulation_function)
 
     @property
