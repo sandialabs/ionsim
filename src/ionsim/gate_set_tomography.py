@@ -485,14 +485,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return quantum_map
 
     def _predict_probability_vector(self, gates: tuple[ParsedGate, ...], rho_supervector: Vector, effect_matrix: Matrix, 
-                                        circuit_map_cache: dict, probability_TOL: float = 1E-12) -> np.ndarray:
+                                        circuit_map_cache: dict) -> np.ndarray:
         """ Predict clipped outcome probabilities as a dense vector in outcome-label order. """
         # Return dense probabilities in self.outcome_labels order so downstream
         # indexing (counts/shots) is pure NumPy gather/sum math.
         quantum_map = self._compose_quantum_map(gates, circuit_map_cache)
         mapped_state = quantum_map @ rho_supervector
         probability_values = np.real(effect_matrix @ mapped_state)
-        return np.clip(probability_values, probability_TOL, 1. - probability_TOL)
+        return np.clip(probability_values, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. -  NUMERICAL_EQUIVALENCE_THRESHOLD)
 
     def _predict_probabilities(self, circ: ParsedCircuit, theta: Vector) -> Vector: 
         """ Predicts outcome probabilities for a GST circuit with gates parametrized by theta """
@@ -547,7 +547,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             theta = self.gst_parameters
 
         l_likelihood = 0.
-        probability_TOL = 1E-12
 
         # Improve speed by building gate process matrices once 
         self._refresh_gate_process_matrix_cache(theta)
@@ -563,7 +562,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             if not metadata['has_data']:
                 raise IonSimError("Cannot evaluate log-likelihood with circuits that have no measurement data.")
 
-            probability_values = self._predict_probability_vector(metadata['gates'], rho_supervector, effect_matrix, circuit_map_cache, probability_TOL)
+            probability_values = self._predict_probability_vector(metadata['gates'], rho_supervector, effect_matrix, circuit_map_cache)
             log_probability_values = np.log(probability_values)
 
             if metadata['has_counts']:
@@ -591,8 +590,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if theta is None:
             theta = self.gst_parameters
 
-        probability_TOL = 1E-9 # to regularize 
-
         # Improve speed by building gate process matrices once 
         self._refresh_gate_process_matrix_cache(theta)
 
@@ -608,7 +605,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 raise IonSimError("Cannot compute chi squared with circuits that have no measurement data.")
 
             probability_values = self._predict_probability_vector(metadata['gates'], rho_supervector, effect_matrix,
-                                        circuit_map_cache, probability_TOL)
+                                        circuit_map_cache)
 
             if metadata['has_counts']:
                 if metadata['total_counts'] > 0:
@@ -673,7 +670,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         gate_model = self.gate_models[gate]
         gate_model_sig = inspect.signature(gate_model)
         parameter_names = list(gate_model_sig.parameters.keys())  
-        indx_in_gate_model = parameter_names.index(parameter_name)
+        try: 
+            indx_in_gate_model = parameter_names.index(parameter_name)
+        except:
+            raise ValueError(f"Model parameter {parameter_name} is not found in gate model {gate}. Gate model has parameters {parameter_names}.")
         slice_from_global_parameters_list = self.gst_parameter_indices[gate]
         return slice_from_global_parameters_list.start + indx_in_gate_model
 

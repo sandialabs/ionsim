@@ -156,7 +156,7 @@ def noisy_idle(energy_shift: float, spin_dephasing_rate: float):
         - GST will vary the total idle time by repeating this noisy idle gate "p" times. 
         - The hamiltonian and dissipator are both time-independent in the chosen frame.  
     """
-    idle_duration = 1E-6 # 1 µs -> second  
+    idle_duration = 2.5E-6 # 1 µs -> second  
 
     delay_lindbladian = sm.Lindbladian(
         hamiltonian=energy_shift_hamiltonian(basis, energy_shift),

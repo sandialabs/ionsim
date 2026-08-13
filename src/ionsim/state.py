@@ -14,6 +14,7 @@ from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.lindbladian import Dissipator, Lindbladian
 from ionsim.named_operators import Fock 
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD 
 
 import numpy as np
 # from typing import Any
@@ -140,10 +141,12 @@ class State:
     
     def compute_basis_state_probabilities(self):
         """Compute the probability of measuring each basis state."""
-        return [
+        probabilities = [
             np.trace(self.basis.compute_projector_matrix(vector).dot(self.density_matrix)).real
             for vector in self.basis.vectors
         ]
+        # There are numerical issues where it's possible to get probabilities like 0.9999999 and -1e-16
+        return np.clip(probabilities, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. -  NUMERICAL_EQUIVALENCE_THRESHOLD)
 
     def compute_density_matrix_traced_over_degree_of_freedom(self, degree_of_freedom: DegreeOfFreedom):
         """Compute a reduced density matrix by tracing out a degree of freedom in the basis."""
