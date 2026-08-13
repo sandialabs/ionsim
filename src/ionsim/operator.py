@@ -39,9 +39,10 @@ class OperatorElement(ABC):
     row_state: EnergyEigenstate # e.g. corresponds to the row index (upper state) of the non-zero element of a raising operator
     strength: float
 
+    # TODO: review this, is this check necessary? 
     def __post_init__(self):
         if np.abs(self.strength) < SMALLEST_ENERGY_SCALE : 
-            raise IonSimError("Invalid matrix element. Element must contain a non-zero strength value.")
+            raise ValueError(f"Invalid matrix element from small strength: {self.strength}. Element must contain a non-zero strength value.")
 
 
 @dataclass(frozen=True, eq=False)
@@ -145,8 +146,11 @@ class Operator(ABC):
             assert row != column, 'Input error: Input should be a purely off-diagonal matrix.' 
             row_state, column_state = basis.states[row], basis.states[column]
             #if (column,row) not in included_indices:
-            coupling = Coupling(row_state = row_state, column_state = column_state, strength = coupling_matrix[row, column], oscillation_rate = rate[row, column])
-            couplings.append(coupling)
+
+            # Only include coupling if its stength is above the threshold energy scale 
+            if np.abs(coupling_matrix[row, column]) > SMALLEST_ENERGY_SCALE: 
+                coupling = Coupling(row_state = row_state, column_state = column_state, strength = coupling_matrix[row, column], oscillation_rate = rate[row, column])
+                couplings.append(coupling)
             #included_indices.append((row, column))
             if column == row:
                 raise IonSimError('Diagonal elements of oscillating (coupling) operators are not currently allowed.')

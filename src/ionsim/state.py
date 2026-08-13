@@ -148,6 +148,16 @@ class State:
         # There are numerical issues where it's possible to get probabilities like 0.9999999 and -1e-16
         return np.clip(probabilities, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. -  NUMERICAL_EQUIVALENCE_THRESHOLD)
 
+    def compute_basis_state_probabilities_from_effect_matrix(self, effect_matrix):
+        """ Computes probability of measuring each basis state via a d x d^2 measurement effect matrix """ 
+        d = int(np.sqrt(len(self.supervector)))
+        if effect_matrix.shape != (d, d**2):
+            raise ValueError(f"Effect matrix must have shape {(d, d2)}.")
+
+        probabilities = (effect_matrix @ self.supervector).real
+        return np.clip(probabilities, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. -  NUMERICAL_EQUIVALENCE_THRESHOLD)
+
+ 
     def compute_density_matrix_traced_over_degree_of_freedom(self, degree_of_freedom: DegreeOfFreedom):
         """Compute a reduced density matrix by tracing out a degree of freedom in the basis."""
         size = len(degree_of_freedom.energy_levels)
