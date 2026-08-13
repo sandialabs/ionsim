@@ -120,7 +120,7 @@ def X_pi_8_co_prop(spin_flip_rate: float):
     return gate.process_matrix 
 
 
-
+### Noisy idle gate, e.g. for a Ramsey experiment, counterprop on the carrier ###  
 def noisy_idle(energy_shift: float, spin_dephasing_rate: float):
     """ Idle gate that includes a Z-coherent energy shift contribution and spin dephasing 
 
