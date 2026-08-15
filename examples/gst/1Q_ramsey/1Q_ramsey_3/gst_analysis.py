@@ -130,8 +130,13 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
     # 7 parameters in the gate set; 7 for SPAM 
     # Construct ideal gate set to compute error metric of GST analysis & gate modeling 
     ideal_gate_set = {}
-    ideal_gate_set['prep'] = ideal_rho_prep 
-    ideal_gate_set['POVM'] = ideal_POVM_effects 
+    false_0_prep = 0.0001
+    false_0 = 0.0001
+    false_1 = 0.001
+    ideal_gate_set['prep'] = sm.State.from_supervector(basis, prep_state_function(false_0_prep)) 
+    #ideal_gate_set['POVM'] = ideal_POVM_effects 
+    ideal_gate_set['POVM'] = POVM_models(false_0, false_1) 
+    outcome_labels = ['0', '1']
     # set up reference (true) gate 
     rabi_rate = 100e3 * 2*np.pi # rad./s
     pi_time = abs(np.pi)/rabi_rate

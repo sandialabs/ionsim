@@ -78,14 +78,11 @@ def main():
     rho_0 = ism.State.from_coefficients(basis, np.array([1., 0.,])) 
     ## Perfect prep or faulty prep:
     #rho_0 = ism.State.from_coefficients(basis, np.array([1., 0.,])) 
-    #false_0_prep = 0.0001
-    false_0_prep = 0.00
-    #rho_0 = ism.State.from_supervector(basis, prep_state_function(false_0_prep))
+    false_0_prep = 0.0001
+    rho_0 = ism.State.from_supervector(basis, prep_state_function(false_0_prep))
     outcome_labels = ['0', '1']
-    false_0 = 0.0
-    false_1 = 0.0
-    #false_bright = 0.0001
-    #false_dark = 0.001
+    false_0 = 0.0001
+    false_1 = 0.001
     outcome_matrix = np.vstack(np.array([outcome_vector for outcome_vector in POVM_models(false_0, false_1).values()])) 
 
     #outcome_labels = ['00', '01', '10', '11'] 
@@ -116,10 +113,10 @@ def main():
                 rho = rho.propagate_using_process_matrix(evaluated_gate_models[gate])
 
             # Apply measurement models to generate outcomes   
-            #outcome_probabilities = rho.compute_basis_state_probabilities_from_effect_matrix(outcome_matrix) 
+            outcome_probabilities = rho.compute_basis_state_probabilities_from_effect_matrix(outcome_matrix) 
     
             # Estimate and record circuit outcomes in a dictionary to create ParsedCircuit object: 
-            outcome_probabilities = rho.compute_basis_state_probabilities() 
+            #outcome_probabilities = rho.compute_basis_state_probabilities() 
             N_shots = N 
             estimated_outcome_counts = np.random.multinomial(N_shots, [*outcome_probabilities])
             

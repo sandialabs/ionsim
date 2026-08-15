@@ -44,6 +44,13 @@ class GSTCircuitPlanner:
         if measure_fiducials is not None and len(measure_fiducials) == 0:
             measure_fiducials = []
 
+        # Include empty in prep/measure fiducials to ensure "do nothing for no time" circuit is included 
+ #        if [] not in prep_fiducials:
+ #            prep_fiducials.append([])
+ #
+ #        if [] not in measure_fiducials:
+ #            mesaure_fiducials.append([])
+
         if germs is None and len(qubit_labels) == 1: 
             germs = self.standard_1Q_germs(gate_names)
 
@@ -139,6 +146,10 @@ class GSTCircuitPlanner:
             for prep_fiducial in self.prep_fiducials:
                 for measure_fiducial in self.measure_fiducials:
                     circuits.append( ParsedCircuit.plan(prep_fiducial, [gate], 1, measure_fiducial, self.qubit_labels)) 
+
+        do_nothing_circuit = ParsedCircuit.plan([], [], 1, [], self.qubit_labels)
+        if do_nothing_circuit not in circuits:
+            circuits.insert(0, do_nothing_circuit)
 
         return circuits 
 

@@ -1218,9 +1218,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         POVM_errors = {}
         measurement_error = 0. 
         for outcome, POVM in ideal_POVMs.items():
+            #if isinstance(POVM, Vector): 
+            #    ideal_POVM = POVM
+            #else:
             ideal_POVM = POVM.superbra 
-            parametrized_POVM = POVMs[outcome] 
-            POVM_errors[outcome] = np.sqrt(np.sum((ideal_POVM - parametrized_POVM)**2)) 
+            modeled_POVM = POVMs[outcome] 
+            POVM_errors[outcome] = np.sqrt(np.sum((ideal_POVM - modeled_POVM)**2)) 
             measurement_error += POVM_errors[outcome] 
 
         gst_errors['POVM'] = POVM_errors
