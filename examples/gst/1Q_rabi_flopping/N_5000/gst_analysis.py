@@ -16,11 +16,11 @@ matplotlib.rcParams['text.usetex']=True
 style_path_data = '~/plot_style_data.txt'
 
 """ ################ Two qubit GST Example ################## """ 
-def run_GST(fname: str, n_circuits: int, N_boot: int, include_SPAM_error: bool=False):
+def run_GST(fname: str, include_SPAM_error: bool=False):
     # 1. Import GST sequence data 
     # Run the main parsing function:  
     parsed_circuits = sm.parse_gst_circuit_file(fname)
-    parsed_circuits = parsed_circuits[:n_circuits]
+    parsed_circuits = parsed_circuits
 
     num_spins = 1
     spins = [
@@ -179,75 +179,14 @@ def run_GST(fname: str, n_circuits: int, N_boot: int, include_SPAM_error: bool=F
     print(gate_set_error) 
 
     print(f"Estimating uncertainty\n")
-    means, uncertainties, gate_set_errors, bootstrapped_thetas = GST_analyzer.bootstrapping_analysis(solver_results.x, N_boot) 
+    means, uncertainties = GST_analyzer.estimate_parameter_uncertainties(solver_results.x, 'bootstrap') 
     print(f"Means: {means}\n\n")
     print(f"Uncertainties: {uncertainties}\n\n")
     #print(f"Bootstrapped: {bootstrap_thetas}\n")
-    N_boot = bootstrapped_thetas.shape[0] 
 
-    errors = np.zeros(N_boot)    
-    std_devs = np.zeros(N_boot)    
-    for i, err_dict in enumerate(gate_set_errors):
-        errors[i] = err_dict[G] 
-
-    error = np.mean(errors)
-    std_dev = np.std(errors)
-    return error, std_dev
-    #return gate_set_error
+    return gate_set_error
 
 
 
 if __name__ == '__main__':
-    fname = "Ncounts_500.gstdata"
-    parsed_circuits = sm.parse_gst_circuit_file(fname)
-    N_circuits = len(parsed_circuits)
-    start = 2
-    errors = np.zeros(N_circuits - start)
-    std_devs = np.zeros(N_circuits - start)
-    N_boot = 50
-    for n in range(start, N_circuits):
-        errors[n-start], std_devs[n-start] = run_GST(fname, n, N_boot, True)
-
-    N_shots = 500 
-    plt.style.use(style_path_data) 
-    plt.figure(figsize = (5,5))
-    #plt.plot(list(range(start, N_circuits)), errors, marker = 'o', linewidth = 1.5, markersize = 7, color = 'k', label=r'$X_{\pi/8}$')
-    plt.errorbar(list(range(start, N_circuits)), errors, std_devs, marker = 'o', linewidth = 1.5, elinewidth = 1.5, markersize = 7, color = 'k', label=r'$X_{\pi/8}$')
-    plt.title(f"Gate Estimation Error vs. Number of Circuits, $N = {N_shots}$ shots.", fontsize = 14)
-    plt.xlabel(r'Number of circuits', fontsize = 22)
-    plt.ylabel(r'$||G - \bar{G}||$', fontsize = 24, rotation = 0, labelpad = 25)
-    #plt.xticks(fontsize = 12)
-    plt.legend()
-    #plt.xscale('log')
-    plt.yscale('log')
-    plt.savefig('N_circuits_gate_error' + str(N_boot) + '.pdf', dpi=300)
-    plt.show()
-
-    plt.figure(figsize = (5,5))
-    plt.errorbar(list(range(start, N_circuits)), errors, std_devs, marker = 'o', linewidth = 1.5, markersize = 7, elinewidth = 1.5, color = 'k', label=r'$X_{\pi/8}$')
-    plt.title(f"Gate Estimation Error vs. Number of Circuits, $N = {N_shots}$ shots.", fontsize = 14)
-    plt.xlabel(r'Number of circuits', fontsize = 22)
-    plt.ylabel(r'$||G - \bar{G}||$', fontsize = 24, rotation = 0, labelpad = 25)
-    #plt.xticks(fontsize = 12)
-    plt.legend()
-    plt.xscale('log')
-    plt.yscale('log')
-    plt.savefig('N_circuits_gate_error_loglog_Nboot_' + str(N_boot) + '.pdf', dpi=300)
-    plt.show()
-    
-    plt.figure(figsize = (5,5))
-    plt.plot(list(range(start, N_circuits)), std_devs, marker = 'o', linewidth = 1.5, markersize = 7, color = 'k', label=r'$X_{\pi/8}$')
-    plt.title(r'Gate Set Error vs. Sample Size', fontsize = 14)
-    plt.xlabel(r'Number of circuits', fontsize = 22)
-    plt.ylabel(r'$\sigma$', fontsize = 24, rotation = 0, labelpad = 20)
-    #plt.xticks(fontsize = 12)
-    plt.legend()
-    #plt.xscale('log')
-    plt.yscale('log')
-    plt.savefig('N_circuits_gate_error' + str(N_boot) + '.pdf', dpi=300)
-    plt.show()
-
-    circuit_indices = list(range(start, N_circuits))
-    np.savetxt("num_circuits_study_Nboot_" + str(N_boot) + ".dat", np.column_stack([circuit_indices, errors, std_devs]))
-
-
+    error = run_GST("Ncounts_500.gstdata", True)

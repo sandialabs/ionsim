@@ -198,17 +198,17 @@ def run_GST(fname: str, n_circuits: int, N_boot: int, include_SPAM_error: bool=F
 
 
 if __name__ == '__main__':
-    fname = "Ncounts_500.gstdata"
+    fname = "Ncounts_5000.gstdata"
     parsed_circuits = sm.parse_gst_circuit_file(fname)
     N_circuits = len(parsed_circuits)
     start = 2
     errors = np.zeros(N_circuits - start)
     std_devs = np.zeros(N_circuits - start)
-    N_boot = 50
+    N_boot = 10
     for n in range(start, N_circuits):
         errors[n-start], std_devs[n-start] = run_GST(fname, n, N_boot, True)
 
-    N_shots = 500 
+    N_shots = 5000 
     plt.style.use(style_path_data) 
     plt.figure(figsize = (5,5))
     #plt.plot(list(range(start, N_circuits)), errors, marker = 'o', linewidth = 1.5, markersize = 7, color = 'k', label=r'$X_{\pi/8}$')

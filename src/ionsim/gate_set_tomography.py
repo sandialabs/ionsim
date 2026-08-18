@@ -32,7 +32,8 @@ def depth_bin(depth):
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], 
-                     gate_models: dict[str, Callable], parameter_bounds: dict[dict[str, tuple]] | None=None, circuit_design: GSTCircuitPlanner | None=None, ideal_gate_set: dict | None=None, verbose: bool=False): 
+                    gate_models: dict[str, Callable], parameter_bounds: dict[dict[str, tuple]] | None=None, circuit_design: GSTCircuitPlanner | None=None, 
+                    ideal_gate_set: dict | None=None, verbose: bool=False, shared_model_parameter_groups: list[list[str]] | None=None): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
     
             Member variables include:
@@ -98,6 +99,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # 3. Parameters: 
         # Build a parameter look-up dictionary for organizing parameter indices. 
         # Retrieve number of GST parameters (prep + gates + measure) and build & initialize parameter vector  
+        self.shared_model_parameter_groups = shared_model_parameter_groups or []
         self.gst_parameter_indices, self.num_gst_parameters = self._build_parameter_organization()
         self.gst_parameters = np.zeros(self.num_gst_parameters) 
 
@@ -240,6 +242,71 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - Parameter indexing are organized in a dictionary for easy retrieval, e.g. {'prep state' : prep_state_parameter_indexing (as slice)} 
             - Returns the layout dictionary and the total number of parameters 
         """
+
+        # Set up dictionary with appropriate number of independent parameters 
+        parameter_indices = {}
+
+        # Index i will incriment as we increase the number of tracked parameters 
+        i = 0
+
+        # Prep: there are at most d^2 - 1 independent parameters due to the Trace[rho] = 1 constraint. 
+        # For physical GST, we read the prep state function and inspect the number of parameters 
+        prep_model_sig = inspect.signature(self.prep_state_model)
+        N = len(prep_model_sig.parameters)
+        if N > (self.d2 - 1):
+            IonSimError(f"Warning: The prep model has more parameters than the maximum number of independent parameters (with normalization constraint): {self.d2 - 1}")
+        parameter_indices["prep"] = slice(i, i + N) 
+        i += N
+
+        # Measure: there are d - 1 independent measurement effects from the completeness constraint.
+        #   - each effect is a d x d matrix, so there are d^2(d-1) indepenent parameters  
+        ## Option 1 
+#        for outcome, effect_model in self.POVM_effect_models.items():
+#            effect_model_sig = inspect.signature(effect_model)
+#            N = len(effect_model_sig.parameters)
+#            parameter_indices[outcome] = slice(i, i + N)
+#            i += N
+
+        ## Option 2 
+        POVM_model_sig = inspect.signature(self.POVM_effect_models) 
+        POVM_parameters = POVM_model_sig.parameters
+        N = len(POVM_parameters) 
+        parameter_indices["POVM"] = slice(i, i + N) 
+        i += N
+
+        for gate, gate_model in self.gate_models.items():
+            gate_model_sig = inspect.signature(gate_model)
+            N = len(gate_model_sig.parameters)
+
+            # Default parametrization is dense (d^2 x d^2) for each gate: 
+            parameter_indices[gate] = slice(i, i + N)
+            i += N  
+
+        return parameter_indices, i 
+
+
+    def _build_parameter_organization_version2(self) -> tuple[dict[str, slice], int]:
+        """ Builds and organizes the independent parameters for GST. This organizes parameters based on:
+            1) Prep state 
+            2) Each Gate model, for all gates in the set  
+            3) Native measurements, by outcome label (e.g. '00')
+
+            - Parameter indexing are organized in a dictionary for easy retrieval, e.g. {'prep state' : prep_state_parameter_indexing (as slice)} 
+            - Returns the layout dictionary and the total number of parameters 
+        """
+
+        shared_group_by_model = {}
+        # e.g. shared model param groups 
+        for group in self.shared_model_parameter_groups:
+            group = tuple(group)
+            if len(group) < 2:
+                raise ValueError(f"A shared model parameter group must contain at least two models.")
+            
+
+
+
+
+########################
 
         # Set up dictionary with appropriate number of independent parameters 
         parameter_indices = {}
@@ -1274,7 +1341,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             return gst_error 
 
 
-    def estimate_parameter_uncertainties(self, theta: Vector | None=None, method: str='bootstrap') -> Vector:
+    #def estimate_parameter_uncertainties(self, theta: Vector | None=None, method: str='bootstrap') -> Vector:
+    def bootstrapping_analysis(self, theta: Vector | None=None,  N_bootstrap: int=50):
         """ Computes uncertainties of each parameter from the Hessian of the log-likelihood at the MLE solution."""
         if self.solver_result is None and theta is None:
             self.solve_for_gate_parameters()
@@ -1285,16 +1353,16 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             self.gst_parameters = theta
 
         uncertainties = np.zeros_like(theta)
-        if method == 'hessian':
-            # L-BFGS-B stores an approximation to the inverse Hessian -- we use this for convariance estimation 
-            covariance = np.array(self.solver_result.hess_inv.todense())
-            num_parameters = len(theta)
-    
-            # Uncertainties are taken as diagonals of covariance matrix 
-            uncertainties = np.sqrt(np.abs(np.diag(covariance)))
-            #return uncertainties, covariance 
-        else: 
-            uncertainties, means, bootstrapped_thetas = self.bootstrap_parameters()
+ #        if method == 'hessian':
+ #            # L-BFGS-B stores an approximation to the inverse Hessian -- we use this for convariance estimation 
+ #            covariance = np.array(self.solver_result.hess_inv.todense())
+ #            num_parameters = len(theta)
+ #    
+ #            # Uncertainties are taken as diagonals of covariance matrix 
+ #            uncertainties = np.sqrt(np.abs(np.diag(covariance)))
+ #            #return uncertainties, covariance 
+ #        else: 
+        uncertainties, means, bootstrapped_thetas = self.bootstrap_parameters(N_bootstrap)
 
         # Return a dictionary containing a dictionary for each model (prep, gate 1, gate 2, etc. , measure) 
         mean_results = {}
