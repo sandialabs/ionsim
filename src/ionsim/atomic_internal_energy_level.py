@@ -13,7 +13,7 @@ from fractions import Fraction
 import numpy as np
 import sympy 
 from sympy.physics.wigner import wigner_3j, wigner_6j 
-from icecream import ic
+from scipy import constants as const
 
 from ionsim.ionsim_error import IonSimError
 from ionsim.energy_level import EnergyLevel
