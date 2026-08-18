@@ -149,6 +149,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self._index_fiducials()
         self._initialize_likelihood_circuit_cache()
         self._normalize_parameter_bounds(parameter_bounds)
+        self.parameters_guess = None
 
 
     @property
@@ -780,8 +781,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                         param_indx = self.get_parameter_index_by_name_in_gate(gate, parameter)
                         self.gst_parameters[param_indx] = initial_value 
                 theta_0 = self.gst_parameters
+                self.parameters_guess = theta_0
             elif isinstance(parameters_guess, list) or isinstance(parameters_guess, np.ndarray):
                 theta_0 = parameters_guess
+                self.parameters_guess = theta_0
             else:
                 raise ValueError(f"Parameter vector initial guess should be a list/array/Vector or nested dictionary. Received: {type(parameters_guess)}")
 
@@ -1291,34 +1294,46 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             uncertainties = np.sqrt(np.abs(np.diag(covariance)))
             #return uncertainties, covariance 
         else: 
-            uncertainties, bootstrapped_thetas = self.bootstrap_uncertainties()
+            uncertainties, means, bootstrapped_thetas = self.bootstrap_parameters()
 
         # Return a dictionary containing a dictionary for each model (prep, gate 1, gate 2, etc. , measure) 
+        mean_results = {}
         uncertainty_results = {}
         # For gates: 
         for gate in self.gate_set:
             gate_model = self.gate_models[gate]
             gate_model_sig = inspect.signature(gate_model)
             parameter_names = list(gate_model_sig.parameters.keys())  
+            parameter_means = means[self.gst_parameter_indices[gate]]
             parameter_uncertainties = uncertainties[self.gst_parameter_indices[gate]]
             # Package up parameter names and uncertainty values: 
+            mean_results[gate] = dict(zip(parameter_names, parameter_means))
             uncertainty_results[gate] = dict(zip(parameter_names, parameter_uncertainties)) 
 
         # For SPAM: 
         prep_model = self.prep_state_model
         prep_model_sig = inspect.signature(prep_model)
         parameter_names = list(prep_model_sig.parameters.keys())
-        prep_param_values = uncertainties[self.gst_parameter_indices['prep']]
-        uncertainty_results['prep'] = dict(zip(parameter_names, prep_param_values)) 
+        prep_param_means = means[self.gst_parameter_indices['prep']]
+        prep_param_unc = uncertainties[self.gst_parameter_indices['prep']]
+        mean_results["prep"] = dict(zip(parameter_names, prep_param_means))
+        uncertainty_results['prep'] = dict(zip(parameter_names, prep_param_unc)) 
 
         # Currently only the independent measurement parameters are returned; TODO: generalize as much as possible  
-        for outcome in self.POVM_effect_models.keys():
-            meas_param_values = uncertainties[self.gst_parameter_indices[outcome]]
-            uncertainty_results[outcome] = meas_param_values 
+        measure_model = self.POVM_effect_models
+        measure_model_sig = inspect.signature(measure_model) 
+        parameter_names = list(measure_model_sig.parameters.keys())
+        parameter_means = means[self.gst_parameter_indices["POVM"]]
+        parameter_uncertainties = uncertainties[self.gst_parameter_indices["POVM"]]
+        mean_results["POVM"] = dict(zip(parameter_names, prep_param_means))
+        uncertainty_results["POVM"] = dict(zip(parameter_names, parameter_uncertainties))
+ #        for outcome in self.POVM_effect_models.keys():
+ #            meas_param_values = uncertainties[self.gst_parameter_indices[outcome]]
+ #            uncertainty_results[outcome] = meas_param_values 
 
-        return uncertainty_results              
+        return mean_results, uncertainty_results              
 
-    def bootstrap_uncertainties(self, N_bootstrap: int=50):
+    def bootstrap_parameters(self, N_bootstrap: int=50):
         """ Bootstrapping for parameter uncertainties: Sample data from the fitted model and re-fit, computing 
                 parameter spread. N_bootstrap is the number of resamplings. """
         if self.verbose:
@@ -1341,13 +1356,17 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 
             # Re-run the MLE analysis to find best fit:
             self.gst_parameters = theta_best.copy()
-            self.solve_for_gate_parameters(parameters_guess = theta_best.copy())   # sets self.gst_parameters to optimal  
+            #self.solve_for_gate_parameters(parameters_guess = theta_best.copy(), solver = 'MLE')   # sets self.gst_parameters to optimal  
+            self.solve_for_gate_parameters(parameters_guess = self.parameters_guess, solver = 'MLE')   # sets self.gst_parameters to optimal  
             bootstrap_thetas[b] = self.gst_parameters
 
         # Restore original data/fit
         self.gst_parameters = theta_best
             
         # Compute uncertainties as standard deviation of the best fits
+        #print(bootstrap_thetas)
+        means = np.mean(bootstrap_thetas,axis=0)
+        #print(f"Mean: {mean}")
         uncertainties = np.std(bootstrap_thetas, axis=0) 
-        return uncertainties, bootstrap_thetas
+        return uncertainties, means, bootstrap_thetas
             

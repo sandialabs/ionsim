@@ -157,7 +157,7 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
         #"Gxpi8" : {"spin_flip_rate" : (0, 200000)}
     } 
     GST_analyzer = sm.GateSetTomography(basis, prep_state_function, POVM_models, parsed_circuits, ism_gate_dictionary, circuit_design = gst_circuit_design, 
-                                    parameter_bounds = parameter_bounds, ideal_gate_set = ideal_gate_set, verbose = True)
+                                    parameter_bounds = parameter_bounds, ideal_gate_set = ideal_gate_set, verbose = False)
     print(f"Num parameters: {GST_analyzer.num_parameters}")
 
     #parameter_guess = np.ones(GST_analyzer.num_parameters)*1e-2
@@ -173,9 +173,17 @@ def run_GST(fname: str, include_SPAM_error: bool=False):
     GST_analyzer.print_state_and_POVMs()
 
     print()
-    gate_set_error = GST_analyzer.compute_gate_set_error(solver_results.x, ideal_gate_set, include_SPAM_error=include_SPAM_error) 
-    #gate_set_error = GST_analyzer.compute_gate_set_error_by_element(solver_results.x, ideal_gate_set, include_SPAM_error=include_SPAM_error)
+    #gate_set_error = GST_analyzer.compute_gate_set_error(solver_results.x, ideal_gate_set, include_SPAM_error=include_SPAM_error) 
+    gate_set_error = GST_analyzer.compute_gate_set_error_by_element(solver_results.x, ideal_gate_set)
+    print(f"Gate set errors: {gate_set_error}")
     print(gate_set_error) 
+
+    print(f"Estimating uncertainty\n")
+    means, uncertainties = GST_analyzer.estimate_parameter_uncertainties(solver_results.x, 'bootstrap') 
+    print(f"Means: {means}\n\n")
+    print(f"Uncertainties: {uncertainties}\n\n")
+    #print(f"Bootstrapped: {bootstrap_thetas}\n")
+
     return gate_set_error
 
 

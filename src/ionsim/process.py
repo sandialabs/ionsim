@@ -330,6 +330,9 @@ class Circuit(Process):
         if any(gate.basis is not gates[0].basis for gate in gates):
             raise IonSimError('All gates in a circuit must be in the same basis.')
 
+        if len(gates) == 0:
+            raise IonSimError(f"List of gates must not be empty, received: {gates}.")
+
         circuit_process_matrix_function = None # default 
         deterministic = (noise is None) or all([noise.parameter_name not in gate.parameters for gate in gates])
         #if deterministic and all(gate.process_matrix_function is not None for gate in gates):
