@@ -1331,7 +1331,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
  #            meas_param_values = uncertainties[self.gst_parameter_indices[outcome]]
  #            uncertainty_results[outcome] = meas_param_values 
 
-        return mean_results, uncertainty_results              
+        gate_set_errors = []
+        N_bootstrap = bootstrapped_thetas.shape[0]
+        for i in range(N_bootstrap):
+            sampled_theta = bootstrapped_thetas[i,:] 
+            gate_set_errors.append(self.compute_gate_set_error_by_element(sampled_theta, self.ideal_gate_set, 'frobenius norm')) 
+        
+        return mean_results, uncertainty_results, gate_set_errors, bootstrapped_thetas 
+        #return mean_results, uncertainty_results              
 
     def bootstrap_parameters(self, N_bootstrap: int=50):
         """ Bootstrapping for parameter uncertainties: Sample data from the fitted model and re-fit, computing 
