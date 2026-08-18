@@ -268,3 +268,31 @@ def compute_hyperfine_clebsch_gordan_coefficient(ground_level: AtomicInternalEne
     # Extract angular momentum quantum numbers for each state: 
     return compute_multipole_amplitude(ground_level, excited_level, 1, q, False)
 
+
+def compute_rabi_frequency_between_atomic_levels(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, 
+                                            atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int):
+
+        if ground_level not in atomic_levels:
+            raise ValueError(f"Ground level {ground_level.name} not found in the atomic structure {atomic_levels}.")
+        if excited_level not in atomic_levels:
+            raise ValueError(f"Excited level {excited_level.name} not found in the atomic structure {atomic_levels}.")
+
+        q = list(np.arange(-multipole_order, multipole_order+1))
+        if multipole_order != 1 and multipole_order != 2:
+            raise ValueError(f"Multipole order be either 1 or 2, corresponding to E1 dipole or E2 quadrupole transitions. Received {multipole_order}.")
+
+        # Estimate rabi frequency from laser polarization and multipole amplitude components  
+        # Compute dot product w.r.t q of spherical polarization components and multipole amplitude components 
+        coupling_amplitudes = {}
+        for _q in q: 
+            coupling_amplitudes[_q] = compute_multipole_amplitude(ground_level, excited_level, multipole_order, _q) 
+        
+        # Compute dot product with laser field polarization vector 
+        # TODO: should we use vdot? 
+        # TODO: do we need hbar?  
+        # TODO: do we normalize the spherical polarization components? 
+        polarization = self.polarization.spherical_components()
+        rabi_frequency = 0. + 1j*0.
+        rabi_frequency = 2.*np.dot(polarization, np.array(list(coupling_amplitudes.values()))) / const.hbar 
+        #print(f"Rabi frequency: {rabi_frequency}")
+        return rabi_frequency
