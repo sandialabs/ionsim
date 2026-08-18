@@ -291,8 +291,7 @@ def compute_rabi_frequency_between_atomic_levels(ground_level: AtomicInternalEne
         # TODO: should we use vdot? 
         # TODO: do we need hbar?  
         # TODO: do we normalize the spherical polarization components? 
-        polarization = self.polarization.spherical_components()
         rabi_frequency = 0. + 1j*0.
-        rabi_frequency = 2.*np.dot(polarization, np.array(list(coupling_amplitudes.values()))) / const.hbar 
+        rabi_frequency = 2.*np.dot(polarization_components, np.array(list(coupling_amplitudes.values()))) / const.hbar 
         #print(f"Rabi frequency: {rabi_frequency}")
         return rabi_frequency
