@@ -269,7 +269,7 @@ def compute_hyperfine_clebsch_gordan_coefficient(ground_level: AtomicInternalEne
     return compute_multipole_amplitude(ground_level, excited_level, 1, q, False)
 
 
-def compute_rabi_frequency_between_atomic_levels(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, 
+def compute_rabi_frequency_between_atomic_levels(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, polarization_components: Vector, 
                                             atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int):
 
         if ground_level not in atomic_levels:

@@ -22,7 +22,7 @@ import sympy
 from sympy.physics.wigner import wigner_3j, wigner_6j 
 
 from ionsim.basis import Basis 
-from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, compute_multipole_amplitude
+from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, compute_multipole_amplitude, compute_rabi_frequency_between_atomic_levels
 from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure
 from ionsim.custom_types import Matrix, Vector
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD, SMALLEST_ENERGY_SCALE 
@@ -346,28 +346,30 @@ class Laser():
     def build_atom_laser_ge_coupling_matrix(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, 
                                             atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int) -> Matrix: 
         """ Builds a coupling matrix representing a laser light-atom coupling """ 
-        if ground_level not in atomic_levels:
-            raise ValueError(f"Ground level {ground_level.name} not found in the atomic structure {atomic_levels}.")
-        if excited_level not in atomic_levels:
-            raise ValueError(f"Excited level {excited_level.name} not found in the atomic structure {atomic_levels}.")
-
-        q = list(np.arange(-multipole_order, multipole_order+1))
-        if multipole_order != 1 and multipole_order != 2:
-            raise ValueError(f"Multipole order be either 1 or 2, corresponding to E1 dipole or E2 quadrupole transitions. Received {multipole_order}.")
-
-        # Estimate rabi frequency from laser polarization and multipole amplitude components  
-        # Compute dot product w.r.t q of spherical polarization components and multipole amplitude components 
-        coupling_amplitudes = {}
-        for _q in q: 
-            coupling_amplitudes[_q] = compute_multipole_amplitude(ground_level, excited_level, multipole_order, _q) 
-        
-        # Compute dot product with laser field polarization vector 
-        # TODO: should we use vdot? 
-        # TODO: do we need hbar?  
-        # TODO: do we normalize the spherical polarization components? 
-        polarization = self.polarization.spherical_components()
-        rabi_frequency = 0. + 1j*0.
-        rabi_frequency = np.abs(2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values())))) 
+        rabi_frequency = compute_rabi_frequency_between_atomic_levels(ground_level, excited_level, self.polarization.spherical_components(), 
+                                                                        atomic_levels, multipole_order) 
+ #        if ground_level not in atomic_levels:
+ #            raise ValueError(f"Ground level {ground_level.name} not found in the atomic structure {atomic_levels}.")
+ #        if excited_level not in atomic_levels:
+ #            raise ValueError(f"Excited level {excited_level.name} not found in the atomic structure {atomic_levels}.")
+ #
+ #        q = list(np.arange(-multipole_order, multipole_order+1))
+ #        if multipole_order != 1 and multipole_order != 2:
+ #            raise ValueError(f"Multipole order be either 1 or 2, corresponding to E1 dipole or E2 quadrupole transitions. Received {multipole_order}.")
+ #
+ #        # Estimate rabi frequency from laser polarization and multipole amplitude components  
+ #        # Compute dot product w.r.t q of spherical polarization components and multipole amplitude components 
+ #        coupling_amplitudes = {}
+ #        for _q in q: 
+ #            coupling_amplitudes[_q] = compute_multipole_amplitude(ground_level, excited_level, multipole_order, _q) 
+ #        
+ #        # Compute dot product with laser field polarization vector 
+ #        # TODO: should we use vdot? 
+ #        # TODO: do we need hbar?  
+ #        # TODO: do we normalize the spherical polarization components? 
+ #        polarization = self.polarization.spherical_components()
+ #        rabi_frequency = 0. + 1j*0.
+ #        rabi_frequency = np.abs(2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values())))) 
         #rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) / const.hbar 
         #print(f"Rabi frequency: {rabi_frequency}")
     
