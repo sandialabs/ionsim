@@ -1,7 +1,0 @@
-# Parameter guess matters a lot for MLE. 
-
-# MLE will find different, physically valid solutions. 
-
-# I worked in an example where coherent Z error was much stronger than spin dephasing; so MLE was not able to confidently estimate the dephasing error. 
-	# a sensitivity evaluated at the expected parameter value would help diagnose that!  
-	# trial and error so far  

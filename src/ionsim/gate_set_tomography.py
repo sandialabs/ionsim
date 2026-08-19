@@ -102,8 +102,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # 3. Parameters: 
         # Build a parameter look-up dictionary for organizing parameter indices. 
         # Retrieve number of GST parameters (prep + gates + measure) and build & initialize parameter vector  
-        self.shared_model_parameters = shared_model_parameters or []
+        self.shared_model_parameters = shared_model_parameters or {}
         self.gst_parameter_indices, self.num_gst_parameters = self._build_parameter_organization()
+        #self.gst_parameter_indices, self.num_gst_parameters = self._build_parameter_organization_version2()
         self.gst_parameters = np.zeros(self.num_gst_parameters) 
 
         # 4. Debugging / diagnostics 
@@ -300,7 +301,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         all_models = {}
         all_models["prep"] = self.prep_state_model
-        all_models["POVM"] = self.POVM_effect_model
+        all_models["POVM"] = self.POVM_effect_models 
 
         for gate, model in self.gate_models.items():
             all_models[repr(gate)] = model 
@@ -309,7 +310,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         i = 0
         # Is this re-organization dictionary thing really necessary? 
         shared_lookup = {}
-        for name, members in self.shared_models_parameters.items():
+        for name, members in self.shared_model_parameters.items():
             for model_key, param_idx in members:
                 shared_lookup[(model_key, param_idx)] = name
 
@@ -319,7 +320,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             shared_slices[name] = i 
             i += 1
 
-        parameter_indices["shared"] = shared_slices
+        #parameter_indices["shared"] = shared_slices
 
         # Build per-model mapping that maps model -> [theta_idx, ...]
         indices_by_model = {}
@@ -327,7 +328,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for model_key, model in all_models.items():
             theta_indices = []
             num_parameters = len((inspect.signature(model)).parameters)
-            for j in range(model.num_params):
+            for j in range(num_parameters):
                 if (model_key, j) in shared_lookup:
                     # Shared parameter, point to shared slot in theta
                     shared_name = shared_lookup[(model_key, j)]
@@ -350,8 +351,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             key = repr(key)
         return theta[self.gst_parameter_indices[key]]
 
-    def get_shared_parameter(self, theta, name):
-        index = self.parameter[]
+    #def get_shared_parameter(self, theta, name):
+    #    index = self.parameter[]
 
 
     #############################
