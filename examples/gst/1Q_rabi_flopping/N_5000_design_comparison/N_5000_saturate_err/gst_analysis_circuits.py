@@ -204,7 +204,7 @@ if __name__ == '__main__':
     start = 2
     errors = np.zeros(N_circuits - start)
     std_devs = np.zeros(N_circuits - start)
-    N_boot = 50
+    N_boot = 20
     for n in range(start, N_circuits):
         errors[n-start], std_devs[n-start] = run_GST(fname, n, N_boot, True)
 

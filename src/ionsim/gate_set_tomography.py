@@ -33,7 +33,7 @@ def depth_bin(depth):
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], 
                     gate_models: dict[str, Callable], parameter_bounds: dict[dict[str, tuple]] | None=None, circuit_design: GSTCircuitPlanner | None=None, 
-                    ideal_gate_set: dict | None=None, verbose: bool=False, shared_model_parameter_groups: list[list[str]] | None=None): 
+                    ideal_gate_set: dict | None=None, verbose: bool=False, shared_model_parameters: dict[str, list[tuple[str, int]]] | None=None): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
     
             Member variables include:
@@ -44,6 +44,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 #- gate model factory is a function that takes a gate name and qubit tuple and returns an IonSim Gate object, which holds a process matrix (gate) function. 
                 - gate_models represents a dictionary that maps GST gate names to IonSim model names, specified by the user.  
                 - gst_parameters: a 1D numpy array of gate parameters.  
+                - shared_model_parameters: dictionary that maps a shared parameter name to a list of (gate_key, param_index) tuples identifying which model parameters are tied together.  
+                    e.g. {'dephasing_rate' : [('Gxpi2:0', 2), ('idle', 0)], 'detuning' : [('Gxpi2:0', 1), ('Gxpi2:0', 1)]}
+                    i.e. parameter index 2 of Gxpi2's arguments corresponds to the same parameter (dephasing_rate) as idle's first argument (index 0). 
             
             Optional arguments:
                 - circuit design as a circuit planner object. This is not required for doing MLE but is required for linear GST. 
@@ -99,7 +102,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # 3. Parameters: 
         # Build a parameter look-up dictionary for organizing parameter indices. 
         # Retrieve number of GST parameters (prep + gates + measure) and build & initialize parameter vector  
-        self.shared_model_parameter_groups = shared_model_parameter_groups or []
+        self.shared_model_parameters = shared_model_parameters or []
         self.gst_parameter_indices, self.num_gst_parameters = self._build_parameter_organization()
         self.gst_parameters = np.zeros(self.num_gst_parameters) 
 
@@ -285,7 +288,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return parameter_indices, i 
 
 
-    def _build_parameter_organization_version2(self) -> tuple[dict[str, slice], int]:
+    def _build_parameter_organization_version2(self): 
         """ Builds and organizes the independent parameters for GST. This organizes parameters based on:
             1) Prep state 
             2) Each Gate model, for all gates in the set  
@@ -295,59 +298,159 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - Returns the layout dictionary and the total number of parameters 
         """
 
-        shared_group_by_model = {}
-        # e.g. shared model param groups 
-        for group in self.shared_model_parameter_groups:
-            group = tuple(group)
-            if len(group) < 2:
-                raise ValueError(f"A shared model parameter group must contain at least two models.")
-            
+        all_models = {}
+        all_models["prep"] = self.prep_state_model
+        all_models["POVM"] = self.POVM_effect_model
 
-
-
-
-########################
-
-        # Set up dictionary with appropriate number of independent parameters 
-        parameter_indices = {}
+        for gate, model in self.gate_models.items():
+            all_models[repr(gate)] = model 
 
         # Index i will incriment as we increase the number of tracked parameters 
         i = 0
+        # Is this re-organization dictionary thing really necessary? 
+        shared_lookup = {}
+        for name, members in self.shared_models_parameters.items():
+            for model_key, param_idx in members:
+                shared_lookup[(model_key, param_idx)] = name
 
-        # Prep: there are at most d^2 - 1 independent parameters due to the Trace[rho] = 1 constraint. 
-        # For physical GST, we read the prep state function and inspect the number of parameters 
-        prep_model_sig = inspect.signature(self.prep_state_model)
-        N = len(prep_model_sig.parameters)
-        if N > (self.d2 - 1):
-            IonSimError(f"Warning: The prep model has more parameters than the maximum number of independent parameters (with normalization constraint): {self.d2 - 1}")
-        parameter_indices["prep"] = slice(i, i + N) 
-        i += N
+        # Allocate shared parameters:
+        shared_slices = {}
+        for name in self.shared_model_parameters.keys():
+            shared_slices[name] = i 
+            i += 1
 
-        # Measure: there are d - 1 independent measurement effects from the completeness constraint.
-        #   - each effect is a d x d matrix, so there are d^2(d-1) indepenent parameters  
-        ## Option 1 
-#        for outcome, effect_model in self.POVM_effect_models.items():
-#            effect_model_sig = inspect.signature(effect_model)
-#            N = len(effect_model_sig.parameters)
-#            parameter_indices[outcome] = slice(i, i + N)
-#            i += N
+        parameter_indices["shared"] = shared_slices
 
-        ## Option 2 
-        POVM_model_sig = inspect.signature(self.POVM_effect_models) 
-        POVM_parameters = POVM_model_sig.parameters
-        N = len(POVM_parameters) 
-        parameter_indices["POVM"] = slice(i, i + N) 
-        i += N
+        # Build per-model mapping that maps model -> [theta_idx, ...]
+        indices_by_model = {}
 
-        for gate, gate_model in self.gate_models.items():
-            gate_model_sig = inspect.signature(gate_model)
-            N = len(gate_model_sig.parameters)
+        for model_key, model in all_models.items():
+            theta_indices = []
+            num_parameters = len((inspect.signature(model)).parameters)
+            for j in range(model.num_params):
+                if (model_key, j) in shared_lookup:
+                    # Shared parameter, point to shared slot in theta
+                    shared_name = shared_lookup[(model_key, j)]
+                    theta_indices.append(shared_slices[shared_name])
+                else:
+                    theta_indices.append(j)
+                    i += 1
+            indices_by_model[model_key] = theta_indices
 
-            # Default parametrization is dense (d^2 x d^2) for each gate: 
-            parameter_indices[gate] = slice(i, i + N)
-            i += N  
 
-        return parameter_indices, i 
+        self.shared_slices = shared_slices
+        return indices_by_model, i  
+        #TODO: change the return statement?
+        #return shared_slices, i  
+
+
+    def get_parameters(self, theta: Vector, key):
+        """ Retrieve parameters for any model by key from theta vector """ 
+        if isinstance(key, ParsedGate):
+            key = repr(key)
+        return theta[self.gst_parameter_indices[key]]
+
+    def get_shared_parameter(self, theta, name):
+        index = self.parameter[]
+
+
+    #############################
+        # 1. Prep model 
+ #        prep_theta_indices = []
+ #        prep_model_sig = inspect.signature(self.prep_state_model)
+ #        N = len(prep_model_sig.parameters)
+ #        for j in range(N):
+ #            if ("prep", j) in shared_lookup:
+ #                shared_name = shared_lookup[[("prep", j)]
+ #                theta_indices.append(shared_slices[shared_name])
+ #            else:
+ #                theta_indices.append(j)
+ #                i += 1
+ #
+ #        mapping_per_model["prep"] = theta_indices
+ #
+ #        # 2. POVM models 
+ #        POVM_theta_indices = []
+ #        POVM_model_sig = inspect.signature(self.POVM_effect_models)
+ #        N = len(POVM_model_sig.parameters)
+ #        for j in range(N):
+ #            if ("POVM", j) in shared_lookup:
+ #                shared_name = shared_lookup[[("POVM", j)]
+ #                theta_indices.append(shared_slices[shared_name])
+ #            else:
+ #                theta_indices.append(j)
+ #                i += 1
+ #        mapping_per_model["POVM"] = theta_indices
+ #
+ #        # Loop over gate models 
+ #        for gate, model in self.gate_models.items():
+ #            gate_key = repr(gate)
+ #            theta_indices = []
+ #            num_parameters = len((inspect.signature(model)).parameters)
+ #            for j in range(model.num_params):
+ #                if (gate_key, j) in shared_lookup:
+ #                    # Shared parameter, point to shared slot in theta
+ #                    shared_name = shared_lookup[(gate_key, j)]
+ #                    theta_indices.append(shared_slices[shared_name])
+ #                else:
+ #                    theta_indices.append(j)
+ #                    i += 1
+ #
+ #            mapping_per_model[gate] = theta_indices
+ #
+ #        self.mapping_per_model = mapping_per_model
+ #        return parameter_indices, i  
+ #            
+ #
+ # #        # e.g. shared model param groups 
+ # #        for group in self.shared_model_parameter_groups:
+ # #            group = tuple(group)
+ # #            if len(group) < 2:
+ # #                raise ValueError(f"A shared model parameter group must contain at least two models.")
+ #            
+ #
+ #########################
+ #
+ #        # Set up dictionary with appropriate number of independent parameters 
+ #        parameter_indices = {}
+ #
+ #        # Index i will incriment as we increase the number of tracked parameters 
+ #        i = 0
+ #
+ #        # Prep: there are at most d^2 - 1 independent parameters due to the Trace[rho] = 1 constraint. 
+ #        # For physical GST, we read the prep state function and inspect the number of parameters 
+ #        prep_model_sig = inspect.signature(self.prep_state_model)
+ #        N = len(prep_model_sig.parameters)
+ #        if N > (self.d2 - 1):
+ #            IonSimError(f"Warning: The prep model has more parameters than the maximum number of independent parameters (with normalization constraint): {self.d2 - 1}")
+ #        parameter_indices["prep"] = slice(i, i + N) 
+ #        i += N
+ #
+ #        # Measure: there are d - 1 independent measurement effects from the completeness constraint.
+ #        #   - each effect is a d x d matrix, so there are d^2(d-1) indepenent parameters  
+ #        ## Option 1 
+ ##        for outcome, effect_model in self.POVM_effect_models.items():
+ ##            effect_model_sig = inspect.signature(effect_model)
+ ##            N = len(effect_model_sig.parameters)
+ ##            parameter_indices[outcome] = slice(i, i + N)
+ ##            i += N
+ #
+ #        ## Option 2 
+ #        POVM_model_sig = inspect.signature(self.POVM_effect_models) 
+ #        POVM_parameters = POVM_model_sig.parameters
+ #        N = len(POVM_parameters) 
+ #        parameter_indices["POVM"] = slice(i, i + N) 
+ #        i += N
+ #
+ #        for gate, gate_model in self.gate_models.items():
+ #            gate_model_sig = inspect.signature(gate_model)
+ #            N = len(gate_model_sig.parameters)
+ #
+ #            # Default parametrization is dense (d^2 x d^2) for each gate: 
+ #            parameter_indices[gate] = slice(i, i + N)
+ #            i += N  
+ #
+ #        return parameter_indices, i 
 
 
     def _index_fiducials(self):
