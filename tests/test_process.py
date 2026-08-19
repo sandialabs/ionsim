@@ -78,37 +78,6 @@ class TestProcess(unittest.TestCase):
         outcome_probability = ramsey.predict_outcome_probabilities(initial_state, [outcome_operator]) 
         self.assertAlmostEqual(outcome_probability[0], 0.9530090510307307, places = 10)
 
-    def test_circuit_process_matrix_functions(self):
-        """ Test the process matrix function of a circuit and derivatives of probability outcomes """ 
-        # TODO: This currently works without circuit noise only; we need to fix this to work with Noise objects 
-        noisy_R_gate = Gate.from_unitary_function(self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.phi_noise)
-
-        ramsey_circuit = Circuit.from_gates([noisy_R_gate, noisy_R_gate])
-
-        #ramsey_circuit = Circuit.from_gates([noisy_R_gate, noisy_R_gate], self.theta_noise) # functions but not accurate  
-        ## Fixed a bug where a noisy process matrix function would not work with kwargs 
-        circuit_pm_function = ramsey_circuit.process_matrix_function 
-
-        # Test outcome probability function  
-        outcome_operator = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_1, Pauli.projector_0)) 
-        initial_state = State.from_coefficients(self.basis, [1., 0., 0., 0.]) 
-
-        prob_function = ramsey_circuit.build_outcome_probability_function(initial_state, outcome_operator)
-        circuit_parameters = {'R__phi' : 0., 'R__theta' : np.pi/2}
-        outcome_prob = prob_function(**circuit_parameters)
-        self.assertAlmostEqual(outcome_prob, 0.9530090510307307, places = 10)
-
-        # Compute outcome probability using probability function: 
-        prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = ["R__phi", "R__theta"], **circuit_parameters) 
-
-        ### Test Jacobian functionality: Compute Jacobian when considering more than 1 outcome: 
-        outcome_operator2 = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_0, Pauli.projector_0)) 
-
-        probs_function = ramsey_circuit.build_outcome_probabilities_function(initial_state, [outcome_operator, outcome_operator2])
-
-        probs, jacobian = circuit_pm_function.jacobian(probs_function, wrt = ["R__phi", "R__theta"], **circuit_parameters)
-        #print(f"Jacobian: \n{jacobian}")
-
 
 if __name__ == '__main__':
     unittest.main()

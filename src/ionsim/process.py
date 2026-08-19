@@ -209,7 +209,7 @@ class Gate(Process):
             assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
             dof_to_trace_out = dofs_to_trace_out[0]
             initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
-            # TODO: consider if this function should just accept a reduced basis...? ==> ECM 03/2026: Yes I think so. 
+            # TODO: consider if this function should just accept a reduced basis...? 
 
         if dofs_to_trace_out is None:
             reduced_basis = basis
@@ -232,6 +232,10 @@ class Gate(Process):
             # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
             # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 
 
+            # TODO: Include tracing out DOF functionality 
+            if dofs_to_trace_out is not None:
+                raise IonSimError(f"Building a gate on a subspace from a Lindbladian on a larger Hilbert space is not yet implemented.")
+
             process_matrix_columns = []
             # When projecting, loop over all vectors in the total basis and then skip the ones that will be zero, i.e. set those cols = zero and skip evolution.   
                 # Projection does this redundantly by setting the appropriate parts to zero. But skipping t-evolution saves substantially on computation.
@@ -242,12 +246,12 @@ class Gate(Process):
         
                     # TODO: Include tracing out DOF functionality 
                     # Time-evolve with Lindbladian, this yields the ij'th column of the process matrix.
-         #            if dofs_to_trace_out is None:
-         #                initial_state = State.from_wavefunction(basis, vector)
-         #            else:
-         #                initial_state = State.from_wavefunction_with_new_component(
-         #                    basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
-         #                )
+                    #if dofs_to_trace_out is None:
+                    #initial_state = State.from_density_matrix(basis,  np.outer(vector_p, vector))
+                    #else:
+                    #    initial_state = State.from_wavefunction_with_new_component(
+                    #        basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
+                    #    )
                     final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
     
                     # Supervector of final state gives you 1 column of the process matrix  
@@ -313,17 +317,7 @@ class Gate(Process):
 class Circuit(Process):
     """A quantum circuit (i.e., a series of gates) in a basis of states."""
     gates: list[Gate]
-    process_matrix_function: Callable | None = None
-    #parameters: None | dict[str, float] = field(default_factory=dict) 
 
- #    def __post_init__(self):
- #        # Check that process_matrix_function(*parameter_args) == process_matrix 
- #        parameter_names, arguments = list(self.parameters.keys()), list(self.parameters.values())
- #        if self.process_matrix_function:
- #            if not (self.process_matrix_function(*arguments) == self.process_matrix).all:
- #                raise IonSimError(f"Error, process matrix function and process matrix attributes do not correspond.")
-
-    # TODO: Should the user be adding noise at the circuit level? Is it an essential feature? We could just have them specify it at the gate level? 
     @classmethod
     def from_gates(cls, gates: list[Gate], noise: Noise | None = None):
         """Build a circuit from a series of gates in the same basis."""
@@ -333,27 +327,12 @@ class Circuit(Process):
         if len(gates) == 0:
             raise IonSimError(f"List of gates must not be empty, received: {gates}.")
 
-        circuit_process_matrix_function = None # default 
         deterministic = (noise is None) or all([noise.parameter_name not in gate.parameters for gate in gates])
-        #if deterministic and all(gate.process_matrix_function is not None for gate in gates):
-        if all(gate.process_matrix_function is not None for gate in gates):
-            # Compile gate function list (in circuit order) and then reverse by circuit convention  
-            gate_functions = []
-            for gate in gates:
-                gate_functions.append(gate.process_matrix_function)
-
-            # Reverse gate function order by convention (last gate in original list is first gate to apply)  
-            gate_functions = gate_functions[::-1]
-            circuit_process_matrix_function = Circuit_Process_Matrix_Function_Helper(gate_functions)
-
-        #if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
         if deterministic: 
             process_matrix = _combine_process_matrices([gate.process_matrix for gate in gates])
             return cls(gates[0].basis, process_matrix, gates, circuit_process_matrix_function)
         pmats_list = []
 
-        # TODO: Handle noise correctly when building circuit process matrix function  
-        # TODO: Wouldn't there be name conflict ambiguity issues? e.g. where noise is specified for a parameter, but that parameter may be included in multiple gates with different meanings?  
         for gate in gates:
             if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
                 arguments = np.array(list(gate.parameters.values()))
@@ -367,7 +346,7 @@ class Circuit(Process):
         probs = [noise.probability_density_function(darg) for darg in noise.domain_arguments]
         ys = np.array([p * chi for p, chi in zip(probs, process_mats)])
         process_matrix = trapz_for_matrix(ys, noise.domain_arguments) 
-        return cls(gates[0].basis, process_matrix, gates, circuit_process_matrix_function)
+        return cls(gates[0].basis, process_matrix, gates)
 
     def predict_outcome_probability(self, initial_state: State, outcome_operator: Operator) -> float:
         """ Computes a probability of observing an outcome when applying the circuit to a state. 
@@ -453,321 +432,3 @@ def predict_outcome_probabilities_from_process_matrix(initial_state: State, proc
     return (outcome_matrix @ propagated_state.supervector).real  
     #return (outcome_operator.superbra @ propagated_state.supervector).real  
 
-
-import jax 
-import jax.numpy as jnp 
-jax.config.update("jax_enable_x64", True)
-
-#class Circuit_Process_Matrix_Helper():
-#@dataclass(frozen=True, eq=False)
-class Circuit_Process_Matrix_Function_Helper():
-    """ Builds a single process matrix function for a circuit, represented as a composition of gates 
-            where each gate is represented by its own gate process matrix function. 
-
-        - This class builds a single callable that returns the process matrix for the circuit. 
-
-        - The class organizes and tracks each gate model input arguments in order to avoid namespace 
-            conflicts.  
-
-        - Functions that are repeated are computed once and reused to avoid excess compution.  
-
-        - Includes JAX functionality for derivative computation of the proess matrix function w.r.t. gate parameters
-            - requires jax, jaxlib  
-    """ 
-
-    def __init__(self, gate_models: Sequence[Callable], separator: str = "__", jax_native: bool=False, forward_diff_eps: float = 1e-6):
-        """ 
-            gate_models: a sequence to represent the order of gates applied in the circuit 
-
-            separator: a string used for namespacing parameters within a gate model, e.g. "X_pi2__thetaX"
-                refers to the parameter arg thetaX within the gate model function X_pi2.  
-
-            jax_native: either a bool or a dictionary containing boolean for each gate in the gate sequence  
-
-        """
-        self.separator = separator 
-
-        if isinstance(jax_native, bool):
-            flags = {f.__name__: jax_native for f in list(gate_models)}
-        else:
-            flags = {f.__name__: jax_native.get(f.__name__, False) for f in list(gate_models)}
-
-        # Wrap each gate model once and then reuse it whenever the gate appears: 
-        wrap_cache = {}
-        def get_effective(function: Callable) -> int:
-            # Key by id is safer than function name to avoid possible name conflicts 
-            if id(function) not in wrap_cache:
-                wrap_cache[id(function)] = function if flags[function.__name__] else make_matrix_function_jax_differentiable(function, eps=forward_diff_eps) 
-            return wrap_cache[id(function)] 
-
-        self.gate_sequence = [get_effective(f) for f in list(gate_models)] 
-
-        self.unique_functions = list({id(f): f for f in self.gate_sequence}.values())
-        self._param_map: dict[str, tuple] = {} # namespaced name -> (function name, original name)
-        self._name_to_function: dict[str, Callable] = {}
-        self._type_hints: dict[str, type] = {}
-
-        self._build_signature()
-
-
-    def _build_signature(self):
-        """ Builds the circuit process matrix function signature """ 
-        params = []
-        seen_names = set()
-        for f in self.unique_functions:
-            fname = f.__name__
-            if fname in seen_names:
-                raise ValueError(f"Duplicate function name '{fname}' -- two distinct functions can't share a name. Rename one or pass explicit names.")
-            seen_names.add(fname)
-            self._name_to_function[fname] = f
-
-            sig = inspect.signature(f)
-            try:
-                hints = get_type_hints(f)
-            except Exception:
-                hints = {} # skip if this fails 
-        
-            for name, param in sig.parameters.items():
-                if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-                    raise NotImplementedError(f"{fname} uses *args/**kwargs, not supported.")
-                namespace = f"{fname}{self.separator}{name}"
-                if namespace in self._param_map:
-                    raise ValueError(f"Parameter collision in '{namespace}'")
-                self._param_map[namespace] = (fname, name)
-                if name in hints:
-                    self._type_hints[namespace] = hints[name]
-                params.append(param.replace(name=namespace, kind=inspect.Parameter.KEYWORD_ONLY))
-
-        self.__signature__ = inspect.Signature(params)
-
-    @staticmethod
-    def _type_matches(value, expected) -> bool:
-        """ Check 'value' at runtime against a type hint (expected) """
-        if expected is typing.Any or expected is inspect.Parameter.empty:
-            return True
-
-        if expected in (int, float, complex) and (isinstance(value, (int, float, complex)) or hasattr(value, "dtype")):
-            return True
-
-        origin = get_origin(expected)
-        if origin is typing.Union:
-            return any(Circuit_Process_Matrix_Function_Helper._type_matches(value, arg) for arg in get_args(expected))
-
-        if origin is not None:
-            try:
-                return isinstance(value, origin)
-            except TypeError:
-                return True
-
-        if isinstance(expected, type):
-            if expected is float and isinstance(value, int):
-                return True
-            try:
-                return isinstance(value, expected)
-            except TypeError:
-                return True
-
-        return True # unrecognized hint, don't fail in this case 
-
-    def check_types(self, **kwargs) -> list[str]:
-        """ Returns human readable messages for type-hint vs. actual type mismatch """
-
-        errors = []
-        for namespace, value, in kwargs.items():
-            expected = self._type_hints.get(namespace)
-            if expected is None:
-                continue
-            if not self._type_matches(value, expected):
-                fname, orig_name = self._param_map[namespace]
-                expected_repr = getattr(expected, "__name__", str(expected))
-                errors.append(f"{namespace} (={value!r}) expected {expected_repr} for {fname}'s '{orig_name}', got {type(value).__name__}")
-        return errors 
-
-    def missing_required(self, **kwargs) -> list[str]:
-        """ Returns namespaced names of required parameters not supplied"""
-        provided = set(kwargs)
-        return [name for name, p in self.__signature__.parameters.items() 
-                if p.default is inspect.Parameter.empty and name not in provided]
-
-    def __call__(self, **kwargs):
-        """ method for Callable behavior """
-        missing = self.missing_required(**kwargs)
-        if missing:
-            by_func: dict[str,list] = {}
-            for namespace in missing:
-                fname, orig_name = self._param_map[namespace]
-                by_func.setdefault(fname, []).append(orig_name)
-            details = "; ".join(f"{fname} missing {names}" for fname, names in by_func.items())
-            raise TypeError(f"Missing required argument(s): {details}")
-
-        valid_names = set(self.__signature__.parameters)
-        unexpected = set(kwargs) - valid_names
-
-        if unexpected:
-            raise TypeError(f"Unexpected argument(s): {sorted(unexpected)}. Valid arguments are: {sorted(valid_names)}")
-        
-        errors_type = self.check_types(**kwargs)
-        if errors_type:
-            raise TypeError("Type mismatch: " + "; ".join(errors_type)) 
-
-        bound = self.__signature__.bind(**kwargs)
-        bound.apply_defaults()
-
-        per_function_kwargs = {fname: {} for fname in self._name_to_function}
-        for namespace, value in bound.arguments.items():
-            fname, orig_name = self._param_map[namespace]
-            per_function_kwargs[fname][orig_name] = value
-
-        # call each unique function once and store the result to reuse at every instance of that function 
-        results = {fname: f(**per_function_kwargs[fname]) for fname, f in self._name_to_function.items()}
-
-        # Build list of matrices 
-        matrices = [results[f.__name__] for f in self.gate_sequence]
-
-        return reduce(lambda g1,g2: g1 @ g2, matrices)
-
-    def gradient(self, wrapped_scalar_function: Callable, wrt: list[str], **kwargs):
-        """ Computes a derivative of a scalar function with respect to (wrt) a list of parameters with all else (kwargs) fixed. 
-
-            scalar function takes in a matrix function and returns a scalar. 
-
-            kwargs specifies the point where the gradient is evaluated, e.g. "Rx__theta" = value
-
-            Returns (value, gradients) where gradients is {name: dValue/dName} for every name in 'wrt'.
-
-        """
-        # Assumes the a wrapping like such: 
-        scalar_function = wrapped_scalar_function.scalar_function
-        unknown = set(wrt) - set(self.__signature__.parameters)
-
-        if unknown:
-            raise ValueError(f"Unknown parameter name(s) in 'wrt': {sorted(unknown)}")
-
-        diff_values = {k: kwargs[k] for k in wrt}
-        fixed_values = {k: v for k, v in kwargs.items() if k not in wrt}
-        
-        # Set a 1-parameter function taking a dictionary for jax usage  
-        def f(diff_params: dict):
-            merged = {**fixed_values, **diff_params}
-            # Evaluate (self) process matrix function using the parameters 
-            U = self(**merged)
-            return scalar_function(U)
-    
-        value, gradients = jax.value_and_grad(f)(diff_values)
-        return value, gradients
-
-
-    def jacobian(self, wrapped_vector_function: Callable, wrt: list[str], **kwargs):
-        """ Same as gradient (above) but for a vector-valued output (e.g. multiple outcome probabilities)
-            Returns (value, jac) where jac[name] has shape (len(output), *shape(param))
-        """
-        # Assumes the a wrapping like such: 
-        vector_function = wrapped_vector_function.vector_function
-        unknown = set(wrt) - set(self.__signature__.parameters)
-
-        if unknown:
-            raise ValueError(f"Unknown parameter name(s) in 'wrt': {sorted(unknown)}")
-
-        diff_values = {k: kwargs[k] for k in wrt}
-        fixed_values = {k: v for k, v in kwargs.items() if k not in wrt}
-
-        # Set a 1-parameter function taking a dictionary for jax usage  
-        def f(diff_params: dict):
-            merged = {**fixed_values, **diff_params}
-            return vector_function(self(**merged))
-
-        value = f(diff_values)    
-        jac = jax.jacobian(f)(diff_values)
-        return value, jac 
-
-
-
-
-### Helper function to interface with jax library; converting a complicated python callable to jax differentiable 
-def make_matrix_function_jax_differentiable(function: Callable, eps: float = 1e-6, diff_params: list[str] = None) -> Callable:
-    """ Wraps an arbitrarily complicated python function mapping named parameters to a matrix into a 
-        JAX-differentiable function via jax.custom_jvp with a central finite-difference backward rule. 
-
-        This avoids an explicit tracing of the function's body by Jax, leading to no restrictions on the 
-        function to make it compatible with JAX. 
-
-        - diff_params are the parameters that the function is differentiated with respect to 
-
-        Note: custom_vjp operates correctly by separating the output's real and imaginary parts 
-    """
-    sig = inspect.signature(function) 
-    param_names = list(sig.parameters.keys())
-
-    try: 
-        hints = get_type_hints(function) 
-    except Exception:
-        hints = {}
-
-    if diff_params is not None:
-        is_diff = {name: name in diff_params for name in param_names}
-    else:
-        is_diff = {name: (True if hints.get(name) is None else hints[name] in (float, complex)) for name in param_names}
-
-    diff_names = [n for n in param_names if is_diff[n]]
-    nondiff_names = [n for n in param_names if not is_diff[n]]
-
-    def positional_function(nondiff_args, diff_args):
-        kwargs = dict(zip(nondiff_names, nondiff_args))
-        kwargs.update(dict(zip(diff_names, diff_args)))
-        return function(**kwargs)
-
-    @functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
-    def wrapped_real_imaginary(nondiff_args, diff_args):
-        U = positional_function(nondiff_args, diff_args)
-        return jnp.real(U), jnp.imag(U)
-
-    def wrapped_real_imaginary_fwd(nondiff_args, diff_args):
-        U = positional_function(nondiff_args, diff_args)
-        return (jnp.real(U), jnp.imag(U)), diff_args
-
-    def wrapped_real_imaginary_bwd(nondiff_args, residual_diff_args, cotangent):
-        ct_real, ct_imag = cotangent 
-        grads = []
-        for i, arg in enumerate(residual_diff_args):
-            plus = list(residual_diff_args); plus[i] = arg + eps
-            minus = list(residual_diff_args); minus[i] = arg - eps
-            dU = (positional_function(nondiff_args, tuple(plus)) - positional_function(nondiff_args, tuple(minus)))/(2. * eps)
-            grads.append( jnp.sum(ct_real * jnp.real(dU)) + jnp.sum(ct_imag * jnp.imag(dU)) )
-        return (tuple(grads), ) 
-
-    wrapped_real_imaginary.defvjp(wrapped_real_imaginary_fwd, wrapped_real_imaginary_bwd)
-
-    def wrapped(**kwargs):
-        bound = sig.bind(**kwargs)
-        bound.apply_defaults()
-        nondiff_args = tuple(bound.arguments[n] for n in nondiff_names)
-        diff_args = tuple(bound.arguments[n] for n in diff_names)
-        U_real, U_imag = wrapped_real_imaginary(nondiff_args, diff_args)
-        return U_real + 1j*U_imag
-
-    wrapped.__name__ = function.__name__
-    wrapped.__signature__ = sig 
-    wrapped.__doc__ = function.__doc__ 
-    return wrapped 
-
-
-# Possible idea: Build a IonSim circuit object from a ParsedCircuit object, requires gate models + basis  
-#@dataclass(frozen=True,eq=False)
-#class GST_Circuit():
-#    """ Class containing IonSim GST Circuit Objects, containing lists of gates"""
-#
-#    name: str
-#    prep_circuit: Circuit  
-#    germ_circuit: Circuit 
-#    measure_circuit: Circuit 
-#    germ_power: int 
-#    counts: dict[str, int] | None=None 
-#    
-#    @property
-#    def expanded_circuit(self) -> list[Gate]:
-#        """ List of gates, expanded (no germ power included) """
-#        return self.prep_circuit.gates + self.germ_circuit.gates * self.germ_power.gates + self.measure_circuit.gates
-#
-#    def __repr__(self):
-#        readable_name = " ".join(repr(gate.name) for gate in self.expanded_gates) or "(empty)"
-#        return f"GST_Circuit({gates_readable}, counts={self.counts})"

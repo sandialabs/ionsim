@@ -20,7 +20,7 @@ num_spins = 1
 
 # Create a basis of 1 qubit: 
 spins = [
-    sm.AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+    sm.AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
     for _ in range(num_spins)
 ]
 basis = sm.StandardBasis([*spins])

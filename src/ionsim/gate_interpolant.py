@@ -105,27 +105,6 @@ class GateInterpolant():
         return cls(grid_axes, gate_name, grid, gate_basis, gates_on_grid)
 
 
- #    @classmethod
- #    def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, gate_duration: float, grid_axes: dict[str, Vector], gate_name: str | None=None):
- #        """ Build gate interpolant from Schrodinger evolution of a Hamiltonian. 
- #            - requires a function that returns the hamiltonian using the interpolant grid parameters  
- #            - requires a fixed duration to set the hamiltonian's time evolution 
- #            - requires a dictionary of parameters to specify the grid
- #        """ 
- #        # TODO: Test/verify this function. 
- #        # Build a grid and loop over every parameter value and build the gate from the hamiltonian
- #        grid = cls.build_grid(grid_axes)
- #
- #        # For each parameter combination in the parameter grid, compute the gate and process matrix.
- #        gates_on_grid = []
- #        for values in grid:
- #            coordinate = dict(zip(grid_axes.keys(), values)) 
- #            # TODO: accomodate args for from_hamiltonian() like DOF to trace out, etc. 
- #            gates_on_grid.append(Gate.from_hamiltonian_function(basis, hamiltonian_function, gate_duration, coordinate)) 
- #
- #        return cls(grid_axes, gate_name, grid, basis, gates_on_grid)
-    
-
     def compute_functional_of_gates(self, gate_property_functional: Callable) -> list:
         """ Computes a functional of the gate (e.g. gate residual) at every gate in the grid, corresponding to each element of the returned list. """ 
         functional_output = []
