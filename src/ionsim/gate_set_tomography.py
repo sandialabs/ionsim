@@ -1211,11 +1211,27 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
 
     def parameters_from_lgst_results(self):
-        """ Extracts the parameters vector from linear GST results """
+        """ Extracts the parameters vector from linear GST results.
 
-        if not hasattr(self, 'lgst_results'):
-            self.run_linear_gst()
+            If shared parameters exist, fits all models jointly. 
+            If not, gate set models are fit independently. 
 
+        """
+        if not hasattr(self, 'lgst_results') or self.lgst_results is None:
+            self.run_linear_gst(self.ideal_gate_set)
+
+        if self.shared_model_parameters:
+            theta = self._joint_fit_to_lgst()
+        else:
+            theta = self._independent_fit_to_lgst()
+
+        # Set internal gst parameters attribute to extracted parameters 
+        self.gst_parameters = theta 
+        return theta
+
+
+    def _independent_fit_to_lgst(self):
+        """ Fits independent gate set models to LGST-estimated elements (no shared model parameters). """
         # Initialize theta 
         theta = self.gst_parameters.copy()
 
@@ -1223,17 +1239,11 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for gate, lgst_gate_matrix in self.lgst_results['gate_estimates'].items():
             # Compute the fit parameters for each gate model 
             fit_parameters = self._fit_gate_model_to_lgst_estimate(gate, lgst_gate_matrix)    
-            #indices = self.gst_parameter_indices[gate]
- #            for k, indx in enumerate(indices):
- #                theta[indx] = fit_parameters[k].real 
             theta[self.gst_parameter_indices[gate]] = fit_parameters.real 
 
         # Extract SPAM parameters:
         # Native prep state         
         prep_fit_parameters = self._fit_prep_model_to_lgst_estimate(self.lgst_results['native_prep_state'])
- #        prep_indices = self.gst_parameter_indices["prep"]
- #        for k, indx in enumerate(prep_indices):
- #            theta[indx] = prep_fit_parameters[k].real 
         theta[self.gst_parameter_indices['prep']] = prep_fit_parameters
 
         # Native measurement effects  
@@ -1244,15 +1254,47 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         ## Option 2:
         outcome_parameters = self._fit_measurement_effect_model_to_lgst_estimate(self.lgst_results['estimated_effects'])
- #        POVM_indices = self.gst_parameter_indices["POVM"]
- #        for k, indx in enumerate(POVM_indices):
- #            theta[indx] = outcome_parameters[k].real 
-
         theta[self.gst_parameter_indices["POVM"]] = outcome_parameters.real
 
-        # Set gst parameters attribute to extracted parameters 
-        self.gst_parameters = theta
         return theta
+
+    def _joint_fit_to_lgst(self):
+        """ Fits all gate set models jointly (if there are shared parameters) """ 
+        lgst_gates = self.lgst_results["gate_estimates"]
+        lgst_prep = self.lgst_results["native_prep_state"]
+        lgst_effects = self.lgst_results["estimated_effects"]
+
+        def cost(theta):
+            # Cost function of the gate set to fit gate set parameters from LGST estimates  
+            total_cost = 0.
+            # Gates
+            for gate, lgst_matrix in lgst_gates.items():
+                gate_params = self.get_parameters(theta, gate)
+                M = self.gate_models[gate](*gate_params)
+                total_cost += np.linalg.norm(M - lgst_matrix, 'fro')**2
+            
+            # Prep 
+            prep_params = self.get_parameters(theta, "prep")
+            rho = self.prep_state_model(*prep_params)
+            total += np.linalg.norm(rho - lgst_prep)**2
+                
+            # POVM 
+            POVM_params = self.get_parameters(theta, "POVM")
+            modeled_effects = self.POVM_effect_models(*POVM_params)
+            for outcome, effect in lgst_effects.items():
+                assert outcome in modeled_effects
+                total += np.linalg.norm(modeled_effects[outcome] - effect)**2
+                #if outcome in modeled_effects:
+            return total.real
+            
+        theta_0 = self.gst_parameters.copy()
+        # TODO: potentially seed from independent fits with average parameter values? see if this is necessary  
+        #theta_0 = self._seed_from_independent_fits(theta_0)
+        
+        result = opt.minimize(cost, theta_0, method='Nelder-Mead', bounds = self.parameter_bounds)
+        return result.x 
+
+        
 
     ## TODO: Consolidate / factor into a single "fit model to lgst" function if possible  
     def _fit_prep_model_to_lgst_estimate(self, lgst_native_prep: Vector) -> Vector:
