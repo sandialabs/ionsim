@@ -182,7 +182,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         parsed_bounds = [(None, None) for _ in range(self.num_gst_parameters)]
 
         # Treat as dictionary 
-        if not isinstance(parameter_bounds, dict);
+        if not isinstance(parameter_bounds, dict):
             raise TypeError(f"Please specify parameter bounds as dictionary, list, or None. Received type {type(parameter_bounds)}")
 
         # Handle shared parameters:
@@ -193,7 +193,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 param_index = self.shared_indices[name]
                 parsed_bounds[param_index] = tuple(bounds)
 
-
         # Handle prep, measure, and any gates 
         if 'prep' in parameter_bounds:
             for name, bounds in parameter_bounds["prep"].items():
@@ -201,12 +200,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 parsed_bounds[param_index] = tuple(bounds)
 
         if 'POVM' in parameter_bounds:
-            for name, bounds in parameter_bounds["prep"].items():
+            for name, bounds in parameter_bounds["POVM"].items():
                 param_index = self.get_parameter_index_by_name_in_effect_model(name)
                 parsed_bounds[param_index] = tuple(bounds)
 
         for gate_name, bound_info in parameter_bounds.items():
-            if name in ('prep', 'POVM', 'shared'): 
+            if gate_name in ['prep', 'POVM', 'shared']: 
                 continue
             if not isinstance(bound_info, dict):
                 raise TypeError(
@@ -215,7 +214,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 )
             for parameter_name, bounds in bound_info.items():
                 parameter_index = self.get_parameter_index_by_name_in_gate(gate_name, parameter_name)
-                parsed_bounds[parameter_index] = tuple(param_bounds)
+                parsed_bounds[parameter_index] = tuple(bounds)
 
         self.parameter_bounds = parsed_bounds
 
@@ -908,6 +907,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         """ Return index in gate parameters where parameter from a gate mdoel appears. Return -1 if not found """
         effect_model_sig = inspect.signature(self.POVM_effect_models)
         parameter_names = list(effect_model_sig.parameters.keys())  
+        if parameter_name not in parameter_names:
+            raise ValueError(f"Parameter {parameter_name} not in the POVM model parameters {parameter_names}")
         local_index = parameter_names.index(parameter_name)
         return self.gst_parameter_indices["POVM"][local_index]
         #slice_from_global_parameters_list = self.gst_parameter_indices["POVM"]
@@ -973,7 +974,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # If no initial guess is specified, we use linear GST to generate a good guess for the gate set parameters  
             self.solver_result = self.run_linear_gst(self.ideal_gate_set)
             theta_0 = self.parameters_from_lgst_results()
-            #self.parameters_guess = theta_0 # or None? should reproduce user input of None   
+            self.parameters_guess = theta_0 # or None? should reproduce user input of None   
             self.solver_result = None
             return theta_0
 
@@ -981,8 +982,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             theta_0 = parameters_guess
             self.parameters_guess = theta_0
             return theta_0
-        else:
-            raise ValueError(f"Parameter vector initial guess should be a list/array/Vector or nested dictionary. Received: {type(parameters_guess)}")
 
         if isinstance(parameters_guess, dict):
             # If a parameter is not specified, it is assumed to be zero as its initial guess. 
@@ -1008,7 +1007,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                         index = self.get_parameter_index_by_name_in_gate(gate, name)
                         self.gst_parameters[index] = value
 
-        self.parameters_guess = self.gst_parameters 
+            self.parameters_guess = self.gst_parameters 
+        else:
+            raise ValueError(f"Parameter vector initial guess should be a list/array/Vector or nested dictionary. Received: {type(parameters_guess)}")
+
         return self.parameters_guess
 
 
@@ -1054,15 +1056,22 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
  #                self.parameters_guess = theta_0
  #            else:
  #                raise ValueError(f"Parameter vector initial guess should be a list/array/Vector or nested dictionary. Received: {type(parameters_guess)}")
-        theta_0 = self.parameters_guess
+        self.parse_parameter_guess_input(parameters_guess)
+        #theta_0 = self.gst_parameters 
+
+        #theta_0 = self.parameters_guess
+
+        #print(len(theta_0))
+        #print(len(self.parameters_bounds))
+        #assert len(theta_0) == len(self.parameters_bounds)
 
         if self.verbose: 
             print(f"\n -- Solver for gate parameters in GST using {solver} --- ")
-            print(f"Initial parameters: {theta_0}")
+            print(f"Initial parameters: {self.parameters_guess}")
 
         if solver == 'MLE':
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
-            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds, **kwargs) 
+            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = self.parameters_guess, method = 'L-BFGS-B', bounds = self.parameter_bounds, **kwargs) 
             self.solver_result = solver_result
             self.gst_parameters = solver_result.x
             return solver_result
@@ -1072,7 +1081,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             return self.gst_parameters 
         elif solver == 'staged MLE':
             # Do staged MLE --> MLE done in batches of increasing circuit depths. 
-            self.solver_result, results_by_stage = self.staged_objective_minimization(theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds, **kwargs) 
+            self.solver_result, results_by_stage = self.staged_objective_minimization(self.parameters_guess, method = 'L-BFGS-B', bounds = self.parameter_bounds, **kwargs) 
             self.results_by_stage = results_by_stage
             self.gst_parameters = self.solver_result.x
             return self.solver_result 
