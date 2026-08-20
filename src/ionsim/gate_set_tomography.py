@@ -965,6 +965,60 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for label, effect in M_effects.items():
             print(f"\nMeasurement effect {label} vectors: {effect}")
 
+
+    def parse_parameter_guess_input(self, parameters_guess: Vector | dict | None) -> Vector:
+        """ Interface to parse user input parameter guess information into a vector of initial values for scipy minimize"""
+
+        if parameters_guess is None:
+            # If no initial guess is specified, we use linear GST to generate a good guess for the gate set parameters  
+            self.solver_result = self.run_linear_gst(self.ideal_gate_set)
+            theta_0 = self.parameters_from_lgst_results()
+            #self.parameters_guess = theta_0 # or None? should reproduce user input of None   
+            self.solver_result = None
+            return theta_0
+
+        if isinstance(parameters_guess, list) or isinstance(parameters_guess, np.ndarray):
+            theta_0 = parameters_guess
+            self.parameters_guess = theta_0
+            return theta_0
+        else:
+            raise ValueError(f"Parameter vector initial guess should be a list/array/Vector or nested dictionary. Received: {type(parameters_guess)}")
+
+        if isinstance(parameters_guess, dict):
+            # If a parameter is not specified, it is assumed to be zero as its initial guess. 
+            for key in parameters_guess:
+                if key == 'shared':
+                    for name, value in parameters_guess['shared'].items():
+                        if name not in self.shared_indices():
+                            raise ValueError(f"Unknown shared parameter: {name}.") 
+                        index = self.shared_indices[name]
+                        self.gst_parameters[index] = value
+
+                elif key == 'prep':
+                    for name, value in parameters_guess['shared'].items():
+                        index = self.get_parameter_index_by_name_in_prep_model(name)
+                        self.gst_parameters[index] = value
+                elif key == 'POVM':
+                    for name, value in parameters_guess['shared'].items():
+                        index = self.get_parameter_index_by_name_in_effect_model(name)
+                        self.gst_parameters[index] = value
+                else:
+                    gate = self.user_key_gate_map[key]
+                    for name, value in parameters_guess[key].items():
+                        index = self.get_parameter_index_by_name_in_gate(gate, name)
+                        self.gst_parameters[index] = value
+
+        self.parameters_guess = self.gst_parameters 
+        return self.parameters_guess
+
+
+
+
+
+
+
+
+
     def solve_for_gate_parameters(self, parameters_guess: Vector | dict | None, solver: str = 'MLE', **kwargs):
         """ Function to solve for the parametrization values of a particular gate. 
 
@@ -979,27 +1033,28 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         """
         # Specify initial guess and handle different input formats 
-        if parameters_guess is None:
-            # If no initial guess is specified, we use linear GST to generate a good guess for the gate set parameters  
-            self.solver_result = self.run_linear_gst(self.ideal_gate_set)
-            theta_0 = self.parameters_from_lgst_results()
-            self.solver_result = None
-        else:
-            if isinstance(parameters_guess, dict):
-                # Gate model dictionary expects ParsedGate keys 
-                for key in parameters_guess.keys():  
-                    gate = self.user_key_gate_map[key]
-                    index_of_gate_in_GS = list(self.gate_models.keys()).index(gate)
-                    for parameter, initial_value in parameters_guess[key].items():
-                        param_indx = self.get_parameter_index_by_name_in_gate(gate, parameter)
-                        self.gst_parameters[param_indx] = initial_value 
-                theta_0 = self.gst_parameters
-                self.parameters_guess = theta_0
-            elif isinstance(parameters_guess, list) or isinstance(parameters_guess, np.ndarray):
-                theta_0 = parameters_guess
-                self.parameters_guess = theta_0
-            else:
-                raise ValueError(f"Parameter vector initial guess should be a list/array/Vector or nested dictionary. Received: {type(parameters_guess)}")
+ #        if parameters_guess is None:
+ #            # If no initial guess is specified, we use linear GST to generate a good guess for the gate set parameters  
+ #            self.solver_result = self.run_linear_gst(self.ideal_gate_set)
+ #            theta_0 = self.parameters_from_lgst_results()
+ #            self.solver_result = None
+ #        else:
+ #            if isinstance(parameters_guess, dict):
+ #                # Gate model dictionary expects ParsedGate keys 
+ #                for key in parameters_guess.keys():  
+ #                    gate = self.user_key_gate_map[key]
+ #                    index_of_gate_in_GS = list(self.gate_models.keys()).index(gate)
+ #                    for parameter, initial_value in parameters_guess[key].items():
+ #                        param_indx = self.get_parameter_index_by_name_in_gate(gate, parameter)
+ #                        self.gst_parameters[param_indx] = initial_value 
+ #                theta_0 = self.gst_parameters
+ #                self.parameters_guess = theta_0
+ #            elif isinstance(parameters_guess, list) or isinstance(parameters_guess, np.ndarray):
+ #                theta_0 = parameters_guess
+ #                self.parameters_guess = theta_0
+ #            else:
+ #                raise ValueError(f"Parameter vector initial guess should be a list/array/Vector or nested dictionary. Received: {type(parameters_guess)}")
+        theta_0 = self.parameters_guess
 
         if self.verbose: 
             print(f"\n -- Solver for gate parameters in GST using {solver} --- ")
