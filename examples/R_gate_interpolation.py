@@ -52,9 +52,6 @@ omega = (
     + target_spins[0].energy_levels[1].energy - target_spins[0].energy_levels[0].energy
     + detuning
 )
-TPI = 2. * np.pi
-print(f"frequency: {omega/TPI/1E9}")
-sys.exit(0)
 
 amp_mod = None
 
