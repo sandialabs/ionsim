@@ -28,8 +28,6 @@ def depth_bin(depth):
         return 1
     return int(2**(np.ceil(np.log2(depth))))
 
-#TODO: Resolve inconsistent model function arguments: Gate models take in parameters one at a time, vs. prep and measure models take in a vector of parameters 
-
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], 
                     gate_models: dict[str, Callable], parameter_bounds: dict[dict[str, tuple]] | None=None, circuit_design: GSTCircuitPlanner | None=None, 
@@ -154,7 +152,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Organize a lookup table for fiducial prep/measure circuits; needed for linear GST 
         self._index_fiducials()
         self._initialize_likelihood_circuit_cache()
-        self._normalize_parameter_bounds(parameter_bounds)
+        self._parse_parameter_bounds(parameter_bounds)
         self.parameters_guess = None
 
 
@@ -163,69 +161,15 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return len(self.gst_parameters)
 
 
-    def _normalize_parameter_bounds(self, parameter_bounds) -> list[tuple[float | None, float | None]] | None:
-        # Normalize the documented dictionary form to the flat list of
+    def _parse_parameter_bounds(self, parameter_bounds) -> list[tuple[float | None, float | None]] | None:
+        # Parse the documented dictionary form to the flat list of
         # ``(lower, upper)`` pairs expected by SciPy optimizers. Parameters not
         # named in the dictionary remain unbounded.
         if parameter_bounds is None:
             self.parameter_bounds = None
-        elif isinstance(parameter_bounds, dict):
-            normalized_bounds = [
-                (None, None) for _ in range(self.num_gst_parameters)
-            ]
-            for name, bound_info in parameter_bounds.items():
-                if (name == "prep" or name == "POVM"): 
-                    continue  
+            return 
 
-                # TODO: This needs to be cleaned up. Should the user specify gate names vs. gate objects in a dictionary of parameter bounds   
-                available_gates = [g for g in self.gate_models.keys()]
-                available_gate_names = [g.name for g in available_gates]
-                if name not in available_gates and name not in available_gate_names: 
-                    raise ValueError(f"Unknown model in parameter bounds: {name!r}. Available gate models: {list(self.gate_models.keys())}")
-                #if name not in self.gate_models and name not in self.POVM_effect_models.keys():
-                #    raise ValueError(f"Unknown model in parameter bounds: {name!r}.")
-
-                if not isinstance(bound_info, dict):
-                    raise TypeError(
-                        "Bounds for each model must be a dictionary mapping "
-                        "parameter names to (lower, upper) pairs."
-                    )
-
-                for parameter_name, param_bounds in bound_info.items():
-                    if not isinstance(param_bounds, (list, tuple)) or len(param_bounds) != 2:
-                        raise ValueError(
-                            f"Bounds for model {name}.{parameter_name} must be "
-                            "a (lower, upper) pair."
-                        )
-                    #if name not in self.POVM_effect_models.keys():
-                    parameter_index = self.get_parameter_index_by_name_in_gate(name, parameter_name)
-                    #parameter_index = self.get_parameter_index_by_name_in_effect_model(parameter_name)
-                    #parameter_index = self.get_parameter_index_by_name_in_effect_model(name, parameter_name)
-                    normalized_bounds[parameter_index] = tuple(param_bounds)
-
-            if "prep" in list(parameter_bounds.keys()):
-                for parameter_name, bounds in parameter_bounds["prep"].items():
-                    if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
-                        raise ValueError(
-                            f"Bounds for {name}.{parameter_name} must be "
-                            "a (lower, upper) pair."
-                        )
-                    parameter_index = self.get_parameter_index_by_name_in_prep_model(parameter_name)
-                    normalized_bounds[parameter_index] = tuple(bounds)
-
-            if "POVM" in list(parameter_bounds.keys()):
-                for parameter_name, bounds in parameter_bounds["POVM"].items():
-                    if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
-                        raise ValueError(
-                            f"Bounds for {name}.{parameter_name} must be "
-                            "a (lower, upper) pair."
-                        )
-                    parameter_index = self.get_parameter_index_by_name_in_effect_model(parameter_name)
-                    normalized_bounds[parameter_index] = tuple(bounds)
-
-            # TODO: add measurement models 
-            self.parameter_bounds = normalized_bounds
-        elif isinstance(parameter_bounds, list):
+        if isinstance(parameter_bounds, list):
             if len(parameter_bounds) != self.num_gst_parameters:
                 raise ValueError(
                     "Parameter bounds must contain one (lower, upper) pair "
@@ -233,8 +177,91 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                     f"received {len(parameter_bounds)}."
                 )
             self.parameter_bounds = parameter_bounds
-        else:
-            raise TypeError("Parameter bounds must be a list, dictionary, or None.")
+            return 
+
+        parsed_bounds = [(None, None) for _ in range(self.num_gst_parameters)]
+
+        # Treat as dictionary 
+        if not isinstance(parameter_bounds, dict);
+            raise TypeError(f"Please specify parameter bounds as dictionary, list, or None. Received type {type(parameter_bounds)}")
+
+        # Handle shared parameters:
+        if 'shared' in parameter_bounds:
+            for name, bounds in parameter_bounds['shared'].items():
+                if name not in self.shared_indices:
+                    raise ValueError(f"Unknown model in parameter bounds: {name!r}. Available: {list(self.shared_indices.keys())}")
+                param_index = self.shared_indices[name]
+                parsed_bounds[param_index] = tuple(bounds)
+
+
+        # Handle prep, measure, and any gates 
+        if 'prep' in parameter_bounds:
+            for name, bounds in parameter_bounds["prep"].items():
+                param_index = self.get_parameter_index_by_name_in_prep_model(name)
+                parsed_bounds[param_index] = tuple(bounds)
+
+        if 'POVM' in parameter_bounds:
+            for name, bounds in parameter_bounds["prep"].items():
+                param_index = self.get_parameter_index_by_name_in_effect_model(name)
+                parsed_bounds[param_index] = tuple(bounds)
+
+        for gate_name, bound_info in parameter_bounds.items():
+            if name in ('prep', 'POVM', 'shared'): 
+                continue
+            if not isinstance(bound_info, dict):
+                raise TypeError(
+                    "Bounds for each model must be a dictionary mapping "
+                    "parameter names to (lower, upper) pairs."
+                )
+            for parameter_name, bounds in bound_info.items():
+                parameter_index = self.get_parameter_index_by_name_in_gate(gate_name, parameter_name)
+                parsed_bounds[parameter_index] = tuple(param_bounds)
+
+        self.parameter_bounds = parsed_bounds
+
+
+    #==================================
+ #            # TODO: This needs to be cleaned up. Should the user specify gate names vs. gate objects in a dictionary of parameter bounds   
+ #            available_gates = [g for g in self.gate_models.keys()]
+ #            available_gate_names = [g.name for g in available_gates]
+ #            if name not in available_gates and name not in available_gate_names: 
+ #                raise ValueError(f"Unknown model in parameter bounds: {name!r}. Available gate models: {list(self.gate_models.keys())}")
+ #            #if name not in self.gate_models and name not in self.POVM_effect_models.keys():
+ #            #    raise ValueError(f"Unknown model in parameter bounds: {name!r}.")
+ #
+ #            for parameter_name, param_bounds in bound_info.items():
+ #                if not isinstance(param_bounds, (list, tuple)) or len(param_bounds) != 2:
+ #                    raise ValueError(
+ #                        f"Bounds for model {name}.{parameter_name} must be "
+ #                        "a (lower, upper) pair."
+ #                    )
+ #                #if name not in self.POVM_effect_models.keys():
+ #                parameter_index = self.get_parameter_index_by_name_in_gate(name, parameter_name)
+ #                #parameter_index = self.get_parameter_index_by_name_in_effect_model(parameter_name)
+ #                #parameter_index = self.get_parameter_index_by_name_in_effect_model(name, parameter_name)
+ #                parsed_bounds[parameter_index] = tuple(param_bounds)
+
+ #        if "prep" in list(parameter_bounds.keys()):
+ #            for parameter_name, bounds in parameter_bounds["prep"].items():
+ #                if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+ #                    raise ValueError(
+ #                        f"Bounds for {name}.{parameter_name} must be "
+ #                        "a (lower, upper) pair."
+ #                    )
+ #                parameter_index = self.get_parameter_index_by_name_in_prep_model(parameter_name)
+ #                parsed_bounds[parameter_index] = tuple(bounds)
+ #
+ #        if "POVM" in list(parameter_bounds.keys()):
+ #            for parameter_name, bounds in parameter_bounds["POVM"].items():
+ #                if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+ #                    raise ValueError(
+ #                        f"Bounds for {name}.{parameter_name} must be "
+ #                        "a (lower, upper) pair."
+ #                    )
+ #                parameter_index = self.get_parameter_index_by_name_in_effect_model(parameter_name)
+ #                parsed_bounds[parameter_index] = tuple(bounds)
+
+        #self.parameter_bounds = parsed_bounds
 
 
     def _build_parameter_organization(self) -> tuple[dict[str, slice], int]:
@@ -1486,15 +1513,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             self.gst_parameters = theta
 
         uncertainties = np.zeros_like(theta)
- #        if method == 'hessian':
- #            # L-BFGS-B stores an approximation to the inverse Hessian -- we use this for convariance estimation 
- #            covariance = np.array(self.solver_result.hess_inv.todense())
- #            num_parameters = len(theta)
- #    
- #            # Uncertainties are taken as diagonals of covariance matrix 
- #            uncertainties = np.sqrt(np.abs(np.diag(covariance)))
- #            #return uncertainties, covariance 
- #        else: 
         uncertainties, means, bootstrapped_thetas = self.bootstrap_parameters(N_bootstrap)
 
         # Return a dictionary containing a dictionary for each model (prep, gate 1, gate 2, etc. , measure) 
@@ -1528,9 +1546,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         parameter_uncertainties = uncertainties[self.gst_parameter_indices["POVM"]]
         mean_results["POVM"] = dict(zip(parameter_names, prep_param_means))
         uncertainty_results["POVM"] = dict(zip(parameter_names, parameter_uncertainties))
- #        for outcome in self.POVM_effect_models.keys():
- #            meas_param_values = uncertainties[self.gst_parameter_indices[outcome]]
- #            uncertainty_results[outcome] = meas_param_values 
 
         gate_set_errors = []
         N_bootstrap = bootstrapped_thetas.shape[0]
@@ -1539,7 +1554,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             gate_set_errors.append(self.compute_gate_set_error_by_element(sampled_theta, self.ideal_gate_set, 'frobenius norm')) 
         
         return mean_results, uncertainty_results, gate_set_errors, bootstrapped_thetas 
-        #return mean_results, uncertainty_results              
 
     def bootstrap_parameters(self, N_bootstrap: int=50):
         """ Bootstrapping for parameter uncertainties: Sample data from the fitted model and re-fit, computing 
@@ -1572,9 +1586,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self.gst_parameters = theta_best
             
         # Compute uncertainties as standard deviation of the best fits
-        #print(bootstrap_thetas)
         means = np.mean(bootstrap_thetas,axis=0)
-        #print(f"Mean: {mean}")
         uncertainties = np.std(bootstrap_thetas, axis=0) 
         return uncertainties, means, bootstrap_thetas
             
