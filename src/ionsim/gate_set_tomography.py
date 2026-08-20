@@ -187,6 +187,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Handle shared parameters:
         if 'shared' in parameter_bounds:
+            if self.shared_indices == {}:
+                ValueError(f"Please specify shared parameteres when initializing the GST analysis constructor.")
             for name, bounds in parameter_bounds['shared'].items():
                 if name not in self.shared_indices:
                     raise ValueError(f"Unknown model in parameter bounds: {name!r}. Available: {list(self.shared_indices.keys())}")
@@ -341,12 +343,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 shared_lookup[(model_key, param_idx)] = name
 
         # Allocate shared parameters:
-        shared_slices = {}
+        shared_indices = {}
         for name in self.shared_model_parameters.keys():
-            shared_slices[name] = i 
+            shared_indices[name] = i 
             i += 1
 
-        #parameter_indices["shared"] = shared_slices
+        #parameter_indices["shared"] = shared_indices
 
         # Build per-model mapping that maps model -> [theta_idx, ...]
         indices_by_model = {}
@@ -357,7 +359,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 if (model_key, j) in shared_lookup:
                     # Shared parameter, point to shared slot in theta
                     shared_name = shared_lookup[(model_key, j)]
-                    theta_indices.append(shared_slices[shared_name])
+                    theta_indices.append(shared_indices[shared_name])
                 else:
                     theta_indices.append(i)
                     i += 1
@@ -366,7 +368,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for gate in self.gate_models:
             indices_by_model[gate] = indices_by_model[repr(gate)]
 
-        self.shared_slices = shared_slices
+        self.shared_indices = shared_indices
         return indices_by_model, i  
         #TODO: change the return statement?
         #return shared_slices, i  
@@ -987,8 +989,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # If a parameter is not specified, it is assumed to be zero as its initial guess. 
             for key in parameters_guess:
                 if key == 'shared':
+                    if self.shared_indices == {}:
+                        ValueError(f"Please specify shared parameteres when initializing the GST analysis constructor.")
                     for name, value in parameters_guess['shared'].items():
-                        if name not in self.shared_indices():
+                        if name not in self.shared_indices.keys():
                             raise ValueError(f"Unknown shared parameter: {name}.") 
                         index = self.shared_indices[name]
                         self.gst_parameters[index] = value
