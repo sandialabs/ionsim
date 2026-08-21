@@ -718,7 +718,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             for gate, gate_model in self.gate_models.items():
                 # Retrieve parameters for the gate model 
                 gate_parameters = self.get_parameters(theta, gate) 
-                #gate_parameters = theta[self.gst_parameter_indices[gate]]
                 # Evaluate gate model at those parameter values and store in the PM cache 
                 process_matrix_cache[gate] = gate_model(*gate_parameters) # gate model returns a process matrix  
 
@@ -1016,13 +1015,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             raise ValueError(f"Parameter vector initial guess should be a list/array/Vector or nested dictionary. Received: {type(parameters_guess)}")
 
         return self.parameters_guess
-
-
-
-
-
-
-
 
 
     def solve_for_gate_parameters(self, parameters_guess: Vector | dict | None, solver: str = 'MLE', **kwargs):
@@ -1499,7 +1491,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
 
     ### Functions for gate set error metrics ### 
-    def compute_gate_set_error_by_element(self, gst_parameters: Vector, ideal_gate_set: dict, error_metric:str='frobenius norm') -> dict:
+    def compute_gate_set_error_by_element(self, theta: Vector, ideal_gate_set: dict, error_metric:str='frobenius norm') -> dict:
         """ Computes an error for each element of the gate set by comparison to the ideal gate set elements. 
 
             Current options for gate set error metrics:
@@ -1507,9 +1499,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 2. Process infidelity: between best-fit process matrix and reference matrix 
 
         """ 
-        if self.solver_result is None:
-            self.solve_for_gate_parameters()
-
+ #        if self.solver_result is None:
+ #            self.solve_for_gate_parameters()
         internal_ideal_gate_set = {} 
         for key in ideal_gate_set.keys():
             if key not in ["prep", "POVM"]:
@@ -1529,16 +1520,17 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
             # Get process matrix from gate model at optimum 
             gate_process_matrix_function = self.gate_models[gate]
-            parameter_values = self.get_parameters(self.gst_parameters, gate) 
-            #parameter_values = gst_parameters[self.gst_parameter_indices[gate]] # names and values share same sorted order  
+            #parameter_values = self.get_parameters(self.gst_parameters, gate)  ## Bug
+            parameter_values = self.get_parameters(theta, gate) 
+            #parameter_values = theta[self.gst_parameter_indices[gate]] # names and values share same sorted order  
 
             process_matrix = gate_process_matrix_function(*parameter_values)
             if error_metric == 'frobenius norm':
-                gate_error = np.linalg.norm(process_matrix - ideal_gate)
-            elif error_metric == 'eigenvalues':
-                eigs_true = np.sort_complex(np.linalg.eigvals(ideal_gate))
-                eigs_est = np.sort_complex(np.linalg.eigvals(process_matrix))
-                gate_error = np.linalg.norm(eigs_true - eigs_est)
+                gate_error = np.linalg.norm(process_matrix - ideal_gate, 'fro')
+ #            elif error_metric == 'eigenvalues':
+ #                eigs_true = np.sort_complex(np.linalg.eigvals(ideal_gate))
+ #                eigs_est = np.sort_complex(np.linalg.eigvals(process_matrix))
+ #                gate_error = np.linalg.norm(eigs_true - eigs_est)
             else: # process infidelity 
                 gate_model = Gate(self.basis, process_matrix)
                 gate_error = 1. - gate_model.compute_process_fidelity(ideal_gate)
@@ -1547,14 +1539,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # prep state: 
         ideal_prep_state = ideal_gate_set['prep'].supervector  
-        modeled_prep_state = self.get_prep_state(gst_parameters) 
+        modeled_prep_state = self.get_prep_state(theta) 
         # Trace distance: sqrt(sum([rho_ideal[i] - rho_actual[i]]^2))
         prep_error = np.sqrt(np.sum((modeled_prep_state - ideal_prep_state)**2)) 
         gst_errors['prep'] = prep_error.real
     
         # POVMs 
         ideal_POVMs = ideal_gate_set['POVM']  
-        POVMs = self.get_measurement_effects(gst_parameters)
+        POVMs = self.get_measurement_effects(theta)
         POVM_errors = {}
         measurement_error = 0. 
         for outcome, POVM in ideal_POVMs.items():
@@ -1566,23 +1558,25 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             POVM_errors[outcome] = np.sqrt(np.sum((ideal_POVM - modeled_POVM)**2)) 
             measurement_error += POVM_errors[outcome] 
 
-        gst_errors['POVM'] = POVM_errors
+        #gst_errors['POVM'] = POVM_errors
+        ## ECM change in 08/26; error will be one value for POVM rather than per outcome now 
+        gst_errors['POVM'] = sum(POVM_errors.values())
 
         if self.verbose:
             print(f"\n GST error by gate set element: {gst_errors}")
 
         return gst_errors 
 
-    def compute_gate_set_error(self, gst_parameters: Vector, ideal_gate_set: dict, include_SPAM_error: bool=False) -> float:
+    def compute_gate_set_error(self, theta: Vector, ideal_gate_set: dict, include_SPAM_error: bool=False) -> float:
         """ Computes overall error of the gate set tomography parameter estimation by comparing ideal vs. best-fit gate models. 
 
             - takes in an input dictionary "ideal_gate_set" that contains process matrices for each gate in the gate set. 
             - additionally, the ideal_gate_set input contains the ideal prep state and ideal POVM 
 
         """ 
-        if self.solver_result is None:
-            self.solve_for_gate_parameters()
-
+ #        if self.solver_result is None:
+ #            self.solve_for_gate_parameters()
+ #
 
         internal_ideal_gate_set = {} 
         for key in ideal_gate_set.keys():
@@ -1597,7 +1591,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             else:
                 internal_ideal_gate_set[key] = ideal_gate_set[key] 
 
-        gate_set_errors = self.compute_gate_set_error_by_element(gst_parameters, internal_ideal_gate_set)
+        gate_set_errors = self.compute_gate_set_error_by_element(theta, internal_ideal_gate_set)
 
         # Estimate process fidelity for each gate 
         gst_error = 0.
@@ -1611,6 +1605,65 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             return gst_error 
 
 
+    def compute_average_gate_set_properties(self, N_repetitions: int, theta_true: Vector, N_shots: int):
+        """ Performs Monte Carlo sampling of the true gate set and then fits each gate set sample with MLE. 
+            This enables computing gate set parameters and errors averaged over realizations of the true gate set """  
+
+        # Confirm that this is the true theta:
+
+#         test = self.compute_gate_set_error_by_element(theta_true, self.ideal_gate_set, error_metric = 'frobenius norm')
+#         print(f"\nTesting: {test}")
+#         sys.exit(0)
+        circuit_probabilities = []
+        # Copy the original circuits 
+        gst_circuits = self.parsed_circuits.copy()        
+
+        # For each circuit, compute the true probability
+        for circ in self.parsed_circuits:
+            p = self._predict_probabilities(circ, theta_true)
+            p_vals = [p[o] for o in self.outcome_labels]
+            circuit_probabilities.append(p_vals)
+            #counts = np.random.multinomial(N_shots, p_vals)
+            #circ.measurement_data = CircuitData.from_counts(dict(zip(outcomes, counts)))
+
+        best_theta_samples = np.zeros((N_repetitions, len(self.gst_parameters))) 
+        gate_set_errors = []
+        for n in range(N_repetitions):
+            # Sample the true probabilities for each circuit  
+            for circ, (prob_values) in zip(self.parsed_circuits, circuit_probabilities):
+                outcome_counts = np.random.multinomial(N_shots, prob_values) 
+                circ.measurement_data = CircuitData.from_counts(dict(zip(self.outcome_labels, outcome_counts)))
+
+            # For each repetition, perform MLE 
+            #self.solve_for_gate_parameters(parameters_guess = self.parameters_guess, solver = 'MLE') 
+            self.gst_parameters = self.parameters_guess.copy()
+            results = self.solve_for_gate_parameters(parameters_guess = self.parameters_guess.copy(), solver = 'MLE') 
+            best_theta_samples[n, :] = results.x 
+            # Then compute the gate set errors: 
+            gate_set_errors.append(self.compute_gate_set_error_by_element(results.x, self.ideal_gate_set, 'frobenius norm')) 
+
+        # Restore original parsed circuits from user 
+        self.parsed_circuits = gst_circuits
+
+        theta_avg = np.mean(best_theta_samples, axis=0)
+        theta_stddev = np.std(best_theta_samples, axis=0)
+
+        # Compute average gate set error 
+        avg_gate_set_error = {}
+        gate_set_error_std_deviations = {}
+
+        for model in gate_set_errors[0].keys():
+            errors = np.zeros(N_repetitions)    
+            #std_devs = np.zeros(N_repetitions)    
+            for i, err_dict in enumerate(gate_set_errors):
+                errors[i] = err_dict[model] 
+            avg_gate_set_error[model] = np.mean(errors)
+            gate_set_error_std_deviations[model] = np.std(errors, axis=0)/np.sqrt(N_repetitions) # TODO: check axis=0
+
+        return theta_avg, theta_stddev, avg_gate_set_error, gate_set_error_std_deviations 
+
+
+
     #def estimate_parameter_uncertainties(self, theta: Vector | None=None, method: str='bootstrap') -> Vector:
     def bootstrapping_analysis(self, theta: Vector | None=None,  N_bootstrap: int=50):
         """ Computes uncertainties of each parameter from the Hessian of the log-likelihood at the MLE solution."""
@@ -1622,7 +1675,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         else:
             self.gst_parameters = theta
 
-        uncertainties = np.zeros_like(theta)
+        uncertainties = np.zeros_like(self.gst_parameters)
         uncertainties, means, bootstrapped_thetas = self.bootstrap_parameters(N_bootstrap)
 
         # Return a dictionary containing a dictionary for each model (prep, gate 1, gate 2, etc. , measure) 
@@ -1657,6 +1710,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         mean_results["POVM"] = dict(zip(parameter_names, prep_param_means))
         uncertainty_results["POVM"] = dict(zip(parameter_names, parameter_uncertainties))
 
+        # Compute gate set errors for each bootstrapped sample  
         gate_set_errors = []
         N_bootstrap = bootstrapped_thetas.shape[0]
         for i in range(N_bootstrap):
@@ -1687,16 +1741,16 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 circ.measurement_data = CircuitData.from_counts(dict(zip(outcomes, outcome_counts)))
                 
             # Re-run the MLE analysis to find best fit:
-            self.gst_parameters = theta_best.copy()
+            #self.gst_parameters = theta_best.copy()
             #self.solve_for_gate_parameters(parameters_guess = theta_best.copy(), solver = 'MLE')   # sets self.gst_parameters to optimal  
-            self.solve_for_gate_parameters(parameters_guess = self.parameters_guess, solver = 'MLE')   # sets self.gst_parameters to optimal  
+            self.solve_for_gate_parameters(parameters_guess = self.parameters_guess, solver = 'MLE') 
             bootstrap_thetas[b] = self.gst_parameters
 
         # Restore original data/fit
         self.gst_parameters = theta_best
             
         # Compute uncertainties as standard deviation of the best fits
-        means = np.mean(bootstrap_thetas,axis=0)
+        means = np.mean(bootstrap_thetas, axis=0)
         uncertainties = np.std(bootstrap_thetas, axis=0) 
         return uncertainties, means, bootstrap_thetas
             
