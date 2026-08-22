@@ -1619,6 +1619,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         gst_circuits = self.parsed_circuits.copy()        
 
         # For each circuit, compute the true probability
+        self.cached_theta = None
+        self.process_matrix_cache = None
+        self.likelihood_circuit_cache = {} 
+        self._initialize_likelihood_circuit_cache()
         for circ in self.parsed_circuits:
             p = self._predict_probabilities(circ, theta_true)
             p_vals = [p[o] for o in self.outcome_labels]
@@ -1629,6 +1633,11 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         best_theta_samples = np.zeros((N_repetitions, len(self.gst_parameters))) 
         gate_set_errors = []
         for n in range(N_repetitions):
+            self.cached_theta = None
+            self.process_matrix_cache = None
+            self.likelihood_circuit_cache = {} 
+            self._initialize_likelihood_circuit_cache()
+
             # Sample the true probabilities for each circuit  
             for circ, (prob_values) in zip(self.parsed_circuits, circuit_probabilities):
                 outcome_counts = np.random.multinomial(N_shots, prob_values) 

@@ -382,6 +382,21 @@ class GSTCircuitPlanner:
             sensitivities[tuple(circ.expanded_gates)] = self.compute_circuit_sensitivity(circ, circuit_parameters, initial_state, outcome_operators)
         return sensitivities
 
+
+    def compute_design_fisher_information(self, gst_circuits: list[ParsedCircuit], circuit_parameters, initial_state: State, outcome_operators: list[Operator]):
+        """ Computes sensitivites of each circuit to gate model parameters """ 
+        fisher_information = {}
+        # remove do nothing circuit 
+        do_nothing_circuit = ParsedCircuit.plan([], [], 1, [], self.qubit_labels)
+        circuits = gst_circuits.copy()
+        if do_nothing_circuit in circuits:
+            circuits = circuits.remove(do_nothing_circuit) 
+        #for circ in self.gst_circuits:
+        for circ in circuits:
+            fisher_information[tuple(circ.expanded_gates)] = self.compute_circuit_fisher_information(circ, circuit_parameters, initial_state, outcome_operators)
+        return fisher_information 
+
+
     def compute_circuit_sensitivity(self, circuit: ParsedCircuit, circuit_parameters: dict, initial_state: State, outcome_operators: list[Operator]):
         """ Computes sensitivty of a circuit to gate model parameters """ 
         outcomes = circuit.measurement_data.counts
@@ -424,6 +439,46 @@ class GSTCircuitPlanner:
             #return fisher_info
             return prob_gradients
 
+    def compute_circuit_fisher_information(self, circuit: ParsedCircuit, circuit_parameters: dict, initial_state: State, outcome_operators: list[Operator]):
+        """ Computes sensitivty of a circuit to gate model parameters """ 
+        outcomes = circuit.measurement_data.counts
+        N = circuit.measurement_data.total_counts
+
+        ## Get list of unique parameters 
+        if self.gate_models is None:
+            raise ValueError("Gate models must be provided for sensitivity analysis.")
+
+        # Generate ionsim circuit model 
+        ism_gates = []
+        for gate in circuit.expanded_gates:
+            pm_function = self.gate_models[gate]
+            parameters = (inspect.signature(pm_function)).parameters.keys()
+            fxn_name = pm_function.__name__
+            parameters = [fxn_name + "__" + param for param in parameters]
+            values = []
+            for p in parameters:
+                if p in circuit_parameters.keys():
+                    values.append(circuit_parameters[p])                    
+            parameters_values = dict(zip(parameters, values))  
+            gate = Gate.from_process_matrix_function(initial_state.basis, pm_function, parameters_values)
+            ism_gates.append(gate)
+            
+        ism_circuit = Circuit.from_gates(ism_gates)
+        circuit_pm_function = ism_circuit.process_matrix_function 
+
+        if len(outcome_operators) == 1:
+            prob_function = ism_circuit.build_outcome_probabilities_function(initial_state, outcome_operators[0])
+            prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
+            fisher_info = self.compute_fisher_information(prob, prob_gradients, N)
+            return fisher_info
+        else:
+            if len(outcome_operators) == 0:
+                raise IonSimError(f"You must provide at least one outcome operator. Received {len(outcome_operators)}.")
+            probs_function = ism_circuit.build_outcome_probabilities_function(initial_state, outcome_operators)
+            prob, prob_gradients = circuit_pm_function.jacobian(probs_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
+            fisher_info = self.compute_fisher_information(prob, prob_gradients, N)
+            return fisher_info
+
 
     def compute_fisher_information(self, prob, prob_gradients: dict, N: int) -> dict:
         """ returns fisher information matrix from the parameters """ 
@@ -435,7 +490,8 @@ class GSTCircuitPlanner:
  #            print(gradient)
  #            print(type(gradient))
  #            print(np.array(gradient))
-            FI[param] = N*sum([grad**2/p for grad, p in zip(gradient, prob)])
+            FI[param] = N*sum([(grad**2)/p for grad, p in zip(gradient, prob)])
+        print(FI[param])
         return FI 
 
 
