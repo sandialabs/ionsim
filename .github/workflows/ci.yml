@@ -29,12 +29,17 @@ jobs:
       - name: Run unit tests with coverage
         run: |
           coverage run -m unittest
+          coverage html
           coverage xml
 
-      - name: Upload coverage report
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/upload-code-coverage@v1
+      - name: Upload coverage HTML report
+        uses: actions/upload-artifact@v4
         with:
-          file: coverage.xml
-          language: Python
-          label: code-coverage/coverage.py
+          name: coverage-html
+          path: htmlcov/
+
+      - name: Upload coverage XML
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
