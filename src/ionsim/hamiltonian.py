@@ -277,9 +277,9 @@ class Hamiltonian(CompositeOperator):
         """Evolve a wavefunction by solving the time-dependent Schrodinger equation."""
         assert(self.size == len(initial_wavefunction))
         import time
-        from icecream import ic
+        #from icecream import ic
         start = time.perf_counter()
         result = solve_time_evolution_equation(self.hamiltonian_function, initial_wavefunction, duration, time_evals, **kwargs)
         end = time.perf_counter()
-        ic(f'Evolving wavefunction took {end-start} seconds.')
+        #ic(f'Evolving wavefunction took {end-start} seconds.')
         return result

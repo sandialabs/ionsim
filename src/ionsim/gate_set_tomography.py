@@ -160,6 +160,82 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
     def num_parameters(self):
         return len(self.gst_parameters)
 
+    @cached_property
+    def parameter_names(self) -> list[str]:
+        """ Returns parameter names in sorted order that matches internal parameter theta vector """  
+        names = [None] * self.num_gst_parameters
+
+        # Label shared parameters first 
+        if hasattr(self, 'shared_indices'):
+            for shared_parameter, idx_in_model in self.shared_indices.items():        
+                names[idx_in_model] = f"shared:{shared_parameter}" 
+
+        # Labels for each model
+        model_entries = [("prep", self.prep_state_model), ("POVM", self.POVM_effect_models)]                
+        for gate in self.gate_models:
+            model_entries.append((gate, self.gate_models[gate]))
+
+        for model_key, model_fn in model_entries:
+            if isinstance(model_key, ParsedGate):
+                model_label = repr(model_key)
+            else:
+                model_label = str(model_key) 
+
+            # Get parameter names from function signatures 
+            sig = inspect.signature(model_fn)
+            local_names = list(sig.parameters.keys())
+            # Get theta indices from model
+            indices = self.gst_parameter_indices[model_key]
+
+            for local_i, global_i in enumerate(indices):
+                # skip if already labeled 
+                if names[global_i] is not None:
+                    continue
+
+                if local_i < len(local_names):
+                    pname = local_names[local_i]
+                else:
+                    pname = f"param_{local_i}" 
+
+                names[global_i] = f"{model_label}.{pname}"
+
+        for i in range(len(names)):
+            if names[i] is None:
+                names[i] = f"unknown_{i}"
+
+        return names 
+
+
+
+    def build_theta_from_dict(self, param_values: dict, default_value: float = 0.) -> Vector:
+        """ Builds a theta vector from a dictionary of parameter names to values """
+        # Initialize theta vector 
+        theta = np.full(self.num_gst_parameters, default_value)
+
+        names = self.parameter_names
+
+        # Flatten nested dictionaries:
+        flat_values = {}
+        for key, val in param_values.items():
+            if isinstance(val, dict):
+                for param_name, param_val in val.items():
+                    flat_values[f"{key}.{param_name}"] = param_val
+            else:
+                flat_values[key] = val
+
+
+        # Assign values by matching names 
+        unmatched = set(flat_values.keys()) 
+        for i, name in enumerate(names):
+            if name in flat_values:
+                theta[i] = flat_values[name]
+                unmatched.discard(name)
+
+        if unmatched:
+            available = '\n '.join(sorted(names))
+            raise ValueError(f"Unknown parameter names: {unmatched}.\n Available parameters:\n {available}")
+
+        return theta
 
     def _parse_parameter_bounds(self, parameter_bounds) -> list[tuple[float | None, float | None]] | None:
         # Parse the documented dictionary form to the flat list of
@@ -221,50 +297,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self.parameter_bounds = parsed_bounds
 
 
-    #==================================
- #            # TODO: This needs to be cleaned up. Should the user specify gate names vs. gate objects in a dictionary of parameter bounds   
- #            available_gates = [g for g in self.gate_models.keys()]
- #            available_gate_names = [g.name for g in available_gates]
- #            if name not in available_gates and name not in available_gate_names: 
- #                raise ValueError(f"Unknown model in parameter bounds: {name!r}. Available gate models: {list(self.gate_models.keys())}")
- #            #if name not in self.gate_models and name not in self.POVM_effect_models.keys():
- #            #    raise ValueError(f"Unknown model in parameter bounds: {name!r}.")
- #
- #            for parameter_name, param_bounds in bound_info.items():
- #                if not isinstance(param_bounds, (list, tuple)) or len(param_bounds) != 2:
- #                    raise ValueError(
- #                        f"Bounds for model {name}.{parameter_name} must be "
- #                        "a (lower, upper) pair."
- #                    )
- #                #if name not in self.POVM_effect_models.keys():
- #                parameter_index = self.get_parameter_index_by_name_in_gate(name, parameter_name)
- #                #parameter_index = self.get_parameter_index_by_name_in_effect_model(parameter_name)
- #                #parameter_index = self.get_parameter_index_by_name_in_effect_model(name, parameter_name)
- #                parsed_bounds[parameter_index] = tuple(param_bounds)
-
- #        if "prep" in list(parameter_bounds.keys()):
- #            for parameter_name, bounds in parameter_bounds["prep"].items():
- #                if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
- #                    raise ValueError(
- #                        f"Bounds for {name}.{parameter_name} must be "
- #                        "a (lower, upper) pair."
- #                    )
- #                parameter_index = self.get_parameter_index_by_name_in_prep_model(parameter_name)
- #                parsed_bounds[parameter_index] = tuple(bounds)
- #
- #        if "POVM" in list(parameter_bounds.keys()):
- #            for parameter_name, bounds in parameter_bounds["POVM"].items():
- #                if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
- #                    raise ValueError(
- #                        f"Bounds for {name}.{parameter_name} must be "
- #                        "a (lower, upper) pair."
- #                    )
- #                parameter_index = self.get_parameter_index_by_name_in_effect_model(parameter_name)
- #                parsed_bounds[parameter_index] = tuple(bounds)
-
-        #self.parameter_bounds = parsed_bounds
-
-
     def _build_parameter_organization(self) -> tuple[dict[str, slice], int]:
         """ Builds and organizes the independent parameters for GST. This organizes parameters based on:
             1) Prep state 
@@ -274,6 +306,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - Parameter indexing are organized in a dictionary for easy retrieval, e.g. {'prep state' : prep_state_parameter_indexing (as slice)} 
             - Returns the layout dictionary and the total number of parameters 
         """
+        # TODO: Delete this 
 
         # Set up dictionary with appropriate number of independent parameters 
         parameter_indices = {}
@@ -1030,37 +1063,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - Returns a result object; parameter results are accessed as a vector via results.x  
 
         """
-        # Specify initial guess and handle different input formats 
- #        if parameters_guess is None:
- #            # If no initial guess is specified, we use linear GST to generate a good guess for the gate set parameters  
- #            self.solver_result = self.run_linear_gst(self.ideal_gate_set)
- #            theta_0 = self.parameters_from_lgst_results()
- #            self.solver_result = None
- #        else:
- #            if isinstance(parameters_guess, dict):
- #                # Gate model dictionary expects ParsedGate keys 
- #                for key in parameters_guess.keys():  
- #                    gate = self.user_key_gate_map[key]
- #                    index_of_gate_in_GS = list(self.gate_models.keys()).index(gate)
- #                    for parameter, initial_value in parameters_guess[key].items():
- #                        param_indx = self.get_parameter_index_by_name_in_gate(gate, parameter)
- #                        self.gst_parameters[param_indx] = initial_value 
- #                theta_0 = self.gst_parameters
- #                self.parameters_guess = theta_0
- #            elif isinstance(parameters_guess, list) or isinstance(parameters_guess, np.ndarray):
- #                theta_0 = parameters_guess
- #                self.parameters_guess = theta_0
- #            else:
- #                raise ValueError(f"Parameter vector initial guess should be a list/array/Vector or nested dictionary. Received: {type(parameters_guess)}")
         self.parse_parameter_guess_input(parameters_guess)
-        #theta_0 = self.gst_parameters 
-
-        #theta_0 = self.parameters_guess
-
-        #print(len(theta_0))
-        #print(len(self.parameters_bounds))
-        #assert len(theta_0) == len(self.parameters_bounds)
-
         if self.verbose: 
             print(f"\n -- Solver for gate parameters in GST using {solver} --- ")
             print(f"Initial parameters: {self.parameters_guess}")
@@ -1296,7 +1299,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # TODO: potentially seed from independent fits with average parameter values? see if this is necessary  
         #theta_0 = self._seed_from_independent_fits(theta_0)
 
-        print(self.parameter_bounds)        
         result = opt.minimize(cost, theta_0, method='Nelder-Mead', bounds = self.parameter_bounds)
         return result.x 
 
@@ -1595,15 +1597,16 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         gate_set_errors = self.compute_gate_set_error_by_element(theta, internal_ideal_gate_set)
 
         # Estimate process fidelity for each gate 
-        gst_error = 0.
-        gst_error = sum([gate_set_errors[gate] for gate in self.gate_set]) / len(self.gate_set)
-
-        if include_SPAM_error:
-            POVM_errors = np.array(list(gate_set_errors['POVM'].values())).real
-            SPAM_error = gate_set_errors['prep'] + sum(POVM_errors)
-            return gst_error + SPAM_error 
-        else:
-            return gst_error 
+        return self.average_model_errors(gate_set_errors, include_SPAM_error)
+ #        gst_error = 0.
+ #        gst_error = sum([gate_set_errors[gate] for gate in self.gate_set]) / len(self.gate_set)
+ #
+ #        if include_SPAM_error:
+ #            POVM_errors = np.array(list(gate_set_errors['POVM'].values())).real
+ #            SPAM_error = gate_set_errors['prep'] + sum(POVM_errors)
+ #            return gst_error + SPAM_error 
+ #        else:
+ #            return gst_error 
 
 
     def compute_average_gate_set_properties(self, N_repetitions: int, theta_true: Vector, N_shots: int):
@@ -1672,6 +1675,30 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         return theta_avg, theta_stddev, avg_gate_set_error, gate_set_error_std_deviations 
 
+
+    def average_model_errors(self, gate_set_error: dict, include_SPAM_error: bool=True) -> float: 
+        """ Average over gate model errors and include SPAM model errors """  
+        gst_error = 0.
+        gst_error = sum([gate_set_error[gate] for gate in self.gate_set]) / len(self.gate_set)
+
+        if include_SPAM_error:
+            #POVM_errors = np.array(list(gate_set_errors['POVM'].values())).real
+            #SPAM_error = gate_set_errors['prep'] + sum(POVM_errors)
+            SPAM_error = gate_set_error['prep'] + gate_set_error["POVM"]
+            return gst_error + SPAM_error 
+        else:
+            return gst_error 
+
+    def propagate_errors(self, gate_set_std_deviations: dict, include_SPAM_error: bool=True) -> float: 
+        """ Propagate errors to get an overall gate set standard derviation for the gate set error """   
+        gst_error = 0.
+        gst_error = sum([gate_set_std_deviations[gate]**2 for gate in self.gate_set]) / (len(self.gate_set)**2)
+        if include_SPAM_error:
+            #POVM_errors = np.array(list(gate_set_std_deviations['POVM'])).real
+            SPAM_error = gate_set_std_deviations['prep'] + gate_set_std_deviations["POVM"]
+            #SPAM_error = gate_set_std_deviations['prep'] + sum(POVM_errors)
+            gst_error += SPAM_error**2 
+        return np.sqrt(gst_error)
 
 
     #def estimate_parameter_uncertainties(self, theta: Vector | None=None, method: str='bootstrap') -> Vector:

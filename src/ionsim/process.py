@@ -133,8 +133,8 @@ class Gate(Process):
 
         import time
         final_states = []
-        ic(len(reduced_basis.vectors))
-        ic(reduced_basis.vectors)
+        #ic(len(reduced_basis.vectors))
+        #ic(reduced_basis.vectors)
         for vector in reduced_basis.vectors:
             if dofs_to_trace_out is None:
                 initial_state = State.from_wavefunction(basis, vector)
@@ -142,7 +142,7 @@ class Gate(Process):
                 initial_state = State.from_wavefunction_with_new_component(
                     basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
                 )
-            ic(len(initial_state.wavefunction))
+            #ic(len(initial_state.wavefunction))
             # start = time.perf_counter()
             final_states.append(
                 initial_state.propagate_using_schrodinger_equation(
