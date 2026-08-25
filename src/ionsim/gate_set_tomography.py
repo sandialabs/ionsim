@@ -1281,21 +1281,22 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # Prep 
             prep_params = self.get_parameters(theta, "prep")
             rho = self.prep_state_model(*prep_params)
-            total += np.linalg.norm(rho - lgst_prep)**2
+            total_cost += np.linalg.norm(rho - lgst_prep)**2
                 
             # POVM 
             POVM_params = self.get_parameters(theta, "POVM")
             modeled_effects = self.POVM_effect_models(*POVM_params)
             for outcome, effect in lgst_effects.items():
                 assert outcome in modeled_effects
-                total += np.linalg.norm(modeled_effects[outcome] - effect)**2
+                total_cost += np.linalg.norm(modeled_effects[outcome] - effect)**2
                 #if outcome in modeled_effects:
-            return total.real
+            return total_cost.real
             
         theta_0 = self.gst_parameters.copy()
         # TODO: potentially seed from independent fits with average parameter values? see if this is necessary  
         #theta_0 = self._seed_from_independent_fits(theta_0)
-        
+
+        print(self.parameter_bounds)        
         result = opt.minimize(cost, theta_0, method='Nelder-Mead', bounds = self.parameter_bounds)
         return result.x 
 

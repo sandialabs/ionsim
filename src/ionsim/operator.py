@@ -130,6 +130,9 @@ class Operator(ABC):
         nonzero_diagonal = any(rows == cols)
         nonzero_offdiagonal = not all(rows == cols) 
         # Check that input static_matrix operator is purely off-diagonal
+ #        has_nan = np.any(np.isnan(static_matrix))
+ #        if has_nan:
+ #            raise ValueError(f"Static matrix input has NAN values, received {static_matrix}.")
         assert not nonzero_diagonal, 'Error: Matrix input should be purely off-diagonal to correspond with oscillation rate input. Dense matrix input with oscillation rate is ambiguous.'
         
         rate = csr_matrix(([oscillation_rate for _ in rows], (rows, cols)), shape=static_coupling_matrix.shape)
