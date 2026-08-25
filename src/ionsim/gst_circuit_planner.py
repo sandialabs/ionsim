@@ -485,13 +485,15 @@ class GSTCircuitPlanner:
         FI = {}
         #print(prob)         
         #print(prob_gradients)         
-        for param, gradient in prob_gradients.items():
+        #for param, gradient in prob_gradients.items():
+        for param1, gradient1 in prob_gradients.items():
+            for param2, gradient2 in prob_gradients.items():
  #            print(param)
  #            print(gradient)
  #            print(type(gradient))
  #            print(np.array(gradient))
-            FI[param] = N*sum([(grad**2)/p for grad, p in zip(gradient, prob)])
-        print(FI[param])
+                #FI[param] = N*sum([(grad**2)/p for grad, p in zip(gradient, prob)])
+                FI[(param1, param2)] = N*sum([(grad1*grad2)/p for grad1, grad2, p in zip(gradient1, gradient2, prob)])
         return FI 
 
 
