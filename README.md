@@ -96,7 +96,7 @@ This represents a coherent simulation of a Molmer-Sorenson gate:
 # Go to the ionsim directory
 cd examples/
 
-# "Check out" the branch with gate set tomography analysis capabilities:
+# Run an example Mölmer-Sörensen gate
 python example_simulated_multimode_MS_gate.py
 ```
 
