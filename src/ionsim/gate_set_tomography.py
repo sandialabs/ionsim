@@ -1609,15 +1609,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
  #            return gst_error 
 
 
-    def compute_average_gate_set_properties(self, N_repetitions: int, theta_true: Vector, N_shots: int):
+    def compute_average_gate_set_properties(self, N_repetitions: int, theta_true: Vector, N_shots: int, solver: str='MLE'):
         """ Performs Monte Carlo sampling of the true gate set and then fits each gate set sample with MLE. 
             This enables computing gate set parameters and errors averaged over realizations of the true gate set """  
 
         # Confirm that this is the true theta:
 
-#         test = self.compute_gate_set_error_by_element(theta_true, self.ideal_gate_set, error_metric = 'frobenius norm')
-#         print(f"\nTesting: {test}")
-#         sys.exit(0)
+        #test = self.compute_gate_set_error_by_element(theta_true, self.ideal_gate_set, error_metric = 'frobenius norm')
+        #print(f"\nTesting the 'true' theta vector: {test}")
         circuit_probabilities = []
         # Copy the original circuits 
         gst_circuits = self.parsed_circuits.copy()        
@@ -1647,13 +1646,22 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 outcome_counts = np.random.multinomial(N_shots, prob_values) 
                 circ.measurement_data = CircuitData.from_counts(dict(zip(self.outcome_labels, outcome_counts)))
 
+            self.lgst_results = None   
+            self.solver_result = None 
+            self._index_fiducials() # Reindex and organize fiducial information for linear GST if needed   
+
             # For each repetition, perform MLE 
-            #self.solve_for_gate_parameters(parameters_guess = self.parameters_guess, solver = 'MLE') 
             self.gst_parameters = self.parameters_guess.copy()
-            results = self.solve_for_gate_parameters(parameters_guess = self.parameters_guess.copy(), solver = 'MLE') 
-            best_theta_samples[n, :] = results.x 
+            results = self.solve_for_gate_parameters(parameters_guess = self.parameters_guess.copy(), solver = solver) 
+            if solver == 'linear':
+                best_theta_samples[n, :] = results
+            else:
+                best_theta_samples[n, :] = results.x 
             # Then compute the gate set errors: 
-            gate_set_errors.append(self.compute_gate_set_error_by_element(results.x, self.ideal_gate_set, 'frobenius norm')) 
+            if solver == 'linear':
+                gate_set_errors.append(self.compute_gate_set_error_by_element(results, self.ideal_gate_set, 'frobenius norm')) 
+            else:
+                gate_set_errors.append(self.compute_gate_set_error_by_element(results.x, self.ideal_gate_set, 'frobenius norm')) 
 
         # Restore original parsed circuits from user 
         self.parsed_circuits = gst_circuits
