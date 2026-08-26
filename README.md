@@ -18,10 +18,10 @@ python -m venv myvenv
 # Activate the virtual environment.
 source myvenv/bin/activate
 
-# Install the project and its dependencies in editable mode. This means any changes to
-# the code in this directory will be reflected when running programs in this virtual
-# environment without reinstalling ionsim.
-pip install -e ionsim
+# Install the project, its dependencies, and the dependencies for the tutorials in editable mode.
+# This means any changes to the code in this directory will be reflected when running programs in
+# this virtual environment without reinstalling ionsim.
+pip install -e ionsim[tutorials]
 ```
 
 ## Installation 
@@ -77,9 +77,12 @@ directory called ionsim in the current directory.
 # Clone the repo (the below URL is also available from the "Code" button on the project page in github: https://github.com/sandialabs/ionsim#).
 git clone https://github.com/sandialabs/ionsim.git 
 
-# Install the project and its dependencies in editable mode. This means any changes to
-# the code in this directory will be reflected when running programs in this virtual
-# environment without reinstalling ionsim.
+# Install the project and its dependencies in editable mode, including requirements for the tutorials.
+# This means any changes to the code in this directory will be reflected when running programs in this
+# virtual environment without reinstalling ionsim.
+pip install -e ionsim[tutorials]
+
+# If you do not need the tutorials, use the following command instead.
 pip install -e ionsim
 ```
 
@@ -96,3 +99,18 @@ cd examples/
 # "Check out" the branch with gate set tomography analysis capabilities:
 python example_simulated_multimode_MS_gate.py
 ```
+
+
+### Running Tutorials
+The tutorials are Jupyter notebooks. Make sure ionsim was installed
+with the `ionsim[tutorials]` option as shown above.
+
+```bash
+# Go to the tutorials directory
+cd tutorials/
+
+# Start the notebook. This will open in your browswer after some delay.
+jupyter notebook
+```
+
+We recommend starting with the `Simulated R Gate State Fidelity` tutorial.
