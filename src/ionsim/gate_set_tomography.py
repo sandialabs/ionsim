@@ -1678,7 +1678,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Compute average gate set error 
         avg_gate_set_error = {}
-        gate_set_error_std_deviations = {}
+        gate_set_error_standard_error = {}
 
         for model in gate_set_errors[0].keys():
             errors = np.zeros(N_repetitions)    
@@ -1687,9 +1687,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 errors[i] = err_dict[model] 
             avg_gate_set_error[model] = np.mean(errors)
             #avg_gate_set_error[model] = np.median(errors)
-            gate_set_error_std_deviations[model] = np.std(errors, axis=0)/np.sqrt(N_repetitions) # TODO: check axis=0
+            # Standard error = standard deviation / sqrt(N)
+            gate_set_error_standard_error[model] = np.std(errors, axis=0)/np.sqrt(N_repetitions) 
 
-        return theta_avg, theta_stddev, avg_gate_set_error, gate_set_error_std_deviations 
+        return theta_avg, theta_stddev, avg_gate_set_error, gate_set_error_standard_error 
 
 
     def average_model_errors(self, gate_set_error: dict, include_SPAM_error: bool=True) -> float: 
