@@ -1070,6 +1070,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         if solver == 'MLE':
             # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations. 
+            #solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = self.parameters_guess, method = 'Nelder-Mead', bounds = self.parameter_bounds, **kwargs) 
+            #options = {'ftol' : 1e-15, 'gtol' : 1e-12, 'maxiter' : 10000}
             solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = self.parameters_guess, method = 'L-BFGS-B', bounds = self.parameter_bounds, **kwargs) 
             self.solver_result = solver_result
             self.gst_parameters = solver_result.x
@@ -1619,17 +1621,13 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         #print(f"\nTesting the 'true' theta vector: {test}")
         circuit_probabilities = []
         # Copy the original circuits 
-        gst_circuits = self.parsed_circuits.copy()        
+        original_data = [circ.measurement_data for circ in self.parsed_circuits]
 
         # For each circuit, compute the true probability
-        self.cached_theta = None
-        self.process_matrix_cache = None
-        self.likelihood_circuit_cache = {} 
-        self._initialize_likelihood_circuit_cache()
-        for circ in self.parsed_circuits:
-            p = self._predict_probabilities(circ, theta_true)
-            p_vals = [p[o] for o in self.outcome_labels]
-            circuit_probabilities.append(p_vals)
+ #        self.cached_theta = None
+ #        self.process_matrix_cache = None
+ #        self._likelihood_circuit_cache = {} 
+ #        self._initialize_likelihood_circuit_cache()
             #counts = np.random.multinomial(N_shots, p_vals)
             #circ.measurement_data = CircuitData.from_counts(dict(zip(outcomes, counts)))
 
@@ -1638,12 +1636,16 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for n in range(N_repetitions):
             self.cached_theta = None
             self.process_matrix_cache = None
-            self.likelihood_circuit_cache = {} 
+            self._likelihood_circuit_cache = {} 
             self._initialize_likelihood_circuit_cache()
 
             # Sample the true probabilities for each circuit  
-            for circ, (prob_values) in zip(self.parsed_circuits, circuit_probabilities):
-                outcome_counts = np.random.multinomial(N_shots, prob_values) 
+            for circ in self.parsed_circuits:
+                p = self._predict_probabilities(circ, theta_true)
+                p_vals = [p[o] for o in self.outcome_labels]
+                #circuit_probabilities.append(p_vals)
+                #for circ, (prob_values) in zip(self.parsed_circuits, circuit_probabilities):
+                outcome_counts = np.random.multinomial(N_shots, p_vals) 
                 circ.measurement_data = CircuitData.from_counts(dict(zip(self.outcome_labels, outcome_counts)))
 
             self.lgst_results = None   
@@ -1652,7 +1654,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
             # For each repetition, perform MLE 
             self.gst_parameters = self.parameters_guess.copy()
-            results = self.solve_for_gate_parameters(parameters_guess = self.parameters_guess.copy(), solver = solver) 
+            options = {'ftol' : 1e-15, 'gtol' : 1e-12, 'maxiter' : 10000}
+            results = self.solve_for_gate_parameters(parameters_guess = self.parameters_guess.copy(), solver = solver, options = options) 
             if solver == 'linear':
                 best_theta_samples[n, :] = results
             else:
@@ -1663,9 +1666,13 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             else:
                 gate_set_errors.append(self.compute_gate_set_error_by_element(results.x, self.ideal_gate_set, 'frobenius norm')) 
 
-        # Restore original parsed circuits from user 
-        self.parsed_circuits = gst_circuits
+            print(f"Finished repetition {n} with parameters: {best_theta_samples[n, :]}.")
 
+        # Restore original parsed circuits from user 
+        for circ, data in zip(self.parsed_circuits, original_data):
+            circ.measurement_data = data
+
+        #theta_avg = np.mean(best_theta_samples, axis=0)
         theta_avg = np.mean(best_theta_samples, axis=0)
         theta_stddev = np.std(best_theta_samples, axis=0)
 
@@ -1679,6 +1686,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             for i, err_dict in enumerate(gate_set_errors):
                 errors[i] = err_dict[model] 
             avg_gate_set_error[model] = np.mean(errors)
+            #avg_gate_set_error[model] = np.median(errors)
             gate_set_error_std_deviations[model] = np.std(errors, axis=0)/np.sqrt(N_repetitions) # TODO: check axis=0
 
         return theta_avg, theta_stddev, avg_gate_set_error, gate_set_error_std_deviations 
