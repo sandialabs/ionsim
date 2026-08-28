@@ -118,7 +118,6 @@ class GateInterpolant():
         else:
             results_dict['gate_data'] = self.computed_gate_data_as_array
         io.write_results_to_file(filename, results_dict, attributes)
-        return 0
 
     @classmethod
     def from_file(cls, filename: str, basis: StandardBasis): 
