@@ -91,7 +91,7 @@ def main():
         + detuning
     )
     amp_mod = None
-    import_interpolant = False  # option if the interpolant has previously been built  
+    import_interpolant = True  # option if the interpolant has previously been built  
 
     # Define directory where interpolant and output plots will be stored 
     data_directory = Path.home() / "tmp" / "ionsim_examples_data"
@@ -116,7 +116,6 @@ def main():
     if import_interpolant : 
         ic(f" -- Reading R gate data from file {data_filename} --- ")
         # Optional: Write interpolant to a file using gate interpolant class 
-        #R_gate_interpolant.write_to_file(data_filename)
         R_gate_interpolant_v2 = sm.GateInterpolant.from_file(data_filename, basis)
         interpolated_R = R_gate_interpolant_v2.interpolated_gate_function
 
@@ -153,7 +152,7 @@ def main():
             'dy_name': dy_name,
         }
         ic(f" -- Writing R gate data to file {data_filename} --- ")
-        R_gate_interpolant.write_to_file(data_filename, attributes)
+        R_gate_interpolant.write_to_file(data_filename, attributes, 'w')
 
     dxs2 = np.linspace(dxs[0], dxs[-1], (len(dxs)-1)*2 + 1)
     # We have interpolated the R gate over a two-dimensional grid. 

@@ -232,7 +232,7 @@ def main():
 
         # Set up a dictionary of results and write to an hdf5 file  
         results_dictionary = {'dx' : dxs, 'dy': dys, 'relative_error': F_data}
-        sm.io.write_results_to_file(data_filename, results_dictionary, attributes)
+        sm.io.write_results_to_file(data_filename, results_dictionary, 'w', attributes)
                 
     # Step 2: Use the grid of gates to interpolate. 
     if compute_interpolated_gate:

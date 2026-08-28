@@ -110,14 +110,14 @@ class GateInterpolant():
             function_output.append(function(gate))
         return function_output
 
-    def write_to_file(self, filename: str, attributes: dict=None):
+    def write_to_file(self, filename: str, attributes: dict=None, mode: str='w'):
         """ Function to write Gate Interpolant class data to an hd5f file """
         results_dict = {**self.grid_axes}
         if self.gate_name:
             results_dict[self.gate_name + '_gate_data'] = self.computed_gate_data_as_array
         else:
             results_dict['gate_data'] = self.computed_gate_data_as_array
-        io.write_results_to_file(filename, results_dict, attributes)
+        io.write_results_to_file(filename, results_dict, mode, attributes)
 
     @classmethod
     def from_file(cls, filename: str, basis: StandardBasis): 
