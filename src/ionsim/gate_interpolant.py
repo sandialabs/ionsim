@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Callable
+from typing import Callable, Any
 from dataclasses import dataclass
 from csaps import NdGridCubicSmoothingSpline
 from itertools import product 
@@ -104,7 +104,7 @@ class GateInterpolant():
 
         return cls(grid_axes, gate_name, grid, gate_basis, gates_on_grid)
 
-    def evaluate_function_on_grid(self, function: Callable[Gate]) -> list:
+    def evaluate_function_on_grid(self, function: Callable[Gate, Any]) -> list:
         """ Evaluates a function of the gate (e.g. gate residual) for every gate in the grid, corresponding to each element of the returned list. """ 
         function_output = []
         for gate in self.computed_gates: 
