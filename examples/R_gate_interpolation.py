@@ -10,25 +10,22 @@ from pathlib import Path
 import numpy as np
 from scipy.sparse import kron as skron
 from icecream import ic
+import time
+from matplotlib import pyplot as plt
 
 import ionsim as sm
-sparse = False
-modulate_amplitude = False
-num_spins = 1
-
-# Create a basis of 1 qubit: 
-spins = [
-    sm.AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-    for _ in range(num_spins)
-]
-basis = sm.StandardBasis([*spins])
-target_spins = [spins[0]]
-
+    
+# R-gate helper functions 
 # Basic R hamiltonian function: 
-def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
+def R_hamiltonian(basis, phi, rabi_rate, omega, target_spins, sparse=False, mod=None):
+    """ Returns an IonSim Hamiltonian for the R(theta, phi) gate.
 
-    phase = phi # gate phase 
-    prefactor = np.exp(1j*phase) * rabi_rate/2  
+        - theta is achieved by dynamic evolution of this Hamiltonian with the specified Rabi rate 
+        - phi is the gate phase that sets the spin rotation axis (phi = 0 <==> Rx gate)
+        - omega is the driving frequency in rad/s  
+        - target_spins is a list of IonSim degrees of freedom corresponding to driven qubits   
+     """ 
+    prefactor = np.exp(1j*phi) * rabi_rate/2  
 
     raise_target_spins = [basis.enlarge_matrix(sm.Pauli.plus, [spin]) for spin in target_spins]
 
@@ -40,51 +37,60 @@ def R_hamiltonian(basis, phi, rabi_rate, omega, sparse=False, mod=None):
     interaction_frame_energies = [-state.energy for state in basis.states] # implement arbitrary hamiltonian (with time-dependence? need an adiabatic intertwiner)
     return sm.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
 
-# Fix the rabi rate and detuning 
-rabi_rate = 100e3 * 2*np.pi # rad./s
-detuning = 0
+def simulated_R(basis, phi, theta, omega, domega, rabi_rate, target_spins, sparse=False, mod=None):
+    """ Builds R(phi, theta) Hamiltonian for a frequency change omega + domega, returns gate """ 
+    tau = abs(theta)/rabi_rate
+    hamiltonian = R_hamiltonian(basis, phi, rabi_rate, omega + domega, target_spins, sparse, mod)
+    start = time.perf_counter()
+    ic(hamiltonian.hamiltonian_function(0))
+    end = time.perf_counter()
+    ic(f'Building Hamiltonian took {end - start} s.')
+    return sm.Gate.from_hamiltonian(basis, hamiltonian, tau)
 
-omega = (
-    + target_spins[0].energy_levels[1].energy - target_spins[0].energy_levels[0].energy
-    + detuning
-)
+def R(basis, phi, theta, domega, half_box_width, omega, rabi_rate, target_spins, sparse, mod):
+    """ Builds a process matrix function, then a gate by adding optional noise to it """ 
+    def process_matrix_function(domega):
+        gate = simulated_R(basis, phi, theta, omega, domega, rabi_rate, target_spins, sparse, mod) # builds Hamiltonian and returns gate 
+        return gate.process_matrix
+    if half_box_width == 0:
+        omega_noise = None
+    else:
+        domegas = np.linspace(-half_box_width, half_box_width, 21)
+        omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
+    return sm.Gate.from_process_matrix_function(
+            basis, process_matrix_function, {'domega': domega}, omega_noise,
+        )
 
-amp_mod = None
+def ideal_R(basis, phi, theta, target_spins):
+    return sm.Gate.from_unitary(basis, sm.Unitary.R(phi, theta), target_spins)
+
+def process_fidelity(basis, phi, theta, dx, dy, target_spins):
+    return R(basis, phi, theta, dx, dy, rabi_rate, target_spins).compute_process_fidelity(ideal_R(phi, theta).process_matrix)
+
 
 def main():
-    import time
-    from matplotlib import pyplot as plt
 
-    # R-gate helper functions 
-    def simulated_R(phi, theta, domega):
-        """ Builds R(phi, theta) Hamiltonian for a frequency change omega + domega, returns gate """ 
-        tau = abs(theta)/rabi_rate
-        hamiltonian = R_hamiltonian(basis, phi, rabi_rate, omega + domega, sparse=sparse, mod=amp_mod)
-        start = time.perf_counter()
-        ic(hamiltonian.hamiltonian_function(0))
-        end = time.perf_counter()
-        ic(f'Building Hamiltonian took {end - start} s.')
-        return sm.Gate.from_hamiltonian(basis, hamiltonian, tau)
+    sparse = False
+    modulate_amplitude = False
+    num_spins = 1
+    
+    # Create a basis of 1 qubit: 
+    spins = [
+        sm.AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        for _ in range(num_spins)
+    ]
+    basis = sm.StandardBasis([*spins])
+    target_spins = [spins[0]]
 
-    def R(phi, theta, domega, half_box_width):
-        """ Builds a process matrix function, then a gate by adding optional noise to it """ 
-        def process_matrix_function(domega):
-            gate = simulated_R(phi, theta, domega) # builds Hamiltonian and returns gate 
-            return gate.process_matrix
-        if half_box_width == 0:
-            omega_noise = None
-        else:
-            domegas = np.linspace(-half_box_width, half_box_width, 21)
-            omega_noise = sm.Noise.from_named_pdf('domega', 'box', {'half_width': half_box_width}, domegas)
-        return sm.Gate.from_process_matrix_function(
-                basis, process_matrix_function, {'domega': domega}, omega_noise,
-            )
-
-    def ideal_R(phi, theta):
-        return sm.Gate.from_unitary(basis, sm.Unitary.R(phi, theta), target_spins)
-
-    def process_fidelity(phi, theta, dx, dy):
-        return R(phi, theta, dx, dy).compute_process_fidelity(ideal_R(phi, theta).process_matrix)
+    # Fix the rabi rate and detuning 
+    rabi_rate = 100e3 * 2*np.pi # rad./s
+    detuning = 0
+    
+    omega = (
+        + target_spins[0].energy_levels[1].energy - target_spins[0].energy_levels[0].energy
+        + detuning
+    )
+    amp_mod = None
 
     compute_interpolated_gate = True
     test_IO = True
@@ -123,7 +129,7 @@ def main():
             def R_function(domega, half_box_width):
                 """ Gate function of the interpolation parameters; returns a Gate object """ 
                 # domega and half_box_width are the interpolant parameters 
-                return R(phi, theta, domega, half_box_width)
+                return R(basis, phi, theta, domega, half_box_width, omega, rabi_rate, target_spins, sparse, amp_mod)
     
             # 1. Construct the gate interpolant class instance 
             ic("Building gate interpolant using gate function")
@@ -145,15 +151,15 @@ def main():
         dy = dys[-1]
         ms_gates = []
         for dx in dxs:
-            ms_gates.append(R(phi, theta, dx, dy))
+            ms_gates.append(R(basis, phi, theta, dx, dy, omega, rabi_rate, target_spins, sparse, amp_mod))
         ms_gates2 = []
         for dx in dxs2:
-            ms_gates2.append(R(phi, theta, dx, dy))
-        fidelities = [gate.compute_process_fidelity(ideal_R(phi, theta).process_matrix) for gate in ms_gates]
-        fidelities2 = [gate.compute_process_fidelity(ideal_R(phi, theta).process_matrix) for gate in ms_gates2]
+            ms_gates2.append(R(basis, phi, theta, dx, dy, omega, rabi_rate, target_spins, sparse, amp_mod))
+        fidelities = [gate.compute_process_fidelity(ideal_R(basis, phi, theta, target_spins).process_matrix) for gate in ms_gates]
+        fidelities2 = [gate.compute_process_fidelity(ideal_R(basis, phi, theta, target_spins).process_matrix) for gate in ms_gates2]
         approx_fids = [
             interpolated_R(dx, dy).compute_process_fidelity(
-                ideal_R(phi, theta).process_matrix
+                ideal_R(basis, phi, theta, target_spins).process_matrix
             ) for dx in dxs2
         ]
 
@@ -173,15 +179,15 @@ def main():
         dys2 = np.linspace(dys[0], dys[-1], (len(dys)-1)*2 + 1)
         ms_gates = []
         for dy in dys:
-            ms_gates.append(R(phi, theta, dx, dy))
+            ms_gates.append(R(basis, phi, theta, dx, dy, omega, rabi_rate, target_spins, sparse, amp_mod))
         ms_gates2 = []
         for dy in dys2:
-            ms_gates2.append(R(phi, theta, dx, dy))
-        fidelities = [gate.compute_process_fidelity(ideal_R(phi, theta).process_matrix) for gate in ms_gates]
-        fidelities2 = [gate.compute_process_fidelity(ideal_R(phi, theta).process_matrix) for gate in ms_gates2]
+            ms_gates2.append(R(basis, phi, theta, dx, dy, omega, rabi_rate, target_spins, sparse, amp_mod))
+        fidelities = [gate.compute_process_fidelity(ideal_R(basis, phi, theta, target_spins).process_matrix) for gate in ms_gates]
+        fidelities2 = [gate.compute_process_fidelity(ideal_R(basis, phi, theta, target_spins).process_matrix) for gate in ms_gates2]
         approx_fids = [
             interpolated_R(dx, dy).compute_process_fidelity(
-                ideal_R(phi, theta).process_matrix
+                ideal_R(basis, phi, theta, target_spins).process_matrix
             ) for dy in dys2
         ]
 
