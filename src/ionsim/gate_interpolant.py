@@ -104,13 +104,12 @@ class GateInterpolant():
 
         return cls(grid_axes, gate_name, grid, gate_basis, gates_on_grid)
 
-
-    def compute_functional_of_gates(self, gate_property_functional: Callable) -> list:
-        """ Computes a functional of the gate (e.g. gate residual) at every gate in the grid, corresponding to each element of the returned list. """ 
-        functional_output = []
+    def evaluate_function_on_grid(self, function: Callable[Gate]) -> list:
+        """ Evaluates a function of the gate (e.g. gate residual) for every gate in the grid, corresponding to each element of the returned list. """ 
+        function_output = []
         for gate in self.computed_gates: 
-            functional_output.append(gate_property_functional(gate))
-        return functional_output
+            function_output.append(function(gate))
+        return function_output
 
     def write_to_file(self, filename: str, attributes: dict=None):
         """ Function to write Gate Interpolant class data to an hd5f file """

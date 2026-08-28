@@ -211,11 +211,11 @@ def main():
         # Compute gate residuals using inverse of ideal R gate  
         chi_inv = np.linalg.inv(ideal_R(phi, theta).process_matrix)
 
-        # Define a functional of the gate to return the desired property  
-        def relative_err_gate_functional(gate):
+        # Define a function that takes a Gate object and returns a property or derievd quantity of the Gate  
+        def relative_err(gate: sm.Gate):
             return gate.process_matrix.dot(chi_inv) - np.eye(size)
 
-        gate_residual_data = R_gate_interpolant.compute_functional_of_gates(relative_err_gate_functional) 
+        gate_residual_data = R_gate_interpolant.evaluate_function_on_grid(relative_err) 
 
         ic(gate_residual_data)
 
