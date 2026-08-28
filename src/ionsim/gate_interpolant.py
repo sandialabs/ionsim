@@ -5,7 +5,6 @@ from csaps import NdGridCubicSmoothingSpline
 from itertools import product 
 import inspect 
 from functools import cached_property
-import sys
 
 from ionsim.custom_types import Vector, Matrix
 from ionsim.noise import Noise
@@ -45,7 +44,7 @@ class GateInterpolant():
     @staticmethod
     def build_grid(grid_axes: dict[str, list[Vector]]):
         """ Returns the N-dimensional parameter grid as a list of coordinates in the grid. """
-        return list(product(*list(grid_axes.values()))) 
+        return list(product(*grid_axes.values())) 
 
     @property
     def gate_size(self):
@@ -55,7 +54,7 @@ class GateInterpolant():
             assert len(shape) == 2
             assert shape[0] == shape[1]  # should they always be square? 
             return shape[0] 
-        raise IonSimError("Error: There are no gates in this interpolant class instance. Size of gate is unknown.")
+        raise IonSimError("There are no gates in this interpolant class instance. Size of gate is unknown.")
 
     @property
     def computed_gates_process_matrices(self):
@@ -113,9 +112,7 @@ class GateInterpolant():
 
     def write_to_file(self, filename: str, attributes: dict=None):
         """ Function to write Gate Interpolant class data to an hd5f file """
-        # TODO: Figure out how to read/write basis information 
-        results_dict = {}
-        results_dict.update(self.grid_axes) 
+        results_dict = {**self.grid_axes}
         if self.gate_name:
             results_dict[self.gate_name + '_gate_data'] = self.computed_gate_data_as_array
         else:
@@ -132,10 +129,8 @@ class GateInterpolant():
 
         # Parse grid axes from reading 1D arrays; parse gate data from NDArray
         for key, value in results.items():
-            #if not isinstance(value, NDArray) or not isinstance(value, Matrix):
             if not isinstance(value, np.ndarray): 
                 raise ValueError("Data from file should contain a set of 1D arrays for the grid axes and one Vector for the gate data.") 
-            #if isinstance(value, Vector) and len(value.shape) == 1:
             if isinstance(value, np.ndarray) and len(value.shape) == 1:
                 _grid_axes[key] = results[key]
 
@@ -143,7 +138,7 @@ class GateInterpolant():
         if not gate_attribute:
             raise IonSimError("No gate Vector data found in file.")
         elif len(gate_attribute) > 1:
-            raise IonSimError("File should contain 1 gate data of shape (d^2, d^2, *grid_lengths).")
+            raise IonSimError(f"File should contain 1 gate data of shape (d^2, d^2, *grid_lengths), found {gate_attribute}.")
             
         try:
             gate_name = attr_from_file[results.keys()[0]]['gate_name']
@@ -162,9 +157,6 @@ class GateInterpolant():
             assert len(parameter_coord_indices) == len(_grid_axes.keys()) 
 
             # Build the corresponding gate at this parameter coordinate and append 
-#           if sys.version_info >= (3, 10):
-#               gates_on_grid.append( Gate(basis = basis, process_matrix = gate_data[:, :, *parameter_coord_indices]) ) 
-#           else:
             arr_indices = (slice(None), slice(None)) + tuple(parameter_coord_indices)
             gates_on_grid.append( Gate(basis = basis, process_matrix = gate_data[arr_indices]) ) 
 
@@ -222,7 +214,6 @@ class GateInterpolant():
         
     def interpolant_function_from_splines(self, property_interpolant: dict | list[dict, dict], property_name: str) -> Callable:
         """ Returns a property interpolating function of the grid parameters, e.g. F(x,y) for x,y grid parameters""" 
-        args_str = ", ".join(self.parameter_list)
         N_parameters = len(self.parameter_list)
 
         # Build and return a general, dynamic interpolating function 
@@ -260,7 +251,6 @@ class GateInterpolant():
             size = self.gate_size 
             complex_data = False 
             if isinstance(property_interpolant, list) or isinstance(property_interpolant, tuple): 
-                #property_interpolant = list(property_interpolant)
                 complex_data = True
                 function_output = np.empty((size, size), dtype=complex)
             else:
@@ -307,7 +297,6 @@ class GateInterpolant():
         # Build and return a general interpolating function for a Gate object  
         # Retrieve process matrix interpolating function --> should only compute this once. 
         process_matrix_interpolating_function = self.process_matrix_interpolant_function
-        args_str = ", ".join(self.parameter_list)
         N_parameters = len(self.parameter_list)
 
         def _gate_interpolating_function(*args, **kwargs) -> Gate:
