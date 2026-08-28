@@ -140,7 +140,7 @@ class GateInterpolant():
             raise IonSimError(f"File should contain 1 gate data of shape (d^2, d^2, *grid_lengths), found {gate_attribute}.")
             
         try:
-            gate_name = attr_from_file[results.keys()[0]]['gate_name']
+            gate_name = attr_from_file[gate_attribute[0]]['gate_name']
         except:
             gate_name = None
 
