@@ -206,7 +206,7 @@ class GateInterpolant():
 
 
     #### Interpolation methods #### 
-    @cached_property # TODO: decide whether this should be cached or just a property 
+    @cached_property 
     def process_matrix_interpolant_function(self): 
         """ Returns a gate's process matrix interpolating function of the grid parameters, e.g. G(x,y) for x,y grid parameters""" 
         # Extract gate spline information, then build interpolant function from the splines 
@@ -272,7 +272,7 @@ class GateInterpolant():
 
         return Gate(self.basis, process_matrix = process_matrix_interpolating_function(*grid_values)) 
 
-    @cached_property # TODO: decide whether this should be cached or just a property 
+    @cached_property 
     def interpolated_gate_function(self) -> Callable:
         """ Returns a function that returns a Gate object evaluated at grid parameter values. """
         # Build and return a general interpolating function for a Gate object  
@@ -283,40 +283,10 @@ class GateInterpolant():
         def _gate_interpolating_function(*args, **kwargs) -> Gate:
             if len(args) == 1 and not kwargs and isinstance(args[0], (list, tuple, np.ndarray)):
                    args = tuple(args[0])
-            
             sig = inspect.Signature(parameters=[inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD)
                 for name in self.parameter_list] )
-            
             grid_coordinate = sig.bind(*args, **kwargs).arguments
-
- #            # Interpolating function for the gate.  
- #            if args and kwargs:
- #                raise IonSimError("Use positional or keyword arguments, not both.")
- #
- #            # Extract grid coordinate values from args/kwargs  
- #            if args:
- #                if len(args) == 1 and hasattr(args[0], '__len__'):
- #                    # If one argument is passed (representing a list, tuple, array of arguments), convert to list
- #                    values = list(args[0])
- #                else:
- #                    # If several arguments are passed, this should correspond to the parameter values. 
- #                    values = list(args)
- #
- #                if len(values) != N_parameters:
- #                    raise IonSimError(f"Not enough parameters specified for interpolant. Expected {N_parameters}, received {len(values)}.")
- #
- #                grid_coordinate = dict(zip(self.parameter_list, values))
- #            else:
- #                missing_parameters = set(self.parameter_list).difference(set(kwargs.keys()))
- #                extra_parameters = set(kwargs.keys()).difference(set(self.parameter_list)) 
- #                if missing_parameters:
- #                    raise IonSimError(f"Function keyword arguments are missing the followign parameters: {missing_parameters}")
- #                if extra_parameters:
- #                    raise IonSimError(f"Additional parameters specified that are not part of the interpolation parameter list: {extra_parameters}")
- #
- #                grid_coordinate = kwargs               
             grid_coordinate_values = tuple(grid_coordinate[parameter_name] for parameter_name in self.parameter_list) # ensures sorted order of grid coordinate values
-
             gate_output = self.interpolated_gate_from_process_matrix_interpolating_function(process_matrix_interpolating_function, grid_coordinate_values)
             return gate_output 
 
