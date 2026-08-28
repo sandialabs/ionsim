@@ -129,7 +129,7 @@ class GateInterpolant():
         # Parse grid axes from reading 1D arrays; parse gate data from NDArray
         for key, value in results.items():
             if not isinstance(value, np.ndarray): 
-                raise ValueError("Data from file should contain a set of 1D arrays for the grid axes and one Vector for the gate data.") 
+                raise IonSimError("Data from file should contain a set of 1D arrays for the grid axes and one Vector for the gate data.") 
             if isinstance(value, np.ndarray) and len(value.shape) == 1:
                 _grid_axes[key] = results[key]
 
@@ -219,7 +219,7 @@ class GateInterpolant():
         def _interpolating_function(*args, **kwargs):
             # Interpolating function for the property specified in the interpolant.  
             if args and kwargs:
-                raise ValueError("Use positional or keyword arguments, not both.")
+                raise IonSimError("Use positional or keyword arguments, not both.")
 
             if args:
                 if len(args) == 1 and hasattr(args[0], '__len__'):
@@ -230,16 +230,16 @@ class GateInterpolant():
                     values = list(args)
 
                 if len(values) != N_parameters:
-                    raise ValueError(f"Not enough parameters specified for interpolant. Expected {N_parameters}, received {len(values)}.")
+                    raise IonSimError(f"Not enough parameters specified for interpolant. Expected {N_parameters}, received {len(values)}.")
 
                 grid_coordinate = dict(zip(self.parameter_list, values))
             else:
                 missing_parameters = set(self.parameter_list).difference(set(kwargs.keys()))
                 extra_parameters = set(kwargs.keys()).difference(set(self.parameter_list)) 
                 if missing_parameters:
-                    raise ValueError(f"Function keyword arguments are missing the following parameters: {missing_parameters}")
+                    raise IonSimError(f"Function keyword arguments are missing the following parameters: {missing_parameters}")
                 if extra_parameters:
-                    raise ValueError(f"Additional parameters specified that are not part of the interpolation parameter list: {extra_parameters}")
+                    raise IonSimError(f"Additional parameters specified that are not part of the interpolation parameter list: {extra_parameters}")
 
                 grid_coordinate = kwargs               
  
@@ -255,7 +255,7 @@ class GateInterpolant():
             else:
                 function_output = np.empty((size, size), dtype=float)
                 if not isinstance(property_interpolant, dict):
-                    raise ValueError("Pass in a dictionary containing the real-valued interpolant. For complex data, pass in a tuple or list of form [dict, dict].")
+                    raise IonSimError("Pass in a dictionary containing the real-valued interpolant. For complex data, pass in a tuple or list of form [dict, dict].")
 
             # Fill process matrix at the requested parameter coordinate values. 
             # TODO: Can we vectorize this for a list of (dx, dy) coordiantes? 
@@ -286,7 +286,7 @@ class GateInterpolant():
         elif isinstance(parameter_coordinate, dict):
             grid_values = tuple(parameter_coordiante.values())
         else:
-            raise ValueError("Input either a dictionary of grid parameter values or a tuple of the values for interpolation.")
+            raise IonSimError("Input either a dictionary of grid parameter values or a tuple of the values for interpolation.")
 
         return Gate(self.basis, process_matrix = process_matrix_interpolating_function(*grid_values)) 
 
@@ -301,7 +301,7 @@ class GateInterpolant():
         def _gate_interpolating_function(*args, **kwargs) -> Gate:
             # Interpolating function for the gate.  
             if args and kwargs:
-                raise ValueError("Use positional or keyword arguments, not both.")
+                raise IonSimError("Use positional or keyword arguments, not both.")
 
             # Extract grid coordinate values from args/kwargs  
             if args:
@@ -313,16 +313,16 @@ class GateInterpolant():
                     values = list(args)
 
                 if len(values) != N_parameters:
-                    raise ValueError(f"Not enough parameters specified for interpolant. Expected {N_parameters}, received {len(values)}.")
+                    raise IonSimError(f"Not enough parameters specified for interpolant. Expected {N_parameters}, received {len(values)}.")
 
                 grid_coordinate = dict(zip(self.parameter_list, values))
             else:
                 missing_parameters = set(self.parameter_list).difference(set(kwargs.keys()))
                 extra_parameters = set(kwargs.keys()).difference(set(self.parameter_list)) 
                 if missing_parameters:
-                    raise ValueError(f"Function keyword arguments are missing the followign parameters: {missing_parameters}")
+                    raise IonSimError(f"Function keyword arguments are missing the followign parameters: {missing_parameters}")
                 if extra_parameters:
-                    raise ValueError(f"Additional parameters specified that are not part of the interpolation parameter list: {extra_parameters}")
+                    raise IonSimError(f"Additional parameters specified that are not part of the interpolation parameter list: {extra_parameters}")
 
                 grid_coordinate = kwargs               
  
