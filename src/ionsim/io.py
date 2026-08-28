@@ -14,9 +14,6 @@ def write_results_to_file(data_filename: str, results: dict, attributes: dict=No
         for key in results.keys(): 
             write_matrix(datafile, results[key], key, attributes)
 
-    return 0 # successful write 
-
-
 def read_results_from_file(data_filename: str):
     """ Read a set of results from a data file """
     results = {}
