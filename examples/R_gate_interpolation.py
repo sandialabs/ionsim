@@ -9,9 +9,7 @@
 from pathlib import Path
 import numpy as np
 from scipy.sparse import kron as skron
-import h5py
 from icecream import ic
-import sys
 
 import ionsim as sm
 sparse = False
@@ -111,7 +109,7 @@ def main():
         dy_name = 'half_box_width'
 
         if test_IO: 
-            print(f" -- Reading R gate data from file {data_filename} --- ")
+            ic(f" -- Reading R gate data from file {data_filename} --- ")
             # Optional: Write interpolant to a file using gate interpolant class 
             #R_gate_interpolant.write_to_file(data_filename)
             R_gate_interpolant_v2 = sm.GateInterpolant.from_file(data_filename, basis)
@@ -120,7 +118,6 @@ def main():
             grid_axes = R_gate_interpolant_v2.grid_axes
             dxs = grid_axes[dx_name]
             dys = grid_axes[dy_name]
-            #sys.exit(0)
         else:
             # Define a gate function to build the gate interpolant. 
             def R_function(domega, half_box_width):
@@ -129,7 +126,7 @@ def main():
                 return R(phi, theta, domega, half_box_width)
     
             # 1. Construct the gate interpolant class instance 
-            print("Building gate interpolant using gate function")
+            ic("Building gate interpolant using gate function")
             gate_name = 'sqrtX'
             domegas = np.linspace(-50 * 2*np.pi*1e3, 50 * 2*np.pi*1e3, 5) 
             half_box_widths = np.linspace(0, 50 * 2*np.pi*1e3, 3) 

@@ -22,9 +22,7 @@ def read_results_from_file(data_filename: str):
     results = {}
     attributes_from_file = {}
     with h5py.File(data_filename, 'r') as datafile: 
-        # loop over all attributes in the file
-        attributes = list(datafile.keys())
-        for attribute in attributes:
+        for attribute in datafile:
             results[attribute], attributes_from_file[attribute] = read_matrix(datafile, attribute) 
 
     return results, attributes_from_file 

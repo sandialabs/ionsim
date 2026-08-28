@@ -42,7 +42,7 @@ class OperatorElement(ABC):
     # TODO: review this, is this check necessary? 
     def __post_init__(self):
         if np.abs(self.strength) < SMALLEST_ENERGY_SCALE : 
-            raise ValueError(f"Invalid matrix element from small strength: {self.strength}. Element must contain a non-zero strength value.")
+            raise IonSimError(f"Invalid matrix element from small strength: {self.strength}. Element must contain a non-zero strength value.")
 
 
 @dataclass(frozen=True, eq=False)
