@@ -146,8 +146,13 @@ def main():
         interpolated_R = R_gate_interpolant.interpolated_gate_function # returns a Gate object at a grid point 
 
     dxs2 = np.linspace(dxs[0], dxs[-1], (len(dxs)-1)*2 + 1)
-    dy = dys[-1]
+    # We have interpolated the R gate over a two-dimensional grid. 
+    # Let's plot a slice in each direction to observe the interpolation and impact of each parameter on the gate infidelity  
+    dy = dys[-1] # Pick the final half box width value as constant to study impact as a funciton of domega (dx) 
     ms_gates = []
+
+    # Check that the interpolation is consistent / performing well by studying gate fidelity 
+    #   on the grid (dx's) and off-the-grid (dx2): 
     for dx in dxs:
         ms_gates.append(R(basis, phi, theta, dx, dy, omega, rabi_rate, target_spins, sparse, amp_mod))
     ms_gates2 = []
@@ -173,8 +178,11 @@ def main():
     plt.savefig(data_directory / f'infidelity_vs_{dx_name}.pdf', bbox_inches='tight')
     plt.show()
 
-    dx = dxs[-1]
+    # Now studying a slice at constant dx (domega) to observe the interpolation and impact of dy (half box width) on the gate infidelity  
+    dx = dxs[-1] # Pick the final domega value as constant to study impact as a funciton of half box width (dy) 
     dys2 = np.linspace(dys[0], dys[-1], (len(dys)-1)*2 + 1)
+    # Check that the interpolation is consistent / performing well by studying gate fidelity 
+    #   on the grid (dy's) and off-the-grid (dy2): 
     ms_gates = []
     for dy in dys:
         ms_gates.append(R(basis, phi, theta, dx, dy, omega, rabi_rate, target_spins, sparse, amp_mod))
