@@ -116,7 +116,7 @@ def main():
     if import_interpolant : 
         ic(f" -- Reading R gate data from file {data_filename} --- ")
         # Optional: Write interpolant to a file using gate interpolant class 
-        R_gate_interpolant_v2 = sm.GateInterpolant.from_file(data_filename, basis)
+        R_gate_interpolant_v2 = sm.GateInterpolant.from_file_and_basis(data_filename, basis)
         interpolated_R = R_gate_interpolant_v2.interpolated_gate_function
 
         grid_axes = R_gate_interpolant_v2.grid_axes

@@ -120,7 +120,7 @@ class GateInterpolant():
         io.write_results_to_file(filename, results_dict, mode, attributes)
 
     @classmethod
-    def from_file(cls, filename: str, basis: StandardBasis): 
+    def from_file_and_basis(cls, filename: str, basis: StandardBasis): 
         """ Function to read Gate Interpolant class data from an hd5f file and instance the class """
         results, attr_from_file = io.read_results_from_file(filename)
 
