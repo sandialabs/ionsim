@@ -263,14 +263,12 @@ class GateInterpolant():
         return _interpolating_function
 
 
-    def interpolated_gate_from_process_matrix_interpolating_function(self, process_matrix_interpolating_function: Callable, parameter_coordinate: tuple | dict[str, float]):  
+    def interpolated_gate_from_process_matrix_interpolating_function(self, process_matrix_interpolating_function: Callable, parameter_coordinate: tuple):  
         """ Returns the gate evaluated at a grid point off of the grid domain.""" 
         if isinstance(parameter_coordinate, tuple):
             grid_values = parameter_coordinate
-        elif isinstance(parameter_coordinate, dict):
-            grid_values = tuple(parameter_coordiante.values())
         else:
-            raise IonSimError("Input either a dictionary of grid parameter values or a tuple of the values for interpolation.")
+            raise IonSimError("Input grid parameter coordinate as a tuple of the coordinate indices.")
 
         return Gate(self.basis, process_matrix = process_matrix_interpolating_function(*grid_values)) 
 
