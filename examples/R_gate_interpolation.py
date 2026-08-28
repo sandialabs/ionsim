@@ -91,12 +91,14 @@ def main():
         + detuning
     )
     amp_mod = None
-    import_interpolant = True   # option if the interpolant has previously been built  
+    import_interpolant = False  # option if the interpolant has previously been built  
 
+    # Define directory where interpolant and output plots will be stored 
     data_directory = Path.home() / "tmp" / "ionsim_examples_data"
     if not data_directory.exists():
         data_directory.mkdir(parents=True, exist_ok=True)
 
+    # Filename for the interpolant 
     data_filename = data_directory / "test_R.hdf5"
 
     ## R Gate interpolation: 
