@@ -49,7 +49,7 @@ class Process(ABC):
 class Gate(Process):
     """A quantum gate represented in a basis of states."""
     process_matrix_function: Callable | None = None
-    parameters: dict[str, float] = field(default_factory=dict) 
+    parameters: dict[str, float] = field(default_factory=dict)
 
     unitary: Matrix | None = None
 
@@ -381,12 +381,10 @@ class Circuit(Process):
         def scalar_function(circuit_process_matrix):
             return predict_outcome_probability_from_process_matrix(initial_state, circuit_process_matrix, outcome_operator)
 
-        def outcome_probability_function(**kwargs):
-            return scalar_function(self.process_matrix_function(**kwargs)) 
-
-        outcome_probability_function.__signature__ = self.process_matrix_function.__signature__
-        outcome_probability_function.__name__ = "outcome_probability" 
-        outcome_probability_function.__doc__ = "Outcome probability given a circuit acted on an initial state.\n"
+        @wraps(self.process_matrix_function)
+        def outcome_probability(**kwargs):
+            """Outcome probability given a circuit acted on an initial state."""
+            return scalar_function(self.process_matrix_function(**kwargs))
         outcome_probability_function.scalar_function = scalar_function # Needed by jax for gradient / derivative work 
         outcome_probability_function.process_matrix_function = self.process_matrix_function 
         return outcome_probability_function
@@ -394,7 +392,7 @@ class Circuit(Process):
     def build_outcome_probabilities_function(self, initial_state: State, outcome_operators: list[Operator]) -> Callable:
         """ Returns a function that returns a vector of outcome probabilities as a function of circuit model parameters """  
         if self.process_matrix_function is None:
-            return [None for _ in range(len(outcome_operators))] 
+            return [None] * len(outcome_operators)
 
         outcome_matrix = np.vstack([outcome_op.superbra for outcome_op in outcome_operators])
         def vector_function(circuit_process_matrix):
@@ -430,5 +428,4 @@ def predict_outcome_probabilities_from_process_matrix(initial_state: State, proc
     propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
     # Using @ operator facilitates jax compatibility; np.dot does not 
     return (outcome_matrix @ propagated_state.supervector).real  
-    #return (outcome_operator.superbra @ propagated_state.supervector).real  
 
