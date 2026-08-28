@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from csaps import NdGridCubicSmoothingSpline
 from itertools import product 
 import inspect 
+import warnings
 from functools import cached_property
 
 from ionsim.custom_types import Vector, Matrix
@@ -142,6 +143,7 @@ class GateInterpolant():
         try:
             gate_name = attr_from_file[gate_attribute[0]]['gate_name']
         except:
+            warnings.warn(f"No gate name found in {filename}.")
             gate_name = None
 
         # Build grid and extract corresponding gates on the grid  
