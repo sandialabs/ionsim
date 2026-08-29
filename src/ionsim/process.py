@@ -202,7 +202,6 @@ class Gate(Process):
             - optional argument to trace out DOF or project out states. 
             - The gate is built in the reduced or projected basis. 
         """
-        # TODO: Include tracing out DOF functionality 
         if dofs_to_trace_out is not None:
             assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
             assert(len(dofs_to_trace_out) == len(initial_wavefunctions_for_dofs_to_trace_out))
@@ -232,7 +231,6 @@ class Gate(Process):
             # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
             # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 
 
-            # TODO: Include tracing out DOF functionality 
             if dofs_to_trace_out is not None:
                 raise IonSimError(f"Building a gate on a subspace from a Lindbladian on a larger Hilbert space is not yet implemented.")
 
@@ -244,14 +242,6 @@ class Gate(Process):
                     # Necessary to do |vector_p > <vector| to get correct basis ordering after projection  
                     initial_state = State.from_density_matrix(basis,  np.outer(vector_p, vector))
         
-                    # TODO: Include tracing out DOF functionality 
-                    # Time-evolve with Lindbladian, this yields the ij'th column of the process matrix.
-                    #if dofs_to_trace_out is None:
-                    #initial_state = State.from_density_matrix(basis,  np.outer(vector_p, vector))
-                    #else:
-                    #    initial_state = State.from_wavefunction_with_new_component(
-                    #        basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
-                    #    )
                     final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
     
                     # Supervector of final state gives you 1 column of the process matrix  
