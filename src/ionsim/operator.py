@@ -18,7 +18,7 @@ from ionsim.basis import StandardBasis
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.degree_of_freedom import DegreeOfFreedom
 from ionsim.custom_types import Matrix, Vector
-from ionsim.config import SMALLEST_ENERGY_SCALE
+from ionsim.config import SMALLEST_ENERGY_SCALE, NUMERICAL_EQUIVALENCE_THRESHOLD
 
 
 # ------- Contains classes for Operators and Operator Elements -------- 
@@ -108,12 +108,19 @@ class Operator(ABC):
     def static_matrix(self):
         """The sparse-matrix representation of the operator. If purely offdiagonal, the time-dependent phase factor is set equal to one."""
 
-
     @property
     def superbra(self):
         """ Flattened representation of a static operator (often a measurement (POVM)) as a row vector """ 
+        no_oscillation = np.all([coupling.oscillation_rate < NUMERICAL_EQUIVALENCE_THRESHOLD for coupling in self.couplings])
+        if modulation_function is None and no_oscillation: 
+            return self.static_superbra 
+        else:
+            raise NotImplementedError(f"Dynamic superbra calculation not yet implemented.")
+
+    @property
+    def static_superbra(self):
         # Convert d x d effect operator matrix to a d^2 row vector: E --> flatten((E^{dagger}).T) = conj(E).flatten() 
-        return (np.conj(self.static_matrix.toarray())).flatten() # TODO: add warning / fail for non-static operators? 
+        return (np.conj(self.static_matrix.toarray())).flatten() 
 
     @staticmethod
     def _create_sparse_static_coupling_matrix_and_rate_matrix(static_matrix: Matrix, oscillation_rate: float):
