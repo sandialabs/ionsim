@@ -242,7 +242,6 @@ class GateInterpolant():
                     raise IonSimError("Pass in a dictionary containing the real-valued interpolant. For complex data, pass in a tuple or list of form [dict, dict].")
 
             # Fill process matrix at the requested parameter coordinate values. 
-            # TODO: Can we vectorize this for a list of (dx, dy) coordiantes? 
             for i in range(size):
                 for j in range(size):
                     if complex_data:
