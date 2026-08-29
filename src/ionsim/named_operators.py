@@ -10,6 +10,7 @@
 import numpy as np
 
 from icecream import ic
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD 
 
 class Pauli:
 
@@ -113,7 +114,7 @@ class Unitary:
         alpha = np.sqrt(alpha)
         TOL = 1E-10
 
-        if alpha < TOL:
+        if alpha < NUMERICAL_EQUIVALENCE_THRESHOLD:
             return np.eye(2, dtype=complex) 
         
         # Pauli spin vector:  
