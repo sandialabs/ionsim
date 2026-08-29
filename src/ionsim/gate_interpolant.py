@@ -1,11 +1,11 @@
 import numpy as np
-from typing import Callable, Any
+from typing import Callable
 from dataclasses import dataclass
 from csaps import NdGridCubicSmoothingSpline
 from itertools import product 
 import inspect 
-import warnings
 from functools import cached_property
+import sys
 
 from ionsim.custom_types import Vector, Matrix
 from ionsim.noise import Noise
@@ -26,7 +26,7 @@ class GateInterpolant():
 
     grid_axes: dict[str, list[Vector]] 
     gate_name: str | None
-    grid: list[tuple] 
+    grid: list[tuple] #| NDArray 
     basis: StandardBasis | None # gives meaning to process matrix element ordering and required for gates  
     computed_gates: list[Gate] # Representing non-interpolated gates, computed on the parameter grid  
 
@@ -45,7 +45,7 @@ class GateInterpolant():
     @staticmethod
     def build_grid(grid_axes: dict[str, list[Vector]]):
         """ Returns the N-dimensional parameter grid as a list of coordinates in the grid. """
-        return list(product(*grid_axes.values())) 
+        return list(product(*list(grid_axes.values()))) 
 
     @property
     def gate_size(self):
@@ -55,7 +55,7 @@ class GateInterpolant():
             assert len(shape) == 2
             assert shape[0] == shape[1]  # should they always be square? 
             return shape[0] 
-        raise IonSimError("There are no gates in this interpolant class instance. Size of gate is unknown.")
+        raise IonSimError("Error: There are no gates in this interpolant class instance. Size of gate is unknown.")
 
     @property
     def computed_gates_process_matrices(self):
@@ -104,24 +104,49 @@ class GateInterpolant():
 
         return cls(grid_axes, gate_name, grid, gate_basis, gates_on_grid)
 
-    def evaluate_function_on_grid(self, function: Callable[Gate, Any]) -> list:
-        """ Evaluates a function of the gate (e.g. gate residual) for every gate in the grid, corresponding to each element of the returned list. """ 
-        function_output = []
-        for gate in self.computed_gates: 
-            function_output.append(function(gate))
-        return function_output
 
-    def write_to_file(self, filename: str, attributes: dict=None, mode: str='w'):
+ #    @classmethod
+ #    def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, gate_duration: float, grid_axes: dict[str, Vector], gate_name: str | None=None):
+ #        """ Build gate interpolant from Schrodinger evolution of a Hamiltonian. 
+ #            - requires a function that returns the hamiltonian using the interpolant grid parameters  
+ #            - requires a fixed duration to set the hamiltonian's time evolution 
+ #            - requires a dictionary of parameters to specify the grid
+ #        """ 
+ #        # TODO: Test/verify this function. 
+ #        # Build a grid and loop over every parameter value and build the gate from the hamiltonian
+ #        grid = cls.build_grid(grid_axes)
+ #
+ #        # For each parameter combination in the parameter grid, compute the gate and process matrix.
+ #        gates_on_grid = []
+ #        for values in grid:
+ #            coordinate = dict(zip(grid_axes.keys(), values)) 
+ #            # TODO: accomodate args for from_hamiltonian() like DOF to trace out, etc. 
+ #            gates_on_grid.append(Gate.from_hamiltonian_function(basis, hamiltonian_function, gate_duration, coordinate)) 
+ #
+ #        return cls(grid_axes, gate_name, grid, basis, gates_on_grid)
+    
+
+    def compute_functional_of_gates(self, gate_property_functional: Callable) -> list:
+        """ Computes a functional of the gate (e.g. gate residual) at every gate in the grid, corresponding to each element of the returned list. """ 
+        functional_output = []
+        for gate in self.computed_gates: 
+            functional_output.append(gate_property_functional(gate))
+        return functional_output
+
+    def write_to_file(self, filename: str, attributes: dict=None):
         """ Function to write Gate Interpolant class data to an hd5f file """
-        results_dict = {**self.grid_axes}
+        # TODO: Figure out how to read/write basis information 
+        results_dict = {}
+        results_dict.update(self.grid_axes) 
         if self.gate_name:
             results_dict[self.gate_name + '_gate_data'] = self.computed_gate_data_as_array
         else:
             results_dict['gate_data'] = self.computed_gate_data_as_array
-        io.write_results_to_file(filename, results_dict, mode, attributes)
+        io.write_results_to_file(filename, results_dict, attributes)
+        return 0
 
     @classmethod
-    def from_file_and_basis(cls, filename: str, basis: StandardBasis): 
+    def from_file(cls, filename: str, basis: StandardBasis): 
         """ Function to read Gate Interpolant class data from an hd5f file and instance the class """
         results, attr_from_file = io.read_results_from_file(filename)
 
@@ -129,8 +154,10 @@ class GateInterpolant():
 
         # Parse grid axes from reading 1D arrays; parse gate data from NDArray
         for key, value in results.items():
+            #if not isinstance(value, NDArray) or not isinstance(value, Matrix):
             if not isinstance(value, np.ndarray): 
-                raise IonSimError("Data from file should contain a set of 1D arrays for the grid axes and one Vector for the gate data.") 
+                raise ValueError("Data from file should contain a set of 1D arrays for the grid axes and one Vector for the gate data.") 
+            #if isinstance(value, Vector) and len(value.shape) == 1:
             if isinstance(value, np.ndarray) and len(value.shape) == 1:
                 _grid_axes[key] = results[key]
 
@@ -138,12 +165,11 @@ class GateInterpolant():
         if not gate_attribute:
             raise IonSimError("No gate Vector data found in file.")
         elif len(gate_attribute) > 1:
-            raise IonSimError(f"File should contain 1 gate data of shape (d^2, d^2, *grid_lengths), found {gate_attribute}.")
+            raise IonSimError("File should contain 1 gate data of shape (d^2, d^2, *grid_lengths).")
             
         try:
-            gate_name = attr_from_file[gate_attribute[0]]['gate_name']
+            gate_name = attr_from_file[results.keys()[0]]['gate_name']
         except:
-            warnings.warn(f"No gate name found in {filename}.")
             gate_name = None
 
         # Build grid and extract corresponding gates on the grid  
@@ -158,6 +184,9 @@ class GateInterpolant():
             assert len(parameter_coord_indices) == len(_grid_axes.keys()) 
 
             # Build the corresponding gate at this parameter coordinate and append 
+#           if sys.version_info >= (3, 10):
+#               gates_on_grid.append( Gate(basis = basis, process_matrix = gate_data[:, :, *parameter_coord_indices]) ) 
+#           else:
             arr_indices = (slice(None), slice(None)) + tuple(parameter_coord_indices)
             gates_on_grid.append( Gate(basis = basis, process_matrix = gate_data[arr_indices]) ) 
 
@@ -206,7 +235,7 @@ class GateInterpolant():
 
 
     #### Interpolation methods #### 
-    @cached_property 
+    @cached_property # TODO: decide whether this should be cached or just a property 
     def process_matrix_interpolant_function(self): 
         """ Returns a gate's process matrix interpolating function of the grid parameters, e.g. G(x,y) for x,y grid parameters""" 
         # Extract gate spline information, then build interpolant function from the splines 
@@ -215,18 +244,37 @@ class GateInterpolant():
         
     def interpolant_function_from_splines(self, property_interpolant: dict | list[dict, dict], property_name: str) -> Callable:
         """ Returns a property interpolating function of the grid parameters, e.g. F(x,y) for x,y grid parameters""" 
+        args_str = ", ".join(self.parameter_list)
         N_parameters = len(self.parameter_list)
 
         # Build and return a general, dynamic interpolating function 
         def _interpolating_function(*args, **kwargs):
-            if len(args) == 1 and not kwargs and isinstance(args[0], (list, tuple, np.ndarray)):
-                   args = tuple(args[0])
-            
-            sig = inspect.Signature(parameters=[inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-                for name in self.parameter_list] )
-            
-            grid_coordinate = sig.bind(*args, **kwargs).arguments
+            # Interpolating function for the property specified in the interpolant.  
+            if args and kwargs:
+                raise ValueError("Use positional or keyword arguments, not both.")
 
+            if args:
+                if len(args) == 1 and hasattr(args[0], '__len__'):
+                    # If one argument is passed (representing a list, tuple, array of arguments), convert to list
+                    values = list(args[0])
+                else:
+                    # If several arguments are passed, this should correspond to the parameter values. 
+                    values = list(args)
+
+                if len(values) != N_parameters:
+                    raise ValueError(f"Not enough parameters specified for interpolant. Expected {N_parameters}, received {len(values)}.")
+
+                grid_coordinate = dict(zip(self.parameter_list, values))
+            else:
+                missing_parameters = set(self.parameter_list).difference(set(kwargs.keys()))
+                extra_parameters = set(kwargs.keys()).difference(set(self.parameter_list)) 
+                if missing_parameters:
+                    raise ValueError(f"Function keyword arguments are missing the following parameters: {missing_parameters}")
+                if extra_parameters:
+                    raise ValueError(f"Additional parameters specified that are not part of the interpolation parameter list: {extra_parameters}")
+
+                grid_coordinate = kwargs               
+ 
             # Convert grid coordinate dictionary to tuple 
             grid_coordinate_values = tuple(grid_coordinate[parameter_name] for parameter_name in self.parameter_list) # ensures sorted order of grid coordinate values
 
@@ -234,14 +282,16 @@ class GateInterpolant():
             size = self.gate_size 
             complex_data = False 
             if isinstance(property_interpolant, list) or isinstance(property_interpolant, tuple): 
+                #property_interpolant = list(property_interpolant)
                 complex_data = True
                 function_output = np.empty((size, size), dtype=complex)
             else:
                 function_output = np.empty((size, size), dtype=float)
                 if not isinstance(property_interpolant, dict):
-                    raise IonSimError("Pass in a dictionary containing the real-valued interpolant. For complex data, pass in a tuple or list of form [dict, dict].")
+                    raise ValueError("Pass in a dictionary containing the real-valued interpolant. For complex data, pass in a tuple or list of form [dict, dict].")
 
             # Fill process matrix at the requested parameter coordinate values. 
+            # TODO: Can we vectorize this for a list of (dx, dy) coordiantes? 
             for i in range(size):
                 for j in range(size):
                     if complex_data:
@@ -262,30 +312,56 @@ class GateInterpolant():
         return _interpolating_function
 
 
-    def interpolated_gate_from_process_matrix_interpolating_function(self, process_matrix_interpolating_function: Callable, parameter_coordinate: tuple):  
+    def interpolated_gate_from_process_matrix_interpolating_function(self, process_matrix_interpolating_function: Callable, parameter_coordinate: tuple | dict[str, float]):  
         """ Returns the gate evaluated at a grid point off of the grid domain.""" 
         if isinstance(parameter_coordinate, tuple):
             grid_values = parameter_coordinate
+        elif isinstance(parameter_coordinate, dict):
+            grid_values = tuple(parameter_coordiante.values())
         else:
-            raise IonSimError("Input grid parameter coordinate as a tuple of the coordinate indices.")
+            raise ValueError("Input either a dictionary of grid parameter values or a tuple of the values for interpolation.")
 
         return Gate(self.basis, process_matrix = process_matrix_interpolating_function(*grid_values)) 
 
-    @cached_property 
+    @cached_property # TODO: decide whether this should be cached or just a property 
     def interpolated_gate_function(self) -> Callable:
         """ Returns a function that returns a Gate object evaluated at grid parameter values. """
         # Build and return a general interpolating function for a Gate object  
         # Retrieve process matrix interpolating function --> should only compute this once. 
         process_matrix_interpolating_function = self.process_matrix_interpolant_function
+        args_str = ", ".join(self.parameter_list)
         N_parameters = len(self.parameter_list)
 
         def _gate_interpolating_function(*args, **kwargs) -> Gate:
-            if len(args) == 1 and not kwargs and isinstance(args[0], (list, tuple, np.ndarray)):
-                   args = tuple(args[0])
-            sig = inspect.Signature(parameters=[inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-                for name in self.parameter_list] )
-            grid_coordinate = sig.bind(*args, **kwargs).arguments
+            # Interpolating function for the gate.  
+            if args and kwargs:
+                raise ValueError("Use positional or keyword arguments, not both.")
+
+            # Extract grid coordinate values from args/kwargs  
+            if args:
+                if len(args) == 1 and hasattr(args[0], '__len__'):
+                    # If one argument is passed (representing a list, tuple, array of arguments), convert to list
+                    values = list(args[0])
+                else:
+                    # If several arguments are passed, this should correspond to the parameter values. 
+                    values = list(args)
+
+                if len(values) != N_parameters:
+                    raise ValueError(f"Not enough parameters specified for interpolant. Expected {N_parameters}, received {len(values)}.")
+
+                grid_coordinate = dict(zip(self.parameter_list, values))
+            else:
+                missing_parameters = set(self.parameter_list).difference(set(kwargs.keys()))
+                extra_parameters = set(kwargs.keys()).difference(set(self.parameter_list)) 
+                if missing_parameters:
+                    raise ValueError(f"Function keyword arguments are missing the followign parameters: {missing_parameters}")
+                if extra_parameters:
+                    raise ValueError(f"Additional parameters specified that are not part of the interpolation parameter list: {extra_parameters}")
+
+                grid_coordinate = kwargs               
+ 
             grid_coordinate_values = tuple(grid_coordinate[parameter_name] for parameter_name in self.parameter_list) # ensures sorted order of grid coordinate values
+
             gate_output = self.interpolated_gate_from_process_matrix_interpolating_function(process_matrix_interpolating_function, grid_coordinate_values)
             return gate_output 
 

@@ -64,6 +64,7 @@ class Noise:
         if parameter_index is None:
             return matrix_function
 
+        # ECM Fix 07/2026 to handle the case where a user passes in kwargs only 
         @wraps(matrix_function)
         def wrapper(*args, **kwargs):
             args = list(args)
@@ -72,9 +73,11 @@ class Noise:
                 base_value = float(kwargs[self.parameter_name])
             else:
                 if parameter_index >= len(args):
-                    raise IonSimError(f"Noisy parameter at position {parameter_index} was not provided positionally nor specified as a keyword argument.")
+                    raise TypeError(f"Noisy parameter at position {parameter_index} was not provided positionally nor specified as a keyword argument.")
                 base_value = float(args[parameter_index])
 
+            #function_arguments = np.array([[float(arg) for arg in args]]*len(self.domain_arguments)) # TODO: is float right here? Then, arguments will accept ints but they must be real
+            #function_arguments[:, parameter_index] += self.domain_arguments
             function_values = []
             for darg in self.domain_arguments:
                 noisy_value = base_value + darg
@@ -86,7 +89,17 @@ class Noise:
                     call_args = list(args)
                     call_args[parameter_index] = noisy_value
                     function_values.append(matrix_function(*call_args, **kwargs))
+            #function_values = [matrix_function(*arguments) for arguments in function_arguments]
             probs = [self.probability_density_function(darg) for darg in self.domain_arguments]
             ys = np.array([p*fv for p, fv in zip(probs, function_values)])
             return trapz_for_matrix(ys, self.domain_arguments)
         return wrapper
+ #        @wraps(matrix_function)
+ #        def wrapper(*args, **kwargs):
+ #            function_arguments = np.array([[float(arg) for arg in args]]*len(self.domain_arguments)) # TODO: is float right here? Then, arguments will accept ints but they must be real
+ #            function_arguments[:, parameter_index] += self.domain_arguments
+ #            function_values = [matrix_function(*arguments) for arguments in function_arguments]
+ #            probs = [self.probability_density_function(darg) for darg in self.domain_arguments]
+ #            ys = np.array([p*fv for p, fv in zip(probs, function_values)])
+ #            return trapz_for_matrix(ys, self.domain_arguments)
+ #        return wrapper

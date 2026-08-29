@@ -1,0 +1,248 @@
+gate_names:
+- Gxpi2:0
+- Gxpi2:1
+- Gypi2:0
+- Gypi2:1
+- MS:0:1
+qubit_labels:
+- 0
+- 1
+prep_fiducials:
+- []
+- - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gypi2
+    qubits:
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 1
+  - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 0
+- - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gypi2
+    qubits:
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 1
+  - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gypi2
+    qubits:
+    - 0
+- - name: Gypi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gypi2
+    qubits:
+    - 0
+  - name: Gypi2
+    qubits:
+    - 1
+- - name: Gypi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 1
+  - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 0
+- - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gypi2
+    qubits:
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 1
+  - name: Gxpi2
+    qubits:
+    - 1
+measure_fiducials:
+- []
+- - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gypi2
+    qubits:
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 1
+  - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 0
+- - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gypi2
+    qubits:
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 1
+  - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gypi2
+    qubits:
+    - 0
+- - name: Gypi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gypi2
+    qubits:
+    - 0
+  - name: Gypi2
+    qubits:
+    - 1
+- - name: Gypi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 1
+  - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 0
+- - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gypi2
+    qubits:
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 0
+  - name: Gxpi2
+    qubits:
+    - 1
+  - name: Gxpi2
+    qubits:
+    - 1
+germs:
+- - name: Gxpi2
+    qubits:
+    - 0
+- - name: Gxpi2
+    qubits:
+    - 1
+- - name: Gypi2
+    qubits:
+    - 0
+- - name: Gypi2
+    qubits:
+    - 1
+- - name: MS
+    qubits:
+    - 0
+    - 1
+- - name: Gxpi2
+    qubits:
+    - 1
+  - name: MS
+    qubits:
+    - 0
+    - 1
+  - name: Gxpi2
+    qubits:
+    - 0
+- - name: Gypi2
+    qubits:
+    - 1
+  - name: MS
+    qubits:
+    - 0
+    - 1
+  - name: MS
+    qubits:
+    - 0
+    - 1
+  - name: Gypi2
+    qubits:
+    - 0
+germ_powers:
+- 1
