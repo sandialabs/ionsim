@@ -203,6 +203,7 @@ class Gate(Process):
             - The gate is built in the reduced or projected basis. 
         """
         if dofs_to_trace_out is not None:
+            raise NotImplementedError("Tracing out DOFs from a larger subspace not yet implemented.")
             assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
             assert(len(dofs_to_trace_out) == len(initial_wavefunctions_for_dofs_to_trace_out))
             assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
@@ -223,16 +224,13 @@ class Gate(Process):
         elif lindbladian_commutes_at_later_times:
             # Lindbladian is time dependent but commute with itself at later times: Integrate each element of the lindbladian matrix forward in time from t = 0 to t = duration            
             L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
-
             process_matrix = scipy.linalg.expm(L_integral)
-
         else:
             # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
             # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
             # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 
-
             if dofs_to_trace_out is not None:
-                raise IonSimError(f"Building a gate on a subspace from a Lindbladian on a larger Hilbert space is not yet implemented.")
+                raise NotImplementedError(f"Building a gate on a subspace from a Lindbladian on a larger Hilbert space is not yet implemented.")
 
             process_matrix_columns = []
             # When projecting, loop over all vectors in the total basis and then skip the ones that will be zero, i.e. set those cols = zero and skip evolution.   
