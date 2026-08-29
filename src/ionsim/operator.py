@@ -111,8 +111,12 @@ class Operator(ABC):
     @property
     def superbra(self):
         """ Flattened representation of a static operator (often a measurement (POVM)) as a row vector """ 
-        no_oscillation = np.all([coupling.oscillation_rate < NUMERICAL_EQUIVALENCE_THRESHOLD for coupling in self.couplings])
-        if modulation_function is None and no_oscillation: 
+        if hasattr(self, "couplings"): 
+            no_oscillation = np.all([coupling.oscillation_rate < NUMERICAL_EQUIVALENCE_THRESHOLD for coupling in self.couplings])
+        else:
+            no_oscillation = True
+
+        if self.modulation_function is None and no_oscillation: 
             return self.static_superbra 
         else:
             raise NotImplementedError(f"Dynamic superbra calculation not yet implemented.")
