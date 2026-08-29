@@ -248,7 +248,7 @@ class Lindbladian:
             super_ham = lambda t: 0. 
 
         if self.dissipator:
-            super_dissipator = lambda t: self.dissipator.dissipator_matrix_function(t) 
+            super_dissipator = self.dissipator.dissipator_matrix_function
         else:
             super_dissipator = lambda t: 0. 
 
