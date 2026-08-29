@@ -64,7 +64,6 @@ class Noise:
         if parameter_index is None:
             return matrix_function
 
-        # ECM Fix 07/2026 to handle the case where a user passes in kwargs only 
         @wraps(matrix_function)
         def wrapper(*args, **kwargs):
             args = list(args)
