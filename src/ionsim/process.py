@@ -209,7 +209,6 @@ class Gate(Process):
             assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
             dof_to_trace_out = dofs_to_trace_out[0]
             initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
-            # TODO: consider if this function should just accept a reduced basis...? 
 
         if dofs_to_trace_out is None:
             reduced_basis = basis
