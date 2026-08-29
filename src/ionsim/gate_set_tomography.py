@@ -1141,8 +1141,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # Cost is Frobenius norm of the process matrix difference bt. model and LGST-predicted
             modeled_effect_matrix = np.vstack([np.asarray(self.get_measurement_effects(theta)[label]) for label in self.outcome_labels])
             lgst_native_measurements_matrix = np.vstack([np.asarray(lgst_native_measurements[outcome]) for outcome in self.outcome_labels])
-            #modeled_effect_matrix = self.get_measurement_effects(theta)[outcome]
-            #lgst_native_measurements_matrix = lgst_native_measurements[outcome]
             return np.linalg.norm(modeled_effect_matrix - lgst_native_measurements_matrix)**2
 
         measurement_indices = self.gst_parameter_indices["POVM"] 
@@ -1174,14 +1172,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             M = gate_model(*theta)
             return np.linalg.norm(M - target_gate_matrix, 'fro')**2
 
-        #gate_model_sig = inspect.signature(gate_model)
-        #N_parameters = len(gate_model_sig.parameters)
         N_parameters = len(gate_indices)
         p0 = np.zeros(N_parameters, dtype=complex) # zero often corresponds to ideal gate conditions 
         if self.parameter_bounds is not None:
-            #gate_parameter_bounds = self.parameter_bounds[gate_indices]
             model_bounds = [self.parameter_bounds[idx] for idx in gate_indices] 
-            #gate_parameter_bounds = [self.parameter_bounds[idx] for idx in indices]
         else:
             gate_parameter_bounds = None 
 
