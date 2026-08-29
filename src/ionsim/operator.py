@@ -18,7 +18,7 @@ from ionsim.basis import StandardBasis
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.degree_of_freedom import DegreeOfFreedom
 from ionsim.custom_types import Matrix, Vector
-from ionsim.config import SMALLEST_ENERGY_SCALE
+from ionsim.config import SMALLEST_ENERGY_SCALE, NUMERICAL_EQUIVALENCE_THRESHOLD
 
 
 # ------- Contains classes for Operators and Operator Elements -------- 
@@ -42,7 +42,7 @@ class OperatorElement(ABC):
     # TODO: review this, is this check necessary? 
     def __post_init__(self):
         if np.abs(self.strength) < SMALLEST_ENERGY_SCALE : 
-            raise ValueError(f"Invalid matrix element from small strength: {self.strength}. Element must contain a non-zero strength value.")
+            raise IonSimError(f"Invalid matrix element from small strength: {self.strength}. Element must contain a non-zero strength value.")
 
 
 @dataclass(frozen=True, eq=False)
@@ -83,13 +83,6 @@ class EnergyShift(OperatorElement):
         if self.row_state.name != self.column_state.name: # or check equality between state objects? not currently allowed 
           raise IonSimError('Energy Shift must use same row and column state to represent a diagonal element.')
 
-        # TODO: Brandon - do you think energy shift (diagonal) hamiltonian elements should be real valued? 
-        if isinstance(self.strength, complex):
-            if self.strength.imag > SMALLEST_ENERGY_SCALE: 
-                raise IonSimError("Invalid energy shift matrix element. Element must be real valued. Energy strength = {self.strength}")
-            else:
-                object.__setattr__(self, 'strength', self.strength.real)
-
 
 # ---- Classes for operators ----  
 @dataclass(frozen=True, eq=False)
@@ -115,12 +108,23 @@ class Operator(ABC):
     def static_matrix(self):
         """The sparse-matrix representation of the operator. If purely offdiagonal, the time-dependent phase factor is set equal to one."""
 
-
     @property
     def superbra(self):
         """ Flattened representation of a static operator (often a measurement (POVM)) as a row vector """ 
+        if hasattr(self, "couplings"): 
+            no_oscillation = np.all([coupling.oscillation_rate < NUMERICAL_EQUIVALENCE_THRESHOLD for coupling in self.couplings])
+        else:
+            no_oscillation = True
+
+        if self.modulation_function is None and no_oscillation: 
+            return self.static_superbra 
+        else:
+            raise NotImplementedError(f"Dynamic superbra calculation not yet implemented.")
+
+    @property
+    def static_superbra(self):
         # Convert d x d effect operator matrix to a d^2 row vector: E --> flatten((E^{dagger}).T) = conj(E).flatten() 
-        return (np.conj(self.static_matrix.toarray())).flatten() # TODO: add warning / fail for non-static operators? 
+        return (np.conj(self.static_matrix.toarray())).flatten() 
 
     @staticmethod
     def _create_sparse_static_coupling_matrix_and_rate_matrix(static_matrix: Matrix, oscillation_rate: float):

@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 #***************************************************************************************************
 # Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
 # Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
@@ -96,7 +95,6 @@ def main():
         return sm.Gate.from_process_matrix_function(
                 basis, process_matrix_function, {'domega': domega}, omega_noise,
             )
-                #basis, process_matrix_function, {'domega': domega}, spins, omega_noise,
 
     def ideal_R(phi, theta):
         return sm.Gate.from_unitary(basis, sm.Unitary.R(phi, theta), target_spins)
@@ -201,7 +199,7 @@ def main():
             """ Gate function of the interpolation parameters; returns a Gate object """ 
             return R(phi, theta, domega, half_box_width)
 
-        print("Building gate interoplant using process matrix function")
+        ic("Building gate interpolant using process matrix function")
         R_gate_interpolant = sm.GateInterpolant.from_gate_function(R_function, grid_axes, gate_name) 
         grids = R_gate_interpolant.grids 
         grid = R_gate_interpolant.grid
@@ -213,11 +211,11 @@ def main():
         # Compute gate residuals using inverse of ideal R gate  
         chi_inv = np.linalg.inv(ideal_R(phi, theta).process_matrix)
 
-        # Define a functional of the gate to return the desired property  
-        def relative_err_gate_functional(gate):
+        # Define a function that takes a Gate object and returns a property or derievd quantity of the Gate  
+        def relative_err(gate: sm.Gate):
             return gate.process_matrix.dot(chi_inv) - np.eye(size)
 
-        gate_residual_data = R_gate_interpolant.compute_functional_of_gates(relative_err_gate_functional) 
+        gate_residual_data = R_gate_interpolant.evaluate_function_on_grid(relative_err) 
 
         ic(gate_residual_data)
 
@@ -234,7 +232,7 @@ def main():
 
         # Set up a dictionary of results and write to an hdf5 file  
         results_dictionary = {'dx' : dxs, 'dy': dys, 'relative_error': F_data}
-        sm.io.write_results_to_file(data_filename, results_dictionary, attributes)
+        sm.io.write_results_to_file(data_filename, results_dictionary, 'w', attributes)
                 
     # Step 2: Use the grid of gates to interpolate. 
     if compute_interpolated_gate:
@@ -258,7 +256,7 @@ def main():
         # F_data <==> Gate-valued (process matrix) residuals. For every x,y gate parameter, there's a d^2 x d^2 process matrix .
         F_spline_reals, F_spline_imags = R_gate_interpolant.construct_spline_for_gate_derived_matrix_property(F_data, complex_data=True)
 
-        # Using the interpolants, build a function to return F(x,y) for arbitary x,y pairs
+        # Using the interpolants, build a function to return F(x,y) for arbitrary x,y pairs
         F_function = R_gate_interpolant.interpolant_function_from_splines([F_spline_reals, F_spline_imags], 'relative_error')
 
         def interpolated_R(phi, theta, dx, dy):

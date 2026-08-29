@@ -248,7 +248,7 @@ class Lindbladian:
             super_ham = lambda t: 0. 
 
         if self.dissipator:
-            super_dissipator = lambda t: self.dissipator.dissipator_matrix_function(t) 
+            super_dissipator = self.dissipator.dissipator_matrix_function
         else:
             super_dissipator = lambda t: 0. 
 
@@ -261,7 +261,7 @@ class Lindbladian:
             e.g. evolves supervector "y" using dy/dt = Ly, where L is the N^2 x N^2 dissipator matrix. 
         """
         # solve_time_evolution_equation() assumes a Schrodinger equation form dy/dt = (-i*A)y, where i = sqrt(-1) and A <==> the function input, e.g. a Hamiltonian matrix. 
-        # Therfore, we must compensate this form by multiplying by the lindbladian by i 
+        # Therfore, we must compensate this form by multiplying the lindbladian by i 
         assert(self.size == len(initial_supervector))
         dynamical_matrix = lambda t: self.matrix_function(t) * 1j
         return solve_time_evolution_equation(dynamical_matrix, initial_supervector, duration, time_evals, **kwargs)
