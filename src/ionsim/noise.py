@@ -90,12 +90,3 @@ class Noise:
             ys = np.array([p*fv for p, fv in zip(probs, function_values)])
             return trapz_for_matrix(ys, self.domain_arguments)
         return wrapper
- #        @wraps(matrix_function)
- #        def wrapper(*args, **kwargs):
- #            function_arguments = np.array([[float(arg) for arg in args]]*len(self.domain_arguments)) # TODO: is float right here? Then, arguments will accept ints but they must be real
- #            function_arguments[:, parameter_index] += self.domain_arguments
- #            function_values = [matrix_function(*arguments) for arguments in function_arguments]
- #            probs = [self.probability_density_function(darg) for darg in self.domain_arguments]
- #            ys = np.array([p*fv for p, fv in zip(probs, function_values)])
- #            return trapz_for_matrix(ys, self.domain_arguments)
- #        return wrapper
