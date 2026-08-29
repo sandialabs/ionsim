@@ -1070,12 +1070,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         theta[self.gst_parameter_indices['prep']] = prep_fit_parameters
 
         # Native measurement effects  
-        ## Option 1:
-        #for outcome in self.POVM_effect_models.keys():
-        #    outcome_parameters = self._fit_measurement_effect_model_to_lgst_estimate(outcome, self.lgst_results['estimated_effects'])
-        #    theta[self.gst_parameter_indices[outcome]] = outcome_parameters.real
-
-        ## Option 2:
         outcome_parameters = self._fit_measurement_effect_model_to_lgst_estimate(self.lgst_results['estimated_effects'])
         theta[self.gst_parameter_indices["POVM"]] = outcome_parameters.real
 
