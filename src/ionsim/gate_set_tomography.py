@@ -751,7 +751,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
     def get_parameter_index_by_name_in_prep_model(self, parameter_name: str) -> int:
         """ Return index in gate parameters where parameter from a gate mdoel appears. Return -1 if not found """
-        #prep_model = self.prep_state_model
         prep_model_sig = inspect.signature(self.prep_state_model)
         parameter_names = list(prep_model_sig.parameters.keys())  
         local_index = parameter_names.index(parameter_name)
@@ -1100,7 +1099,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             modeled_effects = self.POVM_effect_models(*POVM_params)
             for outcome, effect in lgst_effects.items():
                 assert outcome in modeled_effects
-                total_cost += np.linalg.norm(modeled_effects[outcome] - effect)**2
+                total_cost += np.linalg.norm(modeled_effects[outcome] - effect, 'fro')**2
                 #if outcome in modeled_effects:
             return total_cost.real
             
@@ -1295,9 +1294,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
             # Get process matrix from gate model at optimum 
             gate_process_matrix_function = self.gate_models[gate]
-            #parameter_values = self.get_parameters(self.gst_parameters, gate)  ## Bug
             parameter_values = self.get_parameters(theta, gate) 
-            #parameter_values = theta[self.gst_parameter_indices[gate]] # names and values share same sorted order  
 
             process_matrix = gate_process_matrix_function(*parameter_values)
             if error_metric == 'frobenius norm':
@@ -1321,21 +1318,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         POVM_errors = {}
         measurement_error = 0. 
         for outcome, POVM in ideal_POVMs.items():
-            #if isinstance(POVM, Vector): 
-            #    ideal_POVM = POVM
-            #else:
             ideal_POVM = POVM.superbra 
             modeled_POVM = POVMs[outcome] 
             POVM_errors[outcome] = np.sqrt(np.sum((ideal_POVM - modeled_POVM)**2)) 
             measurement_error += POVM_errors[outcome] 
 
-        #gst_errors['POVM'] = POVM_errors
-        ## ECM change in 08/26; error will be one value for POVM rather than per outcome now 
         gst_errors['POVM'] = sum(POVM_errors.values())
-
         if self.verbose:
             print(f"\n GST error by gate set element: {gst_errors}")
-
         return gst_errors 
 
     def compute_gate_set_error(self, theta: Vector, ideal_gate_set: dict, include_SPAM_error: bool=False) -> float:
@@ -1368,8 +1358,11 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             This enables computing gate set parameters and errors averaged over realizations of the true gate set """  
 
         # Confirm that this is the true theta:
-        #test = self.compute_gate_set_error_by_element(theta_true, self.ideal_gate_set, error_metric = 'frobenius norm')
-        #print(f"\nTesting the 'true' theta vector: {test}")
+        test_error = self.compute_gate_set_error_by_element(theta_true, self.ideal_gate_set, error_metric = 'frobenius norm')
+        test_error = np.abs(sum(test_error.values()))
+        if test_error > NUMERICAL_EQUIVALENCE_THRESHOLD:
+            raise IonSimError(f"Specified parameter vector is not the true theta. Gate set error received: {test_error}") 
+
         circuit_probabilities = []
         # Copy the original circuits 
         original_data = [circ.measurement_data for circ in self.parsed_circuits]
