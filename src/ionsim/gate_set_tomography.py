@@ -204,8 +204,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         return names 
 
-
-
     def build_theta_from_dict(self, param_values: dict, default_value: float = 0.) -> Vector:
         """ Builds a theta vector from a dictionary of parameter names to values """
         # Initialize theta vector 
@@ -294,49 +292,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 parsed_bounds[parameter_index] = tuple(bounds)
 
         self.parameter_bounds = parsed_bounds
-
-
- #    def _build_parameter_organization(self) -> tuple[dict[str, slice], int]:
- #        """ Builds and organizes the independent parameters for GST. This organizes parameters based on:
- #            1) Prep state 
- #            2) Each Gate model, for all gates in the set  
- #            3) Native measurements, by outcome label (e.g. '00')
- #
- #            - Parameter indexing are organized in a dictionary for easy retrieval, e.g. {'prep state' : prep_state_parameter_indexing (as slice)} 
- #            - Returns the layout dictionary and the total number of parameters 
- #        """
- #
- #        # Set up dictionary with appropriate number of independent parameters 
- #        parameter_indices = {}
- #
- #        # Index i will incriment as we increase the number of tracked parameters 
- #        i = 0
- #
- #        # Prep: there are at most d^2 - 1 independent parameters due to the Trace[rho] = 1 constraint. 
- #        # For physical GST, we read the prep state function and inspect the number of parameters 
- #        prep_model_sig = inspect.signature(self.prep_state_model)
- #        N = len(prep_model_sig.parameters)
- #        if N > (self.d2 - 1):
- #            IonSimError(f"Warning: The prep model has more parameters than the maximum number of independent parameters (with normalization constraint): {self.d2 - 1}")
- #        parameter_indices["prep"] = slice(i, i + N) 
- #        i += N
- #
- #        POVM_model_sig = inspect.signature(self.POVM_effect_models) 
- #        POVM_parameters = POVM_model_sig.parameters
- #        N = len(POVM_parameters) 
- #        parameter_indices["POVM"] = slice(i, i + N) 
- #        i += N
- #
- #        for gate, gate_model in self.gate_models.items():
- #            gate_model_sig = inspect.signature(gate_model)
- #            N = len(gate_model_sig.parameters)
- #
- #            # Default parametrization is dense (d^2 x d^2) for each gate: 
- #            parameter_indices[gate] = slice(i, i + N)
- #            i += N  
- #
- #        return parameter_indices, i 
-
 
     def _build_parameter_organization(self): 
         """ Builds and organizes the independent parameters for GST. This organizes parameters based on:
@@ -443,9 +398,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         POVM_parameters = self.get_parameters(theta, "POVM") 
         M_effects = self.POVM_effect_models(*POVM_parameters)
 
-        #completeness_violation = np.linalg.norm(sum(M_effects.values()).reshape(self.d, self.d) - np.eye(self.d))
-        #if np.abs(completeness_violation) > 0.1:
-        #    raise IonSimError(f"Measurement effect models are violating completenss constraint with residual {np.abs(completeness_violation)}") 
+        completeness_violation = np.linalg.norm(sum(M_effects.values()).reshape(self.d, self.d) - np.eye(self.d))
+        if np.abs(completeness_violation) > 1E-7:
+            raise IonSimError(f"Measurement effect models are violating completenss constraint with residual {np.abs(completeness_violation)}") 
         return M_effects 
 
     def _initialize_likelihood_circuit_cache(self):
@@ -641,7 +596,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                     # Weighted log-likelihood contribution from count data.
                     l_likelihood += np.dot(metadata['count_values'], log_probability_values)
             else:
-                raise IonSimError(f"Time-dependent GST is not available in this version of IonSim.") 
+                raise NotImplementedError(f"Time-dependent GST is not available in this version of IonSim.") 
                 # Time-series data: each shot contributes one log-probability term.
                 if metadata['shot_indices'].size > 0:
                     l_likelihood += np.sum(log_probability_values[metadata['shot_indices']])
@@ -1391,7 +1346,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
             # For each repetition, perform MLE 
             self.gst_parameters = self.parameters_guess.copy()
-            options = {'ftol' : 1e-15, 'gtol' : 1e-12, 'maxiter' : 10000}
+            options = {'ftol' : 1e-15, 'gtol' : 1e-12, 'maxiter' : 100000}
             results = self.solve_for_gate_parameters(parameters_guess = self.parameters_guess.copy(), solver = solver, options = options, **kwargs) 
             if solver == 'linear':
                 best_theta_samples[n, :] = results
@@ -1543,4 +1498,3 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         means = np.mean(bootstrap_thetas, axis=0)
         uncertainties = np.std(bootstrap_thetas, axis=0) 
         return uncertainties, means, bootstrap_thetas
-            

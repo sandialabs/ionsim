@@ -40,9 +40,10 @@ class OperatorElement(ABC):
     strength: float
 
     # TODO: review this, is this check necessary? 
-    def __post_init__(self):
-        if np.abs(self.strength) < SMALLEST_ENERGY_SCALE : 
-            raise ValueError(f"Invalid matrix element from small strength: {self.strength}. Element must contain a non-zero strength value.")
+    # TODO: Remove or change to machine precision; this is not intended behavior and leads to bugs / normalization issues  
+ #    def __post_init__(self):
+ #        if np.abs(self.strength) < SMALLEST_ENERGY_SCALE : 
+ #            raise ValueError(f"Invalid matrix element from small strength: {self.strength}. Element must contain a non-zero strength value.")
 
 
 @dataclass(frozen=True, eq=False)
@@ -51,7 +52,7 @@ class Coupling(OperatorElement):
     oscillation_rate: float # provides w in the phase factor exp[-i w t]
 
     def __post_init__(self):
-        super().__post_init__()
+        #super().__post_init__()
         if self.row_state.name == self.column_state.name: # or check equality between states? not currently allowed 
           raise IonSimError('Coupling must entail different row and column state to represent an off-diagonal element.')
 
@@ -78,17 +79,16 @@ class EnergyShift(OperatorElement):
         return cls(row_state = state, column_state = state, strength = shift_strength) 
 
     def __post_init__(self):
-        super().__post_init__()
+        #super().__post_init__()
         # Checks that user is using this functionality for diagonal elements only  
         if self.row_state.name != self.column_state.name: # or check equality between state objects? not currently allowed 
           raise IonSimError('Energy Shift must use same row and column state to represent a diagonal element.')
 
-        # TODO: Brandon - do you think energy shift (diagonal) hamiltonian elements should be real valued? 
-        if isinstance(self.strength, complex):
-            if self.strength.imag > SMALLEST_ENERGY_SCALE: 
-                raise IonSimError("Invalid energy shift matrix element. Element must be real valued. Energy strength = {self.strength}")
-            else:
-                object.__setattr__(self, 'strength', self.strength.real)
+ #        if isinstance(self.strength, complex):
+ #            if self.strength.imag > SMALLEST_ENERGY_SCALE: 
+ #                raise IonSimError("Invalid energy shift matrix element. Element must be real valued. Energy strength = {self.strength}")
+ #            else:
+ #                object.__setattr__(self, 'strength', self.strength.real)
 
 
 # ---- Classes for operators ----  
@@ -101,7 +101,9 @@ class Operator(ABC):
 
     def __post_init__(self):
         # Checks that all elements have non-zero strength compared to the smallest energy scale  
-        if any(np.abs(element.strength) < SMALLEST_ENERGY_SCALE for element in self.elements):
+        #if any(np.abs(element.strength) < SMALLEST_ENERGY_SCALE for element in self.elements):
+        # TODO: Consider changing to NUMERICAL THRESHOLD 
+        if all(np.abs(element.strength) < SMALLEST_ENERGY_SCALE for element in self.elements):
             raise IonSimError("Invalid matrix element. Element must contain a non-zero strength value.")
 
     @classmethod
@@ -151,9 +153,9 @@ class Operator(ABC):
             #if (column,row) not in included_indices:
 
             # Only include coupling if its stength is above the threshold energy scale 
-            if np.abs(coupling_matrix[row, column]) > SMALLEST_ENERGY_SCALE: 
-                coupling = Coupling(row_state = row_state, column_state = column_state, strength = coupling_matrix[row, column], oscillation_rate = rate[row, column])
-                couplings.append(coupling)
+            #if np.abs(coupling_matrix[row, column]) > SMALLEST_ENERGY_SCALE: 
+            coupling = Coupling(row_state = row_state, column_state = column_state, strength = coupling_matrix[row, column], oscillation_rate = rate[row, column])
+            couplings.append(coupling)
             #included_indices.append((row, column))
             if column == row:
                 raise IonSimError('Diagonal elements of oscillating (coupling) operators are not currently allowed.')
@@ -191,9 +193,9 @@ class Operator(ABC):
         # Assumes diagonal elements sorted order matches the sorted order of basis states in basis. 
         matrix_elements = []
         for i, value in enumerate(diagonal_elements):
-            if np.abs(value) > SMALLEST_ENERGY_SCALE : 
-                matrix_element = EnergyShift.from_state(basis.states[i], value)
-                matrix_elements.append(matrix_element)
+            #if np.abs(value) > SMALLEST_ENERGY_SCALE : 
+            matrix_element = EnergyShift.from_state(basis.states[i], value)
+            matrix_elements.append(matrix_element)
               
         return matrix_elements 
  
@@ -389,7 +391,7 @@ class GeneralOperator(Operator): # is there a better name? We avoid "DenseOperat
         matrix_elements = [] 
         matrix_elements = energy_shift_elements + couplings
 
-        assert len(matrix_elements) == input_operator.count_nonzero(), f"Expected {input_operator.count_nonzero()} elements but have {len(matrix_elements)} instead."
+        #assert len(matrix_elements) == input_operator.count_nonzero(), f"Expected {input_operator.count_nonzero()} elements but have {len(matrix_elements)} instead."
         return cls(basis, matrix_elements, modulation_function)
 
     @property
