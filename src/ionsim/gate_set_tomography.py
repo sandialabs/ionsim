@@ -1353,7 +1353,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Estimate process fidelity for each gate 
         return self.average_model_errors(gate_set_errors, include_SPAM_error)
 
-    def compute_average_gate_set_properties(self, N_repetitions: int, theta_true: Vector, N_shots: int, solver: str='MLE'):
+    def compute_average_gate_set_properties(self, N_repetitions: int, theta_true: Vector, N_shots: int, solver: str='MLE', parameters_guess: Vector | dict | None=None, **kwargs):
         """ Performs Monte Carlo sampling of the true gate set and then fits each gate set sample with MLE. 
             This enables computing gate set parameters and errors averaged over realizations of the true gate set """  
 
@@ -1363,6 +1363,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if test_error > NUMERICAL_EQUIVALENCE_THRESHOLD:
             raise IonSimError(f"Specified parameter vector is not the true theta. Gate set error received: {test_error}") 
 
+        self.parse_parameter_guess_input(parameters_guess)
         circuit_probabilities = []
         # Copy the original circuits 
         original_data = [circ.measurement_data for circ in self.parsed_circuits]
@@ -1391,7 +1392,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             # For each repetition, perform MLE 
             self.gst_parameters = self.parameters_guess.copy()
             options = {'ftol' : 1e-15, 'gtol' : 1e-12, 'maxiter' : 10000}
-            results = self.solve_for_gate_parameters(parameters_guess = self.parameters_guess.copy(), solver = solver, options = options) 
+            results = self.solve_for_gate_parameters(parameters_guess = self.parameters_guess.copy(), solver = solver, options = options, **kwargs) 
             if solver == 'linear':
                 best_theta_samples[n, :] = results
             else:
