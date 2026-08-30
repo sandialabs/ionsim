@@ -1054,7 +1054,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             modeled_effects = self.POVM_effect_models(*POVM_params)
             for outcome, effect in lgst_effects.items():
                 assert outcome in modeled_effects
-                total_cost += np.linalg.norm(modeled_effects[outcome] - effect, 'fro')**2
+                total_cost += np.linalg.norm(modeled_effects[outcome] - effect)**2
                 #if outcome in modeled_effects:
             return total_cost.real
             
