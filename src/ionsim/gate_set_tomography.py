@@ -1055,14 +1055,13 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             for outcome, effect in lgst_effects.items():
                 assert outcome in modeled_effects
                 total_cost += np.linalg.norm(modeled_effects[outcome] - effect)**2
-                #if outcome in modeled_effects:
             return total_cost.real
             
-        theta_0 = self.gst_parameters.copy()
         # TODO: potentially seed from independent fits with average parameter values? see if this is necessary  
         #theta_0 = self._seed_from_independent_fits(theta_0)
-
-        result = opt.minimize(cost, theta_0, method='Nelder-Mead', bounds = self.parameter_bounds)
+        ## Note: L-BFGS-B performs significantly better here than Nelder-Mead; Nelder-Mead should not be used in this method.
+        #result = opt.minimize(cost, self.parameters_guess, method='Nelder-Mead', bounds = self.parameter_bounds)
+        result = opt.minimize(cost, self.parameters_guess, method='L-BFGS-B', bounds=self.parameter_bounds)#'Nelder-Mead', bounds = self.parameter_bounds)
         return result.x 
 
         
