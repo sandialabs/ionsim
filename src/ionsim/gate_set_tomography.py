@@ -768,7 +768,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             print(f"\nMeasurement effect {label} vectors: {effect}")
 
 
-    def parse_parameter_guess_input(self, parameters_guess: Vector | dict | None) -> Vector:
+    def _parse_parameter_guess_input(self, parameters_guess: Vector | dict | None) -> Vector:
         """ Interface to parse user input parameter guess information into a vector of initial values for scipy minimize"""
 
         if parameters_guess is None:
@@ -830,7 +830,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             - Returns a result object; parameter results are accessed as a vector via results.x  
 
         """
-        self.parse_parameter_guess_input(parameters_guess)
+        self._parse_parameter_guess_input(parameters_guess)
         if self.verbose: 
             print(f"\n -- Solver for gate parameters in GST using {solver} --- ")
             print(f"Initial parameters: {self.parameters_guess}")
@@ -1061,7 +1061,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         #theta_0 = self._seed_from_independent_fits(theta_0)
         ## Note: L-BFGS-B performs significantly better here than Nelder-Mead; Nelder-Mead should not be used in this method.
         #result = opt.minimize(cost, self.parameters_guess, method='Nelder-Mead', bounds = self.parameter_bounds)
-        result = opt.minimize(cost, self.parameters_guess, method='L-BFGS-B', bounds=self.parameter_bounds)#'Nelder-Mead', bounds = self.parameter_bounds)
+        if self.parameters_guess is None:
+            theta_0 = self.gst_parameters
+        else:
+            theta_0 = self.parameters_guess
+
+        result = opt.minimize(cost, theta_0, method='L-BFGS-B', bounds=self.parameter_bounds)#'Nelder-Mead', bounds = self.parameter_bounds)
         return result.x 
 
         
@@ -1317,7 +1322,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if test_error > NUMERICAL_EQUIVALENCE_THRESHOLD:
             raise IonSimError(f"Specified parameter vector is not the true theta. Gate set error received: {test_error}") 
 
-        self.parse_parameter_guess_input(parameters_guess)
+        self._parse_parameter_guess_input(parameters_guess)
         circuit_probabilities = []
         # Copy the original circuits 
         original_data = [circ.measurement_data for circ in self.parsed_circuits]
