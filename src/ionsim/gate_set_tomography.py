@@ -382,6 +382,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         """ 
         prep_params = self.get_parameters(theta, "prep") #theta[self.gst_parameter_indices["prep"]] # d^2 - 1 column vector  
         prep_state = self.prep_state_model(*prep_params)
+        trace = np.trace(prep_state.reshape(self.d, self.d)) 
+        if np.abs(trace - 1.) > 1E-6:
+            raise IonSimError(f"Prep state is not normalized, trace = {trace}")
         return prep_state
 
     def get_measurement_effects(self, theta) -> dict[str, Vector]:
@@ -1059,18 +1062,16 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             
         # TODO: potentially seed from independent fits with average parameter values? see if this is necessary  
         #theta_0 = self._seed_from_independent_fits(theta_0)
-        ## Note: L-BFGS-B performs significantly better here than Nelder-Mead; Nelder-Mead should not be used in this method.
-        #result = opt.minimize(cost, self.parameters_guess, method='Nelder-Mead', bounds = self.parameter_bounds)
         if self.parameters_guess is None:
             theta_0 = self.gst_parameters
         else:
             theta_0 = self.parameters_guess
 
+        ## Note: L-BFGS-B performs significantly better here than Nelder-Mead; Nelder-Mead should not be used in this method.
         result = opt.minimize(cost, theta_0, method='L-BFGS-B', bounds=self.parameter_bounds)#'Nelder-Mead', bounds = self.parameter_bounds)
         return result.x 
 
         
-
     ## TODO: Consolidate / factor into a single "fit model to lgst" function if possible  
     def _fit_prep_model_to_lgst_estimate(self, lgst_native_prep: Vector) -> Vector:
         """ Fits a prep state model's parameters given the lgst results for the prep state. """
@@ -1322,7 +1323,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if test_error > NUMERICAL_EQUIVALENCE_THRESHOLD:
             raise IonSimError(f"Specified parameter vector is not the true theta. Gate set error received: {test_error}") 
 
-        self._parse_parameter_guess_input(parameters_guess)
         circuit_probabilities = []
         # Copy the original circuits 
         original_data = [circ.measurement_data for circ in self.parsed_circuits]
@@ -1347,11 +1347,11 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             self.lgst_results = None   
             self.solver_result = None 
             self._index_fiducials() # Reindex and organize fiducial information for linear GST if needed   
+            self._parse_parameter_guess_input(parameters_guess)
 
             # For each repetition, perform MLE 
             self.gst_parameters = self.parameters_guess.copy()
-            options = {'ftol' : 1e-15, 'gtol' : 1e-12, 'maxiter' : 100000}
-            results = self.solve_for_gate_parameters(parameters_guess = self.parameters_guess.copy(), solver = solver, options = options, **kwargs) 
+            results = self.solve_for_gate_parameters(parameters_guess = self.parameters_guess.copy(), solver = solver, **kwargs) 
             if solver == 'linear':
                 best_theta_samples[n, :] = results
             else:
@@ -1414,6 +1414,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
 
     #def estimate_parameter_uncertainties(self, theta: Vector | None=None, method: str='bootstrap') -> Vector:
+    ## TODO: Consider deleting this; we probably don't need bootstrapping 
     def bootstrapping_analysis(self, theta: Vector | None=None,  N_bootstrap: int=50):
         """ Computes uncertainties of each parameter from the Hessian of the log-likelihood at the MLE solution."""
         if self.solver_result is None and theta is None:

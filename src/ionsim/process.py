@@ -224,9 +224,7 @@ class Gate(Process):
         elif lindbladian_commutes_at_later_times:
             # Lindbladian is time dependent but commute with itself at later times: Integrate each element of the lindbladian matrix forward in time from t = 0 to t = duration            
             L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
-
             process_matrix = scipy.linalg.expm(L_integral)
-
         else:
             # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
             # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 

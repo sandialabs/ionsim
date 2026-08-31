@@ -18,7 +18,7 @@ from ionsim.basis import StandardBasis
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.degree_of_freedom import DegreeOfFreedom
 from ionsim.custom_types import Matrix, Vector
-from ionsim.config import SMALLEST_ENERGY_SCALE
+from ionsim.config import SMALLEST_ENERGY_SCALE, NUMERICAL_EQUIVALENCE_THRESHOLD 
 
 
 # ------- Contains classes for Operators and Operator Elements -------- 
@@ -99,12 +99,12 @@ class Operator(ABC):
     elements: list[OperatorElement]
     modulation_function: Callable | None=None
 
-    def __post_init__(self):
-        # Checks that all elements have non-zero strength compared to the smallest energy scale  
-        #if any(np.abs(element.strength) < SMALLEST_ENERGY_SCALE for element in self.elements):
-        # TODO: Consider changing to NUMERICAL THRESHOLD 
-        if all(np.abs(element.strength) < SMALLEST_ENERGY_SCALE for element in self.elements):
-            raise IonSimError("Invalid matrix element. Element must contain a non-zero strength value.")
+ #    def __post_init__(self):
+ #        # Checks that all elements have non-zero strength compared to the smallest energy scale  
+ #        #if any(np.abs(element.strength) < SMALLEST_ENERGY_SCALE for element in self.elements):
+ #        # TODO: Consider changing to NUMERICAL THRESHOLD 
+ #        if all(np.abs(element.strength) < NUMERICAL_EQUIVALENCE_THRESHOLD for element in self.elements):
+ #            raise IonSimError("Invalid matrix element. Element must contain a non-zero strength value.")
 
     @classmethod
     @abstractmethod
@@ -213,7 +213,7 @@ class EnergyShiftOperator(Operator):
     """A diagonal quantum operator in a basis of energy eigenstates, representing energy shifts."""
 
     def __post_init__(self):
-        super().__post_init__()
+        #super().__post_init__()
         self._check_all_elements_are_energy_shifts()
 
     def _check_all_elements_are_energy_shifts(self):
@@ -263,7 +263,7 @@ class CouplingOperator(Operator):
     """An off-diagonal quantum operator in a basis of energy eigenstates."""
 
     def __post_init__(self):
-        super().__post_init__()
+        #super().__post_init__()
         self._check_for_one_oscillation_rate() # should use inherited method 
 
     def _check_all_elements_are_couplings(self):
@@ -319,8 +319,8 @@ class GeneralOperator(Operator): # is there a better name? We avoid "DenseOperat
 
         The Hamiltonian class will require separating a general operator into CouplingOperator and EnergyShiftOperator contributions for efficiency. 
     """
-    def __post_init__(self):
-        super().__post_init__()
+ #    def __post_init__(self):
+ #        super().__post_init__()
 
     @property
     def couplings(self):
