@@ -91,7 +91,7 @@ def main():
         + detuning
     )
     amp_mod = None
-    import_interpolant = False # option if the interpolant has previously been built  
+    import_interpolant = True # option if the interpolant has previously been built  
 
     # Define directory where interpolant and output plots will be stored 
     data_directory = Path.home() / "tmp" / "ionsim_examples_data"

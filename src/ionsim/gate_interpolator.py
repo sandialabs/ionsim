@@ -55,7 +55,7 @@ class GateInterpolator():
             assert len(shape) == 2
             assert shape[0] == shape[1]  # should they always be square? 
             return shape[0] 
-        raise IonSimError("There are no gates in this interpolant class instance. Size of gate is unknown.")
+        raise IonSimError("There are no gates in this interpolator class instance. Size of gate is unknown.")
 
     @property
     def computed_gates_process_matrices(self):
@@ -76,7 +76,7 @@ class GateInterpolator():
 
     @classmethod
     def from_gate_function(cls, gate_function: Callable, grid_axes: dict[str, Vector], gate_name: str | None=None):
-        """ Build gate interpolant from a gate function, which returns a gate from grid parameter values. """ 
+        """ Build gate interpolator from a gate function, which returns a gate from grid parameter values. """ 
         # NB: This is the cleanest way to handle noise. Noise is embedded in the gate function input. 
         grid = cls.build_grid(grid_axes) # a list of grid points 
         gates_on_grid = []
@@ -93,7 +93,7 @@ class GateInterpolator():
 
     @classmethod
     def from_process_matrix_function(cls, process_matrix_function: Callable, grid_axes: dict[str, Vector], gate_basis: StandardBasis, gate_name: str | None=None): 
-        """ Build gate interpolant from a process matrix function. """ 
+        """ Build gate interpolator from a process matrix function. """ 
         # Build a grid and loop over every parameter value and build the gate from the process matrix function  
         grid = cls.build_grid(grid_axes)
 
@@ -165,7 +165,7 @@ class GateInterpolator():
 
 
     def construct_spline_for_gate_derived_matrix_property(self, gate_derived_property: Matrix, complex_data: bool=True):
-        """ Constructs interpolant spline for derived property that lives on the domain of the parameter grid.
+        """ Constructs interpolator spline for derived property that lives on the domain of the parameter grid.
 
             - assumes gate_derived_property is matrix input of the shape: (d, d, parameter1_grid, parameter2_grid, ... )
                 where "d" is the dimension (process matrix is d^2 x d^2), 
@@ -192,11 +192,11 @@ class GateInterpolator():
         return spline_reals
 
     def construct_spline_for_gate(self, complex_data: bool=True):
-        """ Constructs interpolant spline for the gate process matrices that live on the domain of the parameter grid. """ 
+        """ Constructs interpolator spline for the gate process matrices that live on the domain of the parameter grid. """ 
         return self.construct_spline_for_gate_derived_matrix_property(self.computed_gate_data_as_array, complex_data)
 
     def construct_spline_for_gate_derived_scalar_property(self, gate_derived_property: Matrix, complex_data: bool=True):
-        """ Constructs interpolant spline for derived property that lives on the domain of the parameter grid.""" 
+        """ Constructs interpolator spline for derived property that lives on the domain of the parameter grid.""" 
         # Gate derived property input is a grid-dependent scalar property, e.g. Fidelity[x, y] -> Number  
         spline_reals = NdGridCubicSmoothingSpline(self.grids, gate_derived_property.real, smooth=1) 
         if complex_data:
@@ -207,13 +207,14 @@ class GateInterpolator():
 
     #### Interpolation methods #### 
     @cached_property 
-    def process_matrix_interpolant_function(self): 
+    #def process_matrix_interpolant_function(self): 
+    def process_matrix_interpolator(self): 
         """ Returns a gate's process matrix interpolating function of the grid parameters, e.g. G(x,y) for x,y grid parameters""" 
-        # Extract gate spline information, then build interpolant function from the splines 
+        # Extract gate spline information, then build interpolator function from the splines 
         gate_spline_reals, gate_spline_imags = self.construct_spline_for_gate(complex_data=True)
         return self.make_interpolated_property_from_splines([gate_spline_reals, gate_spline_imags], 'process matrix')
         
-    def make_interpolated_property_from_splines(self, property_interpolant: dict | list[dict, dict], property_name: str) -> Callable:
+    def make_interpolated_property_from_splines(self, property_interpolator: dict | list[dict, dict], property_name: str) -> Callable:
         """ Returns a property interpolating function of the grid parameters, e.g. F(x,y) for x,y grid parameters""" 
         N_parameters = len(self.parameter_list)
 
@@ -230,24 +231,24 @@ class GateInterpolator():
             # Convert grid coordinate dictionary to tuple 
             grid_coordinate_values = tuple(grid_coordinate[parameter_name] for parameter_name in self.parameter_list) # ensures sorted order of grid coordinate values
 
-            # For gate interpolation, the property interpolant is of shape (d, d, *parameter_grid)
+            # For gate interpolation, the property interpolator is of shape (d, d, *parameter_grid)
             size = self.gate_size 
             complex_data = False 
-            if isinstance(property_interpolant, list) or isinstance(property_interpolant, tuple): 
+            if isinstance(property_interpolator, list) or isinstance(property_interpolator, tuple): 
                 complex_data = True
                 function_output = np.empty((size, size), dtype=complex)
             else:
                 function_output = np.empty((size, size), dtype=float)
-                if not isinstance(property_interpolant, dict):
-                    raise IonSimError("Pass in a dictionary containing the real-valued interpolant. For complex data, pass in a tuple or list of form [dict, dict].")
+                if not isinstance(property_interpolator, dict):
+                    raise IonSimError("Pass in a dictionary containing the real-valued interpolator. For complex data, pass in a tuple or list of form [dict, dict].")
 
             # Fill process matrix at the requested parameter coordinate values. 
             for i in range(size):
                 for j in range(size):
                     if complex_data:
-                        function_output[i,j] = property_interpolant[0][i,j](grid_coordinate_values).item() + 1j*property_interpolant[1][i,j](grid_coordinate_values).item()
+                        function_output[i,j] = property_interpolator[0][i,j](grid_coordinate_values).item() + 1j*property_interpolator[1][i,j](grid_coordinate_values).item()
                     else:
-                        function_output[i,j] = property_interpolant[i,j](grid_coordinate_values).item() 
+                        function_output[i,j] = property_interpolator[i,j](grid_coordinate_values).item() 
 
             return function_output 
 
@@ -257,26 +258,26 @@ class GateInterpolator():
 
         # Build a function whose signature is specified by the user in the class instance (at runtime) 
         _interpolating_function.__signature__ = sig
-        _interpolating_function.__name__ = property_name + "_interpolant"
+        _interpolating_function.__name__ = property_name + "_interpolator"
 
         return _interpolating_function
 
 
-    def make_interpolated_gate_from_process_matrix_function(self, process_matrix_interpolating_function: Callable, parameter_coordinate: tuple):  
+    def make_interpolated_gate_from_process_matrix_function(self, process_matrix_interpolator: Callable, parameter_coordinate: tuple):  
         """ Returns the gate evaluated at a grid point off of the grid domain.""" 
         if isinstance(parameter_coordinate, tuple):
             grid_values = parameter_coordinate
         else:
             raise IonSimError("Input grid parameter coordinate as a tuple of the coordinate indices.")
 
-        return Gate(self.basis, process_matrix = process_matrix_interpolating_function(*grid_values)) 
+        return Gate(self.basis, process_matrix = process_matrix_interpolator(*grid_values)) 
 
     @cached_property 
     def make_interpolated_gate_over_grid(self) -> Callable:
         """ Returns a function that returns a Gate object evaluated at grid parameter values. """
         # Build and return a general interpolating function for a Gate object  
         # Retrieve process matrix interpolating function --> should only compute this once. 
-        process_matrix_interpolating_function = self.process_matrix_interpolant_function
+        #process_matrix_interpolator = self.process_matrix_interpolator
         N_parameters = len(self.parameter_list)
 
         def _gate_interpolating_function(*args, **kwargs) -> Gate:
@@ -286,7 +287,7 @@ class GateInterpolator():
                 for name in self.parameter_list] )
             grid_coordinate = sig.bind(*args, **kwargs).arguments
             grid_coordinate_values = tuple(grid_coordinate[parameter_name] for parameter_name in self.parameter_list) # ensures sorted order of grid coordinate values
-            gate_output = self.make_interpolated_gate_from_process_matrix_function(process_matrix_interpolating_function, grid_coordinate_values)
+            gate_output = self.make_interpolated_gate_from_process_matrix_function(self.process_matrix_interpolator, grid_coordinate_values)
             return gate_output 
 
         return _gate_interpolating_function
