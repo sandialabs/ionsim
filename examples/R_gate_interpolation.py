@@ -91,7 +91,7 @@ def main():
         + detuning
     )
     amp_mod = None
-    import_interpolant = True  # option if the interpolant has previously been built  
+    import_interpolant = False # option if the interpolant has previously been built  
 
     # Define directory where interpolant and output plots will be stored 
     data_directory = Path.home() / "tmp" / "ionsim_examples_data"
@@ -116,8 +116,8 @@ def main():
     if import_interpolant : 
         ic(f" -- Reading R gate data from file {data_filename} --- ")
         # Optional: Write interpolant to a file using gate interpolant class 
-        R_gate_interpolant_v2 = sm.GateInterpolant.from_file_and_basis(data_filename, basis)
-        interpolated_R = R_gate_interpolant_v2.interpolated_gate_function
+        R_gate_interpolant_v2 = sm.GateInterpolator.from_file_and_basis(data_filename, basis)
+        interpolated_R = R_gate_interpolant_v2.make_interpolated_gate_over_grid 
 
         grid_axes = R_gate_interpolant_v2.grid_axes
         dxs = grid_axes[dx_name]
@@ -139,11 +139,11 @@ def main():
         dys = half_box_widths
 
         grid_axes = {dx_name : dxs, dy_name : dys} 
-        R_gate_interpolant = sm.GateInterpolant.from_gate_function(R_function, grid_axes, gate_name) 
+        R_gate_interpolant = sm.GateInterpolator.from_gate_function(R_function, grid_axes, gate_name) 
     
         # 2 Build a gate interpolating function (this uses cubic splines): returns Gate evaluated at grid / off-grid parameter values  
         """ Ex] interpolated_R(x = 0.5 * 2π * 1E3, y = 2.) returns an R Gate object at domega = 0.5 * 2π * 1E3, half_box_width 2. """ 
-        interpolated_R = R_gate_interpolant.interpolated_gate_function # returns a Gate object at a grid point 
+        interpolated_R = R_gate_interpolant.make_interpolated_gate_over_grid # returns a Gate object at a grid point 
 
         # 3. Save to a file to load in the future 
         attributes = {

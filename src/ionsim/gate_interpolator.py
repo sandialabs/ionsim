@@ -16,7 +16,7 @@ import ionsim.io as io
 from ionsim.process import Gate 
 
 @dataclass(frozen=True, eq=False) 
-class GateInterpolant(): 
+class GateInterpolator(): 
     """ A class for building a grid of gates to do gate interpolation and compute interpolated gates. 
 
         - maintains a sequence of gates built at corresponding parameter grid values. 
@@ -211,9 +211,9 @@ class GateInterpolant():
         """ Returns a gate's process matrix interpolating function of the grid parameters, e.g. G(x,y) for x,y grid parameters""" 
         # Extract gate spline information, then build interpolant function from the splines 
         gate_spline_reals, gate_spline_imags = self.construct_spline_for_gate(complex_data=True)
-        return self.interpolant_function_from_splines([gate_spline_reals, gate_spline_imags], 'process matrix')
+        return self.make_interpolated_property_from_splines([gate_spline_reals, gate_spline_imags], 'process matrix')
         
-    def interpolant_function_from_splines(self, property_interpolant: dict | list[dict, dict], property_name: str) -> Callable:
+    def make_interpolated_property_from_splines(self, property_interpolant: dict | list[dict, dict], property_name: str) -> Callable:
         """ Returns a property interpolating function of the grid parameters, e.g. F(x,y) for x,y grid parameters""" 
         N_parameters = len(self.parameter_list)
 
@@ -262,7 +262,7 @@ class GateInterpolant():
         return _interpolating_function
 
 
-    def interpolated_gate_from_process_matrix_interpolating_function(self, process_matrix_interpolating_function: Callable, parameter_coordinate: tuple):  
+    def make_interpolated_gate_from_process_matrix_function(self, process_matrix_interpolating_function: Callable, parameter_coordinate: tuple):  
         """ Returns the gate evaluated at a grid point off of the grid domain.""" 
         if isinstance(parameter_coordinate, tuple):
             grid_values = parameter_coordinate
@@ -272,7 +272,7 @@ class GateInterpolant():
         return Gate(self.basis, process_matrix = process_matrix_interpolating_function(*grid_values)) 
 
     @cached_property 
-    def interpolated_gate_function(self) -> Callable:
+    def make_interpolated_gate_over_grid(self) -> Callable:
         """ Returns a function that returns a Gate object evaluated at grid parameter values. """
         # Build and return a general interpolating function for a Gate object  
         # Retrieve process matrix interpolating function --> should only compute this once. 
@@ -286,7 +286,7 @@ class GateInterpolant():
                 for name in self.parameter_list] )
             grid_coordinate = sig.bind(*args, **kwargs).arguments
             grid_coordinate_values = tuple(grid_coordinate[parameter_name] for parameter_name in self.parameter_list) # ensures sorted order of grid coordinate values
-            gate_output = self.interpolated_gate_from_process_matrix_interpolating_function(process_matrix_interpolating_function, grid_coordinate_values)
+            gate_output = self.make_interpolated_gate_from_process_matrix_function(process_matrix_interpolating_function, grid_coordinate_values)
             return gate_output 
 
         return _gate_interpolating_function
