@@ -207,7 +207,6 @@ class GateInterpolator():
 
     #### Interpolation methods #### 
     @cached_property 
-    #def process_matrix_interpolant_function(self): 
     def process_matrix_interpolator(self): 
         """ Returns a gate's process matrix interpolating function of the grid parameters, e.g. G(x,y) for x,y grid parameters""" 
         # Extract gate spline information, then build interpolator function from the splines 
