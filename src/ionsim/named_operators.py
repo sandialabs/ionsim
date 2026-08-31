@@ -10,6 +10,7 @@
 import numpy as np
 
 from icecream import ic
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD 
 
 class Pauli:
 
@@ -39,6 +40,18 @@ class Pauli:
         [[0, 1],
          [0, 0]],
     )
+
+    ''' Projectors for single-qubit basis states: |0><0| and |1><1| ''' 
+    projector_0 = np.array(
+        [[1, 0],
+         [0, 0]],
+    )
+
+    projector_1 = np.array(
+        [[0, 0],
+         [0, 1]],
+    )
+
 
 class Fock:
 
@@ -77,9 +90,35 @@ class Unitary:
 
     @staticmethod
     def R(phi: float, theta: float):
-        """A single-qubit rotation on the Bloch sphere."""
+        """A single-qubit rotation on the XY plane of the Bloch sphere."""
         sigma_phi = np.cos(phi) * Pauli.X + np.sin(phi) * Pauli.Y
+        # TODO: Resolve global phase convention 
         return np.exp(1j*theta/2) * (np.cos(theta/2) * Pauli.I - 1j*np.sin(theta/2) * sigma_phi)
+
+    @staticmethod
+    def R_bloch(bloch_vector: list[float]):
+        """ A single-qubit rotation on the Bloch sphere via the Bloch vector v = (v1, v2, v3): 
+
+            U = exp( -i (v1 * sigma_x + v2*sigma_y + v3*sigma_z) ) 
+              = cos(alpha) I - i sin(alpha) (v_hat dot sigma) 
+
+            Unit vector: v_hat = v / |v|, sigma = (X, Y, Z) 
+
+            ex] Recover X_pi2 (sqrtX) gate via v1 = (π/2)/2
+        """
+        # Magnitude of the Bloch vector: 
+        alpha = 0.
+        for v in bloch_vector:
+            alpha += v**2 
+
+        alpha = np.sqrt(alpha)
+        if alpha < NUMERICAL_EQUIVALENCE_THRESHOLD:
+            return np.eye(2, dtype=complex) 
+        
+        # Pauli spin vector:  
+        n_vector = [v / alpha for v in bloch_vector] 
+        sigma_n = (n_vector[0] * Pauli.X + n_vector[1] * Pauli.Y + n_vector[2] * Pauli.Z ) # to absorb normalization  
+        return np.cos(alpha) * Pauli.I - 1j*np.sin(alpha) * sigma_n
 
     X = R(0, np.pi)
     sqrtX = R(0, np.pi/2)
@@ -92,3 +131,10 @@ class Unitary:
         """The Molmer-Sorensen entangling gate."""
         sigma_phi = np.cos(phi) * Pauli.X + np.sin(phi) * Pauli.Y
         return np.cos(theta/2) * np.kron(Pauli.I, Pauli.I) - 1j*np.sin(theta/2) * np.kron(sigma_phi, sigma_phi)
+
+    # The extra -i factor likely comes from book-keeping on the planar "R" method above, which has an extra exp(i theta /2) global factor  
+    CNOT = np.exp(1j*np.pi/2.)*np.exp(-1j*np.pi/4.)*(np.kron(np.conj(sqrtY).T,I)) @ (np.kron(np.conj(sqrtX).T,I)) @ (np.kron(I, np.conj(sqrtX).T)) @ MS(0., np.pi/2.) @ (np.kron(sqrtY, I))
+
+    @staticmethod
+    def CNOT_from_MS(phi: float, theta: float): 
+        return np.exp(1j*np.pi/2.)*np.exp(-1j*np.pi/4.)*(np.kron(np.conj(Unitary.sqrtY).T,Unitary.I)) @ (np.kron(np.conj(Unitary.sqrtX).T,Unitary.I)) @ (np.kron(Unitary.I, np.conj(Unitary.sqrtX).T)) @ Unitary.MS(phi, theta) @ (np.kron(Unitary.sqrtY, Unitary.I))

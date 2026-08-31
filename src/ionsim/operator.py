@@ -18,7 +18,7 @@ from ionsim.basis import StandardBasis
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.degree_of_freedom import DegreeOfFreedom
 from ionsim.custom_types import Matrix, Vector
-from ionsim.config import SMALLEST_ENERGY_SCALE
+from ionsim.config import SMALLEST_ENERGY_SCALE, NUMERICAL_EQUIVALENCE_THRESHOLD
 
 
 # ------- Contains classes for Operators and Operator Elements -------- 
@@ -39,9 +39,10 @@ class OperatorElement(ABC):
     row_state: EnergyEigenstate # e.g. corresponds to the row index (upper state) of the non-zero element of a raising operator
     strength: float
 
+    # TODO: review this, is this check necessary? 
     def __post_init__(self):
         if np.abs(self.strength) < SMALLEST_ENERGY_SCALE : 
-            raise IonSimError("Invalid matrix element. Element must contain a non-zero strength value.")
+            raise IonSimError(f"Invalid matrix element from small strength: {self.strength}. Element must contain a non-zero strength value.")
 
 
 @dataclass(frozen=True, eq=False)
@@ -107,6 +108,24 @@ class Operator(ABC):
     def static_matrix(self):
         """The sparse-matrix representation of the operator. If purely offdiagonal, the time-dependent phase factor is set equal to one."""
 
+    @property
+    def superbra(self):
+        """ Flattened representation of a static operator (often a measurement (POVM)) as a row vector """ 
+        if hasattr(self, "couplings"): 
+            no_oscillation = np.all([coupling.oscillation_rate < NUMERICAL_EQUIVALENCE_THRESHOLD for coupling in self.couplings])
+        else:
+            no_oscillation = True
+
+        if self.modulation_function is None and no_oscillation: 
+            return self.static_superbra 
+        else:
+            raise NotImplementedError(f"Dynamic superbra calculation not yet implemented.")
+
+    @property
+    def static_superbra(self):
+        # Convert d x d effect operator matrix to a d^2 row vector: E --> flatten((E^{dagger}).T) = conj(E).flatten() 
+        return (np.conj(self.static_matrix.toarray())).flatten() 
+
     @staticmethod
     def _create_sparse_static_coupling_matrix_and_rate_matrix(static_matrix: Matrix, oscillation_rate: float):
         """Create sparse matrices for the static operator matrix and the osciallation rate matrix."""
@@ -131,8 +150,11 @@ class Operator(ABC):
             assert row != column, 'Input error: Input should be a purely off-diagonal matrix.' 
             row_state, column_state = basis.states[row], basis.states[column]
             #if (column,row) not in included_indices:
-            coupling = Coupling(row_state = row_state, column_state = column_state, strength = coupling_matrix[row, column], oscillation_rate = rate[row, column])
-            couplings.append(coupling)
+
+            # Only include coupling if its stength is above the threshold energy scale 
+            if np.abs(coupling_matrix[row, column]) > SMALLEST_ENERGY_SCALE: 
+                coupling = Coupling(row_state = row_state, column_state = column_state, strength = coupling_matrix[row, column], oscillation_rate = rate[row, column])
+                couplings.append(coupling)
             #included_indices.append((row, column))
             if column == row:
                 raise IonSimError('Diagonal elements of oscillating (coupling) operators are not currently allowed.')

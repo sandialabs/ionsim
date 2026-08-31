@@ -14,8 +14,10 @@ import numpy as np
 from ionsim.process import Gate, Circuit
 from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis
-from ionsim.named_operators import Unitary
+from ionsim.named_operators import Unitary, Pauli
 from ionsim.noise import Noise
+from ionsim.operator import EnergyShiftOperator
+from ionsim.state import State 
 
 class TestProcess(unittest.TestCase):
 
@@ -51,7 +53,7 @@ class TestProcess(unittest.TestCase):
     def test_extra_noisy_gate_process_fidelity(self):
         """Test the process fidelity of the extra noisy gate."""
         extra_noisy_gate = Gate.from_process_matrix_function(
-            self.basis, self.noisy_phi_gate.process_matrix_function, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.theta_noise,
+            self.basis, self.noisy_phi_gate.process_matrix_function, {'phi': 0, 'theta': np.pi/2}, self.theta_noise,
         )
         fidelity = extra_noisy_gate.compute_process_fidelity(self.Sx.process_matrix)
         self.assertAlmostEqual(fidelity, 0.9306176541502549, places=14)
@@ -67,6 +69,14 @@ class TestProcess(unittest.TestCase):
         )
         fidelity = ramsey.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
         self.assertAlmostEqual(fidelity, 0.9306176541502548, places=14)
+
+        # Test computing outcome probabilities 
+        outcome_operator = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_1, Pauli.projector_0)) 
+        initial_state = State.from_coefficients(self.basis, [1., 0., 0., 0.]) 
+
+        outcome_probability = ramsey.predict_outcome_probabilities(initial_state, [outcome_operator]) 
+        self.assertAlmostEqual(outcome_probability[0], 0.9530090510307307, places = 10)
+
 
 if __name__ == '__main__':
     unittest.main()
