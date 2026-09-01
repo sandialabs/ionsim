@@ -30,7 +30,7 @@ from .noise import Noise
 from .zeeman_solver import ZeemanHyperfineSolver
 from .composite_operator import CompositeOperator
 from .lindbladian import Dissipator, DissipatorSpontaneousEmission, Lindbladian 
-from .gst_circuit_parser import ParsedGate, ParsedCircuit, CircuitData
+from .gst_circuit_parser import ParsedGate, ParsedCircuit, CircuitData, parse_gst_circuit_file
 from .gate_set_tomography import GateSetTomography 
 from .gst_circuit_planner import GSTCircuitPlanner 
 from .gate_interpolator import GateInterpolator 

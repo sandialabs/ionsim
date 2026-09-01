@@ -18,7 +18,7 @@ from ionsim.basis import StandardBasis
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.degree_of_freedom import DegreeOfFreedom
 from ionsim.custom_types import Matrix, Vector
-from ionsim.config import SMALLEST_ENERGY_SCALE, NUMERICAL_EQUIVALENCE_THRESHOLD
+from ionsim.config import SMALLEST_ENERGY_SCALE, NUMERICAL_EQUIVALENCE_THRESHOLD 
 
 
 # ------- Contains classes for Operators and Operator Elements -------- 
@@ -40,9 +40,10 @@ class OperatorElement(ABC):
     strength: float
 
     # TODO: review this, is this check necessary? 
-    def __post_init__(self):
-        if np.abs(self.strength) < SMALLEST_ENERGY_SCALE : 
-            raise IonSimError(f"Invalid matrix element from small strength: {self.strength}. Element must contain a non-zero strength value.")
+    # TODO: Remove or change to machine precision; this is not intended behavior and leads to bugs / normalization issues  
+ #    def __post_init__(self):
+ #        if np.abs(self.strength) < SMALLEST_ENERGY_SCALE : 
+ #            raise ValueError(f"Invalid matrix element from small strength: {self.strength}. Element must contain a non-zero strength value.")
 
 
 @dataclass(frozen=True, eq=False)
@@ -51,7 +52,7 @@ class Coupling(OperatorElement):
     oscillation_rate: float # provides w in the phase factor exp[-i w t]
 
     def __post_init__(self):
-        super().__post_init__()
+        #super().__post_init__()
         if self.row_state.name == self.column_state.name: # or check equality between states? not currently allowed 
           raise IonSimError('Coupling must entail different row and column state to represent an off-diagonal element.')
 
@@ -78,10 +79,16 @@ class EnergyShift(OperatorElement):
         return cls(row_state = state, column_state = state, strength = shift_strength) 
 
     def __post_init__(self):
-        super().__post_init__()
+        #super().__post_init__()
         # Checks that user is using this functionality for diagonal elements only  
         if self.row_state.name != self.column_state.name: # or check equality between state objects? not currently allowed 
           raise IonSimError('Energy Shift must use same row and column state to represent a diagonal element.')
+
+ #        if isinstance(self.strength, complex):
+ #            if self.strength.imag > SMALLEST_ENERGY_SCALE: 
+ #                raise IonSimError("Invalid energy shift matrix element. Element must be real valued. Energy strength = {self.strength}")
+ #            else:
+ #                object.__setattr__(self, 'strength', self.strength.real)
 
 
 # ---- Classes for operators ----  
@@ -92,10 +99,12 @@ class Operator(ABC):
     elements: list[OperatorElement]
     modulation_function: Callable | None=None
 
-    def __post_init__(self):
-        # Checks that all elements have non-zero strength compared to the smallest energy scale  
-        if any(np.abs(element.strength) < SMALLEST_ENERGY_SCALE for element in self.elements):
-            raise IonSimError("Invalid matrix element. Element must contain a non-zero strength value.")
+ #    def __post_init__(self):
+ #        # Checks that all elements have non-zero strength compared to the smallest energy scale  
+ #        #if any(np.abs(element.strength) < SMALLEST_ENERGY_SCALE for element in self.elements):
+ #        # TODO: Consider changing to NUMERICAL THRESHOLD 
+ #        if all(np.abs(element.strength) < NUMERICAL_EQUIVALENCE_THRESHOLD for element in self.elements):
+ #            raise IonSimError("Invalid matrix element. Element must contain a non-zero strength value.")
 
     @classmethod
     @abstractmethod
@@ -108,23 +117,12 @@ class Operator(ABC):
     def static_matrix(self):
         """The sparse-matrix representation of the operator. If purely offdiagonal, the time-dependent phase factor is set equal to one."""
 
+
     @property
     def superbra(self):
         """ Flattened representation of a static operator (often a measurement (POVM)) as a row vector """ 
-        if hasattr(self, "couplings"): 
-            no_oscillation = np.all([coupling.oscillation_rate < NUMERICAL_EQUIVALENCE_THRESHOLD for coupling in self.couplings])
-        else:
-            no_oscillation = True
-
-        if self.modulation_function is None and no_oscillation: 
-            return self.static_superbra 
-        else:
-            raise NotImplementedError(f"Dynamic superbra calculation not yet implemented.")
-
-    @property
-    def static_superbra(self):
         # Convert d x d effect operator matrix to a d^2 row vector: E --> flatten((E^{dagger}).T) = conj(E).flatten() 
-        return (np.conj(self.static_matrix.toarray())).flatten() 
+        return (np.conj(self.static_matrix.toarray())).flatten() # TODO: add warning / fail for non-static operators? 
 
     @staticmethod
     def _create_sparse_static_coupling_matrix_and_rate_matrix(static_matrix: Matrix, oscillation_rate: float):
@@ -134,6 +132,9 @@ class Operator(ABC):
         nonzero_diagonal = any(rows == cols)
         nonzero_offdiagonal = not all(rows == cols) 
         # Check that input static_matrix operator is purely off-diagonal
+ #        has_nan = np.any(np.isnan(static_matrix))
+ #        if has_nan:
+ #            raise ValueError(f"Static matrix input has NAN values, received {static_matrix}.")
         assert not nonzero_diagonal, 'Error: Matrix input should be purely off-diagonal to correspond with oscillation rate input. Dense matrix input with oscillation rate is ambiguous.'
         
         rate = csr_matrix(([oscillation_rate for _ in rows], (rows, cols)), shape=static_coupling_matrix.shape)
@@ -152,9 +153,9 @@ class Operator(ABC):
             #if (column,row) not in included_indices:
 
             # Only include coupling if its stength is above the threshold energy scale 
-            if np.abs(coupling_matrix[row, column]) > SMALLEST_ENERGY_SCALE: 
-                coupling = Coupling(row_state = row_state, column_state = column_state, strength = coupling_matrix[row, column], oscillation_rate = rate[row, column])
-                couplings.append(coupling)
+            #if np.abs(coupling_matrix[row, column]) > SMALLEST_ENERGY_SCALE: 
+            coupling = Coupling(row_state = row_state, column_state = column_state, strength = coupling_matrix[row, column], oscillation_rate = rate[row, column])
+            couplings.append(coupling)
             #included_indices.append((row, column))
             if column == row:
                 raise IonSimError('Diagonal elements of oscillating (coupling) operators are not currently allowed.')
@@ -192,9 +193,9 @@ class Operator(ABC):
         # Assumes diagonal elements sorted order matches the sorted order of basis states in basis. 
         matrix_elements = []
         for i, value in enumerate(diagonal_elements):
-            if np.abs(value) > SMALLEST_ENERGY_SCALE : 
-                matrix_element = EnergyShift.from_state(basis.states[i], value)
-                matrix_elements.append(matrix_element)
+            #if np.abs(value) > SMALLEST_ENERGY_SCALE : 
+            matrix_element = EnergyShift.from_state(basis.states[i], value)
+            matrix_elements.append(matrix_element)
               
         return matrix_elements 
  
@@ -212,7 +213,7 @@ class EnergyShiftOperator(Operator):
     """A diagonal quantum operator in a basis of energy eigenstates, representing energy shifts."""
 
     def __post_init__(self):
-        super().__post_init__()
+        #super().__post_init__()
         self._check_all_elements_are_energy_shifts()
 
     def _check_all_elements_are_energy_shifts(self):
@@ -262,7 +263,7 @@ class CouplingOperator(Operator):
     """An off-diagonal quantum operator in a basis of energy eigenstates."""
 
     def __post_init__(self):
-        super().__post_init__()
+        #super().__post_init__()
         self._check_for_one_oscillation_rate() # should use inherited method 
 
     def _check_all_elements_are_couplings(self):
@@ -318,8 +319,8 @@ class GeneralOperator(Operator): # is there a better name? We avoid "DenseOperat
 
         The Hamiltonian class will require separating a general operator into CouplingOperator and EnergyShiftOperator contributions for efficiency. 
     """
-    def __post_init__(self):
-        super().__post_init__()
+ #    def __post_init__(self):
+ #        super().__post_init__()
 
     @property
     def couplings(self):
@@ -390,7 +391,7 @@ class GeneralOperator(Operator): # is there a better name? We avoid "DenseOperat
         matrix_elements = [] 
         matrix_elements = energy_shift_elements + couplings
 
-        assert len(matrix_elements) == input_operator.count_nonzero(), f"Expected {input_operator.count_nonzero()} elements but have {len(matrix_elements)} instead."
+        #assert len(matrix_elements) == input_operator.count_nonzero(), f"Expected {input_operator.count_nonzero()} elements but have {len(matrix_elements)} instead."
         return cls(basis, matrix_elements, modulation_function)
 
     @property

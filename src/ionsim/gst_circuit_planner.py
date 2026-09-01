@@ -320,8 +320,8 @@ class GSTCircuitPlanner:
         """ Computes sensitivites of each circuit to gate model parameters """ 
         fisher_information = {}
         # Remove do nothing circuit 
+        circuits = gst_circuits.copy()
         if gst_circuits[0].expanded_gates == []: 
-            circuits = gst_circuits.copy()
             circuits = circuits[1:] 
 
         for circ in circuits:
