@@ -40,7 +40,7 @@ class OperatorElement(ABC):
     strength: float
 
     # TODO: review this, is this check necessary? 
-    # TODO: Remove or change to machine precision; this is not intended behavior and leads to bugs / normalization issues  
+    # TODO: Remove or change to machine precision; this is not intended behavior and leads to bugs / normalization issues on POVMs 
  #    def __post_init__(self):
  #        if np.abs(self.strength) < SMALLEST_ENERGY_SCALE : 
  #            raise ValueError(f"Invalid matrix element from small strength: {self.strength}. Element must contain a non-zero strength value.")
