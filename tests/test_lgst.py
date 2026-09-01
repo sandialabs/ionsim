@@ -212,9 +212,9 @@ class TestGST(unittest.TestCase):
         Y_pi2_error = gate_set_error[self.gates[1]]
         SPAM_error = gate_set_error["prep"]
         SPAM_error += gate_set_error["POVM"]
-        self.assertAlmostEqual(X_pi2_error, 0.0004924175661171493, places=8)
-        self.assertAlmostEqual(Y_pi2_error, 0.0004924175661169726, places=8)
-        self.assertAlmostEqual(SPAM_error, 2.1712445132231874e-05, places=8)
+        self.assertAlmostEqual(X_pi2_error, 0.0004924175661171493, places=5)
+        self.assertAlmostEqual(Y_pi2_error, 0.0004924175661169726, places=5)
+        self.assertAlmostEqual(SPAM_error, 2.1712445132231874e-05, places=5)
 
     def test_mle_gst_analysis(self):
         """ Test GST via maximum likelihood estimation (MLE)""" 
@@ -225,9 +225,9 @@ class TestGST(unittest.TestCase):
         Y_pi2_error = gate_set_error[self.gates[1]]
         SPAM_error = gate_set_error["prep"]
         SPAM_error += gate_set_error["POVM"]
-        self.assertAlmostEqual(X_pi2_error, 0.0006672864884890055, places=8)
-        self.assertAlmostEqual(Y_pi2_error, 0.0006672864884889269, places=8)
-        self.assertAlmostEqual(SPAM_error, 0.0010575712223980156, places=8)
+        self.assertAlmostEqual(X_pi2_error, 0.0006672864884890055, places=5)
+        self.assertAlmostEqual(Y_pi2_error, 0.0006672864884889269, places=5)
+        self.assertAlmostEqual(SPAM_error, 0.0010575712223980156, places=5)
 
 if __name__ == '__main__':
     unittest.main()

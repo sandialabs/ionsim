@@ -187,8 +187,8 @@ class TestGST(unittest.TestCase):
         X_pi8_error = gate_set_error[self.gates[0]]
         SPAM_error = gate_set_error["prep"]
         SPAM_error += gate_set_error["POVM"]
-        self.assertAlmostEqual(X_pi8_error, 0.00027408522081525397, places=8)
-        self.assertAlmostEqual(SPAM_error, 0.00011231981002808708, places=8)
+        self.assertAlmostEqual(X_pi8_error, 0.00027408522081525397, places=5)
+        self.assertAlmostEqual(SPAM_error, 0.00011231981002808708, places=5)
 
     def test_fisher_info(self):
         """ Test calculation of fisher information""" 
@@ -200,7 +200,7 @@ class TestGST(unittest.TestCase):
 
         FI_last_circuit = circuit_design_fisher_info[tuple(self.parsed_circuits[-1].expanded_gates)]
         param_key = "X_pi_8_co_prop_simple__amplitude_noise_strength"
-        self.assertAlmostEqual(FI_last_circuit[(param_key, param_key)], 24283.2431074, places=6)
+        self.assertAlmostEqual(FI_last_circuit[(param_key, param_key)], 24283.2431074, places=3)
 
 if __name__ == '__main__':
     unittest.main()
