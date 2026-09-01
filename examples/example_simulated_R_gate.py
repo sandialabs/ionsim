@@ -201,8 +201,8 @@ def main():
             """ Gate function of the interpolation parameters; returns a Gate object """ 
             return R(phi, theta, domega, half_box_width)
 
-        print("Building gate interoplant using process matrix function")
-        R_gate_interpolant = sm.GateInterpolant.from_gate_function(R_function, grid_axes, gate_name) 
+        ic("Building gate interpolant using process matrix function")
+        R_gate_interpolant = sm.GateInterpolator.from_gate_function(R_function, grid_axes, gate_name) 
         grids = R_gate_interpolant.grids 
         grid = R_gate_interpolant.grid
         lens = R_gate_interpolant.grid_lengths 
@@ -258,8 +258,8 @@ def main():
         # F_data <==> Gate-valued (process matrix) residuals. For every x,y gate parameter, there's a d^2 x d^2 process matrix .
         F_spline_reals, F_spline_imags = R_gate_interpolant.construct_spline_for_gate_derived_matrix_property(F_data, complex_data=True)
 
-        # Using the interpolants, build a function to return F(x,y) for arbitary x,y pairs
-        F_function = R_gate_interpolant.interpolant_function_from_splines([F_spline_reals, F_spline_imags], 'relative_error')
+        # Using the interpolants, build a function to return F(x,y) for arbitrary x,y pairs
+        F_function = R_gate_interpolant.make_interpolated_property_from_splines([F_spline_reals, F_spline_imags], 'relative_error')
 
         def interpolated_R(phi, theta, dx, dy):
             return sm.Gate(basis, (F_function(dx, dy) + np.eye(size)).dot(ideal_R(phi, theta).process_matrix))

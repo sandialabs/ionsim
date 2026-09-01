@@ -8,23 +8,18 @@ from ionsim.custom_types import AnyMatrix
 # Opening the file with 'w' allows reading and writing and
 # truncates existing data. See https://docs.h5py.org/en/stable/high/file.html
 
-def write_results_to_file(data_filename: str, results: dict, attributes: dict=None):
+def write_results_to_file(data_filename: str, results: dict, mode: str='w', attributes: dict=None):
     """ Write a set of results to a data file """
-    with h5py.File(data_filename, 'w') as datafile: 
+    with h5py.File(data_filename, mode) as datafile: 
         for key in results.keys(): 
             write_matrix(datafile, results[key], key, attributes)
-
-    return 0 # successful write 
-
 
 def read_results_from_file(data_filename: str):
     """ Read a set of results from a data file """
     results = {}
     attributes_from_file = {}
     with h5py.File(data_filename, 'r') as datafile: 
-        # loop over all attributes in the file
-        attributes = list(datafile.keys())
-        for attribute in attributes:
+        for attribute in datafile:
             results[attribute], attributes_from_file[attribute] = read_matrix(datafile, attribute) 
 
     return results, attributes_from_file 

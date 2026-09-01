@@ -86,7 +86,6 @@ class TestProcess(unittest.TestCase):
         ramsey_circuit = Circuit.from_gates([noisy_R_gate, noisy_R_gate])
 
         #ramsey_circuit = Circuit.from_gates([noisy_R_gate, noisy_R_gate], self.theta_noise) # functions but not accurate  
-        ## Fixed a bug where a noisy process matrix function would not work with kwargs 
         circuit_pm_function = ramsey_circuit.process_matrix_function 
 
         # Test outcome probability function  
@@ -99,15 +98,15 @@ class TestProcess(unittest.TestCase):
         self.assertAlmostEqual(outcome_prob, 0.9530090510307307, places = 10)
 
         # Compute outcome probability using probability function: 
-        prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = ["R__phi", "R__theta"], **circuit_parameters) 
+        prob, prob0_gradients = circuit_pm_function.gradient(prob_function, wrt = ["R__phi", "R__theta"], **circuit_parameters) 
+        self.assertAlmostEqual(prob0_gradients["R__phi"], -1.08349378e-10, places = 5)
 
-        ### Test Jacobian functionality: Compute Jacobian when considering more than 1 outcome: 
+        # Test Jacobian functionality: Compute Jacobian when considering more than 1 outcome: 
         outcome_operator2 = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_0, Pauli.projector_0)) 
-
         probs_function = ramsey_circuit.build_outcome_probabilities_function(initial_state, [outcome_operator, outcome_operator2])
-
         probs, jacobian = circuit_pm_function.jacobian(probs_function, wrt = ["R__phi", "R__theta"], **circuit_parameters)
-        #print(f"Jacobian: \n{jacobian}")
+        self.assertAlmostEqual(jacobian["R__phi"][1], 5.28382730e-11, places = 5)
+        self.assertAlmostEqual(jacobian["R__phi"][0], prob0_gradients["R__phi"], places = 5)
 
 
 if __name__ == '__main__':

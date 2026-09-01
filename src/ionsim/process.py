@@ -133,8 +133,6 @@ class Gate(Process):
 
         import time
         final_states = []
-        #ic(len(reduced_basis.vectors))
-        #ic(reduced_basis.vectors)
         for vector in reduced_basis.vectors:
             if dofs_to_trace_out is None:
                 initial_state = State.from_wavefunction(basis, vector)
@@ -142,17 +140,12 @@ class Gate(Process):
                 initial_state = State.from_wavefunction_with_new_component(
                     basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
                 )
-            #ic(len(initial_state.wavefunction))
-            # start = time.perf_counter()
             final_states.append(
                 initial_state.propagate_using_schrodinger_equation(
                     hamiltonian, duration,
                     ode_solver=ode_solver, **ode_solver_kwargs
                 )
             )
-            # end = time.perf_counter()
-            # ic(f'State propagation took {end-start} seconds.')
-
         # TODO: how can we do multiprocessing outside of main?
         # from concurrent.futures import ProcessPoolExecutor
         # def propagate(vector):
@@ -204,6 +197,7 @@ class Gate(Process):
         """
         # TODO: Include tracing out DOF functionality 
         if dofs_to_trace_out is not None:
+            raise NotImplementedError("Tracing out DOFs from a larger subspace not yet implemented.")
             assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
             assert(len(dofs_to_trace_out) == len(initial_wavefunctions_for_dofs_to_trace_out))
             assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
@@ -229,6 +223,8 @@ class Gate(Process):
             # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
             # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
             # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 
+            if dofs_to_trace_out is not None:
+                raise NotImplementedError(f"Building a gate on a subspace from a Lindbladian on a larger Hilbert space is not yet implemented.")
 
             process_matrix_columns = []
             # When projecting, loop over all vectors in the total basis and then skip the ones that will be zero, i.e. set those cols = zero and skip evolution.   
@@ -237,15 +233,6 @@ class Gate(Process):
                 for j, vector_p in enumerate(basis.vectors):
                     # Necessary to do |vector_p > <vector| to get correct basis ordering after projection  
                     initial_state = State.from_density_matrix(basis,  np.outer(vector_p, vector))
-        
-                    # TODO: Include tracing out DOF functionality 
-                    # Time-evolve with Lindbladian, this yields the ij'th column of the process matrix.
-         #            if dofs_to_trace_out is None:
-         #                initial_state = State.from_wavefunction(basis, vector)
-         #            else:
-         #                initial_state = State.from_wavefunction_with_new_component(
-         #                    basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
-         #                )
                     final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
     
                     # Supervector of final state gives you 1 column of the process matrix  
@@ -321,7 +308,7 @@ class Circuit(Process):
  #            if not (self.process_matrix_function(*arguments) == self.process_matrix).all:
  #                raise IonSimError(f"Error, process matrix function and process matrix attributes do not correspond.")
 
-    # TODO: Should the user be adding noise at the circuit level? Is it an essential feature? We could just have them specify it at the gate level? 
+    # TODO: Need to make autodifferentiation compatible with circuit Noise objects   
     @classmethod
     def from_gates(cls, gates: list[Gate], noise: Noise | None = None):
         """Build a circuit from a series of gates in the same basis."""
@@ -449,7 +436,6 @@ def predict_outcome_probabilities_from_process_matrix(initial_state: State, proc
     propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
     # Using @ operator facilitates jax compatibility; np.dot does not 
     return (outcome_matrix @ propagated_state.supervector).real  
-    #return (outcome_operator.superbra @ propagated_state.supervector).real  
 
 
 import jax 
@@ -748,24 +734,3 @@ def make_matrix_function_jax_differentiable(function: Callable, eps: float = 1e-
     wrapped.__doc__ = function.__doc__ 
     return wrapped 
 
-
-# Possible idea: Build a IonSim circuit object from a ParsedCircuit object, requires gate models + basis  
-#@dataclass(frozen=True,eq=False)
-#class GST_Circuit():
-#    """ Class containing IonSim GST Circuit Objects, containing lists of gates"""
-#
-#    name: str
-#    prep_circuit: Circuit  
-#    germ_circuit: Circuit 
-#    measure_circuit: Circuit 
-#    germ_power: int 
-#    counts: dict[str, int] | None=None 
-#    
-#    @property
-#    def expanded_circuit(self) -> list[Gate]:
-#        """ List of gates, expanded (no germ power included) """
-#        return self.prep_circuit.gates + self.germ_circuit.gates * self.germ_power.gates + self.measure_circuit.gates
-#
-#    def __repr__(self):
-#        readable_name = " ".join(repr(gate.name) for gate in self.expanded_gates) or "(empty)"
-#        return f"GST_Circuit({gates_readable}, counts={self.counts})"
