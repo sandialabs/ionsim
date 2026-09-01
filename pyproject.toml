@@ -18,7 +18,8 @@ dependencies = [
     "pyyaml",
     "pint",
     "sympy",
-    "h5py"
+    "h5py",
+    "jax"
 ]
 classifiers = [
     "Development Status :: 2 - Beta",

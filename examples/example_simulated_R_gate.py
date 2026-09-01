@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 #***************************************************************************************************
 # Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
 # Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
@@ -214,10 +213,10 @@ def main():
         chi_inv = np.linalg.inv(ideal_R(phi, theta).process_matrix)
 
         # Define a functional of the gate to return the desired property  
-        def relative_err_gate_functional(gate):
+        def relative_err(gate):
             return gate.process_matrix.dot(chi_inv) - np.eye(size)
 
-        gate_residual_data = R_gate_interpolant.compute_functional_of_gates(relative_err_gate_functional) 
+        gate_residual_data = R_gate_interpolant.evaluate_function_on_grid(relative_err) 
 
         ic(gate_residual_data)
 
@@ -234,7 +233,7 @@ def main():
 
         # Set up a dictionary of results and write to an hdf5 file  
         results_dictionary = {'dx' : dxs, 'dy': dys, 'relative_error': F_data}
-        sm.io.write_results_to_file(data_filename, results_dictionary, attributes)
+        sm.io.write_results_to_file(data_filename, results_dictionary, 'w', attributes)
                 
     # Step 2: Use the grid of gates to interpolate. 
     if compute_interpolated_gate:
