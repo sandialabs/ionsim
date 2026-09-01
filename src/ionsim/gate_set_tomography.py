@@ -901,13 +901,13 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         gram_matrix_det = np.linalg.det(gram_matrix)
         if np.abs(gram_matrix_det) < 1E-12:
-            ValueError(f"Gram matrix is not invertible, determinant = {gram_matrix_det}") 
+            raise ValueError(f"Gram matrix is not invertible, determinant = {gram_matrix_det}") 
         
         # 2. Compute SVD to get projector to linear-independent subspace  
         U, S, Vh = np.linalg.svd(gram_matrix)
 
         if len(S) < self.d2:
-            ValueError(f"Gram matrix is not informationally complete. It has rank {len(S)} instead of {self.d2}.")
+            raise IonSimError(f"Gram matrix is not informationally complete. It has rank {len(S)} instead of {self.d2}.")
 
         # Projector onto k = d^2 top right singular vectors  
         Pi = Vh[:self.d2, :]
@@ -915,8 +915,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Check that the fiducials are informationally complete by checking singular values: 
         TOL = 1E-10
         N_significant_vals = np.sum(S > TOL)
-        if N_significant_vals < self.d2:
-            ValueError(f" Fiducials are not informationally complete. Only {N_significant_vals} singular values instead of {self.d2}.")
+        if (N_significant_vals < self.d2): 
+            raise ValueError(f" Fiducials are not informationally complete. Only {N_significant_vals} singular values instead of {self.d2}.")
 
         # Check separation between complete and excess subspaces
         if len(S) > self.d2:
@@ -1222,7 +1222,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                         
             # restore circuit information
             self.parsed_circuits = original_circuits
-
         # return final result, having used all circuits:
         return solver_result, solver_results
 
@@ -1340,8 +1339,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             for circ in self.parsed_circuits:
                 p = self._predict_probabilities(circ, theta_true)
                 p_vals = [p[o] for o in self.outcome_labels]
-                #circuit_probabilities.append(p_vals)
-                #for circ, (prob_values) in zip(self.parsed_circuits, circuit_probabilities):
                 outcome_counts = np.random.multinomial(N_shots, p_vals) 
                 circ.measurement_data = CircuitData.from_counts(dict(zip(self.outcome_labels, outcome_counts)))
 
@@ -1382,9 +1379,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             for i, err_dict in enumerate(gate_set_errors):
                 errors[i] = err_dict[model] 
             avg_gate_set_error[model] = np.mean(errors)
-            #avg_gate_set_error[model] = np.median(errors)
             # Standard error = standard deviation / sqrt(N)
-            #gate_set_error_standard_error[model] = np.std(errors, axis=0)/np.sqrt(N_repetitions) 
             gate_set_error_standard_error[model] = stats.sem(errors, axis=0)
 
         return theta_avg, theta_std_err, avg_gate_set_error, gate_set_error_standard_error 
@@ -1396,8 +1391,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         gst_error = sum([gate_set_error[gate] for gate in self.gate_set]) / len(self.gate_set)
 
         if include_SPAM_error:
-            #POVM_errors = np.array(list(gate_set_errors['POVM'].values())).real
-            #SPAM_error = gate_set_errors['prep'] + sum(POVM_errors)
             SPAM_error = gate_set_error['prep'] + gate_set_error["POVM"]
             return gst_error + SPAM_error 
         else:
@@ -1411,95 +1404,3 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             SPAM_error = gate_set_std_errs['prep'] + gate_set_std_errs["POVM"]
             gst_error += SPAM_error**2 
         return np.sqrt(gst_error)
-
-
-    #def estimate_parameter_uncertainties(self, theta: Vector | None=None, method: str='bootstrap') -> Vector:
-    ## TODO: Consider deleting this; we probably don't need bootstrapping 
- #    def bootstrapping_analysis(self, theta: Vector | None=None,  N_bootstrap: int=50):
- #        """ Computes uncertainties of each parameter from the Hessian of the log-likelihood at the MLE solution."""
- #        if self.solver_result is None and theta is None:
- #            self.solve_for_gate_parameters()
- #
- #        if theta is None:
- #            theta = self.gst_parameters 
- #        else:
- #            self.gst_parameters = theta
- #
- #        uncertainties = np.zeros_like(self.gst_parameters)
- #        uncertainties, means, bootstrapped_thetas = self.bootstrap_parameters(N_bootstrap)
- #
- #        # Return a dictionary containing a dictionary for each model (prep, gate 1, gate 2, etc. , measure) 
- #        mean_results = {}
- #        uncertainty_results = {}
- #        # For gates: 
- #        for gate in self.gate_set:
- #            gate_model = self.gate_models[gate]
- #            gate_model_sig = inspect.signature(gate_model)
- #            parameter_names = list(gate_model_sig.parameters.keys())  
- #            parameter_means = means[self.gst_parameter_indices[gate]]
- #            parameter_uncertainties = uncertainties[self.gst_parameter_indices[gate]]
- #            # Package up parameter names and uncertainty values: 
- #            mean_results[gate] = dict(zip(parameter_names, parameter_means))
- #            uncertainty_results[gate] = dict(zip(parameter_names, parameter_uncertainties)) 
- #
- #        # For SPAM: 
- #        prep_model = self.prep_state_model
- #        prep_model_sig = inspect.signature(prep_model)
- #        parameter_names = list(prep_model_sig.parameters.keys())
- #        prep_param_means = means[self.gst_parameter_indices['prep']]
- #        prep_param_unc = uncertainties[self.gst_parameter_indices['prep']]
- #        mean_results["prep"] = dict(zip(parameter_names, prep_param_means))
- #        uncertainty_results['prep'] = dict(zip(parameter_names, prep_param_unc)) 
- #
- #        # Currently only the independent measurement parameters are returned; TODO: generalize as much as possible  
- #        measure_model = self.POVM_effect_models
- #        measure_model_sig = inspect.signature(measure_model) 
- #        parameter_names = list(measure_model_sig.parameters.keys())
- #        parameter_means = means[self.gst_parameter_indices["POVM"]]
- #        parameter_uncertainties = uncertainties[self.gst_parameter_indices["POVM"]]
- #        mean_results["POVM"] = dict(zip(parameter_names, prep_param_means))
- #        uncertainty_results["POVM"] = dict(zip(parameter_names, parameter_uncertainties))
- #
- #        # Compute gate set errors for each bootstrapped sample  
- #        gate_set_errors = []
- #        N_bootstrap = bootstrapped_thetas.shape[0]
- #        for i in range(N_bootstrap):
- #            sampled_theta = bootstrapped_thetas[i,:] 
- #            gate_set_errors.append(self.compute_gate_set_error_by_element(sampled_theta, self.ideal_gate_set, 'frobenius norm')) 
- #        
- #        return mean_results, uncertainty_results, gate_set_errors, bootstrapped_thetas 
- #
- #    def bootstrap_parameters(self, N_bootstrap: int=50):
- #        """ Bootstrapping for parameter uncertainties: Sample data from the fitted model and re-fit, computing 
- #                parameter spread. N_bootstrap is the number of resamplings. """
- #        if self.verbose:
- #            print(f"Bootstrapping the uncertainties")
- #        theta_best = self.gst_parameters.copy()
- #        bootstrap_thetas = np.zeros((N_bootstrap, len(theta_best)))
- #
- #        circuit_probabilities = []
- #        for circ in self.parsed_circuits:
- #            probs = self._predict_probabilities(circ, theta_best)
- #            counts = circ.measurement_data.total_counts     # TODO: generalize to t-dependent data 
- #            circuit_probabilities.append((probs, counts))
- #        
- #        for b in range(N_bootstrap):
- #            for circ, (probs, total_counts) in zip(self.parsed_circuits, circuit_probabilities):
- #                outcomes = list(probs.keys()) 
- #                outcome_probs = [probs[outcome] for outcome in outcomes]
- #                outcome_counts = np.random.multinomial(total_counts, outcome_probs) 
- #                circ.measurement_data = CircuitData.from_counts(dict(zip(outcomes, outcome_counts)))
- #                
- #            # Re-run the MLE analysis to find best fit:
- #            #self.gst_parameters = theta_best.copy()
- #            #self.solve_for_gate_parameters(parameters_guess = theta_best.copy(), solver = 'MLE')   # sets self.gst_parameters to optimal  
- #            self.solve_for_gate_parameters(parameters_guess = self.parameters_guess, solver = 'MLE') 
- #            bootstrap_thetas[b] = self.gst_parameters
- #
- #        # Restore original data/fit
- #        self.gst_parameters = theta_best
- #            
- #        # Compute uncertainties as standard deviation of the best fits
- #        means = np.mean(bootstrap_thetas, axis=0)
- #        uncertainties = np.std(bootstrap_thetas, axis=0) 
- #        return uncertainties, means, bootstrap_thetas
