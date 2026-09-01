@@ -69,10 +69,10 @@ class TestGST(unittest.TestCase):
             POVMs["1"] = operator.superbra 
             return POVMs ## POVMs["00"] -> row vector 
 
-        def X_pi_8_co_prop_simple(amplitude_noise_strength: float): 
+        def X_pi_2_co_prop_simple(amplitude_noise_strength: float): 
             """ Single parameter process matrix model for an X(pi/8) rotation subject to white amplitude noise"""
             # Set up Hamiltonian and sigma_X dissipator: 
-            rotation_angle = np.pi/8.
+            rotation_angle = np.pi/2.
             phi = 0.
             omega = self.qubit.energy_levels[1].energy - self.qubit.energy_levels[0].energy
             rabi_rate = 100e3 * 2*np.pi # rad./s
@@ -89,7 +89,30 @@ class TestGST(unittest.TestCase):
             dissipator = Dissipator(self.basis, diss_operators, diss_interaction_frame_energies)
             rabi_lindbladian = Lindbladian(ham, dissipator) 
         
-            # rotation angle = pi/8 = Omega*duration
+            duration = rotation_angle/rabi_rate 
+            gate = Gate.from_lindbladian(self.basis, rabi_lindbladian, duration, lindbladian_time_independent=True)
+            return gate.process_matrix 
+
+        def Y_pi_2_co_prop_simple(amplitude_noise_strength: float): 
+            """ Single parameter process matrix model for an X(pi/8) rotation subject to white amplitude noise"""
+            # Set up Hamiltonian and sigma_X dissipator: 
+            rotation_angle = np.pi/2.
+            phi = np.pi/2.
+            omega = self.qubit.energy_levels[1].energy - self.qubit.energy_levels[0].energy
+            rabi_rate = 100e3 * 2*np.pi # rad./s
+            pi_time = abs(np.pi)/rabi_rate
+            prefactor = np.exp(1j*phi) * rabi_rate/2.
+            ham_operators = [CouplingOperator.from_matrix(self.basis, prefactor * Pauli.plus, omega, None)]
+            interaction_frame_energies = [-state.energy for state in self.basis.states] # implement arbitrary hamiltonian (with time-dependence? need an adiabatic intertwiner)
+            ham = Hamiltonian(self.basis, ham_operators, interaction_frame_energies)
+
+            spin_flip_y_rate = (amplitude_noise_strength * 1E-6 * rabi_rate**2 )/ 4.
+            spin_flipper_y = np.sqrt(spin_flip_y_rate) * Pauli.Y 
+            diss_operators = [CouplingOperator.from_matrix(self.basis, spin_flipper_y, 0)]
+            diss_interaction_frame_energies = [0 for state in self.basis.states] # implement arbitrary hamiltonian (with time-dependence? need an adiabatic intertwiner)
+            dissipator = Dissipator(self.basis, diss_operators, diss_interaction_frame_energies)
+            rabi_lindbladian = Lindbladian(ham, dissipator) 
+        
             duration = rotation_angle/rabi_rate 
             gate = Gate.from_lindbladian(self.basis, rabi_lindbladian, duration, lindbladian_time_independent=True)
             return gate.process_matrix 
@@ -98,22 +121,22 @@ class TestGST(unittest.TestCase):
         self.prep_state_model = prep_state_function 
         self.POVM_models = POVM_models
 
-        gate_names = ['Gxpi8:0'] 
+        gate_names = ['Gxpi2:0', 'Gypi2:0'] 
         self.gates = [] 
         qubit_indices = [0] 
         for name in gate_names:
             self.gates.append(ParsedGate.from_string(name))
-        Gxpi8_q0 = self.gates[0]
+        Gxpi2_q0 = self.gates[0]
+        Gypi2_q0 = self.gates[1]
         amplitude_noise_strength = 0.125 # S0 in rad^2/MHz 
-        self.gate_models = { Gxpi8_q0 : X_pi_8_co_prop_simple} 
-        self.evaluated_gate_models = { Gxpi8_q0 : X_pi_8_co_prop_simple(amplitude_noise_strength)} 
+        self.gate_models = { Gxpi2_q0 : X_pi_2_co_prop_simple, Gypi2_q0 : Y_pi_2_co_prop_simple} 
+        self.evaluated_gate_models = { Gxpi2_q0 : X_pi_2_co_prop_simple(amplitude_noise_strength), 
+            Gypi2_q0 : Y_pi_2_co_prop_simple(amplitude_noise_strength) 
+        } 
 
         num_qubits = len(qubit_indices)
-        powers = [1, 2, 4, 8, 16, 32, 64, 128]
-        fiducials = [[]]
-        germs = [[Gxpi8_q0]] 
-        self.gst_circuit_planner = GSTCircuitPlanner(gate_names, qubit_indices, prep_fiducials = fiducials, measure_fiducials = fiducials, germ_powers = powers, 
-                                                        germs = germs, gate_models = self.gate_models) 
+        powers = [1, 2, 4]
+        self.gst_circuit_planner = GSTCircuitPlanner(gate_names, qubit_indices, germ_powers = powers, gate_models = self.gate_models) 
 
         self.gst_circuits = self.gst_circuit_planner.generate_gst_circuits()
 
@@ -128,17 +151,17 @@ class TestGST(unittest.TestCase):
         self.test_circuit_simulations_and_outcomes()
     
         ## Parameter information: 
-        self.parameters_guess = {Gxpi8_q0 : {"amplitude_noise_strength" : 0.5}, 
-            "shared" : {"SPAM_error_probability" : 1e-4}
-        }
+        self.parameters_guess = {"shared" : {"amplitude_noise_strength" : 0.5, "SPAM_error_probability" : 1e-4}}
 
         self.parameter_bounds = {
-            "shared" : {"SPAM_error_probability" : (0., 1.)}, 
-            Gxpi8_q0 : {"amplitude_noise_strength" : (0.0001, 10.0)}  
+            "shared" : {"SPAM_error_probability" : (0., 1.), "amplitude_noise_strength" : (0.0001, 10.0)}  
         } 
     
         # Define parameters which are shared among models 
-        self.shared_model_parameters = {'SPAM_error_probability' : [("prep", 0), ("POVM", 0)]}
+        self.shared_model_parameters = {'SPAM_error_probability' : [("prep", 0), ("POVM", 0)], 
+            'amplitude_noise_strength' : [("Gxpi2:0", 0), ("Gypi2:0", 0)]  
+            #'amplitude_noise_strength' : [(Gxpi2_q0, 0), (Gypi2_q0, 0)]  
+        }
 
         self.true_POVM_effects = {} 
         self.true_POVM_effects['0'] = EnergyShiftOperator.from_matrix(self.basis, self.POVM_models(SPAM_error_prob)['0'].reshape(2,2))
@@ -147,7 +170,8 @@ class TestGST(unittest.TestCase):
         self.true_gate_set = {}
         self.true_gate_set['prep'] = self.rho_0 
         self.true_gate_set['POVM'] = self.true_POVM_effects 
-        self.true_gate_set[Gxpi8_q0] =  X_pi_8_co_prop_simple(amplitude_noise_strength)
+        self.true_gate_set[Gxpi2_q0] =  X_pi_2_co_prop_simple(amplitude_noise_strength)
+        self.true_gate_set[Gypi2_q0] =  Y_pi_2_co_prop_simple(amplitude_noise_strength)
 
         self.GST_analyzer = GateSetTomography(self.basis, self.prep_state_model, self.POVM_models, self.parsed_circuits, self.gate_models, 
                                     circuit_design = self.gst_circuit_planner, parameter_bounds = self.parameter_bounds, ideal_gate_set = self.true_gate_set, 
@@ -180,16 +204,32 @@ class TestGST(unittest.TestCase):
 
         self.parsed_circuits = self.gst_circuits
 
+
+    def test_linear_gst_analysis(self):
+        """ Test GST via maximum likelihood estimation (MLE)""" 
+        solver_results = self.GST_analyzer.solve_for_gate_parameters(None, 'linear') 
+        gate_set_error = self.GST_analyzer.compute_gate_set_error_by_element(solver_results, self.true_gate_set)
+        X_pi2_error = gate_set_error[self.gates[0]]
+        Y_pi2_error = gate_set_error[self.gates[1]]
+        SPAM_error = gate_set_error["prep"]
+        SPAM_error += gate_set_error["POVM"]
+        self.assertAlmostEqual(X_pi2_error, 0.0004924175661171493, places=8)
+        self.assertAlmostEqual(Y_pi2_error, 0.0004924175661169726, places=8)
+        self.assertAlmostEqual(SPAM_error, 2.1712445132231874e-05, places=8)
+
+
     def test_mle_gst_analysis(self):
         """ Test GST via maximum likelihood estimation (MLE)""" 
         solver_results = self.GST_analyzer.solve_for_gate_parameters(self.parameters_guess, 'MLE') 
         gate_set_error = self.GST_analyzer.compute_gate_set_error_by_element(solver_results.x, self.true_gate_set)
-        X_pi8_error = gate_set_error[self.gates[0]]
+
+        X_pi2_error = gate_set_error[self.gates[0]]
+        Y_pi2_error = gate_set_error[self.gates[1]]
         SPAM_error = gate_set_error["prep"]
         SPAM_error += gate_set_error["POVM"]
-        self.assertAlmostEqual(X_pi8_error, 0.00027408522081525397, places=8)
-        self.assertAlmostEqual(SPAM_error, 0.00011231981002808708, places=8)
-
+        self.assertAlmostEqual(X_pi2_error, 0.0006672864884890055, places=8)
+        self.assertAlmostEqual(Y_pi2_error, 0.0006672864884889269, places=8)
+        self.assertAlmostEqual(SPAM_error, 0.0010575712223980156, places=8)
 
 if __name__ == '__main__':
     unittest.main()
