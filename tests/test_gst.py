@@ -104,9 +104,9 @@ class TestGST(unittest.TestCase):
         for name in gate_names:
             self.gates.append(ParsedGate.from_string(name))
         Gxpi8_q0 = self.gates[0]
-        amplitude_noise_strength = 0.125 # S0 in rad^2/MHz 
+        self.amplitude_noise_strength = 0.125 # S0 in rad^2/MHz 
         self.gate_models = { Gxpi8_q0 : X_pi_8_co_prop_simple} 
-        self.evaluated_gate_models = { Gxpi8_q0 : X_pi_8_co_prop_simple(amplitude_noise_strength)} 
+        self.evaluated_gate_models = { Gxpi8_q0 : X_pi_8_co_prop_simple(self.amplitude_noise_strength)} 
 
         num_qubits = len(qubit_indices)
         powers = [1, 2, 4, 8, 16, 32, 64, 128]
@@ -147,7 +147,7 @@ class TestGST(unittest.TestCase):
         self.true_gate_set = {}
         self.true_gate_set['prep'] = self.rho_0 
         self.true_gate_set['POVM'] = self.true_POVM_effects 
-        self.true_gate_set[Gxpi8_q0] =  X_pi_8_co_prop_simple(amplitude_noise_strength)
+        self.true_gate_set[Gxpi8_q0] =  X_pi_8_co_prop_simple(self.amplitude_noise_strength)
 
         self.GST_analyzer = GateSetTomography(self.basis, self.prep_state_model, self.POVM_models, self.parsed_circuits, self.gate_models, 
                                     circuit_design = self.gst_circuit_planner, parameter_bounds = self.parameter_bounds, ideal_gate_set = self.true_gate_set, 
@@ -190,6 +190,17 @@ class TestGST(unittest.TestCase):
         self.assertAlmostEqual(X_pi8_error, 0.00027408522081525397, places=8)
         self.assertAlmostEqual(SPAM_error, 0.00011231981002808708, places=8)
 
+    def test_fisher_info(self):
+        """ Test calculation of fisher information""" 
+        circuit_parameters = {"X_pi_8_co_prop_simple__amplitude_noise_strength" :  self.amplitude_noise_strength}
+        outcome_operator0 = EnergyShiftOperator.from_matrix(self.basis, Pauli.projector_0)
+        outcome_operator1 = EnergyShiftOperator.from_matrix(self.basis, Pauli.projector_1)
+        ideal_outcome_operators = [outcome_operator0, outcome_operator1]
+        circuit_design_fisher_info = self.gst_circuit_planner.compute_design_fisher_information(self.parsed_circuits, circuit_parameters, self.rho_0, ideal_outcome_operators)
+
+        FI_last_circuit = circuit_design_fisher_info[tuple(self.parsed_circuits[-1].expanded_gates)]
+        param_key = "X_pi_8_co_prop_simple__amplitude_noise_strength"
+        self.assertAlmostEqual(FI_last_circuit[(param_key, param_key)], 24283.2431074, places=6)
 
 if __name__ == '__main__':
     unittest.main()

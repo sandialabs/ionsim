@@ -369,10 +369,10 @@ class GSTCircuitPlanner:
         """ Computes sensitivites of each circuit to gate model parameters """ 
         fisher_information = {}
         # Remove do nothing circuit 
-        do_nothing_circuit = ParsedCircuit.plan([], [], 1, [], self.qubit_labels)
-        circuits = gst_circuits.copy()
-        if do_nothing_circuit in circuits:
-            circuits = circuits.remove(do_nothing_circuit) 
+        if gst_circuits[0].expanded_gates == []: 
+            circuits = gst_circuits.copy()
+            circuits = circuits[1:] 
+
         for circ in circuits:
             fisher_information[tuple(circ.expanded_gates)] = self.compute_circuit_fisher_information(circ, circuit_parameters, initial_state, outcome_operators)
         return fisher_information 

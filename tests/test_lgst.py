@@ -204,7 +204,6 @@ class TestGST(unittest.TestCase):
 
         self.parsed_circuits = self.gst_circuits
 
-
     def test_linear_gst_analysis(self):
         """ Test GST via maximum likelihood estimation (MLE)""" 
         solver_results = self.GST_analyzer.solve_for_gate_parameters(None, 'linear') 
@@ -216,7 +215,6 @@ class TestGST(unittest.TestCase):
         self.assertAlmostEqual(X_pi2_error, 0.0004924175661171493, places=8)
         self.assertAlmostEqual(Y_pi2_error, 0.0004924175661169726, places=8)
         self.assertAlmostEqual(SPAM_error, 2.1712445132231874e-05, places=8)
-
 
     def test_mle_gst_analysis(self):
         """ Test GST via maximum likelihood estimation (MLE)""" 

@@ -113,13 +113,11 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self.cached_theta = None 
         self.process_matrix_cache = None 
 
-        # Cache metadata for fast likelihood evaluation.
-        # Keep a stable outcome ordering so all vectorized probability operations
-        # use consistent indices across circuits and evaluations.
         #self.outcome_labels = tuple(self.POVM_effect_models.keys())
         # TODO: Need to generalize this for time-dep. GST  
         self.outcome_labels = tuple(parsed_circuits[0].measurement_data.counts.keys()) 
         self.outcome_to_index = {label: i for i, label in enumerate(self.outcome_labels)}
+        # Cache metadata for fast likelihood evaluation.
         self._likelihood_circuit_cache = {}
 
         self.ideal_gate_set = None 
@@ -326,6 +324,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             i += 1
 
         # Build per-model mapping that maps model -> [theta_idx, ...]
+                #if key not in ["prep", "POVM"]:
+                #    gate = self.user_key_gate_map[key]
         indices_by_model = {}
         for model_key, model in all_models.items():
             theta_indices = []
