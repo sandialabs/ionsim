@@ -35,7 +35,7 @@ class Pauli:
     # Attribute for the single-qubit Pauli vector: \sigma = (I, X, Y, Z)
     vector: list[Matrix] = [I, X, Y, Z]
 
-    ''' Raising/lowering operators assume |g> corresponds to row/column 1 and |e> corresponds to row/column 2 '''
+    ''' Spin raising/lowering operators use convention where |g> corresponds to row/column 1 and |e> corresponds to row/column 2 '''
     plus = np.array(
         [[0, 0],
          [1, 0]],
