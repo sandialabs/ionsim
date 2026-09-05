@@ -42,11 +42,6 @@ class Basis(ABC):
         """Basis-state vectors."""
 
     @property
-    def atomic_structure_DOFs(self):
-        """ Returns list of atomic structure degrees of freedom or empty list if none. """
-        return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicStructure)]
-
-    @property
     def change_of_basis_matrix(self):
         """The unitary matrix that transforms a vector in this basis to the standard basis."""
         return np.array([vector for vector in self.vectors]).T
@@ -234,6 +229,11 @@ class StandardBasis(Basis):
     def vectors(self):
         """Basis-state vectors corresponding to the energy eigenstates."""
         return list(np.eye(len(self.states)))
+
+    @property
+    def atomic_structure_DOFs(self):
+        """ Returns list of atomic structure degrees of freedom or empty list if none. """
+        return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicStructure)]
 
 
 @dataclass(frozen=True, eq=False)

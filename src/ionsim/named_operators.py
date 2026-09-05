@@ -35,7 +35,6 @@ class Pauli:
     # Attribute for the single-qubit Pauli vector: \sigma = (I, X, Y, Z)
     vector: list[Matrix] = [I, X, Y, Z]
 
-
     ''' Raising/lowering operators assume |g> corresponds to row/column 1 and |e> corresponds to row/column 2 '''
     plus = np.array(
         [[0, 0],
@@ -159,7 +158,6 @@ class Unitary:
         """The Molmer-Sorensen entangling gate."""
         sigma_phi = np.cos(phi) * Pauli.X + np.sin(phi) * Pauli.Y
         return np.cos(theta/2) * np.kron(Pauli.I, Pauli.I) - 1j*np.sin(theta/2) * np.kron(sigma_phi, sigma_phi)
-
     # The extra -i factor likely comes from book-keeping on the planar "R" method above, which has an extra exp(i theta /2) global factor  
     CNOT = np.exp(1j*np.pi/2.)*np.exp(-1j*np.pi/4.)*(np.kron(np.conj(sqrtY).T,I)) @ (np.kron(np.conj(sqrtX).T,I)) @ (np.kron(I, np.conj(sqrtX).T)) @ MS(0., np.pi/2.) @ (np.kron(sqrtY, I))
 
