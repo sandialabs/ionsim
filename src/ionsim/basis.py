@@ -182,12 +182,6 @@ class Basis(ABC):
         """Check if the basis has two atomic internal energy levels in each degree of freedom."""
         if self.is_qubit_basis:
             return 
- #        if all([len(dof.energy_levels) == 2 for dof in self.degrees_of_freedom]):
- #            if all([
- #                all([isinstance(level, AtomicInternalEnergyLevel) for level in dof.energy_levels])
- #                for dof in self.degrees_of_freedom
- #            ]):
- #                return
         raise IonSimError('The basis must have two atomic internal energy levels in each degree of freedom.')
 
     def change_basis_of_vector(self, vector: Vector, new_basis: 'Basis'):

@@ -9,7 +9,7 @@
 
 from ionsim.basis import Basis, StandardBasis
 from ionsim.energy_level import EnergyEigenstate
-from ionsim.degree_of_freedom import DegreeOfFreedom
+from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure, MotionalMode
 from ionsim.custom_types import Vector, Matrix
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
@@ -193,26 +193,66 @@ class State:
             small_density_matrix += multi_dot([proj_left, self.density_matrix, proj_right])
         return small_density_matrix
 
+    def project_to_qubit_space(self, non_qubit_levels: list[AtomicInternalEnergyLevel]):
+        """ Projects the state onto the qubit subspace """
+        # Return self if already in qubit subspace
+        if self.basis.is_qubit_basis():
+            return self
+        else:
+            return self.project_out_levels(non_qubit_levels)
 
-    #def project_to_computational_space()
-    #@classmethod
-#    def project_to_qubit_space(self, qubit_levels: list[EnergyLevel]):
-#        """ Projects the state onto the qubit subspace """
-#        # Return self if already in qubit subspace
-#        if self.basis._check_if_qubit_basis():
-#            return self
-#        N = len(self.basis.atomic_structure_DOFs) # number of qubits 
-#        N_DOF = len(self.basis.degrees_of_freedom) 
-#        N_states = len(self.basis.states) 
-#        assert N <= N_DOF
-#
-#        if N == N_DOF: 
-#            return self
-#        else:  
-#            return cls.project_out_states(non_qubit_states)
+    def project_out_levels(self, levels: list):
+        """ Project state into a subspace without the requested levels. Returns the projected state """ 
+        # Create basis as subspace of the current state's basis  
+        new_DOFs = []
+        for DOF in self.basis.degrees_of_freedom:
+            DOF_levels = DOF.energy_levels
+            levels_to_keep = [l for l in DOF_levels if l not in levels]
+            if isinstance(DOF, AtomicStructure):
+                new_DOF = AtomicStructure(levels_to_keep, DOF.name) 
+            elif isinstance(DOF, MotionalMode):
+                new_DOF = MotionalMode(levels_to_keep, DOF.name) 
+            else:
+                raise IonSimError(f"Levels to project must refer to levels from a motional mode or atomic structure DOF.")
+            new_DOFs.append(new_DOF)
 
-    def project_out_states(self, new_basis: StandardBasis, states_to_project_out: list[EnergyEigenstate]):
+        new_basis = StandardBasis(new_DOFs)
+
+        # Get indices to project out by finding where the levels are in the basis
+        projection_indices = [] 
+        for i, state in enumerate(self.basis.states):
+            project = any([l in state.components for l in levels]) 
+            if project:
+                projection_indices.append(i)
+
+        projection_indices = set(projection_indices)
+        states_to_project = [self.basis.states[i] for i in projection_indices] 
+        return self.project_out_states(new_basis, states_to_project) 
+                    
+    def project_out_states(self, states_to_project_out: list[EnergyEigenstate], new_basis: StandardBasis | None=None):
         """Return a projected state by projecting out a set of levels in the enlarged basis into a new basis."""
+
+        # Create the new basis from the list of states to project if not provided 
+        if new_basis == None:
+            states_to_keep = [s for s in self.basis.states if s not in states_to_project_out]
+            # Components for each state in the list of states to keep
+            components = [state.components for state in states_to_keep]
+            # Get list of levels to keep for each DOF 
+            levels_to_keep_in_DOFs = [list(dict.fromkeys(col)) for col in zip(*components)]
+            assert len(level_to_keep_in_DOFs) == len(self.basis.degrees_of_freedom)
+            new_DOFs = []
+            for levels, DOF in zip(levels_to_keep_in_DOFs, self.basis.degrees_of_freedom):
+                DOF_levels = DOF.energy_levels
+                levels_to_keep = [l for l in DOF.energy_levels if l in levels]
+                if isinstance(DOF, AtomicStructure):
+                    new_DOF = AtomicStructure(levels_to_keep, DOF.name) 
+                elif isinstance(DOF, MotionalMode):
+                    new_DOF = MotionalMode(levels_to_keep, DOF.name) 
+                else:
+                    raise IonSimError(f"Levels to project must refer to levels from a motional mode or atomic structure DOF.")
+                new_DOFs.append(new_DOF)
+    
+            new_basis = StandardBasis(new_DOFs)
 
         if not isinstance(self.basis, StandardBasis):
             raise IonSimError("Projection of density matrix requires a Standard Basis of EnergyEigenstates.")
@@ -223,6 +263,9 @@ class State:
 
         # Get indices corresponding to these states' locations in the enlarged basis
         projection_indices = [self.basis.states.index(state) for state in states_to_project_out] 
+        if projection_indices == []:
+            return self
+
         computational_indices = [i for i in range(len(self.basis.states)) if i not in projection_indices] 
 
         # Compute projected density matrix
