@@ -17,7 +17,8 @@ dependencies = [
     "icecream",
     "pyyaml",
     "pint",
-    "sympy"
+    "sympy",
+    "h5py"
 ]
 classifiers = [
     "Development Status :: 2 - Beta",
@@ -30,6 +31,11 @@ classifiers = [
     "Operating System :: Unix"
 ]
 requires-python = ">=3.10"
+
+[project.optional-dependencies]
+tutorials = [
+    "notebook",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

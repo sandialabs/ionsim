@@ -1,11 +1,21 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 from ionsim.basis import Basis, StandardBasis
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.degree_of_freedom import DegreeOfFreedom
 from ionsim.custom_types import Vector, Matrix
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.dissipator import Dissipator, Lindbladian
-from ionsim.named_operators import Pauli
+from ionsim.lindbladian import Dissipator, Lindbladian
+from ionsim.named_operators import Fock, Pauli
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD 
 
 import numpy as np
 # from typing import Any
@@ -154,11 +164,23 @@ class State:
     
     def compute_basis_state_probabilities(self):
         """Compute the probability of measuring each basis state."""
-        return [
+        probabilities = [
             np.trace(self.basis.compute_projector_matrix(vector).dot(self.density_matrix)).real
             for vector in self.basis.vectors
         ]
+        # There are numerical issues where it's possible to get probabilities like 1.0000..01 and -1e-16
+        return np.clip(probabilities, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. -  NUMERICAL_EQUIVALENCE_THRESHOLD)
 
+    def compute_basis_state_probabilities_from_effect_matrix(self, effect_matrix):
+        """ Computes probability of measuring each basis state via a d x d^2 measurement effect matrix """ 
+        d = int(np.sqrt(len(self.supervector)))
+        if effect_matrix.shape != (d, d**2):
+            raise ValueError(f"Effect matrix must have shape {(d, d2)}.")
+
+        probabilities = (effect_matrix @ self.supervector).real
+        return np.clip(probabilities, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. -  NUMERICAL_EQUIVALENCE_THRESHOLD)
+
+ 
     def compute_density_matrix_traced_over_degree_of_freedom(self, degree_of_freedom: DegreeOfFreedom):
         """Compute a reduced density matrix by tracing out a degree of freedom in the basis."""
         size = len(degree_of_freedom.energy_levels)
@@ -235,7 +257,7 @@ class State:
         """Compute the coherent displacement (expectation value of the lowering operator) for each spin state."""
         assert(len(self.basis.degrees_of_freedom) == len(spin_dofs) + 1) # TODO: trace out other degrees of freedom
         spin_basis = StandardBasis(spin_dofs)
-        lowering = lowering_motion(len(motional_dof.energy_levels))
+        lowering = Fock.lowering(len(motional_dof.energy_levels))
         diplacements = []
         for vector in spin_basis.vectors:
             spin_proj = spin_basis.compute_projector_matrix(vector)
@@ -246,6 +268,3 @@ class State:
     # TODO: maybe add a method for checking if the state is normalized 
 
     # def transform_to_spin_eigenbasis(self):
-
-def lowering_motion(fock_dimension: int):
-    return np.diag([np.sqrt(n+1) for n in range(fock_dimension-1)], k=1)

@@ -1,3 +1,11 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
 import numpy as np
 from numpy.linalg import multi_dot
 from typing import Callable
@@ -15,13 +23,12 @@ import functools as ft
 from icecream import ic
 
 from ionsim.ionsim_error import IonSimError
-from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicSpin
+from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.custom_types import Vector, Matrix
 from ionsim.named_operators import Pauli
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD
-#from ionsim.process import Gate 
 
 
 @dataclass(frozen=True, eq=False)
@@ -35,10 +42,9 @@ class Basis(ABC):
         """Basis-state vectors."""
 
     @property
-    def spin_DOFs(self):
-        """ Returns list of spin degrees of freedom or empty list if none. """
-        spins = [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicSpin)]
-        return spins
+    def atomic_structure_DOFs(self):
+        """ Returns list of atomic structure degrees of freedom or empty list if none. """
+        return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicStructure)]
 
     @property
     def change_of_basis_matrix(self):
@@ -214,9 +220,6 @@ class Basis(ABC):
             print('Input representation must be one of: ', allowed_representations)
 
 
-
-
-
 @dataclass(frozen=True, eq=False)
 class StandardBasis(Basis):
     """A basis of energy eigenstates of a non-interacting Hamiltonian."""
@@ -237,15 +240,14 @@ class StandardBasis(Basis):
 class PauliProductBasis(Basis):
     """ A basis in the N-qubit Pauli group, which forms an orthonormal basis for the Hilbert-Schmidt space of d^2 x d^2 operators.  
         - Basis vectors are basis operators in the Pauli group, which span d^2 unique d x d operators. 
-        - This basis is over-specified with respect to d x d states.  
+        - This basis is over-specified/complete with respect to d x d states.  
     """
-    degrees_of_freedom: list[AtomicSpin]  
+    degrees_of_freedom: list[AtomicStructure]
 
     def __post_init__(self):
         self._check_if_qubit_basis()
 
-    # TODO: Consider cacheing these vectors to avoid building a list of d^2, dxd matrices every time you call this object.  
-    # TODO: The memory cost of storing this will need to be weighed against the time computing these vectors.  
+    # TODO: Consider cacheing these vectors to avoid building a list of d^2, dxd matrices every time you call this object. The memory cost of storing this will need to be weighed against the time computing these vectors.  
     @property
     def vectors(self) -> list[Vector]:
         """ Normalized basis vectors corresponding to vectorized (column-wise flattened) Pauli operator products: vec(P_i)/sqrt(2^{N}) """
@@ -304,7 +306,6 @@ class PauliProductBasis(Basis):
         if include_normalization:
             # W is normalized by d^2
             W *= 1./float(size)
-
         return W 
 
     def superoperator_to_pauli_transfer_matrix(self, superoperator: Matrix, superoperator_basis: StandardBasis) -> Matrix:
@@ -322,19 +323,17 @@ class PauliProductBasis(Basis):
         if not isinstance(superoperator_basis, StandardBasis):
             raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
         assert superoperator.shape == (len(self.vectors), len(self.vectors))
-
         # Get change of basis matrix 
         U = np.array(self.vectors).conj() 
         # If S represents a completely positive, trace-preserving (CPTP) map, R will be purely real. 
         pauli_transfer_matrix = U @ superoperator @ (U.T).conj()
-
         return pauli_transfer_matrix 
 
 
 @dataclass(frozen=True, eq=False)
 class ZPauliBasis(StandardBasis):
     """A basis in which the basis states correspond to the (plus/minus) eigenstates of the z-Pauli spin matrix."""
-    degrees_of_freedom: list[AtomicSpin]
+    degrees_of_freedom: list[AtomicStructure]
 
     def __post_init__(self):
         # self._check_if_pauli_basis() # TODO: should we only allow for one degree of freedom here?
@@ -343,7 +342,7 @@ class ZPauliBasis(StandardBasis):
 @dataclass(frozen=True, eq=False)
 class XPauliBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix."""
-    degrees_of_freedom: list[AtomicSpin]
+    degrees_of_freedom: list[AtomicStructure]
 
     def __post_init__(self):
         # self._check_if_pauli_basis() # TODO: should we only allow for one degree of freedom here?
@@ -362,7 +361,7 @@ class XPauliBasis(Basis):
 @dataclass(frozen=True, eq=False)
 class YPauliBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix."""
-    degrees_of_freedom: list[AtomicSpin]
+    degrees_of_freedom: list[AtomicStructure]
 
     def __post_init__(self):
         # self._check_if_pauli_basis() # TODO: should we only allow for one degree of freedom here?
@@ -381,11 +380,11 @@ class YPauliBasis(Basis):
 @dataclass(frozen=True, eq=False)
 class XPauliAndFockBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix and Fock states."""
-    atomic_spins: list[AtomicSpin]
+    atomic_structure_DOFs: list[AtomicStructure]
 
     @property
     def motional_modes(self):
-        return [dof for dof in self.degrees_of_freedom if dof not in self.atomic_spins]
+        return [dof for dof in self.degrees_of_freedom if dof not in self.atomic_structure_DOFs]
 
     @property
     def vectors(self):
@@ -394,7 +393,7 @@ class XPauliAndFockBasis(Basis):
         minus = 1/np.sqrt(2)*np.array([1, -1])
         groups = list(itertools.product(
             *[
-                [plus, minus] if dof in self.atomic_spins else
+                [plus, minus] if dof in self.atomic_structure_DOFs else
                 [np.eye(len(dof.energy_levels))[i] for i in range(len(dof.energy_levels))]
                 for dof in self.degrees_of_freedom
             ]

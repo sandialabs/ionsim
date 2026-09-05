@@ -1,3 +1,12 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 from dataclasses import dataclass
 import numpy as np
 from scipy.sparse import csr_matrix
@@ -5,7 +14,7 @@ from typing import Callable
 from functools import cached_property
 
 from ionsim.basis import StandardBasis
-from ionsim.degree_of_freedom import AtomicSpin 
+from ionsim.degree_of_freedom import AtomicStructure 
 from ionsim.operator import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
 from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix, as_dense_matrix
 from ionsim.custom_math import matrix_AYB_multiply_to_superoperator, solve_time_evolution_equation
@@ -69,7 +78,7 @@ class Dissipator(CompositeOperator):
 
     def create_lindblad_matrix_function(self, lindblad_operator: Operator) -> Callable:
         """Converts a lindblad Operator object to a callable that returns a matrix at a given time point"""
-        
+
         def _lindblad_function(t: float) -> AnyMatrix:
             if self.sparse:
                 L_matrix = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex') 
@@ -78,7 +87,8 @@ class Dissipator(CompositeOperator):
             
             # Static, diagonal contribution 
             if isinstance(lindblad_operator, GeneralOperator):
-                L_matrix += lindblad_operator.diagonal_contribution.static_matrix
+                if lindblad_operator.energy_shift_operator_contribution:
+                    L_matrix += lindblad_operator.energy_shift_operator_contribution.static_matrix
             elif isinstance(lindblad_operator, EnergyShiftOperator):
                 L_matrix += lindblad_operator.static_matrix
 
@@ -123,7 +133,7 @@ class DissipatorSpontaneousEmission(Dissipator):
     """Subclass for including spontaneous emission dynamics for a known atomic structure."""
 
     @classmethod
-    def from_atomic_structure_data(cls, basis: StandardBasis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], frame_energies: list[float] | None=None, sparse: bool=False, all_spins_are_same: bool = True, select_DOFs: list[AtomicSpin] | None = None):
+    def from_atomic_structure_data(cls, basis: StandardBasis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], frame_energies: list[float] | None=None, sparse: bool=False, all_spins_are_same: bool = True, select_DOFs: list[AtomicStructure] | None = None):
         """ Builds dissipator for spontaneous emission from a user-specified list of excited and ground levels.  
             
 
@@ -137,10 +147,10 @@ class DissipatorSpontaneousEmission(Dissipator):
 
         lindblad_operators = []
 
-        # Loop over each (spin) DOF and create a lindblad operator in that DOF's Hilbert space.
+        # Loop over each Atomic Structure DOF and create a lindblad operator in that DOF's Hilbert space.
             # Then, enlarge that lindblad operator to the system basis which contains the whole Hilbert space.  
         for DOF in DOF_list: 
-            if isinstance(DOF, AtomicSpin):
+            if isinstance(DOF, AtomicStructure):
                 # For each excited level, loop through ground levels it can decay to  
                 for e_level in excited_levels:
 
@@ -190,7 +200,7 @@ class DissipatorSpontaneousEmission(Dissipator):
                             for decay_operator in decay_operators:
                                 lindblad_operators.append(CouplingOperator.from_matrix(basis, decay_operator, 0.))
 
-            # Break from the loop if all the AtomicSpin DOFs are the same 
+            # Break from the loop if all the AtomicStructure DOFs are the same 
             if all_spins_are_same:
                 break 
 
@@ -238,7 +248,7 @@ class Lindbladian:
             super_ham = lambda t: 0. 
 
         if self.dissipator:
-            super_dissipator = lambda t: self.dissipator.dissipator_matrix_function(t) 
+            super_dissipator = self.dissipator.dissipator_matrix_function
         else:
             super_dissipator = lambda t: 0. 
 
@@ -251,7 +261,7 @@ class Lindbladian:
             e.g. evolves supervector "y" using dy/dt = Ly, where L is the N^2 x N^2 dissipator matrix. 
         """
         # solve_time_evolution_equation() assumes a Schrodinger equation form dy/dt = (-i*A)y, where i = sqrt(-1) and A <==> the function input, e.g. a Hamiltonian matrix. 
-        # Therfore, we must compensate this form by multiplying by the lindbladian by i 
+        # Therfore, we must compensate this form by multiplying the lindbladian by i 
         assert(self.size == len(initial_supervector))
         dynamical_matrix = lambda t: self.matrix_function(t) * 1j
         return solve_time_evolution_equation(dynamical_matrix, initial_supervector, duration, time_evals, **kwargs)

@@ -1,5 +1,14 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from sympy.physics.wigner import wigner_3j, wigner_6j 
 import sympy 
@@ -16,6 +25,7 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     term_symbol: str
     fine_energy: float 
     hyperfine_A: float
+    alias: str | None = field(default=None, kw_only=True)
 
     @property
     @abstractmethod
@@ -42,7 +52,7 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     @property
     def energy(self):
         # Total energy: bare energy + external shifts (e.g. Zeeman, light shifts)
-        return self.bare_energy + self.external_energy_shift 
+        return self.bare_energy + self.external_energy_shift
 
 @dataclass(frozen=True, eq=False)
 class LSFineLevel(AtomicInternalEnergyLevel): 
@@ -53,6 +63,7 @@ class LSFineLevel(AtomicInternalEnergyLevel):
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
     lifetime: float | str='null'
     branching_ratios: dict[str, float] | None=None 
+    hyperfine_B: float | None=None
 
 
     @property
@@ -84,6 +95,7 @@ class LSHyperfineLevel(AtomicInternalEnergyLevel):
     external_energy_shift: float = 0.
     lifetime: float | str='null'
     branching_ratios: dict[str, float] | None=None 
+    hyperfine_B: float | None=None
 
     @property
     def coupling_scheme(self):
@@ -106,6 +118,7 @@ class J1L2FineLevel(AtomicInternalEnergyLevel):
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
     lifetime: float | str='null'
     branching_ratios: dict[str, float] | None=None 
+    hyperfine_B: float | None=None
 
 
     @property
@@ -137,6 +150,7 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
     lifetime: float | str = 'null'
     branching_ratios: dict[str, float] | None = None 
+    hyperfine_B: float | None=None
 
 
     @property

@@ -1,6 +1,15 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 import unittest
 import numpy as np
-from ionsim.degree_of_freedom import AtomicSpin, MotionalMode
+from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.basis import StandardBasis, ZPauliBasis, XPauliBasis
 from ionsim.testing import assert_array_close
@@ -9,10 +18,10 @@ class TestBasis(unittest.TestCase):
 
     def setUp(self):
         """Set up the necessary objects for testing."""
-        self.spin_a = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        self.spin_b = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        self.mode_0 = MotionalMode.from_frequency(frequency=3e6*2*np.pi, fock_dimension=3)
-        self.mode_1 = MotionalMode.from_frequency(frequency=4e6*2*np.pi, fock_dimension=2)
+        self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'], level_aliases=['0', '1'])
+        self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'], level_aliases=['0', '1'])
+        self.mode_0 = MotionalMode.from_frequency(frequency=3e6*2*np.pi, fock_dimension=3, level_aliases = ['Mode 0, n = ' + str(n) for n in range(3)])
+        self.mode_1 = MotionalMode.from_frequency(frequency=4e6*2*np.pi, fock_dimension=2, level_aliases = ['Mode 1, n = ' + str(n) for n in range(2)])
 
     def test_spin_basis_states(self):
         """Test the states of the spin basis."""
@@ -25,6 +34,12 @@ class TestBasis(unittest.TestCase):
         ]
         actual_states = [state.name for state in spin_basis.states]
         self.assertEqual(actual_states, expected_states)
+
+        expected_aliases = ['00', '01', '10', '11']
+        actual_aliases = [state.alias() for state in spin_basis.states]
+
+        # Test aliases for spin basis states 
+        self.assertEqual(expected_aliases, actual_aliases)
 
     def test_motional_basis_states(self):
         """Test the states of the motional basis."""
@@ -39,6 +54,9 @@ class TestBasis(unittest.TestCase):
         ]
         actual_states = [state.name for state in motional_basis.states]
         self.assertEqual(actual_states, expected_states)
+
+        # Test alias for motional basis state 
+        self.assertEqual(motional_basis.states[4].alias('; '), 'Mode 0, n = 2; Mode 1, n = 0') 
 
     def test_full_basis_states(self):
         """Test the states of the full basis."""
@@ -71,6 +89,8 @@ class TestBasis(unittest.TestCase):
         ]
         actual_states = [state.name for state in full_basis.states]
         self.assertEqual(actual_states, expected_states)
+        # Test alias for full basis state 
+        self.assertEqual(full_basis.states[3].alias('; '), '0; 0; Mode 0, n = 1; Mode 1, n = 1') 
 
     def test_z_pauli_basis_vectors(self):
         """Test the vectors of the Z Pauli basis."""

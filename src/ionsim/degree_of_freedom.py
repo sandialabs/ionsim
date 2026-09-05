@@ -1,3 +1,12 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 from ionsim.energy_level import EnergyLevel
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.atomic_internal_energy_level import LSFineLevel, LSHyperfineLevel, J1L2FineLevel, J1L2HyperfineLevel
@@ -6,7 +15,7 @@ from ionsim.zeeman_solver import ZeemanHyperfineSolver
 
 import importlib.resources
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from abc import ABC
 import yaml
 from fractions import Fraction
@@ -22,14 +31,14 @@ class DegreeOfFreedom(ABC):
     name: str | None = None # TODO: will we use these names?
 
 @dataclass(frozen=True, eq=False)
-class AtomicSpin(DegreeOfFreedom):
-    """An atomic spin degree of freedom, i.e. its coupled spin and orbital angular momentum."""
+class AtomicStructure(DegreeOfFreedom):
+    """An atomic structure object, containing atomic internal energy levels corresponding to angular momentum eigenstates.""" 
     energy_levels: list[AtomicInternalEnergyLevel]
 
     @classmethod
-    def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None,
-            name: str | None = None, magnetic_field: float=0.):
-        """Build the atomic spin degree of freedom for a particular species of atom."""
+    def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None, 
+            level_aliases: list[str] | None=None, name: str | None = None, magnetic_field: float=0., **kwargs):
+        """Build the atomic structure degree of freedom for a particular species of atom."""
         config_data = cls.get_config_data(species)
         nuclear_spin = config_data['nuclear_spin']
         levels_data = config_data['levels']
@@ -41,6 +50,9 @@ class AtomicSpin(DegreeOfFreedom):
         if term_symbols is not None:
             levels_data = cls.select_some_data(term_symbols, levels_data)
 
+        if level_aliases and len(level_aliases) != len(level_names):
+            raise IonSimError(f'User should specify a level alias for each level in the atomic structure. Expected {len(level_names)} but have {level_aliases}')
+
         levels = []
         for level_data in levels_data:
 
@@ -51,12 +63,17 @@ class AtomicSpin(DegreeOfFreedom):
             get_fine_data, FineLevel, HyperfineLevel = cls.get_level_factory(level_data['coupling_scheme'])
             fine_data = get_fine_data(level_data)
             j = fine_data['j']
-
             # ic(FineLevel.__annotations__, FineLevel(**fine_data, mj={'key': 1}))
             # TODO: why is mypy not catching this??
 
             # Use Zeeman Solver based on level manifold to compute Zeeman shifts 
             if magnetic_field != 0. :
+                # Hyperfine A coefficient is converted to rad/s prior to this function 
+                if fine_data['hyperfine_B'] is None:
+                    hyperfine_B = None
+                else:
+                    hyperfine_B = fine_data['hyperfine_B']/(2. * np.pi) 
+
                 if level_data['coupling_scheme'] == 'j1l2': 
                     s2 = fine_data['s2']
                     if fine_data['gj'] is None:
@@ -70,13 +87,12 @@ class AtomicSpin(DegreeOfFreedom):
                         gj = 2. * (gj1 - 1.) * (k*(k+1) + j1*(j1+1) - l2*(l2 + 1))/((2*j + 1)*(2*k + 1))
                         gj += (3*j*(j+1) - k*(k+1) + s2*(s2+1))/(2.*j*(j+1)) 
                         fine_data['gj'] = gj
-                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, None, s2, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z, gj = gj)
+                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, None, s2, fine_data['hyperfine_A']/(2.*np.pi), hyperfine_B, mass, magnetic_moment, z, gj = gj, **kwargs)
                 else:
                     s = fine_data['s']
                     l = fine_data['l']
-                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']*2.*np.pi, mass, magnetic_moment, z)
+                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']/(2. * np.pi), hyperfine_B, mass, magnetic_moment, z, **kwargs)
                 zeeman_energy_shifts, zeeman_eigenvecs = Zeeman_solver.solve_at_field(magnetic_field)
-                zeeman_energy_shifts *= np.pi*2. # convert to rad/s 
 
             # Construct levels based on coupling structure 
             if structure == 'fine':
@@ -84,11 +100,16 @@ class AtomicSpin(DegreeOfFreedom):
                     # Extract any Zeeman shifts for this state 
                     zeeman_shift_energy = 0.
                     if magnetic_field != 0. :
-                        # For fine couplings, F = J since I = 0, so F <==> J and mf <==> mj labels are interchangable. 
-                        zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = j, mf = mj)
+                        # For fine couplings, F = J since I = 0, so F <==> J and mf <==> mj labels are interchangable.
+                        zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = j, mf = mj) 
                     # Create the level 
-                    level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy)
+                    level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy*np.pi*2.)
                     if level_names is None or level.name in level_names: 
+                        if level_aliases:
+                            level_name_index = level_names.index(level.name)
+                            level_alias = level_aliases[level_name_index]
+                            # Overwrite the level to include its alias
+                            level = replace(level, alias = level_alias)
                         levels.append(level)
             else:
                 for f in np.arange(np.abs(j - nuclear_spin), j + nuclear_spin + 1):
@@ -96,11 +117,17 @@ class AtomicSpin(DegreeOfFreedom):
                         # Extract any Zeeman shifts for this mF state 
                         zeeman_shift_energy = 0.
                         if magnetic_field != 0. :
-                            zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = f, mf = mf)
+                            # Hyperfine A shift is already accounted for in AtomicInternalEnergyLevel 
+                            zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = f, mf = mf, subtract_hyperfineA_shift=True)
 
                         # Create the level 
-                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy)
+                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy * np.pi * 2.)
                         if level_names is None or level.name in level_names:
+                            if level_aliases:
+                                level_name_index = level_names.index(level.name)
+                                level_alias = level_aliases[level_name_index]
+                                # Overwrite the level to include its alias
+                                level = replace(level, alias = level_alias)
                             levels.append(level)
         return cls(levels, name)
 
@@ -121,6 +148,11 @@ class AtomicSpin(DegreeOfFreedom):
         fine_data = dict(level_data)
         fine_data['fine_energy'] = 2 * np.pi * fine_data['fine_energy'] # convert from Hz to rad./s
         fine_data['hyperfine_A'] = 2 * np.pi * fine_data['hyperfine_A'] # convert from Hz to rad./s
+        try: 
+            hyperfine_B = fine_data['hyperfine_B'] * 2. * np.pi
+        except:
+            hyperfine_B = None
+        fine_data['hyperfine_B'] = hyperfine_B 
         fine_data['l'] = cls.compute_l(level_data['term_symbol'])
         fine_data['j'] = cls.compute_j(level_data['term_symbol'])
         fine_data['term_symbol'] = level_data['unique_term_symbol']
@@ -134,6 +166,11 @@ class AtomicSpin(DegreeOfFreedom):
         fine_data = dict(level_data)
         fine_data['fine_energy'] = 2 * np.pi * fine_data['fine_energy'] # convert from Hz to rad./s
         fine_data['hyperfine_A'] = 2 * np.pi * fine_data['hyperfine_A'] # convert from Hz to rad./s
+        try: 
+            hyperfine_B = fine_data['hyperfine_B'] * np.pi * 2.
+        except:
+            hyperfine_B = None
+        fine_data['hyperfine_B'] = hyperfine_B 
         fine_data['k'] = cls.compute_k(level_data['term_symbol'])
         fine_data['j'] = cls.compute_j(level_data['term_symbol'])
         fine_data['gj'] = fine_data.get('gj', None)
@@ -187,7 +224,10 @@ class MotionalMode(DegreeOfFreedom):
     energy_levels: list[CollectiveMotionalEnergyLevel]
 
     @classmethod
-    def from_frequency(cls, frequency: float, fock_dimension: int, name: str | None = None):
+    def from_frequency(cls, frequency: float, fock_dimension: int, name: str | None = None, level_aliases: list[str] | None=None):
         """Build a motional normal-mode degree of freedom for an ion chain."""
-        levels = [CollectiveMotionalEnergyLevel(frequency, fock_number) for fock_number in range(fock_dimension)]
+        if level_aliases:
+            levels = [CollectiveMotionalEnergyLevel(frequency, fock_number, alias = level_aliases[fock_number]) for fock_number in range(fock_dimension)]
+        else:
+            levels = [CollectiveMotionalEnergyLevel(frequency, fock_number) for fock_number in range(fock_dimension)]
         return cls(levels, name)

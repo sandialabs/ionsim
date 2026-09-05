@@ -1,24 +1,35 @@
-from scipy.integrate import quad_vec
-from functools import wraps 
-import scipy
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Callable
 from abc import ABC
-
+import scipy 
+from scipy.integrate import quad_vec
+import typing
+from typing import Callable, Dict, List, Sequence, get_type_hints, get_origin, get_args
+import inspect 
+import functools
+from functools import reduce, wraps 
 from icecream import ic
 
 from ionsim.custom_math import trapz_for_matrix
 from ionsim.custom_types import Vector, Matrix
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.noise import Noise
-from ionsim.degree_of_freedom import DegreeOfFreedom
-from ionsim.basis import Basis, StandardBasis, PauliProductBasis
+from ionsim.basis import DegreeOfFreedom, Basis, StandardBasis, PauliProductBasis
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.dissipator import Lindbladian 
+from ionsim.lindbladian import Lindbladian 
 from ionsim.state import State
-
+from ionsim.operator import Operator
+from ionsim.ionsim_error import IonSimError
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
 @dataclass(frozen=True, eq=False)
 class Process(ABC): 
@@ -44,6 +55,14 @@ class Gate(Process):
 
     unitary: Matrix | None = None
 
+    def __post_init__(self):
+        # Check that process_matrix_function(*parameter_args) == process_matrix 
+        parameter_names, arguments = list(self.parameters.keys()), list(self.parameters.values())
+        if self.process_matrix_function:
+            if not (self.process_matrix_function(*arguments) == self.process_matrix).all:
+                raise IonSimError(f"Error, process matrix function and process matrix attributes do not correspond.")
+
+
     @classmethod #TODO: let default target_dofs be all degrees of freedom
     def from_unitary(cls, basis: Basis, unitary: Matrix, target_dofs: list[DegreeOfFreedom]):
         """Build a gate from a unitary-gate matrix."""
@@ -63,6 +82,8 @@ class Gate(Process):
             process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
         return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
 
+
+    # TODO: Should we extend this to take more than 1 noise parameter? 
     @classmethod
     def from_process_matrix_function(cls, basis: Basis, process_matrix_function: Callable,
             parameters: dict[str, float], noise: Noise | None = None):
@@ -72,6 +93,24 @@ class Gate(Process):
             return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
         noisy_parameter_index = parameter_names.index(noise.parameter_name)
         process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
+        return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+
+
+    @classmethod
+    def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, duration: float,  
+            parameters: dict[str, float], target_dofs: list[DegreeOfFreedom], noise: Noise | None = None):
+        """ Build a gate from a hamiltonian function and its arguments."""
+        parameter_names, arguments = list(parameters.keys()), list(parameters.values())
+
+        @wraps(hamiltonian_function)
+        def process_matrix_function(*args, **kwargs):
+            gate = cls.from_hamiltonian(basis, hamiltonian_function(*args, **kwargs))
+            return gate.process_matrix
+
+        if noise is None or noise.parameter_name not in parameter_names:
+            noisy_parameter_index = parameter_names.index(noise.parameter_name)
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
+
         return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
 
     @classmethod
@@ -174,6 +213,15 @@ class Gate(Process):
                             basis, density_matrix
                         ).trace_out_degree_of_freedom(dof_to_trace_out)
                 supervectors.append(spin_state.supervector)
+ #=======
+ #                if dofs_to_trace_out is None:
+ #                    reduced_state = State.from_density_matrix(basis, density_matrix)
+ #                else:
+ #                    reduced_state = State.from_density_matrix(
+ #                        basis, density_matrix
+ #                    ).trace_out_degree_of_freedom(dof_to_trace_out)
+ #                supervectors.append(reduced_state.supervector)
+ #>>>>>>> main
         process_matrix = np.array(supervectors).T
 
         return cls(reduced_basis, process_matrix, unitary=unitary)
@@ -188,23 +236,64 @@ class Gate(Process):
             lindbladian_commutes_at_later_times: bool = False, 
             ode_solver: str = 'odeintz',
             **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
-
+        # TODO: reconcile projection &  tracing out and what the final basis is  
         """ Build a gate using either the matrix-exponentiated Lindbladian or by solving the Lindblad master equation for a complete set of initial states.
         
             - optional argument to trace out DOF or project out states. 
             - for projecting, specify a dictionary with keys 'basis' : StandardBasis & 'states to project' : list[EnergyEigenstate]
             - The gate is built in the reduced or projected basis. 
         """
-        # TODO: reconcile projection &  tracing out and what the final basis is  
         if dofs_to_trace_out is not None:
+            raise NotImplementedError("Tracing out DOFs from a larger subspace not yet implemented.")
             assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
             assert(len(dofs_to_trace_out) == len(initial_wavefunctions_for_dofs_to_trace_out))
             assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
             dof_to_trace_out = dofs_to_trace_out[0]
             initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
-            # TODO: consider if this function should just accept a reduced basis...? ==> ECM 03/2026: Yes I think so. 
+ #<<<<<<< HEAD
+ #            # TODO: consider if this function should just accept a reduced basis...? ==> ECM 03/2026: Yes I think so. 
+ #
+ #
+ #        if projection_info is None:
+ #            if dofs_to_trace_out is None:
+ #                reduced_basis = basis
+ #            else:
+ #                reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
+ #        else:
+ #            unwanted_state_indices = [basis.states.index(state) for state in projection_info['states to project out']] 
+ #            computational_indices = [i for i in range(len(basis.states)) if i not in unwanted_state_indices] 
+ #            if dofs_to_trace_out is None:
+ #                reduced_basis = projection_info['new basis'] 
+ #                #reduced_basis = basis 
+ #            else:
+ #                raise IonSimError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
+ #
+ #        # Use general t-dependent, non-commutating Lindbladian method unless user specifies otherwise 
+ #        if lindbladian_time_independent:
+ #            print(f"Lindbladian is time-independent. Simplifying computation of process matrix via direct matrix exponentiation.")
+ #            # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
+ #            process_matrix = scipy.linalg.expm(lindbladian.matrix_function(0) * duration)
+ #
+ #            if projection_info:
+ #                process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
+ #
+ #        elif lindbladian_commutes_at_later_times:
+ #            print(f"Lindbladian commutes at different times. Integrating Lindbladian directly in time.") 
+ #            # Integrate each element of the lindbladian matrix forward in time from t = 0 to t = duration            
+ #            L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
+ #
+ #            process_matrix = scipy.linalg.expm(L_integral)
+ #            if projection_info:
+ #                process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
+ #
+ #        else:
+ #            print(f"Default method for generating process matrix from generic time-dependent, non-commutating Lindbladian.")
+ #            # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
+ #            # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
+ #            # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 
+ #=======
 
-
+        # Check if building the gate requires projection or tracing out from a larger Hilbert space  
         if projection_info is None:
             if dofs_to_trace_out is None:
                 reduced_basis = basis
@@ -217,31 +306,27 @@ class Gate(Process):
                 reduced_basis = projection_info['new basis'] 
                 #reduced_basis = basis 
             else:
-                raise IonSimError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
+                raise NotImplementedError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
+ #        if dofs_to_trace_out is None:
+ #            reduced_basis = basis
+ #        else:
+ #            reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
 
         # Use general t-dependent, non-commutating Lindbladian method unless user specifies otherwise 
         if lindbladian_time_independent:
-            print(f"Lindbladian is time-independent. Simplifying computation of process matrix via direct matrix exponentiation.")
             # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
             process_matrix = scipy.linalg.expm(lindbladian.matrix_function(0) * duration)
 
-            if projection_info:
-                process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
-
         elif lindbladian_commutes_at_later_times:
-            print(f"Lindbladian commutes at different times. Integrating Lindbladian directly in time.") 
-            # Integrate each element of the lindbladian matrix forward in time from t = 0 to t = duration            
+            # Lindbladian is time dependent but commutes with itself at later times: Integrate the lindbladian matrix forward in time from t = 0 to t = duration            
             L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
-
             process_matrix = scipy.linalg.expm(L_integral)
-            if projection_info:
-                process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
-
         else:
-            print(f"Default method for generating process matrix from generic time-dependent, non-commutating Lindbladian.")
             # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
             # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
             # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 
+            if dofs_to_trace_out is not None:
+                raise NotImplementedError(f"Building a gate on a subspace from a Lindbladian on a larger Hilbert space is not yet implemented.")
 
             process_matrix_columns = []
             # When projecting, loop over all vectors in the total basis and then skip the ones that will be zero, i.e. set those cols = zero and skip evolution.   
@@ -253,7 +338,7 @@ class Gate(Process):
                         pass 
                     else:
                         # Necessary to do |vector_p > <vector| to get correct basis ordering after projection  
-                        initial_state = State.from_density_matrix(basis,  np.outer(vector_p, vector))
+                        initial_state = State.from_density_matrix(basis, np.outer(vector_p, vector))
     
                         # TODO: Include tracing out DOF functionality 
                         # Time-evolve with Lindbladian, this yields the ij'th column of the process matrix.
@@ -275,9 +360,26 @@ class Gate(Process):
 
         return cls(reduced_basis, process_matrix, unitary=None)
 
+    @classmethod
+    def from_lindbladian_function(cls, basis: StandardBasis, lindbladian_function: Callable, duration: float,  
+            parameters: dict[str, float], noise: Noise | None = None, lindbladian_time_independent: bool=False, 
+            lindbladian_commutes_at_later_times: bool = False): 
+        """ Build a gate from a hamiltonian function and its arguments."""
+        parameter_names, arguments = list(parameters.keys()), list(parameters.values())
 
+        @wraps(lindbladian_function)
+        def process_matrix_function(*args, **kwargs):
+            gate = cls.from_lindbladian(basis, lindbladian_function(*args, **kwargs), duration)
+            return gate.process_matrix
 
-    def compute_pauli_error_rates(self, pauli_twirled_approximation: bool=False) -> dict[str, float]:
+        if noise is None or noise.parameter_name not in parameter_names:
+            noisy_parameter_index = parameter_names.index(noise.parameter_name)
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index, 
+                lindbladian_time_independent = lindbladian_time_independent, lindbladian_commutes_at_later_times = lindbladian_commutes_at_later_times)
+
+        return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+
+    def compute_pauli_error_rates(self) -> dict[str, float]:
         """ Computes Pauli channel error rates, returned in a dictionary with entries (channel name, error rate) """ 
         # Basis safety checks:  
         basis = self.basis
@@ -294,13 +396,10 @@ class Gate(Process):
             pauli_group_basis = self.basis 
             pauli_transfer_matrix = self.process_matrix # pointer assigment  
 
-            if pauli_twirled_approximation:
-               pauli_transfer_matrix = np.diag(pauli_transfer_matrix)      
- 
         # Extract error channel rate from Pauli transfer matrix for each pauli group operator. 
         # Walsh-Hadamard transform relates eigenvalues of PTM to to error rates in Pauli channel representation. 
+        # TODO: Add option to go beyond Pauli twirled approximation (get eigs of PTM and ensure consistent basis state ordering)
         error_rates = pauli_group_basis.walsh_hadamard_transformation_matrix @ np.diag(pauli_transfer_matrix)
-
         return dict(zip(pauli_group_basis.vector_labels, error_rates)) 
  
     # Putting this method here (in process.py) instead of basis.py avoids circular import issue  
@@ -324,7 +423,6 @@ class Gate(Process):
         else:
             pauli_transfer_matrix = pauli_basis.superoperator_to_pauli_transfer_matrix(self.process_matrix, self.basis)
             return Gate(basis = pauli_basis, process_matrix = pauli_transfer_matrix) 
-
 
 # @dataclass(frozen=True, eq=False)
 # class PauliGate(Gate):
@@ -366,10 +464,16 @@ class Circuit(Process):
         """Build a circuit from a series of gates in the same basis."""
         if any(gate.basis is not gates[0].basis for gate in gates):
             raise IonSimError('All gates in a circuit must be in the same basis.')
-        if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
+
+        if len(gates) == 0:
+            raise IonSimError(f"List of gates must not be empty, received: {gates}.")
+
+        deterministic = (noise is None) or all([noise.parameter_name not in gate.parameters for gate in gates])
+        if deterministic: 
             process_matrix = _combine_process_matrices([gate.process_matrix for gate in gates])
-            return cls(gates[0].basis, process_matrix, gates)
+            return cls(gates[0].basis, process_matrix, gates, circuit_process_matrix_function)
         pmats_list = []
+
         for gate in gates:
             if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
                 arguments = np.array(list(gate.parameters.values()))
@@ -385,9 +489,84 @@ class Circuit(Process):
         process_matrix = trapz_for_matrix(ys, noise.domain_arguments) 
         return cls(gates[0].basis, process_matrix, gates)
 
+    def predict_outcome_probability(self, initial_state: State, outcome_operator: Operator) -> float:
+        """ Computes a probability of observing an outcome when applying the circuit to a state. 
+            
+            Outcome is specified as a POVM projector operator, e.g. |0><0| 
+        
+        """ 
+        return predict_outcome_probability_from_process_matrix(initial_state, self.process_matrix, outcome_operator)
+
+    def predict_outcome_probabilities(self, initial_state: State, outcome_operators: list[Operator]) -> list[float]:
+        """ Computes a list of probabilities of observing outcomes when applying the circuit to a state. 
+            
+            Outcomes are specified as a list of projector operators, e.g. [|0><0|, |1><1|]. 
+        
+        """ 
+        outcome_probabilities = []
+        # It is more efficient to evaluate the circuit's action on the state ONCE and then loop over outcome operators. 
+
+        # Propagate the init state using the circuit 
+        propagated_state = initial_state.propagate_using_process_matrix(self.process_matrix) 
+
+        # Represent state and outcome operators in superket/superbra form 
+        for outcome_op in outcome_operators:
+            outcome_probabilities.append((outcome_op.superbra @ propagated_state.supervector).real) 
+
+        return np.array(outcome_probabilities)
+
+
+    def build_outcome_probability_function(self, initial_state: State, outcome_operator: Operator) -> Callable:
+        """ Returns a function that returns an outcome probability as a function of circuit model parameters """  
+
+        def scalar_function(circuit_process_matrix):
+            return predict_outcome_probability_from_process_matrix(initial_state, circuit_process_matrix, outcome_operator)
+
+        @wraps(self.process_matrix_function)
+        def outcome_probability(**kwargs):
+            """Outcome probability given a circuit acted on an initial state."""
+            return scalar_function(self.process_matrix_function(**kwargs))
+        outcome_probability_function.scalar_function = scalar_function # Needed by jax for gradient / derivative work 
+        outcome_probability_function.process_matrix_function = self.process_matrix_function 
+        return outcome_probability_function
+
+    def build_outcome_probabilities_function(self, initial_state: State, outcome_operators: list[Operator]) -> Callable:
+        """ Returns a function that returns a vector of outcome probabilities as a function of circuit model parameters """  
+        if self.process_matrix_function is None:
+            return [None] * len(outcome_operators)
+
+        outcome_matrix = np.vstack([outcome_op.superbra for outcome_op in outcome_operators])
+        def vector_function(circuit_process_matrix):
+            return predict_outcome_probabilities_from_process_matrix(initial_state, circuit_process_matrix, outcome_matrix)
+
+        def outcome_probabilities_function(**kwargs):
+            return vector_function(self.process_matrix_function(**kwargs)) 
+
+        outcome_probabilities_function.__signature__ = self.process_matrix_function.__signature__
+        outcome_probabilities_function.__name__ = "outcome_probabilities" 
+        outcome_probabilities_function.__doc__ = "Outcome probabilities given a circuit acted on an initial state.\n"
+        outcome_probabilities_function.vector_function = vector_function # Needed by jax for jacobian 
+        outcome_probabilities_function.process_matrix_function = self.process_matrix_function 
+        return outcome_probabilities_function
+
+        
 def _combine_process_matrices(process_matrices: list[Matrix]):
     """Combine a series of process matrices (in chronological order) into a single process matrix for the whole circuit."""
     if len(process_matrices) == 1:
         return process_matrices[0]
     else:
         return np.linalg.multi_dot(process_matrices[::-1])
+
+
+def predict_outcome_probability_from_process_matrix(initial_state: State, process_matrix: Matrix, outcome_operator: Operator) -> float:
+    """ Predicts the outcome of a process matrix on a state after measurement/projection <==> outcome operator """   
+    propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
+    # Using @ operator facilitates jax compatibility; np.dot does not 
+    return (outcome_operator.superbra @ propagated_state.supervector).real  
+
+def predict_outcome_probabilities_from_process_matrix(initial_state: State, process_matrix: Matrix, outcome_matrix: Matrix) -> Vector:
+    """ Predicts the probabilities of outcomes of a process matrix on a state after measurement/projection <==> outcome operator """   
+    propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
+    # Using @ operator facilitates jax compatibility; np.dot does not 
+    return (outcome_matrix @ propagated_state.supervector).real  
+

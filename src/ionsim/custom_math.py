@@ -1,3 +1,12 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import numpy as np
@@ -64,7 +73,6 @@ def matrix_AYB_multiply_to_superoperator(A: AnyMatrix | None, B: AnyMatrix | Non
 def solve_time_evolution_equation(interaction_function: Callable, initial_state_vector: Vector, duration: float,
     time_evals: Vector | None = None, ode_solver: str = 'odeintz', **kwargs):
     """Solve the time-dependent Schrodinger equation or the vectorized Lindblad master equation."""
-    print(f'Solving ODE with {ode_solver}.')
     if ode_solver == 'odeintz':
         return OdeIntz(interaction_function, initial_state_vector, duration, time_evals, **kwargs).solve()
     elif ode_solver == 'solve_ivp':
@@ -118,17 +126,17 @@ class SolveIvp(OdeSolver):
 @dataclass(frozen=True, eq=False)
 class ZVODE(OdeSolver):
     """Python's zvode routine."""
-    nsteps: float = 1e6
+    nsteps: float = 1e5
+    atol: float = 1e-16
+    rtol: float = 1e-14
 
     def solve(self):
         """Solves the ODE."""
         if self.time_evals is None:
             num_steps = 3
         else:
-            num_steps = len(time_evals)
-            assert(time_evals[-1] == duration)
-
-        ic(self.nsteps)
+            num_steps = len(self.time_evals)
+            assert(self.time_evals[-1] == self.duration)
 
         n_states = len(self.initial_vector)
         hamiltonian = self.interaction_function
@@ -140,7 +148,6 @@ class ZVODE(OdeSolver):
             initial_state[0] = 1.
 
         intermediate_states = [initial_state]
-        intermediate_times = [0]
         def schrodinger(t, y):
             return  -1.0j * hamiltonian(t).dot(y)
         def jacobian(t, y):
@@ -150,14 +157,15 @@ class ZVODE(OdeSolver):
             else:
                 return -1.0j * tempham
         r = ode(schrodinger, jacobian)
-        r.set_integrator('zvode', method='adams', with_jacobian=True, atol=1e-16, rtol=1e-14, nsteps=self.nsteps) # use method='bdf' for stiff ode
+        r.set_integrator('zvode', method='adams', with_jacobian=True, atol = self.atol, rtol = self.rtol, nsteps=self.nsteps) # use method='bdf' for stiff ode
         r.set_initial_value(initial_state, 0)
-        dt = t_final/float(num_steps)
-        while r.successful() and r.t < t_final:
-            r.integrate(r.t + dt)
+        for k, t in enumerate(self.time_evals[1:], start=1):
+            r.integrate(t)
             intermediate_states += [r.y]
-            intermediate_times += [r.t]
-        return intermediate_times, intermediate_states
+            if not r.successful():
+                raise RuntimeError(f"Integration failed at t={t}")
+
+        return self.time_evals, intermediate_states
 
 # working version
 # @dataclass(frozen=True, eq=False)

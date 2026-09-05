@@ -1,19 +1,30 @@
+#***************************************************************************************************
+# Copyright 2026 National Technology & Engineering Solutions of Sandia, LLC (NTESS).
+# Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights
+# in this software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License. You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
+#***************************************************************************************************
+
 import unittest
 
 import numpy as np
 
 from ionsim.process import Gate, Circuit
-from ionsim.degree_of_freedom import AtomicSpin
+from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis
-from ionsim.named_operators import Unitary
+from ionsim.named_operators import Unitary, Pauli
 from ionsim.noise import Noise
+from ionsim.operator import EnergyShiftOperator
+from ionsim.state import State 
 
 class TestProcess(unittest.TestCase):
 
     def setUp(self):
         """Set up the necessary objects for testing."""
-        self.spin_a = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        self.spin_b = AtomicSpin.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.basis = StandardBasis([self.spin_a, self.spin_b])
 
         self.Sx = Gate.from_unitary(self.basis, Unitary.sqrtX, [self.spin_a])
@@ -43,7 +54,6 @@ class TestProcess(unittest.TestCase):
         """Test the process fidelity of the extra noisy gate."""
         extra_noisy_gate = Gate.from_process_matrix_function(
             self.basis, self.noisy_phi_gate.process_matrix_function, {'phi': 0, 'theta': np.pi/2}, self.theta_noise,
-            #self.basis, self.noisy_phi_gate.process_matrix_function, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.theta_noise,
         )
         fidelity = extra_noisy_gate.compute_process_fidelity(self.Sx.process_matrix)
         self.assertAlmostEqual(fidelity, 0.9306176541502549, places=14)
@@ -60,9 +70,15 @@ class TestProcess(unittest.TestCase):
         fidelity = ramsey.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
         self.assertAlmostEqual(fidelity, 0.9306176541502548, places=14)
 
+        # Test computing outcome probabilities 
+        outcome_operator = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_1, Pauli.projector_0)) 
+        initial_state = State.from_coefficients(self.basis, [1., 0., 0., 0.]) 
+
+        outcome_probability = ramsey.predict_outcome_probabilities(initial_state, [outcome_operator]) 
+        self.assertAlmostEqual(outcome_probability[0], 0.9530090510307307, places = 10)
+
     def test_pauli_transfer_matrix_computations(self):
         noisy_gate = self.noisy_phi_gate
-        #ideal.compute_process_fidelity(self.Sx.process_matrix)
         noisy_gate_pauli = noisy_gate.convert_to_pauli_basis()
         Sx_pauli = self.Sx.convert_to_pauli_basis()
 
