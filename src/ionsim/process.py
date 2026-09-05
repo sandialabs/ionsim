@@ -82,8 +82,6 @@ class Gate(Process):
             process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
         return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
 
-
-    # TODO: Should we extend this to take more than 1 noise parameter? 
     @classmethod
     def from_process_matrix_function(cls, basis: Basis, process_matrix_function: Callable,
             parameters: dict[str, float], noise: Noise | None = None):
@@ -94,7 +92,6 @@ class Gate(Process):
         noisy_parameter_index = parameter_names.index(noise.parameter_name)
         process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
         return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
-
 
     @classmethod
     def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, duration: float,  
@@ -134,8 +131,6 @@ class Gate(Process):
             assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
             dof_to_trace_out = dofs_to_trace_out[0]
             initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
-            # TODO: consider if this function should just accept a reduced basis...? ==> ECM 03/2026: Yes I think so. 
-
 
         # TODO: Consolidate tracing out and projection methods for building a process matrix from hamiltonian in an enlarged hilbert space
         if projection_info is None:
@@ -189,7 +184,6 @@ class Gate(Process):
         # with ProcessPoolExecutor() as executor:
         #     results = executor.map(propagate, reduced_basis.vectors)
         # final_states = list(results)
-
 
         if dofs_to_trace_out is None:
             final_wavefunctions = [fs.wavefunction for fs in final_states]
@@ -288,20 +282,9 @@ class Gate(Process):
                     else:
                         # Necessary to do |vector_p > <vector| to get correct basis ordering after projection  
                         initial_state = State.from_density_matrix(basis, np.outer(vector_p, vector))
-    
-                        # TODO: Include tracing out DOF functionality 
-                        # Time-evolve with Lindbladian, this yields the ij'th column of the process matrix.
-     #                    if dofs_to_trace_out is None:
-     #                        initial_state = State.from_wavefunction(basis, vector)
-     #                    else:
-     #                        initial_state = State.from_wavefunction_with_new_component(
-     #                            basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
-     #                        )
                         final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
-
                         if projection_info is not None: 
                             final_state = final_state.project_out_states(projection_info['new basis'], projection_info['states to project out']) 
-
                         # Supervector of final state gives you 1 column of the process matrix  
                         process_matrix_columns.append(final_state.supervector) 
     
@@ -344,9 +327,9 @@ class Gate(Process):
                 raise IonSimError(f"Gate must be in the standard basis or pauli group basis to compute Pauli error rates.")
         else:
             pauli_group_basis = self.basis 
-            pauli_transfer_matrix = self.process_matrix # pointer assigment  
+            pauli_transfer_matrix = self.process_matrix 
 
-        # Extract error channel rate from Pauli transfer matrix for each pauli group operator. 
+        # Extract error channel rate from Pauli transfer matrix (PTM) for each pauli group operator. 
         # Walsh-Hadamard transform relates eigenvalues of PTM to to error rates in Pauli channel representation. 
         # TODO: Add option to go beyond Pauli twirled approximation (get eigs of PTM and ensure consistent basis state ordering)
         error_rates = pauli_group_basis.walsh_hadamard_transformation_matrix @ np.diag(pauli_transfer_matrix)
