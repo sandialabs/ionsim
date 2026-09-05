@@ -101,13 +101,10 @@ class Basis(ABC):
 
     def project_superoperator(self, superoperator: Matrix, indices_to_project_into: list[int]) -> Vector: 
         """Project a superoperator to a lower-dimensional subspace"""
-        # TODO: Verify that this is correct and we don't need to transpose anything 
-        # We know the computational indices for d x d matrix, but what about d^2 x d^2 ?
         superoperator_indices = [i + j*len(self.states)  # column-wise superoperator convention
             for j in indices_to_project_into 
             for i in indices_to_project_into] 
         return superoperator[np.ix_(superoperator_indices, superoperator_indices)]
-
 
     def compute_superoperator_from_unitary_operator(self, unitary_operator: Matrix):
         """Compute a superoperator from a unitary operator in the column-stacked representation."""
@@ -181,7 +178,6 @@ class Basis(ABC):
                 return
         raise IonSimError('The basis must have two atomic internal energy levels in each degree of freedom.')
 
-    # TODO: check that these are working for the new Basis class
     def change_basis_of_vector(self, vector: Vector, new_basis: 'Basis'):
         """Change the basis of a vector."""
         standard_vector = self.transform_vector_to_standard_basis(vector)
@@ -191,28 +187,6 @@ class Basis(ABC):
         """Change the basis of a matrix."""
         standard_matrix = self.transform_matrix_to_standard_basis(matrix)
         return new_basis.transform_matrix_from_standard_basis(standard_matrix)
-
-    # TODO: This is from old IonSim and needs to be adapted for new IonSim 
-    def compute_choi_jamiolkowski_process_matrix(self, process: Matrix, representation = 'superoperator'):
-        """ Return the Choi-Jamiolkowski representation of a quantum process """
-        # TODO: Add methods as necessary to accept different representations
-        allowed_representations = ['superoperator', 'unitary']
-        process = np.array(process)
-        if representation == 'unitary':
-            process = np.kron(process.conj(), process)
-            representation = 'superoperator'
-        if representation == 'superoperator':
-            # Superoperator is the linear operator acting on vec(rho)
-            dimension = int(np.sqrt(process.shape[0]))
-            jamiolkowski_matrix = np.zeros([dimension**2, dimension**2], dtype='complex')
-            for i in range(dimension**2):
-                Ei_vec= np.zeros(dimension**2)
-                Ei_vec[i] = 1
-                output = unvec(np.dot(process,Ei_vec))
-                jamiolkowski_matrix += np.kron(output, unvec(Ei_vec))
-            return jamiolkowski_matrix
-        else:
-            print('Input representation must be one of: ', allowed_representations)
 
 
 @dataclass(frozen=True, eq=False)

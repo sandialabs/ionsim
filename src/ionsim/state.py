@@ -124,7 +124,6 @@ class State:
         rhos = [self.basis.compute_density_matrix_from_supervector(psi) for psi in supervectors]
         return [State(self.basis, rho) for rho in rhos]
 
-
     def propagate_using_pauli_channel(self, Pauli_error_rates: dict):
         """ Propagates a state under the action of a Pauli channel, specified by its error rates 
 
@@ -145,7 +144,6 @@ class State:
             
         return State.from_density_matrix(self.basis, propagated_density_matrix) 
     
-
     def get_wavefunction_in_new_basis(self, new_basis: Basis):
         """Get the wavefunction in a new basis."""
         if new_basis is self.basis or self.wavefunction is None:
@@ -197,8 +195,8 @@ class State:
 
 
     #def project_to_computational_space()
- #    @classmethod
- #    def project_to_qubit_space(cls):
+    #@classmethod
+ #    def project_to_qubit_space(self, qubit_states: list[EnergyEigenstate]):
  #        N = len(self.basis.spin_DOFs) # number of qubits 
  #        N_DOF = len(self.basis.degrees_of_freedom) 
  #        N_states = len(self.basis.states) 

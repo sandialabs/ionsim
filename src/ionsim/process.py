@@ -122,9 +122,10 @@ class Gate(Process):
             - optional argument to trace out DOF or project out states. 
             - for projection info, specify a dictionary with keys 'basis' : StandardBasis & 'states to project' : list[EnergyEigenstate]
             - The gate is built in the reduced or projected basis. 
-
+            - For a gate on a reduced Hilbert space, we use the convention that first DOFS (e.g. motional) are traced out and then 
+                a further projection may occur. Therefore, the projection information should be included on the reduced Hilbert space 
+                after tracing out DOFs.  
         """ 
-        # TODO: reconcile projection & tracing out and what the final basis is  
         if dofs_to_trace_out is not None:
             assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
             assert(len(dofs_to_trace_out) == len(initial_wavefunctions_for_dofs_to_trace_out))
@@ -144,7 +145,7 @@ class Gate(Process):
             if dofs_to_trace_out is None:
                 reduced_basis = projection_info['new basis'] 
             else:
-                raise IonSimError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
+                raise NotImplementedError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
 
         final_states = []
         for i, vector in enumerate(basis.vectors):
@@ -320,7 +321,6 @@ class Gate(Process):
             # Create Pauli product basis 
             pauli_group_basis = PauliProductBasis(self.basis.degrees_of_freedom)
 
-            # TODO: Consider automatically converting the gate to standard basis, then to Pauli basis 
             if isinstance(basis, StandardBasis):
                 pauli_transfer_matrix = pauli_group_basis.superoperator_to_pauli_transfer_matrix(self.process_matrix, basis)
             else: 

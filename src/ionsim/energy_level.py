@@ -41,7 +41,7 @@ class EnergyEigenstate(EnergyLevel): #TODO: consider renaming this something lik
         return ' : '.join([component.name for component in self.components])
 
     def alias(self, join_by: str=''):
-        """An alias for the state, allowing user specification on how to join state aliases."""
+        """An alias for the state, allowing user specification on how to join component aliases."""
         return join_by.join([component.alias for component in self.components]) 
 
 @dataclass(frozen=True, eq=False)
