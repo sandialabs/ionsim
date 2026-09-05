@@ -169,7 +169,8 @@ class Gate(Process):
                 # It is equivalent to do the projection at this stage (before building the process matrix) 
                 #  compared to projecting the full process matrix. 
                 if projection_info: 
-                    final_states[-1] = final_states[-1].project_out_states(projection_info['new basis'], projection_info['states to project out']) 
+                    final_states[-1] = final_states[-1].project_out_states(projection_info['states to project out'], projection_info['new basis']) 
+                    #final_states[-1] = final_states[-1].project_out_states(projection_info['new basis'], projection_info['states to project out']) 
 
         # TODO: how can we do multiprocessing outside of main?
         # from concurrent.futures import ProcessPoolExecutor
@@ -285,7 +286,8 @@ class Gate(Process):
                         initial_state = State.from_density_matrix(basis, np.outer(vector_p, vector))
                         final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
                         if projection_info is not None: 
-                            final_state = final_state.project_out_states(projection_info['new basis'], projection_info['states to project out']) 
+                            final_state = final_state.project_out_states(projection_info['states to project out'], projection_info['new basis']) 
+                            #final_state = final_state.project_out_states(projection_info['new basis'], projection_info['states to project out']) 
                         # Supervector of final state gives you 1 column of the process matrix  
                         process_matrix_columns.append(final_state.supervector) 
     
@@ -404,7 +406,7 @@ class Circuit(Process):
         deterministic = (noise is None) or all([noise.parameter_name not in gate.parameters for gate in gates])
         if deterministic: 
             process_matrix = _combine_process_matrices([gate.process_matrix for gate in gates])
-            return cls(gates[0].basis, process_matrix, gates, circuit_process_matrix_function)
+            return cls(gates[0].basis, process_matrix, gates)
         pmats_list = []
 
         for gate in gates:
@@ -449,38 +451,38 @@ class Circuit(Process):
         return np.array(outcome_probabilities)
 
 
-    def build_outcome_probability_function(self, initial_state: State, outcome_operator: Operator) -> Callable:
-        """ Returns a function that returns an outcome probability as a function of circuit model parameters """  
-
-        def scalar_function(circuit_process_matrix):
-            return predict_outcome_probability_from_process_matrix(initial_state, circuit_process_matrix, outcome_operator)
-
-        @wraps(self.process_matrix_function)
-        def outcome_probability(**kwargs):
-            """Outcome probability given a circuit acted on an initial state."""
-            return scalar_function(self.process_matrix_function(**kwargs))
-        outcome_probability_function.scalar_function = scalar_function # Needed by jax for gradient / derivative work 
-        outcome_probability_function.process_matrix_function = self.process_matrix_function 
-        return outcome_probability_function
-
-    def build_outcome_probabilities_function(self, initial_state: State, outcome_operators: list[Operator]) -> Callable:
-        """ Returns a function that returns a vector of outcome probabilities as a function of circuit model parameters """  
-        if self.process_matrix_function is None:
-            return [None] * len(outcome_operators)
-
-        outcome_matrix = np.vstack([outcome_op.superbra for outcome_op in outcome_operators])
-        def vector_function(circuit_process_matrix):
-            return predict_outcome_probabilities_from_process_matrix(initial_state, circuit_process_matrix, outcome_matrix)
-
-        def outcome_probabilities_function(**kwargs):
-            return vector_function(self.process_matrix_function(**kwargs)) 
-
-        outcome_probabilities_function.__signature__ = self.process_matrix_function.__signature__
-        outcome_probabilities_function.__name__ = "outcome_probabilities" 
-        outcome_probabilities_function.__doc__ = "Outcome probabilities given a circuit acted on an initial state.\n"
-        outcome_probabilities_function.vector_function = vector_function # Needed by jax for jacobian 
-        outcome_probabilities_function.process_matrix_function = self.process_matrix_function 
-        return outcome_probabilities_function
+ #    def build_outcome_probability_function(self, initial_state: State, outcome_operator: Operator) -> Callable:
+ #        """ Returns a function that returns an outcome probability as a function of circuit model parameters """  
+ #
+ #        def scalar_function(circuit_process_matrix):
+ #            return predict_outcome_probability_from_process_matrix(initial_state, circuit_process_matrix, outcome_operator)
+ #
+ #        @wraps(self.process_matrix_function)
+ #        def outcome_probability(**kwargs):
+ #            """Outcome probability given a circuit acted on an initial state."""
+ #            return scalar_function(self.process_matrix_function(**kwargs))
+ #        outcome_probability_function.scalar_function = scalar_function # Needed by jax for gradient / derivative work 
+ #        outcome_probability_function.process_matrix_function = self.process_matrix_function 
+ #        return outcome_probability_function
+ #
+ #    def build_outcome_probabilities_function(self, initial_state: State, outcome_operators: list[Operator]) -> Callable:
+ #        """ Returns a function that returns a vector of outcome probabilities as a function of circuit model parameters """  
+ #        if self.process_matrix_function is None:
+ #            return [None] * len(outcome_operators)
+ #
+ #        outcome_matrix = np.vstack([outcome_op.superbra for outcome_op in outcome_operators])
+ #        def vector_function(circuit_process_matrix):
+ #            return predict_outcome_probabilities_from_process_matrix(initial_state, circuit_process_matrix, outcome_matrix)
+ #
+ #        def outcome_probabilities_function(**kwargs):
+ #            return vector_function(self.process_matrix_function(**kwargs)) 
+ #
+ #        outcome_probabilities_function.__signature__ = self.process_matrix_function.__signature__
+ #        outcome_probabilities_function.__name__ = "outcome_probabilities" 
+ #        outcome_probabilities_function.__doc__ = "Outcome probabilities given a circuit acted on an initial state.\n"
+ #        outcome_probabilities_function.vector_function = vector_function # Needed by jax for jacobian 
+ #        outcome_probabilities_function.process_matrix_function = self.process_matrix_function 
+ #        return outcome_probabilities_function
 
         
 def _combine_process_matrices(process_matrices: list[Matrix]):
