@@ -46,6 +46,16 @@ class Basis(ABC):
         """The unitary matrix that transforms a vector in this basis to the standard basis."""
         return np.array([vector for vector in self.vectors]).T
 
+    @property
+    def is_qubit_basis(self):
+        """ Returns true if the basis is a qubit basis """ 
+        if all([len(dof.energy_levels) == 2 for dof in self.degrees_of_freedom]):
+            return all([
+                all([isinstance(level, AtomicInternalEnergyLevel) for level in dof.energy_levels])
+                for dof in self.degrees_of_freedom
+            ])
+        return False 
+         
     def transform_vector_to_standard_basis(self, vector: Vector):
         """Transform a vector in this basis to the standard basis."""
         return self.change_of_basis_matrix.dot(vector)
@@ -170,12 +180,14 @@ class Basis(ABC):
 
     def _check_if_qubit_basis(self):
         """Check if the basis has two atomic internal energy levels in each degree of freedom."""
-        if all([len(dof.energy_levels) == 2 for dof in self.degrees_of_freedom]):
-            if all([
-                all([isinstance(level, AtomicInternalEnergyLevel) for level in dof.energy_levels])
-                for dof in self.degrees_of_freedom
-            ]):
-                return
+        if self.is_qubit_basis:
+            return 
+ #        if all([len(dof.energy_levels) == 2 for dof in self.degrees_of_freedom]):
+ #            if all([
+ #                all([isinstance(level, AtomicInternalEnergyLevel) for level in dof.energy_levels])
+ #                for dof in self.degrees_of_freedom
+ #            ]):
+ #                return
         raise IonSimError('The basis must have two atomic internal energy levels in each degree of freedom.')
 
     def change_basis_of_vector(self, vector: Vector, new_basis: 'Basis'):
