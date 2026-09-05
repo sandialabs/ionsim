@@ -193,7 +193,7 @@ class State:
             small_density_matrix += multi_dot([proj_left, self.density_matrix, proj_right])
         return small_density_matrix
 
-    def project_to_qubit_space(self, non_qubit_levels: list[AtomicInternalEnergyLevel]):
+    def project_to_qubit_subspace(self, non_qubit_levels: list[AtomicInternalEnergyLevel]):
         """ Projects the state onto the qubit subspace """
         # Return self if already in qubit subspace
         if self.basis.is_qubit_basis():
@@ -232,6 +232,24 @@ class State:
     def project_out_states(self, states_to_project_out: list[EnergyEigenstate], new_basis: StandardBasis | None=None):
         """Return a projected state by projecting out a set of levels in the enlarged basis into a new basis."""
 
+        if not isinstance(self.basis, StandardBasis):
+            raise IonSimError("Projection of density matrix requires a Standard Basis of EnergyEigenstates.")
+            # TODO: Convert basis to StandardBasis for this   
+
+        # Get indices corresponding to these states' locations in the enlarged basis
+        projection_indices = [self.basis.states.index(state) for state in states_to_project_out] 
+        if projection_indices == []:
+            return self
+
+        computational_indices = [i for i in range(len(self.basis.states)) if i not in projection_indices] 
+
+        # Compute projected density matrix
+        projected_density_matrix = self.density_matrix[np.ix_(computational_indices, computational_indices)] 
+
+        # Check if we need to re-order the basis to match the sorted order in new_basis  
+        permutation = np.argsort(computational_indices)
+        projected_density_matrix = projected_density_matrix[np.ix_(permutation, permutation)] 
+
         # Create the new basis from the list of states to project if not provided 
         if new_basis == None:
             states_to_keep = [s for s in self.basis.states if s not in states_to_project_out]
@@ -254,26 +272,8 @@ class State:
     
             new_basis = StandardBasis(new_DOFs)
 
-        if not isinstance(self.basis, StandardBasis):
-            raise IonSimError("Projection of density matrix requires a Standard Basis of EnergyEigenstates.")
-            # TODO: Convert basis to StandardBasis for this   
-
         if len(new_basis.states) != len(self.basis.states) - len(states_to_project_out):
             raise IonSimError("The specified new basis dimensionality should match the current basis without the projected states.")
-
-        # Get indices corresponding to these states' locations in the enlarged basis
-        projection_indices = [self.basis.states.index(state) for state in states_to_project_out] 
-        if projection_indices == []:
-            return self
-
-        computational_indices = [i for i in range(len(self.basis.states)) if i not in projection_indices] 
-
-        # Compute projected density matrix
-        projected_density_matrix = self.density_matrix[np.ix_(computational_indices, computational_indices)] 
-
-        # Check if we need to re-order the basis to match the sorted order in new_basis  
-        permutation = np.argsort(computational_indices)
-        projected_density_matrix = projected_density_matrix[np.ix_(permutation, permutation)] 
 
         if self.wavefunction is not None:        
             projected_wavefunction = self.wavefunction[computational_indices] 
