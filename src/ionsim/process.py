@@ -213,15 +213,6 @@ class Gate(Process):
                             basis, density_matrix
                         ).trace_out_degree_of_freedom(dof_to_trace_out)
                 supervectors.append(spin_state.supervector)
- #=======
- #                if dofs_to_trace_out is None:
- #                    reduced_state = State.from_density_matrix(basis, density_matrix)
- #                else:
- #                    reduced_state = State.from_density_matrix(
- #                        basis, density_matrix
- #                    ).trace_out_degree_of_freedom(dof_to_trace_out)
- #                supervectors.append(reduced_state.supervector)
- #>>>>>>> main
         process_matrix = np.array(supervectors).T
 
         return cls(reduced_basis, process_matrix, unitary=unitary)
@@ -250,48 +241,6 @@ class Gate(Process):
             assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
             dof_to_trace_out = dofs_to_trace_out[0]
             initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
- #<<<<<<< HEAD
- #            # TODO: consider if this function should just accept a reduced basis...? ==> ECM 03/2026: Yes I think so. 
- #
- #
- #        if projection_info is None:
- #            if dofs_to_trace_out is None:
- #                reduced_basis = basis
- #            else:
- #                reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
- #        else:
- #            unwanted_state_indices = [basis.states.index(state) for state in projection_info['states to project out']] 
- #            computational_indices = [i for i in range(len(basis.states)) if i not in unwanted_state_indices] 
- #            if dofs_to_trace_out is None:
- #                reduced_basis = projection_info['new basis'] 
- #                #reduced_basis = basis 
- #            else:
- #                raise IonSimError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
- #
- #        # Use general t-dependent, non-commutating Lindbladian method unless user specifies otherwise 
- #        if lindbladian_time_independent:
- #            print(f"Lindbladian is time-independent. Simplifying computation of process matrix via direct matrix exponentiation.")
- #            # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
- #            process_matrix = scipy.linalg.expm(lindbladian.matrix_function(0) * duration)
- #
- #            if projection_info:
- #                process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
- #
- #        elif lindbladian_commutes_at_later_times:
- #            print(f"Lindbladian commutes at different times. Integrating Lindbladian directly in time.") 
- #            # Integrate each element of the lindbladian matrix forward in time from t = 0 to t = duration            
- #            L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
- #
- #            process_matrix = scipy.linalg.expm(L_integral)
- #            if projection_info:
- #                process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
- #
- #        else:
- #            print(f"Default method for generating process matrix from generic time-dependent, non-commutating Lindbladian.")
- #            # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
- #            # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
- #            # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 
- #=======
 
         # Check if building the gate requires projection or tracing out from a larger Hilbert space  
         if projection_info is None:
@@ -307,20 +256,20 @@ class Gate(Process):
                 #reduced_basis = basis 
             else:
                 raise NotImplementedError("Tracing out DOFs & projecting out states is not yet supported in this function.") 
- #        if dofs_to_trace_out is None:
- #            reduced_basis = basis
- #        else:
- #            reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
 
         # Use general t-dependent, non-commutating Lindbladian method unless user specifies otherwise 
         if lindbladian_time_independent:
             # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
             process_matrix = scipy.linalg.expm(lindbladian.matrix_function(0) * duration)
+            if projection_info:
+               process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
 
         elif lindbladian_commutes_at_later_times:
             # Lindbladian is time dependent but commutes with itself at later times: Integrate the lindbladian matrix forward in time from t = 0 to t = duration            
             L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
             process_matrix = scipy.linalg.expm(L_integral)
+            if projection_info:
+                process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
         else:
             # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
             # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
@@ -380,7 +329,8 @@ class Gate(Process):
         return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
 
     def compute_pauli_error_rates(self) -> dict[str, float]:
-        """ Computes Pauli channel error rates, returned in a dictionary with entries (channel name, error rate) """ 
+        """ Computes Pauli channel error rates via the Pauli twirled approximation,
+            returned in a dictionary with entries (channel name, error rate) """ 
         # Basis safety checks:  
         basis = self.basis
         if not isinstance(basis, PauliProductBasis):
