@@ -196,16 +196,20 @@ class State:
 
     #def project_to_computational_space()
     #@classmethod
- #    def project_to_qubit_space(self, qubit_states: list[EnergyEigenstate]):
- #        N = len(self.basis.spin_DOFs) # number of qubits 
- #        N_DOF = len(self.basis.degrees_of_freedom) 
- #        N_states = len(self.basis.states) 
- #        assert N < N_DOF
- #
- #        if N == N_DOF: 
- #            return self
- #        else:  
- #            return cls.project_out_states(non_qubit_states)
+#    def project_to_qubit_space(self, qubit_levels: list[EnergyLevel]):
+#        """ Projects the state onto the qubit subspace """
+#        # Return self if already in qubit subspace
+#        if self.basis._check_if_qubit_basis():
+#            return self
+#        N = len(self.basis.atomic_structure_DOFs) # number of qubits 
+#        N_DOF = len(self.basis.degrees_of_freedom) 
+#        N_states = len(self.basis.states) 
+#        assert N <= N_DOF
+#
+#        if N == N_DOF: 
+#            return self
+#        else:  
+#            return cls.project_out_states(non_qubit_states)
 
     def project_out_states(self, new_basis: StandardBasis, states_to_project_out: list[EnergyEigenstate]):
         """Return a projected state by projecting out a set of levels in the enlarged basis into a new basis."""
