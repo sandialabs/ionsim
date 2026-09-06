@@ -16,7 +16,8 @@ from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis
 from ionsim.named_operators import Unitary, Pauli
 from ionsim.noise import Noise
-from ionsim.operator import EnergyShiftOperator
+from ionsim.operator import EnergyShiftOperator, CouplingOperator
+from ionsim.hamiltonian import Hamiltonian
 from ionsim.state import State 
 
 class TestProcess(unittest.TestCase):
@@ -25,6 +26,7 @@ class TestProcess(unittest.TestCase):
         """Set up the necessary objects for testing."""
         self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.spin_c = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2','P1/2'], level_names=['S1/2,0,0', 'S1/2,1,0','P1/2,1,-1'])
         self.basis = StandardBasis([self.spin_a, self.spin_b])
 
         self.Sx = Gate.from_unitary(self.basis, Unitary.sqrtX, [self.spin_a])
@@ -84,6 +86,35 @@ class TestProcess(unittest.TestCase):
 
         fidelity = noisy_gate_pauli.compute_process_fidelity(Sx_pauli.process_matrix)
         self.assertAlmostEqual(fidelity, 0.9535335189419549, places=14)
+
+    def test_Raman_gate(self):
+        full_basis = StandardBasis([self.spin_c])
+        rabi_rate = 10*2.*np.pi*1E3
+        detuning = 10. * 2. * np.pi * 1E6
+
+        omega1 = self.spin_c.energy_levels[2].energy - self.spin_c.energy_levels[0].energy + detuning
+        omega2 = self.spin_c.energy_levels[2].energy - self.spin_c.energy_levels[1].energy + detuning
+        size = len(full_basis.states)
+        static_operator1 = np.zeros((size, size))
+        static_operator1[2, 0] = rabi_rate/2. 
+        static_operator2 = np.zeros((size, size))
+        static_operator2[2, 1] = rabi_rate/2. 
+
+        raising_op1 = CouplingOperator.from_matrix(full_basis, static_operator1, omega1, [self.spin_c])
+        raising_op2 = CouplingOperator.from_matrix(full_basis, static_operator2, omega2, [self.spin_c])
+        
+        interaction_frame_energies = [-1 * state.energy for state in self.basis.states]
+        hamiltonian = Hamiltonian(full_basis, [raising_op1, raising_op2], interaction_frame_energies, sparse=False)
+
+        rabi_eff = rabi_rate**2 / detuning
+        duration = (np.pi/8.)/rabi_eff 
+
+        undesired_levels = [self.spin_c.energy_levels[2]] # P1/2 level to project out        
+        projection_input = {'levels' : undesired_levels}
+        #X_pi8_gate = Gate.from_hamiltonian(full_basis, hamiltonian, duration, projection_input = projection_input, ode_solver = 'zvode') 
+
+        
+
 
 if __name__ == '__main__':
     unittest.main()

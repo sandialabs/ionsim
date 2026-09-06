@@ -201,22 +201,11 @@ class State:
         else:
             return self.project_out_levels(non_qubit_levels)
 
-    def project_out_levels(self, levels: list):
+    def project_out_levels(self, levels: list, new_basis: StandardBasis | None=None):
         """ Project state into a subspace without the requested levels. Returns the projected state """ 
         # Create basis as subspace of the current state's basis  
-        new_DOFs = []
-        for DOF in self.basis.degrees_of_freedom:
-            DOF_levels = DOF.energy_levels
-            levels_to_keep = [l for l in DOF_levels if l not in levels]
-            if isinstance(DOF, AtomicStructure):
-                new_DOF = AtomicStructure(levels_to_keep, DOF.name) 
-            elif isinstance(DOF, MotionalMode):
-                new_DOF = MotionalMode(levels_to_keep, DOF.name) 
-            else:
-                raise IonSimError(f"Levels to project must refer to levels from a motional mode or atomic structure DOF.")
-            new_DOFs.append(new_DOF)
-
-        new_basis = StandardBasis(new_DOFs)
+        if new_basis is None:
+            new_basis = build_subspace_basis_from_levels_to_project(levels)
 
         # Get indices to project out by finding where the levels are in the basis
         projection_indices = [] 
@@ -227,7 +216,7 @@ class State:
 
         projection_indices = set(projection_indices)
         states_to_project = [self.basis.states[i] for i in projection_indices] 
-        return self.project_out_states(new_basis, states_to_project) 
+        return self.project_out_states(states_to_project, new_basis) 
                     
     def project_out_states(self, states_to_project_out: list[EnergyEigenstate], new_basis: StandardBasis | None=None):
         """Return a projected state by projecting out a set of levels in the enlarged basis into a new basis."""
@@ -252,25 +241,7 @@ class State:
 
         # Create the new basis from the list of states to project if not provided 
         if new_basis == None:
-            states_to_keep = [s for s in self.basis.states if s not in states_to_project_out]
-            # Components for each state in the list of states to keep
-            components = [state.components for state in states_to_keep]
-            # Get list of levels to keep for each DOF 
-            levels_to_keep_in_DOFs = [list(dict.fromkeys(col)) for col in zip(*components)]
-            assert len(level_to_keep_in_DOFs) == len(self.basis.degrees_of_freedom)
-            new_DOFs = []
-            for levels, DOF in zip(levels_to_keep_in_DOFs, self.basis.degrees_of_freedom):
-                DOF_levels = DOF.energy_levels
-                levels_to_keep = [l for l in DOF.energy_levels if l in levels]
-                if isinstance(DOF, AtomicStructure):
-                    new_DOF = AtomicStructure(levels_to_keep, DOF.name) 
-                elif isinstance(DOF, MotionalMode):
-                    new_DOF = MotionalMode(levels_to_keep, DOF.name) 
-                else:
-                    raise IonSimError(f"Levels to project must refer to levels from a motional mode or atomic structure DOF.")
-                new_DOFs.append(new_DOF)
-    
-            new_basis = StandardBasis(new_DOFs)
+            new_basis = self.basis.build_subspace_basis_from_states_to_project(states_to_project_out)
 
         if len(new_basis.states) != len(self.basis.states) - len(states_to_project_out):
             raise IonSimError("The specified new basis dimensionality should match the current basis without the projected states.")
