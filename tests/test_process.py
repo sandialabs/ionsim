@@ -89,31 +89,45 @@ class TestProcess(unittest.TestCase):
 
     def test_Raman_gate(self):
         full_basis = StandardBasis([self.spin_c])
-        rabi_rate = 10*2.*np.pi*1E3
-        detuning = 10. * 2. * np.pi * 1E6
+        target_rabi_rate = 10 * 2 * np.pi * 1E3 # rad/s 
+        detuning = -2. * 2. * np.pi * 1E9
+        rabi_rate = np.sqrt(np.abs(detuning) * 2. * target_rabi_rate) 
 
         omega1 = self.spin_c.energy_levels[2].energy - self.spin_c.energy_levels[0].energy + detuning
         omega2 = self.spin_c.energy_levels[2].energy - self.spin_c.energy_levels[1].energy + detuning
+        omega_qubit = self.spin_c.energy_levels[1].energy - self.spin_c.energy_levels[0].energy
+        assert (np.abs(omega1 - omega2) - omega_qubit)/(2*np.pi)/1E3 < 1.E-2, 'Raman resonance condition is violated.'
+
         size = len(full_basis.states)
         static_operator1 = np.zeros((size, size))
         static_operator1[2, 0] = rabi_rate/2. 
         static_operator2 = np.zeros((size, size))
-        static_operator2[2, 1] = rabi_rate/2. 
+        static_operator2[2, 1] = -rabi_rate/2.  # phase of pi
 
         raising_op1 = CouplingOperator.from_matrix(full_basis, static_operator1, omega1, [self.spin_c])
         raising_op2 = CouplingOperator.from_matrix(full_basis, static_operator2, omega2, [self.spin_c])
         
-        interaction_frame_energies = [-1 * state.energy for state in self.basis.states]
+        interaction_frame_energies = [-1 * state.energy for state in full_basis.states]
         hamiltonian = Hamiltonian(full_basis, [raising_op1, raising_op2], interaction_frame_energies, sparse=False)
 
-        rabi_eff = rabi_rate**2 / detuning
-        duration = (np.pi/8.)/rabi_eff 
-
+        theta = np.pi/16.
+        duration = (np.pi/16.)/target_rabi_rate
         undesired_levels = [self.spin_c.energy_levels[2]] # P1/2 level to project out        
         projection_input = {'levels' : undesired_levels}
-        #X_pi8_gate = Gate.from_hamiltonian(full_basis, hamiltonian, duration, projection_input = projection_input, ode_solver = 'zvode') 
+        dt = 0.002 * 1E-6 
+        times = np.arange(0, duration + dt, dt)
+        X_pi16_Raman_gate = Gate.from_hamiltonian(full_basis, hamiltonian, duration, projection_input = projection_input, ode_solver = 'odeintz', time_evals = times) 
+        reduced_basis = X_pi16_Raman_gate.basis
 
-        
+        # Process fidelity 
+        X_pi16_ref = Unitary.R(0., theta) 
+        global_phase_correction = np.exp(-1j*theta)
+        X_pi16_ref *= global_phase_correction
+        X_pi16_ref = Gate.from_unitary(reduced_basis, X_pi16_ref, [self.spin_c])
+
+        process_fidelity = X_pi16_Raman_gate.compute_process_fidelity(X_pi16_ref.process_matrix)
+        self.assertAlmostEqual(process_fidelity, 0.999998720951, places=8)
+            
 
 
 if __name__ == '__main__':

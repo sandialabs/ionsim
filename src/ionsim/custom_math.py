@@ -166,7 +166,6 @@ class ZVODE(OdeSolver):
             intermediate_states += [r.y]
             if not r.successful():
                 raise RuntimeError(f"Integration failed at t={t}")
-
         return self.time_evals, intermediate_states
 
 # working version

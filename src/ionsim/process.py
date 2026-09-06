@@ -220,12 +220,20 @@ class Gate(Process):
                     initial_state = State.from_wavefunction_with_new_component(
                         basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
                     )
-                final_states.append(
-                    initial_state.propagate_using_schrodinger_equation(
-                        hamiltonian, duration,
-                        ode_solver=ode_solver, **ode_solver_kwargs
+                
+                if 'time_evals' not in ode_solver_kwargs:
+                    final_states.append(
+                        initial_state.propagate_using_schrodinger_equation(
+                            hamiltonian, duration,
+                            ode_solver=ode_solver, **ode_solver_kwargs
+                        )
                     )
-                )
+                else:
+                    states = initial_state.propagate_using_schrodinger_equation(
+                            hamiltonian, duration,
+                            ode_solver=ode_solver, **ode_solver_kwargs
+                        )
+                    final_states.append(states[-1])
                 # At the end of each evolution, project out the unwanted states.  
                 # It is equivalent to do the projection at this stage (before building the process matrix) 
                 #  compared to projecting the full process matrix. 
@@ -345,7 +353,12 @@ class Gate(Process):
                     else:
                         # Necessary to do |vector_p > <vector| to get correct basis ordering after projection  
                         initial_state = State.from_density_matrix(basis, np.outer(vector_p, vector))
-                        final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
+                        if 'time_evals' in ode_solver_kwargs:
+                            states = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
+                            final_state = states[-1]
+                        else:
+                            final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
+
                         if projection_info: 
                             final_state = final_state.project_out_states(states_to_project, reduced_basis) 
                         # Supervector of final state gives you 1 column of the process matrix  
