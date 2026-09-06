@@ -534,12 +534,10 @@ def _combine_process_matrices(process_matrices: list[Matrix]):
 def predict_outcome_probability_from_process_matrix(initial_state: State, process_matrix: Matrix, outcome_operator: Operator) -> float:
     """ Predicts the outcome of a process matrix on a state after measurement/projection <==> outcome operator """   
     propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
-    # Using @ operator facilitates jax compatibility; np.dot does not 
     return (outcome_operator.superbra @ propagated_state.supervector).real  
 
 def predict_outcome_probabilities_from_process_matrix(initial_state: State, process_matrix: Matrix, outcome_matrix: Matrix) -> Vector:
     """ Predicts the probabilities of outcomes of a process matrix on a state after measurement/projection <==> outcome operator """   
     propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
-    # Using @ operator facilitates jax compatibility; np.dot does not 
     return (outcome_matrix @ propagated_state.supervector).real  
 
