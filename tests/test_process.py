@@ -127,7 +127,13 @@ class TestProcess(unittest.TestCase):
 
         process_fidelity = X_pi16_Raman_gate.compute_process_fidelity(X_pi16_ref.process_matrix)
         self.assertAlmostEqual(process_fidelity, 0.999998720951, places=8)
-            
+
+        # Test pauli transfer matrix and pauli error rate calculations 
+        error_rates = X_pi16_Raman_gate.compute_pauli_error_rates()        
+        self.assertAlmostEqual(0.9903856857352895, error_rates["I"], places=10)
+        self.assertAlmostEqual(0.009613036066731445, error_rates["X"], places=10)
+        S = sum(error_rates.values())
+        self.assertAlmostEqual(S.real, process_fidelity, places=5)
 
 
 if __name__ == '__main__':

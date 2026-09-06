@@ -68,7 +68,7 @@ class Pauli:
             raise ValueError(f"Number of qubits cannot be negative or zero. Received N_qubits = {N_qubits}.")
             
         if N_qubits == 1:
-            return self.vector
+            return cls.vector
 
         pauli_operators = []
         for operators in product(cls.vector, repeat=N_qubits): 
