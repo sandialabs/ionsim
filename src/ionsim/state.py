@@ -9,6 +9,7 @@
 
 from ionsim.basis import Basis, StandardBasis
 from ionsim.energy_level import EnergyEigenstate
+from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure, MotionalMode
 from ionsim.custom_types import Vector, Matrix
 from ionsim.ionsim_error import IonSimError
