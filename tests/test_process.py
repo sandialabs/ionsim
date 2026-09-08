@@ -132,7 +132,7 @@ class TestProcess(unittest.TestCase):
         import scipy
         error_channel_as_gate = Gate(reduced_basis, X_pi16_Raman_gate.process_matrix @ scipy.linalg.inv(X_pi16_ref.process_matrix))   
         error_rates = error_channel_as_gate.compute_pauli_error_rates()        
-        # I <==> gate occurs as intendend (no error)
+        # I <==> gate occurs as intended (no error); should be equal to process fidelity 
         self.assertAlmostEqual(0.9999987209516402, error_rates["I"].real, places=10)
         self.assertAlmostEqual(process_fidelity, error_rates["I"].real, places=10)
 
