@@ -223,7 +223,7 @@ class State:
 
         if not isinstance(self.basis, StandardBasis):
             raise IonSimError("Projection of density matrix requires a Standard Basis of EnergyEigenstates.")
-            # TODO: Convert basis to StandardBasis for this   
+            # TODO: Convert basis to StandardBasis for this? Is there a simple method to convert a Basis to a StandardBasis 
 
         # Get indices corresponding to these states' locations in the enlarged basis
         projection_indices = [self.basis.states.index(state) for state in states_to_project_out] 

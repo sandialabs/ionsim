@@ -129,11 +129,12 @@ class TestProcess(unittest.TestCase):
         self.assertAlmostEqual(process_fidelity, 0.999998720951, places=8)
 
         # Test pauli transfer matrix and pauli error rate calculations 
-        error_rates = X_pi16_Raman_gate.compute_pauli_error_rates()        
-        self.assertAlmostEqual(0.9903856857352895, error_rates["I"], places=10)
-        self.assertAlmostEqual(0.009613036066731445, error_rates["X"], places=10)
-        S = sum(error_rates.values())
-        self.assertAlmostEqual(S.real, process_fidelity, places=5)
+        import scipy
+        error_channel_as_gate = Gate(reduced_basis, X_pi16_Raman_gate.process_matrix @ scipy.linalg.inv(X_pi16_ref.process_matrix))   
+        error_rates = error_channel_as_gate.compute_pauli_error_rates()        
+        # I <==> gate occurs as intendend (no error)
+        self.assertAlmostEqual(0.9999987209516402, error_rates["I"].real, places=10)
+        self.assertAlmostEqual(process_fidelity, error_rates["I"].real, places=10)
 
 
 if __name__ == '__main__':

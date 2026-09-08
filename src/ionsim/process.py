@@ -190,7 +190,6 @@ class Gate(Process):
             dof_to_trace_out = dofs_to_trace_out[0]
             initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
 
-        # TODO: Consolidate tracing out and projection methods for building a process matrix from hamiltonian in an enlarged hilbert space
         # Parse whether projection / tracing out is needed 
         projection_info = parse_projection_input(projection_input, basis)
         if projection_info is None or projection_info == {}: 
@@ -291,7 +290,6 @@ class Gate(Process):
             lindbladian_commutes_at_later_times: bool = False, 
             ode_solver: str = 'odeintz',
             **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
-        # TODO: reconcile projection &  tracing out and what the final basis is  
         """ Build a gate using either the matrix-exponentiated Lindbladian or by solving the Lindblad master equation for a complete set of initial states.
         
             - optional argument to trace out DOF or project out states. 
@@ -406,7 +404,6 @@ class Gate(Process):
 
         # Extract error channel rate from Pauli transfer matrix (PTM) for each pauli group operator. 
         # Walsh-Hadamard transform relates eigenvalues of PTM to to error rates in Pauli channel representation. 
-        # TODO: Add option to go beyond Pauli twirled approximation (get eigs of PTM and ensure consistent basis state ordering)
         error_rates = pauli_group_basis.walsh_hadamard_transformation_matrix @ np.diag(pauli_transfer_matrix)
         return dict(zip(pauli_group_basis.vector_labels, error_rates)) 
  

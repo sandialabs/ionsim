@@ -264,7 +264,7 @@ class PauliProductBasis(Basis):
     def __post_init__(self):
         self._check_if_qubit_basis()
 
-    # TODO: Consider cacheing these vectors to avoid building a list of d^2, dxd matrices every time you call this object. The memory cost of storing this will need to be weighed against the time computing these vectors.  
+    # TODO: Should we cache these vectors to avoid building a list of d^2, dxd matrices every time you call this object. The memory cost of storing this will need to be weighed against the time computing these vectors.  
     @property
     def vectors(self) -> list[Vector]:
         """ Normalized basis vectors corresponding to vectorized (column-wise flattened) Pauli operator products: vec(P_i)/sqrt(2^{N}) """
