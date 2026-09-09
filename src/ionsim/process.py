@@ -402,6 +402,9 @@ class Gate(Process):
     # Putting this method here (in process.py) instead of basis.py avoids circular import issue  
     def convert_to_pauli_basis(self):
         """ Converts a Gate object to the Pauli Product basis. Returns a Gate object """ 
+        if isinstance(self.basis, PauliProductBasis):
+            return self
+
         if self.basis.is_qubit_basis:
             qubits = self.basis.degrees_of_freedom 
             pauli_basis = PauliProductBasis(qubits) 
