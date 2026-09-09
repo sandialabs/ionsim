@@ -317,10 +317,10 @@ class PauliProductBasis(Basis):
         pauli_op_labels  = ["".join(label) for label in product(single_qubit_pauli_vector, repeat = N)]
         return pauli_op_labels
 
-    @staticmethod
     def label_of_pauli_transfer_matrix_element(self, i: int, j: int):
-        """ Returns Pauli operator label corresponding to the R[i,j] for a Pauli transfer matrix R """ 
-        return self.vector_labels[i], self.vector_labels[j]
+        """ Returns Pauli operator label corresponding to the R[i,j] for a Pauli transfer matrix R """
+        labels = self.vector_labels
+        return labels[i], labels[j]
 
     @staticmethod
     def pauli_to_symplectic(pauli_label: str):
