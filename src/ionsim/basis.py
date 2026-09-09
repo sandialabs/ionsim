@@ -304,7 +304,7 @@ class PauliProductBasis(Basis):
 
         """
 
-        size = len(self.vector_labels) # d^2        
+        size = len(self.vectors) # d^2        
         W = np.zeros((size, size))
  
         # Convert pauli labels to binary representation 
