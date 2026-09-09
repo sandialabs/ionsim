@@ -389,7 +389,6 @@ class Gate(Process):
         """ Computes Pauli channel error rates via the Pauli twirled approximation,
             returned in a dictionary with entries (channel name, error rate) """ 
         # Basis safety checks:  
-        basis = self.basis
         if self.basis.is_qubit_basis:
             pauli_group_basis = PauliProductBasis(self.basis.degrees_of_freedom)
             pauli_transfer_matrix = pauli_group_basis.superoperator_to_pauli_transfer_matrix(self.process_matrix, self.basis)
