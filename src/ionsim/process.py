@@ -192,7 +192,7 @@ class Gate(Process):
 
         # Parse whether projection / tracing out is needed 
         projection_info = parse_projection_input(projection_input, basis)
-        if projection_info is None or projection_info == {}: 
+        if not projection_info:
             states_to_project = []
             if dofs_to_trace_out is None:
                 reduced_basis = basis

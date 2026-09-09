@@ -241,7 +241,7 @@ class State:
         projected_density_matrix = projected_density_matrix[np.ix_(permutation, permutation)] 
 
         # Create the new basis from the list of states to project if not provided 
-        if new_basis == None:
+        if new_basis is None:
             new_basis = self.basis.build_subspace_basis_from_states_to_project(states_to_project_out)
 
         if len(new_basis.states) != len(self.basis.states) - len(states_to_project_out):
