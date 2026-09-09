@@ -34,7 +34,7 @@ class Pauli:
          [0, 1]],
     )
 
-    ''' Attribute for the single-qubit Pauli vector: \sigma = (I, X, Y, Z) '''
+    ''' Attribute for the single-qubit Pauli vector: sigma = (I, X, Y, Z) '''
     vector: list[Matrix] = [I, X, Y, Z]
     vector_as_string: list[str] = ['I', 'X', 'Y', 'Z'] 
 
