@@ -271,7 +271,6 @@ class PauliProductBasis(Basis):
     @property
     def vector_labels(self):
         """ Returns list of labels corresponding to each Pauli product operator basis vectors, e.g. "XIY" for 3 qubits. """  
-        # Convention in IonSim is to use the single-qubit pauli vector in the following order: (I, X, Y, Z) 
         single_qubit_pauli_vector = ['I', 'X', 'Y', 'Z'] 
         N = len(self.degrees_of_freedom)
         pauli_op_labels  = ["".join(label) for label in product(single_qubit_pauli_vector, repeat = N)]
@@ -297,13 +296,12 @@ class PauliProductBasis(Basis):
 
                     W_{m,n} = (-1)^phi(m, n)   , parity phi(m,n) = 0 if P_m, P_n commute and 1 if they anticommute.  
             
-            such that lambda = W @ q. 
+                    such that lambda = W @ q. 
 
             - lambda is a vector of PTM eigenvalues (fidelities), describing how well a Pauli observable is preserved in the process.
             - q is a vector of Pauli channel error rates. 
 
         """
-
         size = len(self.vectors) # d^2        
         W = np.zeros((size, size))
  
