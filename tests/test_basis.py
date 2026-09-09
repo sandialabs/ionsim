@@ -20,6 +20,8 @@ class TestBasis(unittest.TestCase):
         """Set up the necessary objects for testing."""
         self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'], level_aliases=['0', '1'])
         self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'], level_aliases=['0', '1'])
+        self.spin_c = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2','P1/2'], level_names=['S1/2,0,0', 'S1/2,1,0', 'P1/2,1,0'], level_aliases=['0', '1', 'R'])
+        self.spin_d = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2','P1/2'], level_names=['S1/2,0,0', 'S1/2,1,0', 'P1/2,1,0'], level_aliases=['0', '1', 'R'])
         self.mode_0 = MotionalMode.from_frequency(frequency=3e6*2*np.pi, fock_dimension=3, level_aliases = ['Mode 0, n = ' + str(n) for n in range(3)])
         self.mode_1 = MotionalMode.from_frequency(frequency=4e6*2*np.pi, fock_dimension=2, level_aliases = ['Mode 1, n = ' + str(n) for n in range(2)])
 
@@ -129,6 +131,27 @@ class TestBasis(unittest.TestCase):
         for expected, actual in zip(expected_vectors, actual_vectors):
             with self.subTest(expected=expected, actual=actual):
                 assert_array_close(expected, actual)
+
+    def test_subspace_bases(self):
+        """ Test projection from 3-level ions to 2-level ions via 2 methods """ 
+        full_basis = StandardBasis([self.spin_c, self.spin_d])
+
+        # Test projection by specifying levels to project out. 
+        undesired_levels = [self.spin_c.energy_levels[2], self.spin_d.energy_levels[2]] # P1/2 level to project out        
+        reduced_basis = full_basis.build_subspace_basis_from_levels_to_project(undesired_levels)
+
+        # Test projection by specifying states          
+        states_to_project = []
+        for s in full_basis.states:
+            for l in undesired_levels:
+                if l in s.components:
+                    states_to_project.append(s)
+
+        reduced_basis_v2 = full_basis.build_subspace_basis_from_states_to_project(states_to_project)
+        for state1, state2 in zip(reduced_basis.states, reduced_basis_v2.states):
+            self.assertAlmostEqual(state1.energy, state2.energy, places=10) 
+            self.assertEqual(state1.name, state2.name)
+
 
 if __name__ == '__main__':
     unittest.main()

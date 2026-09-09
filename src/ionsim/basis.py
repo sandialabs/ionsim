@@ -6,29 +6,30 @@
 # in compliance with the License. You may obtain a copy of the License at
 # http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
 #***************************************************************************************************
+import numpy as np
+from numpy.linalg import multi_dot
+from typing import Callable
+from functools import wraps 
+from scipy.sparse import csr_matrix
+from scipy.sparse import kron as skron
+from itertools import product
+
+from abc import ABC, abstractmethod
+from typing import Sequence
+from dataclasses import dataclass
+import itertools
+from functools import cached_property, cache
+import functools as ft
+from icecream import ic
 
 from ionsim.ionsim_error import IonSimError
 from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.custom_types import Vector, Matrix
+from ionsim.named_operators import Pauli
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD
 
-import numpy as np
-from numpy.linalg import multi_dot
-from typing import Callable
-from functools import wraps # do I need this?
-from scipy.sparse import csr_matrix
-from scipy.sparse import kron as skron
-
-from abc import ABC, abstractmethod
-from typing import Sequence
-from dataclasses import dataclass
-import itertools
-from functools import cached_property
-import functools as ft
-
-from icecream import ic
 
 @dataclass(frozen=True, eq=False)
 class Basis(ABC):
@@ -45,6 +46,16 @@ class Basis(ABC):
         """The unitary matrix that transforms a vector in this basis to the standard basis."""
         return np.array([vector for vector in self.vectors]).T
 
+    @property
+    def is_qubit_basis(self):
+        """ Returns true if the basis is a qubit basis """ 
+        if all([len(dof.energy_levels) == 2 for dof in self.degrees_of_freedom]):
+            return all([
+                all([isinstance(level, AtomicInternalEnergyLevel) for level in dof.energy_levels])
+                for dof in self.degrees_of_freedom
+            ])
+        return False 
+         
     def transform_vector_to_standard_basis(self, vector: Vector):
         """Transform a vector in this basis to the standard basis."""
         return self.change_of_basis_matrix.dot(vector)
@@ -85,6 +96,7 @@ class Basis(ABC):
     def compute_supervector_from_density_matrix(self, density_matrix: Matrix): # TODO: generalize for any basis
         """Compute a column-stacked supervector from a density matrix."""
         assert(density_matrix.shape == (len(self.vectors), len(self.vectors))) # TODO: replace with IonSimError
+
         return (density_matrix.T).flatten()
     
     def compute_density_matrix_from_supervector(self, supervector: Vector): # TODO: generalize for any basis
@@ -96,6 +108,13 @@ class Basis(ABC):
     def compute_projector_matrix(self, basis_vector: Vector):
         """Compute the projector matrix onto a basis vector."""
         return self.compute_density_matrix_from_wavefunction(basis_vector)
+
+    def project_superoperator(self, superoperator: Matrix, indices_to_project_into: list[int]) -> Vector: 
+        """Project a superoperator to a lower-dimensional subspace"""
+        superoperator_indices = [i + j*len(self.states)  # column-wise superoperator convention
+            for j in indices_to_project_into 
+            for i in indices_to_project_into] 
+        return superoperator[np.ix_(superoperator_indices, superoperator_indices)]
 
     def compute_superoperator_from_unitary_operator(self, unitary_operator: Matrix):
         """Compute a superoperator from a unitary operator in the column-stacked representation."""
@@ -161,15 +180,10 @@ class Basis(ABC):
 
     def _check_if_qubit_basis(self):
         """Check if the basis has two atomic internal energy levels in each degree of freedom."""
-        if all([len(dof.energy_levels) == 2 for dof in self.degrees_of_freedom]):
-            if all([
-                all([isinstance(level, AtomicInternalEnergyLevel) for level in dof.energy_levels])
-                for dof in self.degrees_of_freedom
-            ]):
-                return
+        if self.is_qubit_basis:
+            return 
         raise IonSimError('The basis must have two atomic internal energy levels in each degree of freedom.')
 
-    # TODO: check that these are working for the new Basis class
     def change_basis_of_vector(self, vector: Vector, new_basis: 'Basis'):
         """Change the basis of a vector."""
         standard_vector = self.transform_vector_to_standard_basis(vector)
@@ -179,6 +193,7 @@ class Basis(ABC):
         """Change the basis of a matrix."""
         standard_matrix = self.transform_matrix_to_standard_basis(matrix)
         return new_basis.transform_matrix_from_standard_basis(standard_matrix)
+
 
 @dataclass(frozen=True, eq=False)
 class StandardBasis(Basis):
@@ -199,6 +214,132 @@ class StandardBasis(Basis):
     def atomic_structure_DOFs(self):
         """ Returns list of atomic structure degrees of freedom or empty list if none. """
         return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicStructure)]
+
+    def build_subspace_basis_from_states_to_project(self, states_to_project_out: list[EnergyEigenstate]): 
+        """ Builds a subspace from a larger Hilbert space with states projected out """  
+        states_to_keep = [s for s in self.states if s not in states_to_project_out]
+        # Components for each state in the list of states to keep
+        components = [state.components for state in states_to_keep]
+        # Get list of levels to keep for each DOF 
+        levels_to_keep_in_dofs = [list(col) for col in zip(*components)]
+        assert len(levels_to_keep_in_dofs) == len(self.degrees_of_freedom)
+        new_dofs = [self._filter_levels(levels, dof, False) for levels, dof in zip(levels_to_keep_in_dofs, self.degrees_of_freedom)]
+        return StandardBasis(new_dofs)
+
+    def build_subspace_basis_from_levels_to_project(self, levels: list): 
+        """ Builds a basis after projecting a list of levels from a larger hilbert space"""
+        new_dofs = [self._filter_levels(levels, dof, True) for dof in self.degrees_of_freedom]
+        return StandardBasis(new_dofs)
+
+    @staticmethod
+    def _filter_levels(levels: list, dof: DegreeOfFreedom, remove_levels: bool) -> DegreeOfFreedom:
+        """ Creates a new degree of freedom using a subset of levels for a projection """ 
+        if remove_levels:
+            levels_to_keep = [l for l in dof.energy_levels if l not in levels]
+        else:
+            levels_to_keep = [l for l in dof.energy_levels if l in levels]
+
+        if isinstance(dof, AtomicStructure):
+            return AtomicStructure(levels_to_keep, dof.name) 
+        elif isinstance(dof, MotionalMode):
+            return MotionalMode(levels_to_keep, dof.name) 
+        else:
+            raise IonSimError(f"Levels to project must refer to levels from a motional mode or atomic structure DOF.")
+   
+ 
+@dataclass(frozen=True, eq=False)
+class PauliProductBasis(Basis):
+    """ A basis in the N-qubit Pauli group, which forms an orthonormal basis for the Hilbert-Schmidt space of d^2 x d^2 operators.  
+        - Basis vectors are basis operators in the Pauli group, which span d^2 unique d x d operators. 
+        - This basis is over-specified/complete with respect to d x d states.  
+    """
+    degrees_of_freedom: list[AtomicStructure]
+
+    def __post_init__(self):
+        self._check_if_qubit_basis()
+
+    @staticmethod
+    @cache
+    def _vectors_by_dof_size(count):
+        return [(op.T).flatten()/(2**(0.5*count)) for op in (Pauli.product_operators(count)).values()] 
+
+    @property
+    def vectors(self) -> list[Vector]:
+        """ Normalized basis vectors corresponding to vectorized (column-wise flattened) Pauli operator products: vec(P_i)/sqrt(2^{N}) """
+        return self._vectors_by_dof_size(len(self.degrees_of_freedom))
+
+    @property
+    def vector_labels(self):
+        """ Returns list of labels corresponding to each Pauli product operator basis vectors, e.g. "XIY" for 3 qubits. """  
+        single_qubit_pauli_vector = Pauli.vector_as_string 
+        N = len(self.degrees_of_freedom)
+        pauli_op_labels  = ["".join(label) for label in product(single_qubit_pauli_vector, repeat = N)]
+        return pauli_op_labels
+
+    def label_of_pauli_transfer_matrix_element(self, i: int, j: int):
+        """ Returns Pauli operator label corresponding to the R[i,j] for a Pauli transfer matrix R """
+        labels = self.vector_labels
+        return labels[i], labels[j]
+
+    @staticmethod
+    def pauli_to_symplectic(pauli_label: str):
+        """ Converts Pauli operator bit string label """ 
+        encoding = {'I': (0,0), 'X': (1,0), 'Y': (1,1), 'Z': (0,1)}
+        a = [encoding[p][0] for p in pauli_label]
+        b = [encoding[p][1] for p in pauli_label]
+        return np.array(a + b, dtype=int)
+
+    @property
+    def walsh_hadamard_transformation_matrix(self, include_normalization: bool=True) -> Matrix:
+        """ Walsh-Hadamard transformation matrix for transforming between Pauli transfer matrix (PTM) 
+             eigenvalues and Pauli channel error rates. 
+
+                    W_{m,n} = (-1)^phi(m, n)   , parity phi(m,n) = 0 if P_m, P_n commute and 1 if they anticommute.  
+            
+                    such that lambda = W @ q. 
+
+            - lambda is a vector of PTM eigenvalues (fidelities), describing how well a Pauli observable is preserved in the process.
+            - q is a vector of Pauli channel error rates. 
+
+        """
+        size = len(self.vectors) # d^2        
+        W = np.zeros((size, size))
+ 
+        # Convert pauli labels to binary representation 
+        symplectic_encodings = np.array([self.pauli_to_symplectic(label) for label in self.vector_labels])
+        N = len(self.degrees_of_freedom)
+
+        A, B = symplectic_encodings[:, :N], symplectic_encodings[:, N:]
+
+        # Compute phi(m,n) via matrix multiplication mod 2         
+        Phi = (A @ B.T + B @ A.T) % 2  # matrix of integer -1, +1 values 
+
+        W = ((-1)**Phi).astype(float)
+        if include_normalization:
+            # W is normalized by d^2
+            W *= 1./float(size)
+        return W 
+
+    def superoperator_to_pauli_transfer_matrix(self, superoperator: Matrix, superoperator_basis: StandardBasis) -> Matrix:
+        """ Converts a superoperator to a Pauli Transfer Matrix via a change-of-basis unitary transformation:
+
+            R = U S U^{dagger}
+
+            R is the Pauli Transfer Matrix  
+            U is a unitary change-of-basis matrix ,defined as U_(mu, :) = vec(P_{mu})*  
+            S is the input superoperator 
+        """
+        if isinstance(superoperator_basis, PauliProductBasis):
+            return superoperator 
+
+        if not isinstance(superoperator_basis, StandardBasis):
+            raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
+        assert superoperator.shape == (len(self.vectors), len(self.vectors))
+        # Get change of basis matrix 
+        U = np.array(self.vectors).conj() 
+        # If S represents a completely positive, trace-preserving (CPTP) map, R will be purely real. 
+        pauli_transfer_matrix = U @ superoperator @ (U.T).conj()
+        return pauli_transfer_matrix 
 
 
 @dataclass(frozen=True, eq=False)
