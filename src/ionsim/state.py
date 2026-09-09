@@ -124,7 +124,7 @@ class State:
         rhos = [self.basis.compute_density_matrix_from_supervector(psi) for psi in supervectors]
         return [State(self.basis, rho) for rho in rhos]
 
-    def propagate_using_pauli_channel(self, Pauli_error_rates: dict):
+    def propagate_using_pauli_channel(self, Pauli_error_rates: dict[str, float]):
         """ Propagates a state under the action of a Pauli channel, specified by its error rates 
 
             Pauli channel acting on a state rho: 
@@ -139,9 +139,10 @@ class State:
         N_qubits = int(np.log2(d2))//2
 
         propagated_density_matrix = np.zeros_like(self.density_matrix) 
-        for pauli_label, pauli_operator in zip(Pauli_error_rates.keys(), Pauli.product_operators(N_qubits)): 
-            propagated_density_matrix += Pauli_error_rates[pauli_label] * (pauli_operator @ self.density_matrix @ pauli_operator) 
-            
+        assert d2 == propagated_density_matrix.size 
+        pauli_operators = Pauli.product_operators(N_qubits)
+        for pauli_label in Pauli_error_rates.keys(): 
+            propagated_density_matrix += Pauli_error_rates[pauli_label] * (pauli_operators[pauli_label] @ self.density_matrix @ pauli_operators[pauli_label]) 
         return State.from_density_matrix(self.basis, propagated_density_matrix) 
     
     def get_wavefunction_in_new_basis(self, new_basis: Basis):

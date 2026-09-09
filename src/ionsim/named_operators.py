@@ -16,6 +16,7 @@ from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
 class Pauli:
 
+    ''' Single qubit pauli matrices ''' 
     X = np.array(
         [[0, 1],
          [1, 0]],
@@ -33,8 +34,9 @@ class Pauli:
          [0, 1]],
     )
 
-    # Attribute for the single-qubit Pauli vector: \sigma = (I, X, Y, Z)
+    ''' Attribute for the single-qubit Pauli vector: \sigma = (I, X, Y, Z) '''
     vector: list[Matrix] = [I, X, Y, Z]
+    vector_as_string: list[str] = ['I', 'X', 'Y', 'Z'] 
 
     ''' Spin raising/lowering operators use convention where |g> corresponds to row/column 1 and |e> corresponds to row/column 2 '''
     plus = np.array(
@@ -57,7 +59,7 @@ class Pauli:
     )
 
     @classmethod
-    def product_operators(cls, N_qubits: int) -> list[Matrix]:
+    def product_operators(cls, N_qubits: int) -> dict[str, Matrix]:
         """ Helper function to compute a N-qubit Pauli operators. d = 2^N for N qubits. 
             
             - returns a list of pauli operators. 
@@ -69,10 +71,11 @@ class Pauli:
             raise ValueError(f"Number of qubits cannot be negative or zero. Received N_qubits = {N_qubits}.")
             
         if N_qubits == 1:
-            return cls.vector
+            return dict(zip(cls.vector_as_string, cls.vector))
 
+        pauli_op_labels = ["".join(label) for label in product(cls.vector_as_string, repeat = N_qubits)]
         pauli_operators = [functools.reduce(np.kron, operators) for operators in product(cls.vector, repeat=N_qubits)]
-        return pauli_operators
+        return dict(zip(pauli_op_labels, pauli_operators))
 
 class Fock:
 

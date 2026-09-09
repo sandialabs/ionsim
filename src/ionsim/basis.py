@@ -261,7 +261,7 @@ class PauliProductBasis(Basis):
     @staticmethod
     @cache
     def _vectors_by_dof_size(count):
-        return [(op.T).flatten()/(2**(0.5*count)) for op in Pauli.product_operators(count)] 
+        return [(op.T).flatten()/(2**(0.5*count)) for op in (Pauli.product_operators(count)).values()] 
 
     @property
     def vectors(self) -> list[Vector]:
@@ -271,7 +271,7 @@ class PauliProductBasis(Basis):
     @property
     def vector_labels(self):
         """ Returns list of labels corresponding to each Pauli product operator basis vectors, e.g. "XIY" for 3 qubits. """  
-        single_qubit_pauli_vector = ['I', 'X', 'Y', 'Z'] 
+        single_qubit_pauli_vector = Pauli.vector_as_string 
         N = len(self.degrees_of_freedom)
         pauli_op_labels  = ["".join(label) for label in product(single_qubit_pauli_vector, repeat = N)]
         return pauli_op_labels
