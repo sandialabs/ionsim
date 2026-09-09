@@ -215,42 +215,76 @@ class StandardBasis(Basis):
         """ Returns list of atomic structure degrees of freedom or empty list if none. """
         return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicStructure)]
 
+ #    def build_subspace_basis_from_states_to_project(self, states_to_project_out: list[EnergyEigenstate]): 
+ #        """ Builds a subspace from a larger Hilbert space with states projected out """  
+ #        states_to_keep = [s for s in self.states if s not in states_to_project_out]
+ #        # Components for each state in the list of states to keep
+ #        components = [state.components for state in states_to_keep]
+ #        # Get list of levels to keep for each DOF 
+ #        levels_to_keep_in_DOFs = [list(dict.fromkeys(col)) for col in zip(*components)]
+ #        assert len(levels_to_keep_in_DOFs) == len(self.degrees_of_freedom)
+ #        new_DOFs = []
+ #        for levels, DOF in zip(levels_to_keep_in_DOFs, self.degrees_of_freedom):
+ #            DOF_levels = DOF.energy_levels
+ #            levels_to_keep = [l for l in DOF.energy_levels if l in levels]
+ #            if isinstance(DOF, AtomicStructure):
+ #                new_DOF = AtomicStructure(levels_to_keep, DOF.name) 
+ #            elif isinstance(DOF, MotionalMode):
+ #                new_DOF = MotionalMode(levels_to_keep, DOF.name) 
+ #            else:
+ #                raise IonSimError(f"Levels to project must refer to levels from a motional mode or atomic structure DOF.")
+ #            new_DOFs.append(new_DOF)
+ #        return StandardBasis(new_DOFs)
+ #
+ #    def build_subspace_basis_from_levels_to_project(self, levels: list): 
+ #        """ Builds a basis after projecting a list of levels from a larger hilbert space"""
+ #        new_DOFs = []
+ #        for DOF in self.degrees_of_freedom:
+ #            DOF_levels = DOF.energy_levels
+ #            levels_to_keep = [l for l in DOF_levels if l not in levels]
+ #            if isinstance(DOF, AtomicStructure):
+ #                new_DOF = AtomicStructure(levels_to_keep, DOF.name) 
+ #            elif isinstance(DOF, MotionalMode):
+ #                new_DOF = MotionalMode(levels_to_keep, DOF.name) 
+ #            else:
+ #                raise IonSimError(f"Levels to project must refer to levels from a motional mode or atomic structure DOF.")
+ #            new_DOFs.append(new_DOF)
+ #
+ #        return StandardBasis(new_DOFs)
+
     def build_subspace_basis_from_states_to_project(self, states_to_project_out: list[EnergyEigenstate]): 
         """ Builds a subspace from a larger Hilbert space with states projected out """  
         states_to_keep = [s for s in self.states if s not in states_to_project_out]
         # Components for each state in the list of states to keep
         components = [state.components for state in states_to_keep]
         # Get list of levels to keep for each DOF 
-        levels_to_keep_in_DOFs = [list(dict.fromkeys(col)) for col in zip(*components)]
-        assert len(levels_to_keep_in_DOFs) == len(self.degrees_of_freedom)
-        new_DOFs = []
-        for levels, DOF in zip(levels_to_keep_in_DOFs, self.degrees_of_freedom):
-            DOF_levels = DOF.energy_levels
-            levels_to_keep = [l for l in DOF.energy_levels if l in levels]
-            if isinstance(DOF, AtomicStructure):
-                new_DOF = AtomicStructure(levels_to_keep, DOF.name) 
-            elif isinstance(DOF, MotionalMode):
-                new_DOF = MotionalMode(levels_to_keep, DOF.name) 
-            else:
-                raise IonSimError(f"Levels to project must refer to levels from a motional mode or atomic structure DOF.")
-            new_DOFs.append(new_DOF)
-        return StandardBasis(new_DOFs)
+        levels_to_keep_in_dofs = [list(col) for col in zip(*components)]
+        assert len(levels_to_keep_in_dofs) == len(self.degrees_of_freedom)
+        new_dofs = [self._filter_levels(levels, dof, False) for levels, dof in zip(levels_to_keep_in_dofs, self.degrees_of_freedom)]
+        return StandardBasis(new_dofs)
 
     def build_subspace_basis_from_levels_to_project(self, levels: list): 
         """ Builds a basis after projecting a list of levels from a larger hilbert space"""
-        new_DOFs = []
-        for DOF in self.degrees_of_freedom:
-            DOF_levels = DOF.energy_levels
-            levels_to_keep = [l for l in DOF_levels if l not in levels]
-            if isinstance(DOF, AtomicStructure):
-                new_DOF = AtomicStructure(levels_to_keep, DOF.name) 
-            elif isinstance(DOF, MotionalMode):
-                new_DOF = MotionalMode(levels_to_keep, DOF.name) 
-            else:
-                raise IonSimError(f"Levels to project must refer to levels from a motional mode or atomic structure DOF.")
-            new_DOFs.append(new_DOF)
+        # The input list of levels are intended to be removed 
+        new_dofs = [self._filter_levels(levels, dof, True) for dof in self.degrees_of_freedom]
+        return StandardBasis(new_dofs)
 
-        return StandardBasis(new_DOFs)
+    @staticmethod
+    def _filter_levels(levels: list, dof: DegreeOfFreedom, remove_levels: bool=True) -> DegreeOfFreedom:
+        """ Creates a new degree of freedom using a subset of levels for a projection """ 
+        ## TODO: is there a better way to handle this?
+        if remove_levels:
+            levels_to_keep = [l for l in dof.energy_levels if l not in levels]
+        else:
+            levels_to_keep = [l for l in dof.energy_levels if l in levels]
+
+        if isinstance(dof, AtomicStructure):
+            return AtomicStructure(levels_to_keep, dof.name) 
+        elif isinstance(dof, MotionalMode):
+            return MotionalMode(levels_to_keep, dof.name) 
+        else:
+            raise IonSimError(f"Levels to project must refer to levels from a motional mode or atomic structure DOF.")
+
    
  
 @dataclass(frozen=True, eq=False)
