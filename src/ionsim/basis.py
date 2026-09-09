@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from typing import Sequence
 from dataclasses import dataclass
 import itertools
-from functools import cached_property
+from functools import cached_property, cache
 import functools as ft
 from icecream import ic
 
@@ -298,12 +298,15 @@ class PauliProductBasis(Basis):
     def __post_init__(self):
         self._check_if_qubit_basis()
 
-    # TODO: Should we cache these vectors to avoid building a list of d^2, dxd matrices every time you call this object. The memory cost of storing this will need to be weighed against the time computing these vectors.  
+    @staticmethod
+    @cache
+    def _vectors_by_dof_size(count):
+        return [(op.T).flatten()/(2**(0.5*count)) for op in Pauli.product_operators(count)] 
+
     @property
     def vectors(self) -> list[Vector]:
         """ Normalized basis vectors corresponding to vectorized (column-wise flattened) Pauli operator products: vec(P_i)/sqrt(2^{N}) """
-        N = len(self.degrees_of_freedom)
-        return [(op.T).flatten()/(2**(0.5*N)) for op in Pauli.product_operators(N)] 
+        return self._vectors_by_dof_size(len(self.degrees_of_freedom))
 
     @property
     def vector_labels(self):
