@@ -390,17 +390,9 @@ class Gate(Process):
             returned in a dictionary with entries (channel name, error rate) """ 
         # Basis safety checks:  
         basis = self.basis
-        if not isinstance(basis, PauliProductBasis):
-            # Create Pauli product basis 
+        if self.basis.is_qubit_basis:
             pauli_group_basis = PauliProductBasis(self.basis.degrees_of_freedom)
-
-            if isinstance(basis, StandardBasis):
-                pauli_transfer_matrix = pauli_group_basis.superoperator_to_pauli_transfer_matrix(self.process_matrix, basis)
-            else: 
-                raise IonSimError(f"Gate must be in the standard basis or pauli group basis to compute Pauli error rates.")
-        else:
-            pauli_group_basis = self.basis 
-            pauli_transfer_matrix = self.process_matrix 
+            pauli_transfer_matrix = pauli_group_basis.superoperator_to_pauli_transfer_matrix(self.process_matrix, self.basis)
 
         # Extract error channel rate from Pauli transfer matrix (PTM) for each pauli group operator. 
         # Walsh-Hadamard transform relates eigenvalues of PTM to to error rates in Pauli channel representation. 
