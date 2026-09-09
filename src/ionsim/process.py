@@ -388,10 +388,11 @@ class Gate(Process):
     def compute_pauli_error_rates(self) -> dict[str, float]:
         """ Computes Pauli channel error rates via the Pauli twirled approximation,
             returned in a dictionary with entries (channel name, error rate) """ 
-        # Basis safety checks:  
         if self.basis.is_qubit_basis:
             pauli_group_basis = PauliProductBasis(self.basis.degrees_of_freedom)
             pauli_transfer_matrix = pauli_group_basis.superoperator_to_pauli_transfer_matrix(self.process_matrix, self.basis)
+        else:
+            raise IonSimError(f"Pauli channel error rates require a basis of qubits only.")
 
         # Extract error channel rate from Pauli transfer matrix (PTM) for each pauli group operator. 
         # Walsh-Hadamard transform relates eigenvalues of PTM to to error rates in Pauli channel representation. 
@@ -401,15 +402,11 @@ class Gate(Process):
     # Putting this method here (in process.py) instead of basis.py avoids circular import issue  
     def convert_to_pauli_basis(self):
         """ Converts a Gate object to the Pauli Product basis. Returns a Gate object """ 
-        if isinstance(self.basis, PauliProductBasis):
-            return self
-
-        if not isinstance(self.basis, StandardBasis):
-            raise IonSimError(f"Gate input should be in the Standard Basis. Other transformations are not yet implemented in IonSim.") 
-
-        # Create a PauliProductbasis 
-        spins = self.basis.degrees_of_freedom 
-        pauli_basis = PauliProductBasis(spins) # will automatically check that DOFs are qubits only 
+        if self.basis.is_qubit_basis:
+            qubits = self.basis.degrees_of_freedom 
+            pauli_basis = PauliProductBasis(qubits) 
+        else:
+            raise IonSimError(f"Creating a Gate in the Pauli basis requires a basis of qubits only.")
 
         if self.process_matrix_function:
             @wraps(self.process_matrix_function)
