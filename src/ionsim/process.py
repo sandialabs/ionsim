@@ -399,7 +399,6 @@ class Gate(Process):
         error_rates = pauli_group_basis.walsh_hadamard_transformation_matrix @ np.diag(pauli_transfer_matrix)
         return dict(zip(pauli_group_basis.vector_labels, error_rates)) 
  
-    # Putting this method here (in process.py) instead of basis.py avoids circular import issue  
     def convert_to_pauli_basis(self):
         """ Converts a Gate object to the Pauli Product basis. Returns a Gate object """ 
         if isinstance(self.basis, PauliProductBasis):
