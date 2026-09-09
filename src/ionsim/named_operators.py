@@ -9,6 +9,7 @@
 
 import numpy as np
 from itertools import product
+from functools import reduce 
 
 from ionsim.custom_types import Matrix
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD 
@@ -70,8 +71,7 @@ class Pauli:
         if N_qubits == 1:
             return cls.vector
 
-        pauli_operators = [functools.reduce(np.kron, operators) for operators in product(cls.vector, repeat=N_qubits)]
-
+        pauli_operators = [reduce(np.kron, operators) for operators in product(cls.vector, repeat=N_qubits)]
         return pauli_operators
 
 class Fock:
