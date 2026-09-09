@@ -70,13 +70,7 @@ class Pauli:
         if N_qubits == 1:
             return cls.vector
 
-        pauli_operators = []
-        for operators in product(cls.vector, repeat=N_qubits): 
-            # operators are tuples containing the single-qubit Pauli matrices 
-            P = operators[0]
-            for P_prime in operators[1:]:
-                P = np.kron(P, P_prime) 
-            pauli_operators.append(P)
+        pauli_operators = [functools.reduce(np.kron, operators) for operators in product(cls.vector, repeat=N_qubits)]
 
         return pauli_operators
 
