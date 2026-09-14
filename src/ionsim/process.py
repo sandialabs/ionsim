@@ -500,12 +500,21 @@ class Circuit_Process_Matrix_Function_Helper():
 
         self.gate_sequence = [get_effective(f) for f in list(gate_models)] 
 
+        # Record which functions are black-box wrapped for hessisan calcs
+        self._black_box_func_names = {fname for fname, is_native in flags.items() if not is_native}
+
         self.unique_functions = list({id(f): f for f in self.gate_sequence}.values())
         self._param_map: dict[str, tuple] = {} # namespaced name -> (function name, original name)
         self._name_to_function: dict[str, Callable] = {}
         self._type_hints: dict[str, type] = {}
 
         self._build_signature()
+
+
+    def _is_black_box_param(self, namespaced_name: str) -> bool:
+        """ True if input string belongs to a function that was not jax-compatible (wrapped) """
+        fname, _ = self._param_map[namespaced_name]
+        return fname in self._black_box_func_names
 
 
     def _build_signature(self):
@@ -678,7 +687,89 @@ class Circuit_Process_Matrix_Function_Helper():
         jac = jax.jacobian(f)(diff_values)
         return value, jac 
 
+    # TODO: code _is_black_box_param
 
+    def hessian(self, wrapped_scalar_fn: Callable, wrt: list[str], fd_eps: float=1e-4, **kwargs):
+        """ 2nd derivative of the scalar fxns """  
+        scalar_function = wrapped_scalar_fn.scalar_function
+        unknown = set(wrt) - set(self.__signature__.parameters)
+        if unknown:
+            raise ValueError(f"Unknown parameter name(s) in 'wrt' : {sorted(unknown)}")
+
+        black_box_wrt = [n for n in wrt if self._is_black_box_param(n)]
+        jax_native_wrt = [n for n in wrt if n not in black_box_wrt]
+
+        # jax-native:  
+        if jax_native_wrt:
+            diff_values = {k: kwargs[k] for k in jax_native_wrt}
+            fixed_Values = {k: v for k, v in kwargs.items() if k not in jax_native_wrt}
+
+            def f(diff_params: dict):
+                merged = {**fixed_values, **diff_params}
+                return scalar_fn(self(**merged))
+
+                exact_block = jax.hessian(f)(diff_values)
+                for i in jax_native_wrt:
+                    for j in jax_native_wrt:
+                        hess[i][j] = exact_block[i][j]
+
+        # black box 
+        for j in black_box_wrt:
+            kw_plus = dict(kwargs); kw_plus[j] = kwargs[j] + fd_eps
+            kw_minus = dict(kwargs); kw_minus[j] = kwargs[j] - fd_eps
+            _, grad_plus = self.gradient(scalar_fn, wrt = wrt, **kw_plus)
+            _, grad_minus = self.gradient(scalar_fn, wrt = wrt, **kw_minus)
+            for i in wrt:
+                d2 = (grad_plus[i] - grad_minus[i]) / (2. * fd_eps)
+                hess[i][j] = d2
+                hess[j][i] = d2 # symmetric 
+            # Consider storing just half the matrix 
+        return hess 
+    
+    def hessian_per_outcome(self, wrapped_vector_fn: Callable, wrt: list[str], outcome_labels: list[str] | None=None, 
+                                fd_eps: float=1e-4, **kwargs):
+        """ 2nd derivative of the scalar fxns """  
+        vector_function = wrapped_vector_fn.vector_function
+        unknown = set(wrt) - set(self.__signature__.parameters)
+        if unknown:
+            raise ValueError(f"Unknown parameter name(s) in 'wrt' : {sorted(unknown)}")
+
+        black_box_wrt = [n for n in wrt if self._is_black_box_param(n)]
+        jax_native_wrt = [n for n in wrt if n not in black_box_wrt]
+        raw: dict[str, dict[str, object]] = {i: {} for i in wrt}
+
+        # jax-native:  
+        if jax_native_wrt:
+            diff_values = {k: kwargs[k] for k in jax_native_wrt}
+            fixed_Values = {k: v for k, v in kwargs.items() if k not in jax_native_wrt}
+
+            def f(diff_params: dict):
+                merged = {**fixed_values, **diff_params}
+                return vector_function(self(**merged))
+
+                exact_block = jax.hessian(f)(diff_values)
+                for i in jax_native_wrt:
+                    for j in jax_native_wrt:
+                        hess[i][j] = exact_block[i][j]
+
+        # black box 
+        for j in black_box_wrt:
+            kw_plus = dict(kwargs); kw_plus[j] = kwargs[j] + fd_eps
+            kw_minus = dict(kwargs); kw_minus[j] = kwargs[j] - fd_eps
+            _, jac_plus = self.jacobian(wrapped_vector_fn, wrt = wrt, **kw_plus)
+            _, jac_minus = self.jacobian(wrapped_vector_fn, wrt = wrt, **kw_minus)
+            for i in wrt:
+                d2 = (jac_plus[i] - jac_minus[i]) / (2. * fd_eps)
+                raw[i][j] = d2
+                raw[j][i] = d2 # symmetric 
+
+        n_outcomes = raw[wrt[0]][wrt[0]].shape[0]
+        if outcome_labels is None:
+            outcome_labels = list(range(n_outcomes))
+        elif len(outcome_labels) != n_outcomes:
+            raise ValueError(f"Outcome labels has {len(outcome_labels)} instead of {n_outcomes}.")
+        return {i: {j: {label: raw[i][j][k] for k, label in enumerate(outcome_labels)} for j in wrt} for i in wrt} 
+        #return {label: {i: {j: raw[i][j][k] for j in wrt} for i in wrt} for k, label in enumerate(outcome_labels)}
 
 
 ### Helper function to interface with jax library; converting a complicated python callable to jax differentiable 
@@ -747,6 +838,10 @@ def make_matrix_function_jax_differentiable(function: Callable, eps: float = 1e-
     wrapped.__signature__ = sig 
     wrapped.__doc__ = function.__doc__ 
     return wrapped 
+
+
+
+
 
 
 # Possible idea: Build a IonSim circuit object from a ParsedCircuit object, requires gate models + basis  

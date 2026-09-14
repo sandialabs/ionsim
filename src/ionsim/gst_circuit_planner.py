@@ -439,7 +439,7 @@ class GSTCircuitPlanner:
             #return fisher_info
             return prob_gradients
 
-    def compute_circuit_fisher_information(self, circuit: ParsedCircuit, circuit_parameters: dict, initial_state: State, outcome_operators: list[Operator]):
+    def compute_circuit_fisher_information(self, circuit: ParsedCircuit, circuit_parameters: dict, initial_state: State, outcome_operators: dict[str, Operator]):
         """ Computes sensitivty of a circuit to gate model parameters """ 
         outcomes = circuit.measurement_data.counts
         N = circuit.measurement_data.total_counts
@@ -467,25 +467,29 @@ class GSTCircuitPlanner:
         circuit_pm_function = ism_circuit.process_matrix_function 
 
         if len(outcome_operators) == 1:
-            prob_function = ism_circuit.build_outcome_probabilities_function(initial_state, outcome_operators[0])
+            prob_function = ism_circuit.build_outcome_probabilities_function(initial_state, list(outcome_operators.values())[0])
             prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
+            eps = 1e-4
+            hessian = circuit_pm_function.hessian(prob_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
             fisher_info = self.compute_fisher_information(prob, prob_gradients, N)
             return fisher_info
         else:
             if len(outcome_operators) == 0:
                 raise IonSimError(f"You must provide at least one outcome operator. Received {len(outcome_operators)}.")
-            probs_function = ism_circuit.build_outcome_probabilities_function(initial_state, outcome_operators)
+            probs_function = ism_circuit.build_outcome_probabilities_function(initial_state, outcome_operators.values())
             prob, prob_gradients = circuit_pm_function.jacobian(probs_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
-            fisher_info = self.compute_fisher_information(prob, prob_gradients, N)
+            hessian = circuit_pm_function.hessian_per_outcome(probs_function, wrt = list(circuit_parameters.keys()), outcome_labels = outcome_operators.keys(), **circuit_parameters) 
+            fisher_info = self.compute_fisher_information(prob, prob_gradients, hessian, N)
             return fisher_info
 
 
-    def compute_fisher_information(self, prob, prob_gradients: dict, N: int) -> dict:
+    def compute_fisher_information(self, prob, prob_gradients: dict, hessian: dict, N: int) -> dict:
         """ returns fisher information matrix from the parameters """ 
         FI = {}
         #print(prob)         
         #print(prob_gradients)         
         #for param, gradient in prob_gradients.items():
+        print(hessian.keys())
         for param1, gradient1 in prob_gradients.items():
             for param2, gradient2 in prob_gradients.items():
  #            print(param)
@@ -493,7 +497,8 @@ class GSTCircuitPlanner:
  #            print(type(gradient))
  #            print(np.array(gradient))
                 #FI[param] = N*sum([(grad**2)/p for grad, p in zip(gradient, prob)])
-                FI[(param1, param2)] = N*sum([(grad1*grad2)/p for grad1, grad2, p in zip(gradient1, gradient2, prob)])
+                hessians = list(hessian[param1][param2].values())
+                FI[(param1, param2)] = N*sum([((grad1*grad2)/p - H) for grad1, grad2, p, H in zip(gradient1, gradient2, prob, hessians)])
         return FI 
 
 
