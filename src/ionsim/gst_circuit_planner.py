@@ -486,17 +486,8 @@ class GSTCircuitPlanner:
     def compute_fisher_information(self, prob, prob_gradients: dict, hessian: dict, N: int) -> dict:
         """ returns fisher information matrix from the parameters """ 
         FI = {}
-        #print(prob)         
-        #print(prob_gradients)         
-        #for param, gradient in prob_gradients.items():
-        print(hessian.keys())
         for param1, gradient1 in prob_gradients.items():
             for param2, gradient2 in prob_gradients.items():
- #            print(param)
- #            print(gradient)
- #            print(type(gradient))
- #            print(np.array(gradient))
-                #FI[param] = N*sum([(grad**2)/p for grad, p in zip(gradient, prob)])
                 hessians = list(hessian[param1][param2].values())
                 FI[(param1, param2)] = N*sum([((grad1*grad2)/p - H) for grad1, grad2, p, H in zip(gradient1, gradient2, prob, hessians)])
         return FI 
