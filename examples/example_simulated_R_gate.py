@@ -95,6 +95,7 @@ def main():
         return sm.Gate.from_process_matrix_function(
                 basis, process_matrix_function, {'domega': domega}, omega_noise,
             )
+                #basis, process_matrix_function, {'domega': domega}, spins, omega_noise,
 
     def ideal_R(phi, theta):
         return sm.Gate.from_unitary(basis, sm.Unitary.R(phi, theta), target_spins)
@@ -211,8 +212,8 @@ def main():
         # Compute gate residuals using inverse of ideal R gate  
         chi_inv = np.linalg.inv(ideal_R(phi, theta).process_matrix)
 
-        # Define a function that takes a Gate object and returns a property or derievd quantity of the Gate  
-        def relative_err(gate: sm.Gate):
+        # Define a functional of the gate to return the desired property  
+        def relative_err(gate):
             return gate.process_matrix.dot(chi_inv) - np.eye(size)
 
         gate_residual_data = R_gate_interpolant.evaluate_function_on_grid(relative_err) 
