@@ -30,7 +30,7 @@ def depth_bin(depth):
     return int(2**(np.ceil(np.log2(depth))))
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
-    def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: dict[str, Callable], parsed_circuits: list[ParsedCircuit], 
+    def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: dict[str, Callable], parsed_circuits: list[GstCircuit], 
                     gate_models: dict[str, Callable], parameter_bounds: dict[dict[str, tuple]] | None=None, circuit_design: GSTCircuitPlanner | None=None, 
                     ideal_gate_set: dict | None=None, verbose: bool=False, shared_model_parameters: dict[str, list[tuple[str, int]]] | None=None): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
@@ -69,7 +69,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self.d2 = self.d * self.d
 
         # 1. Get all unique gates in the gate set 
-        self.gate_set = set()  # gate_set contains ParsedGate objects
+        self.gate_set = set()  # gate_set contains GstGate objects
         for circ in self.parsed_circuits:
             for g in circ.expanded_gates: 
                 self.gate_set.add(g) 
@@ -80,15 +80,15 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         # Parse user gate model dictionary names
         for key, model in gate_models.items():
-            if isinstance(key, ParsedGate):
+            if isinstance(key, GstGate):
                 self.user_key_gate_map[key] = key
                 self.gate_models[key] = model
             elif isinstance(key, str):
-                key_as_gate = ParsedGate.from_string(key) 
+                key_as_gate = GstGate.from_string(key) 
                 self.user_key_gate_map[key] = key_as_gate
                 self.gate_models[key_as_gate] = model
             else:
-                raise ValueError(f"Gate key must be string or ParsedGate; received {type(key)}.")
+                raise ValueError(f"Gate key must be string or GstGate; received {type(key)}.")
 
         missing = self.gate_set - set(self.gate_models.keys())
         if missing:
@@ -174,7 +174,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             model_entries.append((gate, self.gate_models[gate]))
 
         for model_key, model_fn in model_entries:
-            if isinstance(model_key, ParsedGate):
+            if isinstance(model_key, GstGate):
                 model_label = repr(model_key)
             else:
                 model_label = str(model_key) 
@@ -348,7 +348,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
     def get_parameters(self, theta: Vector, key):
         """ Retrieve parameters for any model by key from theta vector """ 
-        if isinstance(key, ParsedGate):
+        if isinstance(key, GstGate):
             indices = self.gst_parameter_indices[key]
         elif isinstance(key, str):
             indices = self.gst_parameter_indices[key]
@@ -416,9 +416,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             metadata = self._build_likelihood_circuit_metadata(circ)
             self._likelihood_circuit_cache[id(circ)] = metadata
 
-    def _build_likelihood_circuit_metadata(self, circ: ParsedCircuit) -> dict:
+    def _build_likelihood_circuit_metadata(self, circ: GstCircuit) -> dict:
         """ Build cached indexing data used by likelihood and chi-squared loops. """
-        # Use gate names instead of ParsedGate objects so map-composition cache keys
+        # Use gate names instead of GstGate objects so map-composition cache keys
         # are lightweight and hash quickly.
         #gates = tuple(gate for gate in circ.expanded_gates)
         gates = tuple(circ.expanded_gates)
@@ -474,7 +474,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         metadata['total_counts'] = float(len(shot_indices))
         return metadata
 
-    def _get_likelihood_circuit_metadata(self, circ: ParsedCircuit) -> dict:
+    def _get_likelihood_circuit_metadata(self, circ: GstCircuit) -> dict:
         """ Return cached metadata; rebuild if the circuit's measurement object changed. """
         # Bootstrap and other workflows may replace circ.measurement_data, so we
         # detect that and lazily refresh only the affected cache entry.
@@ -499,7 +499,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         effect_matrix = np.vstack([np.asarray(measurement_effects[label]) for label in self.outcome_labels])
         return rho_supervector, effect_matrix
 
-    def _compose_quantum_map(self, gates: tuple[ParsedGate, ...], circuit_map_cache: dict) -> np.ndarray:
+    def _compose_quantum_map(self, gates: tuple[GstGate, ...], circuit_map_cache: dict) -> np.ndarray:
         """ Compose the circuit map once for each unique gate sequence in an evaluation. """
         # Many circuits can share the same expanded gate sequence; cache the full
         # composed map for this theta evaluation to avoid repeated matrix chains.
@@ -514,7 +514,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         circuit_map_cache[gates] = quantum_map
         return quantum_map
 
-    def _predict_probability_vector(self, gates: tuple[ParsedGate, ...], rho_supervector: Vector, effect_matrix: Matrix, 
+    def _predict_probability_vector(self, gates: tuple[GstGate, ...], rho_supervector: Vector, effect_matrix: Matrix, 
                                         circuit_map_cache: dict) -> np.ndarray:
         """ Predict clipped outcome probabilities as a dense vector in outcome-label order. """
         # Return dense probabilities in self.outcome_labels order so downstream
@@ -524,7 +524,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         probability_values = np.real(effect_matrix @ mapped_state)
         return np.clip(probability_values, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. -  NUMERICAL_EQUIVALENCE_THRESHOLD)
 
-    def _predict_probabilities(self, circ: ParsedCircuit, theta: Vector) -> Vector: 
+    def _predict_probabilities(self, circ: GstCircuit, theta: Vector) -> Vector: 
         """ Predicts outcome probabilities for a GST circuit with gates parametrized by theta """
         # Compatibility helper for existing callers that still expect a dict.
         self._refresh_gate_process_matrix_cache(theta)
@@ -694,10 +694,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         else:
             raise ValueError(f"No log likelihood data is stored.")
 
-    def get_parameter_index_by_name_in_gate(self, gate: ParsedGate, parameter_name: str) -> int:
+    def get_parameter_index_by_name_in_gate(self, gate: GstGate, parameter_name: str) -> int:
         """ Return index in gate parameters where parameter from a gate mdoel appears. Return -1 if not found """
         if isinstance(gate, str):
-            gate = self.user_key_gate_map.get(gate, ParsedGate.from_string(gate))
+            gate = self.user_key_gate_map.get(gate, GstGate.from_string(gate))
 
         gate_model = self.gate_models[gate]
         gate_model_sig = inspect.signature(gate_model)
@@ -724,7 +724,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         local_index = parameter_names.index(parameter_name)
         return self.gst_parameter_indices["POVM"][local_index]
         
-    def get_parameter_value_by_name(self, gate: ParsedGate, parameter_name: str) -> float:
+    def get_parameter_value_by_name(self, gate: GstGate, parameter_name: str) -> float:
         """ Return the parameter value for a requested parameter in a gate model"""
         gate_model = self.gate_models[gate]
         gate_model_sig = inspect.signature(gate_model)
@@ -733,7 +733,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         parameter_values = self.gst_parameters[self.gst_parameter_indices[gate]] # names and values share same sorted order  
         return parameter_values[indx]
         
-    def get_parameter_values_by_name(self, gate: ParsedGate, parameter_names: list[str]) -> dict:
+    def get_parameter_values_by_name(self, gate: GstGate, parameter_names: list[str]) -> dict:
         """ Return the parameter value for a requested parameter in a gate model"""
         requested_params = {}
         for name in parameter_names:
@@ -861,7 +861,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             raise IonSimError('Invalid solver input.')
 
 
-    def _build_probability_matrix(self, target_gate: ParsedGate | None=None, outcome: str | None=None):
+    def _build_probability_matrix(self, target_gate: GstGate | None=None, outcome: str | None=None):
         """ Builds the d^2 x d^2 matrix of observed probabilities 
             for a gate or empty gate (corresponding to the Gram Matrix).
 
@@ -1118,7 +1118,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return result.x[measurement_indices]
 
 
-    def _fit_gate_model_to_lgst_estimate(self, gate: ParsedGate, target_gate_matrix: Matrix) -> Vector:
+    def _fit_gate_model_to_lgst_estimate(self, gate: GstGate, target_gate_matrix: Matrix) -> Vector:
         """ Fits a gate model's parameters given process matrix data (target_gate_matrix).
 
             - gate_model is as Callable that returns a process matrix  
@@ -1242,8 +1242,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                     gate = self.user_key_gate_map[key]
                     internal_ideal_gate_set[gate] = ideal_gate_set[key] 
                 else:
-                    if not isinstance(key, ParsedGate):
-                        raise TypeError(f"Specify gate as a string or ParsedGate.")
+                    if not isinstance(key, GstGate):
+                        raise TypeError(f"Specify gate as a string or GstGate.")
                     internal_ideal_gate_set[key] = ideal_gate_set[key] 
             else:
                 internal_ideal_gate_set[key] = ideal_gate_set[key] 
@@ -1302,8 +1302,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                     gate = self.user_key_gate_map[key]
                     internal_ideal_gate_set[gate] = ideal_gate_set[key] 
                 else:
-                    if not isinstance(key, ParsedGate):
-                        raise TypeError(f"Specify gate as a string or ParsedGate.")
+                    if not isinstance(key, GstGate):
+                        raise TypeError(f"Specify gate as a string or GstGate.")
                     internal_ideal_gate_set[key] = ideal_gate_set[key] 
             else:
                 internal_ideal_gate_set[key] = ideal_gate_set[key] 

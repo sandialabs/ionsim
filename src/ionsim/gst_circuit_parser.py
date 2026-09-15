@@ -65,7 +65,7 @@ class CircuitData:
 
 
 @dataclass(frozen=True) 
-class ParsedGate:
+class GstGate:
     """ Parsed gate from GST file with information on the gate and involved qubits """
 
     name: str 
@@ -96,18 +96,18 @@ class ParsedGate:
 
 
 @dataclass
-class ParsedCircuit:
+class GstCircuit:
     """ Parsed circuit from GST file, optionally with measurement outcomes 
 
         - follows convention of Prep gates --> {(Germ_gates)^germ_power} --> measure gates  
         - Stores the file string contents
 
     """
-    # ParsedCircuit class should remain unfrozen so its measurement_data attribute can be modified by an experiment. 
+    # GstCircuit class should remain unfrozen so its measurement_data attribute can be modified by an experiment. 
     unparsed_data: str
-    fiducial_prep_gates: list[ParsedGate]
-    germ_gates: list[ParsedGate]
-    fiducial_measurement_gates: list[ParsedGate]
+    fiducial_prep_gates: list[GstGate]
+    germ_gates: list[GstGate]
+    fiducial_measurement_gates: list[GstGate]
     germ_power: int 
 
     line_labels: list[int]   # not as important, TODO: delete?   
@@ -115,7 +115,7 @@ class ParsedCircuit:
 
 
     @property
-    def expanded_gates(self) -> list[ParsedGate]:
+    def expanded_gates(self) -> list[GstGate]:
         """ List of gates, expanded (no germ power included) """
         return self.fiducial_prep_gates + self.germ_gates * self.germ_power + self.fiducial_measurement_gates
 
@@ -134,7 +134,7 @@ class ParsedCircuit:
 
     def __repr__(self):
         gates_readable = " ".join(repr(gate) for gate in self.expanded_gates) or "(empty)"
-        return f"ParsedCircuit({gates_readable}, data={self.measurement_data})"
+        return f"GstCircuit({gates_readable}, data={self.measurement_data})"
 
     @property
     def num_qubits(self):
@@ -146,7 +146,7 @@ class ParsedCircuit:
         # Ex] Gxpi2:0(Gxpi2:0)^{2}Gypi2:0@(0)
 
         # Helper function for chaining gate names into a single string 
-        def _gates_to_str(gates: list[ParsedGate]):
+        def _gates_to_str(gates: list[GstGate]):
             return "".join(repr(g) for g in gates)
 
         prep = _gates_to_str(self.fiducial_prep_gates)
@@ -180,9 +180,9 @@ class ParsedCircuit:
 
 
     @staticmethod
-    def plan(prep_gates: list[ParsedGate], germ_gates: list[ParsedGate], germ_power: int, measure_gates: list[ParsedGate], line_labels: list[int]):
+    def plan(prep_gates: list[GstGate], germ_gates: list[GstGate], germ_power: int, measure_gates: list[GstGate], line_labels: list[int]):
         """ Constructs and returns a circuit that is planned - no measurement data exists yet. """ 
-        planned_circ = ParsedCircuit("", prep_gates, germ_gates, measure_gates, germ_power, line_labels, measurement_data = None)
+        planned_circ = GstCircuit("", prep_gates, germ_gates, measure_gates, germ_power, line_labels, measurement_data = None)
         planned_circ.unparsed_data = planned_circ.build_circuit_string()
         return planned_circ  
 
@@ -192,7 +192,7 @@ class ParsedCircuit:
             f.write(self._format_circuit_line() + "\n")
 
 
-def parse_circuit_string(circ: str) -> list[ParsedGate]:
+def parse_circuit_string(circ: str) -> list[GstGate]:
     """ Extract the gate sequence from the circuit string """
 
     # Extracts from patterns like '', '[]', '{}', 'Gxpi2:0'
@@ -205,14 +205,14 @@ def parse_circuit_string(circ: str) -> list[ParsedGate]:
 
     pattern = r"([A-Za-z][A-Za-z0-9_+\-]*):(\d+(?::\d+)*)|\[\]"
 
-    # Find matches for the pattern and build a ParsedGate object for each match 
+    # Find matches for the pattern and build a GstGate object for each match 
     for m in re.finditer(pattern, circ):
         if m.group(0) == "[]":
-            gates.append(ParsedGate("idle", ()))
+            gates.append(GstGate("idle", ()))
         else:
             name = m.group(1)
             qubits = tuple(int(qubit) for qubit in m.group(2).split(":"))
-            gates.append(ParsedGate(name, qubits))
+            gates.append(GstGate(name, qubits))
 
     return gates 
 
@@ -232,7 +232,7 @@ def parse_measurement_outcome_labels(header: str) -> list[str]:
 
 
 
-def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
+def parse_circuit_line(line: str, outcome_labels: list[str]) -> GstCircuit:
     """ Parse a GST circuit line, containing a sequence of gates and possibly measurement count outcomes. """ 
     ## TODO: Add parsing functionality for t-dependent data. This is currently not handled 
     # For GST data files, this is of the format circuit list then measurement counts 
@@ -270,7 +270,7 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
     
     # Parse circuit sequence, starting with empty (do nothing -- prep then measure) string 
     if circuit_sequence == "{}":
-        return ParsedCircuit(unparsed_data = line, fiducial_prep_gates=[], germ_gates = [], fiducial_measurement_gates = [],
+        return GstCircuit(unparsed_data = line, fiducial_prep_gates=[], germ_gates = [], fiducial_measurement_gates = [],
                             germ_power = 1, line_labels = line_labels, measurement_data = parsed_measurement_data) 
 
     # Find the germ block if it exists  
@@ -293,13 +293,13 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
         measure_gates = []
         germ_power = 1
         
-    return ParsedCircuit(line, prep_gates, germ_gates, measure_gates, germ_power, line_labels, parsed_measurement_data) 
+    return GstCircuit(line, prep_gates, germ_gates, measure_gates, germ_power, line_labels, parsed_measurement_data) 
 
 
-def parse_gst_circuit_file(filepath: str | Path) -> list[ParsedCircuit]:
+def parse_gst_circuit_file(filepath: str | Path) -> list[GstCircuit]:
     """ Parse a GST circuit results file, containing circuits and outcomes on each line. """
     filepath = Path(filepath)
-    results: list[ParsedCircuit] = []
+    results: list[GstCircuit] = []
     outcome_labels: list[str] | None = None
 
     # Open file and parse each line: 

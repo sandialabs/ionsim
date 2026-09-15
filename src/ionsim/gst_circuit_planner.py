@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from ionsim.state import State 
 from ionsim.operator import Operator  
 from ionsim.process import Circuit, Gate
-from ionsim.gst_circuit_parser import ParsedCircuit, ParsedGate
+from ionsim.gst_circuit_parser import GstCircuit, GstGate
 
 """ Circuit planner has 2 modes: 1) Gate model agnostic, 2) optimized planner based on gate models and germ sensitivies. """ 
 class GSTCircuitPlanner:
@@ -63,7 +63,7 @@ class GSTCircuitPlanner:
         self.long_GST = long_sequence_GST  
 
         # Ensure consistency in inputs: 
-        # Convert all string-based fiducials/germs to ParsedGate objects
+        # Convert all string-based fiducials/germs to GstGate objects
         self.prep_fiducials = [self.to_parsed_seq(fid) for fid in prep_fiducials]
         self.measure_fiducials = [self.to_parsed_seq(fid) for fid in measure_fiducials]
         self.germs = [self.to_parsed_seq(germ) for germ in germs]
@@ -85,18 +85,18 @@ class GSTCircuitPlanner:
 
 
     def _construct_gate_name_to_object_mapping(self, gate_names: list[str]): 
-        """ Set up the gate name -> ParsedGate look up dictionary """ 
+        """ Set up the gate name -> GstGate look up dictionary """ 
         self.gate_lookup = {}
         for name in gate_names:
-            gate = ParsedGate.from_string(name)
+            gate = GstGate.from_string(name)
             self.gate_lookup[name] = gate
  #            if name == 'idle': # use empty qubit arguments 
- #                self.gate_lookup[name] = ParsedGate(name, ())
+ #                self.gate_lookup[name] = GstGate(name, ())
  #            else:
- #                self.gate_lookup[name] = ParsedGate(name, tuple(qubit_labels))
+ #                self.gate_lookup[name] = GstGate(name, tuple(qubit_labels))
 
     def generate_gst_circuits(self) -> list:
-        """Generate GST circuits. Convert string gates to ParsedGate and avoid duplicates."""
+        """Generate GST circuits. Convert string gates to GstGate and avoid duplicates."""
 
         gst_circuits = []
         unique = set()
@@ -128,16 +128,16 @@ class GSTCircuitPlanner:
         # Group 1: Fiducial prep & measure 
         for prep_fiducial in self.prep_fiducials:
             for measure_fiducial in self.measure_fiducials:
-                circuits.append( ParsedCircuit.plan(prep_fiducial, [], 1, measure_fiducial, self.qubit_labels)) 
+                circuits.append( GstCircuit.plan(prep_fiducial, [], 1, measure_fiducial, self.qubit_labels)) 
 
         # Group 2: Fiducial prep, gate, and measure. For each gate, run the prep & measure circuits. 
         for gate_name in self.gate_names:
             gate = self.gate_lookup[gate_name] 
             for prep_fiducial in self.prep_fiducials:
                 for measure_fiducial in self.measure_fiducials:
-                    circuits.append( ParsedCircuit.plan(prep_fiducial, [gate], 1, measure_fiducial, self.qubit_labels)) 
+                    circuits.append( GstCircuit.plan(prep_fiducial, [gate], 1, measure_fiducial, self.qubit_labels)) 
 
-        do_nothing_circuit = ParsedCircuit.plan([], [], 1, [], self.qubit_labels)
+        do_nothing_circuit = GstCircuit.plan([], [], 1, [], self.qubit_labels)
         if do_nothing_circuit not in circuits:
             circuits.insert(0, do_nothing_circuit)
 
@@ -151,7 +151,7 @@ class GSTCircuitPlanner:
             for power in self.germ_powers:
                 for prep_fiducial in self.prep_fiducials:
                     for measure_fiducial in self.measure_fiducials:
-                        circuits.append( ParsedCircuit.plan(prep_fiducial, germ, power, measure_fiducial, self.qubit_labels)) 
+                        circuits.append( GstCircuit.plan(prep_fiducial, germ, power, measure_fiducial, self.qubit_labels)) 
 
         return circuits 
 
@@ -175,12 +175,12 @@ class GSTCircuitPlanner:
     def standard_1Q_fiducials() -> list:
         """ For 1Q gates, the fiducial circuits are standardized for {X_pi/2, Y_pi/2} gates. 
 
-            - returns the prep and measure fiducials as lists of lists containing ParsedGate objects
+            - returns the prep and measure fiducials as lists of lists containing GstGate objects
 
         """  
         qubits = (0, )
-        X_pi2 = ParsedGate('Gxpi2', qubits)
-        Y_pi2 = ParsedGate('Gypi2', qubits)
+        X_pi2 = GstGate('Gxpi2', qubits)
+        Y_pi2 = GstGate('Gypi2', qubits)
         # include empty list for "do nothing for no time" initial sequence 
         # We should only need 4 fiducials for informational completeness 
         fiducials = [[], [X_pi2], [Y_pi2], [X_pi2, X_pi2]] 
@@ -191,8 +191,8 @@ class GSTCircuitPlanner:
         from itertools import product as iter_product
         single_qubit_fids = {}
         for q in self.qubit_labels:
-            gx = ParsedGate('Gxpi2', (q,)) 
-            gy = ParsedGate('Gypi2', (q,)) 
+            gx = GstGate('Gxpi2', (q,)) 
+            gy = GstGate('Gypi2', (q,)) 
             single_qubit_fids[q] = [
                 [],
                 [gx], 
@@ -216,13 +216,13 @@ class GSTCircuitPlanner:
     def standard_1Q_germs(gate_names: list[str]) -> list:
         """ For 1Q gates, the germs are the gates themselves and specific combinations of them. 
 
-            - returns the list of germs; each germ is a list of ParsedGate objects 
+            - returns the list of germs; each germ is a list of GstGate objects 
 
         """  
         qubits = (0, )
-        X_pi2 = ParsedGate('Gxpi2', qubits)
-        Y_pi2 = ParsedGate('Gypi2', qubits)
-        idle = ParsedGate('[]', ()) # should it be qubits? 
+        X_pi2 = GstGate('Gxpi2', qubits)
+        Y_pi2 = GstGate('Gypi2', qubits)
+        idle = GstGate('[]', ()) # should it be qubits? 
 
         if 'idle' in gate_names:
             germs = [ [X_pi2], [Y_pi2], [idle], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2] ]
@@ -232,7 +232,7 @@ class GSTCircuitPlanner:
         return germs
 
     @staticmethod
-    def write_all_circuit_outcomes(filename: str, circuits: list[ParsedCircuit]): 
+    def write_all_circuit_outcomes(filename: str, circuits: list[GstCircuit]): 
         """ Writes all circuit information to a file """
         N_qubits = circuits[0].num_qubits 
         d = 2**N_qubits # Hilbert space dimensionality 
@@ -258,12 +258,12 @@ class GSTCircuitPlanner:
             f.write(f"## Columns = {columns}\n")
 
     def to_parsed_gate(self, g):
-            if isinstance(g, ParsedGate):
+            if isinstance(g, GstGate):
                 return g
             if isinstance(g, str):
                 # Handle special case for idle gate represented as '[]'
                 if g == '[]':
-                    return ParsedGate('[]', ())
+                    return GstGate('[]', ())
                 if g in self.gate_lookup:
                     return self.gate_lookup[g]
                 raise ValueError(f"Unknown gate name: {g}")
@@ -277,7 +277,7 @@ class GSTCircuitPlanner:
         """Compute the process matrix for a germ given parameter values for each gate model.
 
         Args:
-            germ: List of ParsedGate objects representing the germ
+            germ: List of GstGate objects representing the germ
             theta_dict: Dictionary mapping gate names to their parameter arrays
 
         Returns:
@@ -303,11 +303,11 @@ class GSTCircuitPlanner:
 
         return germ_process_matrix
 
-    def compute_circuit_sensitivities(self, gst_circuits: list[ParsedCircuit], circuit_parameters, initial_state: State, outcome_operators: list[Operator]):
+    def compute_circuit_sensitivities(self, gst_circuits: list[GstCircuit], circuit_parameters, initial_state: State, outcome_operators: list[Operator]):
         """ Computes sensitivites of each circuit to gate model parameters """ 
         sensitivities = {}
         # remove do nothing circuit 
-        do_nothing_circuit = ParsedCircuit.plan([], [], 1, [], self.qubit_labels)
+        do_nothing_circuit = GstCircuit.plan([], [], 1, [], self.qubit_labels)
         circuits = gst_circuits.copy()
         if do_nothing_circuit in circuits:
             circuits = circuits.remove(do_nothing_circuit) 
@@ -316,7 +316,7 @@ class GSTCircuitPlanner:
         return sensitivities
 
 
-    def compute_design_fisher_information(self, gst_circuits: list[ParsedCircuit], circuit_parameters, initial_state: State, outcome_operators: list[Operator]):
+    def compute_design_fisher_information(self, gst_circuits: list[GstCircuit], circuit_parameters, initial_state: State, outcome_operators: list[Operator]):
         """ Computes sensitivites of each circuit to gate model parameters """ 
         fisher_information = {}
         # Remove do nothing circuit 
@@ -329,7 +329,7 @@ class GSTCircuitPlanner:
         return fisher_information 
 
 
-    def compute_circuit_sensitivity(self, circuit: ParsedCircuit, circuit_parameters: dict, initial_state: State, outcome_operators: list[Operator]):
+    def compute_circuit_sensitivity(self, circuit: GstCircuit, circuit_parameters: dict, initial_state: State, outcome_operators: list[Operator]):
         """ Computes sensitivty of a circuit to gate model parameters """ 
         outcomes = circuit.measurement_data.counts
         N = circuit.measurement_data.total_counts
@@ -368,7 +368,7 @@ class GSTCircuitPlanner:
             prob, prob_gradients = circuit_pm_function.jacobian(probs_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
             return prob_gradients
 
-    def compute_circuit_fisher_information(self, circuit: ParsedCircuit, circuit_parameters: dict, initial_state: State, outcome_operators: list[Operator]):
+    def compute_circuit_fisher_information(self, circuit: GstCircuit, circuit_parameters: dict, initial_state: State, outcome_operators: list[Operator]):
         """ Computes sensitivty of a circuit to gate model parameters """ 
         outcomes = circuit.measurement_data.counts
         N = circuit.measurement_data.total_counts
@@ -427,7 +427,7 @@ class GSTCircuitPlanner:
 
 
         def fiducials_to_dict(fiducials):            
-            """ Convert list of fiducial sequences (list of ParsedGates) to dictionary."""
+            """ Convert list of fiducial sequences (list of GstGates) to dictionary."""
             return [gate_list_to_dict(fid) for fid in fiducials]
 
 
@@ -449,13 +449,13 @@ class GSTCircuitPlanner:
         """ Load an experimental design from a YAML file, returns the planner class instance """ 
 
         def dict_to_gate_list(dict_list):
-            """ Converts dictionary list of gates to a list of ParsedGates """ 
-            return [ParsedGate(name=g['name'], qubits = tuple(g['qubits']))
+            """ Converts dictionary list of gates to a list of GstGates """ 
+            return [GstGate(name=g['name'], qubits = tuple(g['qubits']))
                 for g in dict_list]
         
 
         def dict_to_fiducials(fid_list):
-            """ Converts dictionary list of fiducials to list of ParsedGates """ 
+            """ Converts dictionary list of fiducials to list of GstGates """ 
             return [dict_to_gate_list(fid) for fid in fid_list]
             
 
