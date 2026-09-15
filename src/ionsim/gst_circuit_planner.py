@@ -31,7 +31,7 @@ class GSTCircuitPlanner:
         else:
             self.germ_powers = [1]
 
-        # Build Parsed Gate objects from gate names and store them in a dictionary  
+        # Build GstGate objects from gate names and store them in a dictionary  
         self._construct_gate_name_to_object_mapping(gate_names) 
 
         # Set up prep/measure/germ circuits depending on user input. A default is used if none is supplied.  

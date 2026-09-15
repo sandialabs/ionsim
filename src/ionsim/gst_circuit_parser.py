@@ -66,7 +66,7 @@ class CircuitData:
 
 @dataclass(frozen=True) 
 class GstGate:
-    """ Parsed gate from GST file with information on the gate and involved qubits """
+    """ Gst Gate object from GST file with information on the gate and involved qubits """
 
     name: str 
     qubits: tuple[int, ...] # qubits are indexed by integers starting at 0 
@@ -97,7 +97,7 @@ class GstGate:
 
 @dataclass
 class GstCircuit:
-    """ Parsed circuit from GST file, optionally with measurement outcomes 
+    """ Gst circuit from GST file, optionally with measurement outcomes 
 
         - follows convention of Prep gates --> {(Germ_gates)^germ_power} --> measure gates  
         - Stores the file string contents
@@ -110,7 +110,7 @@ class GstCircuit:
     fiducial_measurement_gates: list[GstGate]
     germ_power: int 
 
-    line_labels: list[int]   # not as important, TODO: delete?   
+    line_labels: list[int] 
     measurement_data: CircuitData | None
 
 
@@ -124,7 +124,6 @@ class GstCircuit:
     def total_counts(self) -> int:
         """ Number of measurement counts """
         return self.measurement_data.total_counts 
-        #return sum(self.measurement_counts.values())
 
     @property
     def depth(self) -> int:

@@ -39,7 +39,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 - Basis where the quantum processes (gates), state, and measurement will live. 
                 - prep state: rho_0, representing an ideal state prepared natively. 
                 - POVM_measurement_effect models: is a dictionary of constrained measurement effect models :['0' : E0(params)] or ['00' : E0(params), '01' : E1(params), ...] for N = 2 
-                - parsed_circuits is a list of Parsed GST Circuits that contain circuit information and measurement information.
+                - parsed_circuits is a list of GSTCircuits that contain circuit information and measurement information.
                 #- gate model factory is a function that takes a gate name and qubit tuple and returns an IonSim Gate object, which holds a process matrix (gate) function. 
                 - gate_models represents a dictionary that maps GST gate names to IonSim model names, specified by the user.  
                 - gst_parameters: a 1D numpy array of gate parameters.  
@@ -75,8 +75,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 self.gate_set.add(g) 
 
         # 2. Retrieve gate models  
-        self.gate_models = {}  # dictionary to map a Parsed Gate (from the gate set) to its model as a process matrix function  
-        self.user_key_gate_map = {} # maps the user key to a corresponding Parsed gate object 
+        self.gate_models = {}  # dictionary to map a GstGate (from the gate set) to its model as a process matrix function  
+        self.user_key_gate_map = {} # maps the user key to a corresponding Gst gate object 
 
         # Parse user gate model dictionary names
         for key, model in gate_models.items():
