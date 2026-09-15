@@ -20,7 +20,7 @@ from ionsim.state import State
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.lindbladian import Dissipator, Lindbladian
 from ionsim.gst_circuit_planner import GSTCircuitPlanner
-from ionsim.gst_circuit_parser import ParsedGate, CircuitData 
+from ionsim.gst_circuit_parser import GstGate, CircuitData 
 from ionsim.gate_set_tomography import GateSetTomography
 
 
@@ -125,7 +125,7 @@ class TestGST(unittest.TestCase):
         self.gates = [] 
         qubit_indices = [0] 
         for name in gate_names:
-            self.gates.append(ParsedGate.from_string(name))
+            self.gates.append(GstGate.from_string(name))
         Gxpi2_q0 = self.gates[0]
         Gypi2_q0 = self.gates[1]
         amplitude_noise_strength = 0.125 # S0 in rad^2/MHz 
@@ -191,7 +191,7 @@ class TestGST(unittest.TestCase):
                 # Run IonSim simulation of the gate 
                 rho = rho.propagate_using_process_matrix(self.evaluated_gate_models[gate])
     
-            # Estimate and record circuit outcomes in a dictionary to create ParsedCircuit object: 
+            # Estimate and record circuit outcomes in a dictionary to create GstCircuit object: 
             outcome_probabilities = rho.compute_basis_state_probabilities_from_effect_matrix(self.outcome_matrix) 
             estimated_outcome_counts = _rng.multinomial(N_shots, [*outcome_probabilities])
             outcome_info = {}
