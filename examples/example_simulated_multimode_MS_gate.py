@@ -11,7 +11,6 @@ import ionsim as ism
 
 import numpy as np
 from scipy.sparse import kron as skron
-
 from icecream import ic
 
 sparse = False
@@ -116,7 +115,8 @@ else:
     tau = 125e-6 # s
     loops = 2
     detuning_0 = 2 * np.pi * loops / tau
-    rabi_rate = np.pi / etas[0] / tau * np.sqrt(loops)
+    TPI = 2. * np.pi
+    rabi_rate = np.pi / etas[0] / tau * np.sqrt(loops) 
     amp_mod = None
 
 ic(detuning_0/(2*np.pi*1e3))
@@ -144,7 +144,7 @@ def main():
     end = time.perf_counter()
     ic(f'Building Hamiltonian took {end - start} s.')
 
-    duration = tau
+    duration = tau 
     coefs = np.zeros(len(basis.states))
     coefs[0] = 1
     ic(len(spin_basis.states), len(basis.states))
