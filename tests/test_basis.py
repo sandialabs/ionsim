@@ -191,6 +191,14 @@ class TestBasis(unittest.TestCase):
         
         # Test a set of pauli operators
         labels = ['II', 'YZ', 'YX', 'ZI', 'XX']
+        encodings = [
+            np.array([0, 0, 0, 0]),
+            np.array([1, 0, 1, 1]),
+            np.array([1, 1, 1, 0]),
+            np.array([0, 0, 1, 0]),
+            np.array([1, 1, 0, 0]),
+        ]
+        expected_encodings = dict(zip(labels, encodings))
 
         normalization = 1./np.sqrt((2**2))
 
@@ -201,6 +209,10 @@ class TestBasis(unittest.TestCase):
             # Column-wise flattening 
             expected = (expected.T).flatten() * normalization
             assert_array_close(expected, actual_vectors[l])
+
+            # Test symplectic representation 
+            sympl = Pauli_2Q_basis.pauli_to_symplectic(l) 
+            assert_array_close(sympl, expected_encodings[l]) 
 
 if __name__ == '__main__':
     unittest.main()
