@@ -281,9 +281,10 @@ class PauliProductBasis(Basis):
         return dict(zip(self.vector_labels, self.vectors))
 
     def index_of_label(self, label: str):
-        if label not in self.vector_labels:
-            raise IonSimError(f"Label {label} not in Pauli product basis levels. Expected element in {self.vector_labels}")
-        return self.vector_labels.index(label)
+        try:
+            return self.vector_labels.index(label)
+        except ValueError as exc:
+            raise IonSimError(f"Label {label} not in Pauli product basis levels. Expected element in {self.vector_labels}") from exc
 
     def vector_from_label(self, label:str) -> Vector: 
         return self.vectors[self.index_of_label(label)]
