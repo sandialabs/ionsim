@@ -13,7 +13,7 @@ import numpy as np
 
 from ionsim.process import Gate, Circuit
 from ionsim.degree_of_freedom import AtomicStructure
-from ionsim.basis import StandardBasis
+from ionsim.basis import StandardBasis, PauliProductBasis
 from ionsim.named_operators import Unitary, Pauli
 from ionsim.noise import Noise
 from ionsim.operator import EnergyShiftOperator, CouplingOperator
@@ -135,6 +135,29 @@ class TestProcess(unittest.TestCase):
         # I <==> gate occurs as intended (no error); should be equal to process fidelity 
         self.assertAlmostEqual(0.9999987209516402, error_rates["I"].real, places=10)
         self.assertAlmostEqual(process_fidelity, error_rates["I"].real, places=10)
+
+    def test_pauli_transfer_matrix(self):
+        standard_2Q_basis = StandardBasis([self.spin_a, self.spin_b])
+        Pauli_2Q_basis = PauliProductBasis([self.spin_a, self.spin_b]) 
+        CZ_unitary = np.diag([1., 1., 1., -1.])
+
+        CZ_gate_standard = Gate.from_unitary(standard_2Q_basis, CZ_unitary, [self.spin_a, self.spin_b])
+
+        CZ_pauli_basis_gate = CZ_gate_standard.convert_to_pauli_basis()
+        CZ_ptm = CZ_pauli_basis_gate.process_matrix
+
+        test_diag_elements = ["II", "IZ", "ZI", "ZZ"] 
+        expected_diag_values = [1., 1., 1., 1.]
+
+        for i, diag_element in enumerate(test_diag_elements):
+            indx = Pauli_2Q_basis.index_of_label(diag_element)
+            self.assertEqual(CZ_ptm[indx, indx], expected_diag_values[i]) 
+
+        test_offdiag_elements = [("IX", "II"), ("ZX", "IX"), ("IX", "ZX"), ("YX", "XY"), ("XZ", "XI"), ("YY", "XX"), ("YI", "XZ")]
+        expected_offdiag_values = [0., 1., 1., -1., 1., 1., 0.]
+        for k, offdiag_element in enumerate(test_offdiag_elements):
+            i, j = Pauli_2Q_basis.indices_of_pauli_transfer_matrix_from_labels(*offdiag_element)
+            self.assertEqual(CZ_ptm[i, j], expected_offdiag_values[k]) 
 
 
 if __name__ == '__main__':

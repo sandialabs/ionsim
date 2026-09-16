@@ -290,8 +290,11 @@ class PauliProductBasis(Basis):
 
     def label_of_pauli_transfer_matrix_element(self, i: int, j: int):
         """ Returns Pauli operator label corresponding to the R[i,j] for a Pauli transfer matrix R """
-        labels = self.vector_labels
-        return labels[i], labels[j]
+        return self.vector_labels[i], self.vector_labels[j]
+
+    def indices_of_pauli_transfer_matrix_from_labels(self, label_i: str, label_j: str):
+        """ Returns Pauli transfer matrix indices i,j corresponding to R[i,j] from corresponding label strings """
+        return self.index_of_label(label_i), self.index_of_label(label_j)
 
     @staticmethod
     def pauli_to_symplectic(pauli_label: str):

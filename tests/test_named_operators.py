@@ -64,5 +64,7 @@ class TestNamedOperators(unittest.TestCase):
             expected = np.kron(expected, single_qubit_operators[q3])
             assert_array_close(three_qubit_operators[l], expected)
 
+        
+
 if __name__ == '__main__':
     unittest.main()

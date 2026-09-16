@@ -13,6 +13,7 @@ from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.basis import StandardBasis, ZPauliBasis, XPauliBasis, PauliProductBasis
 from ionsim.named_operators import Pauli
+from ionsim.process import Gate
 from ionsim.testing import assert_array_close
 
 class TestBasis(unittest.TestCase):
