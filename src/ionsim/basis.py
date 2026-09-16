@@ -276,6 +276,10 @@ class PauliProductBasis(Basis):
         pauli_op_labels  = ["".join(label) for label in product(single_qubit_pauli_vector, repeat = N)]
         return pauli_op_labels
 
+    @property
+    def vectors_with_labels(self):
+        return dict(zip(self.vector_labels, self.vectors))
+
     def index_of_label(self, label: str):
         if label not in self.vector_labels:
             raise IonSimError(f"Label {label} not in Pauli product basis levels. Expected element in {self.vector_labels}")

@@ -181,21 +181,26 @@ class TestBasis(unittest.TestCase):
 
         assert_array_close(vecs_as_dict['X'], Pauli_1Q_basis.vector_for_label('X'))
 
- #    def test_2Q_pauli_product_basis(self):
- #        """ Test pauli product basis methods """ 
- #        Pauli_2Q_basis = Pauli.product_operators([self.spin_a, self.spin_b]) 
- #        #Pauli_3Q_basis = Pauli.product_operators() 
- #        pauli_vectors = Pauli_2Q_basis.vectors
- #
- #        normalization = 1./np.sqrt((2**2))
- #        label1 = 'II'
- #        label2 = 'YZ'
- #        label3 = 'YX'
- #
- #        
- #        print(pauli)
+    def test_2Q_pauli_product_basis(self):
+        """ Test pauli product basis methods """ 
+        Pauli_2Q_basis = PauliProductBasis([self.spin_a, self.spin_b]) 
+        actual_vectors = Pauli_2Q_basis.vectors_with_labels
 
+        # Get reference 1-qubit operators, which are used to build N-qubit operators  
+        pauli_1Q = dict(zip(Pauli.vector_as_string, Pauli.vector)) 
+        
+        # Test a set of pauli operators
+        labels = ['II', 'YZ', 'YX', 'ZI', 'XX']
 
+        normalization = 1./np.sqrt((2**2))
+
+        for l in labels:
+            q1 = l[0]
+            q2 = l[1]
+            expected = np.kron(pauli_1Q[q1], pauli_1Q[q2])
+            # Column-wise flattening 
+            expected = (expected.T).flatten() * normalization
+            assert_array_close(expected, actual_vectors[l])
 
 if __name__ == '__main__':
     unittest.main()
