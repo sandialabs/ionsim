@@ -257,7 +257,6 @@ class Gate(Process):
     def from_lindbladian(cls, basis: StandardBasis, lindbladian: Lindbladian, duration: float, 
             dofs_to_trace_out: list[DegreeOfFreedom] | None = None,
             initial_density_matrices_for_dofs_to_trace_out: list[State] | None = None,
-            #projection_input: dict | None = None,
             reduced_basis: StandardBasis | None=None, 
             states_to_project: list[EnergyEigenstate] | None=None,
             levels_to_project: list[EnergyLevel] | None=None,
