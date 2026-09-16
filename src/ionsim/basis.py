@@ -276,6 +276,14 @@ class PauliProductBasis(Basis):
         pauli_op_labels  = ["".join(label) for label in product(single_qubit_pauli_vector, repeat = N)]
         return pauli_op_labels
 
+    def index_of_label(self, label: str):
+        if label not in self.vector_labels:
+            raise IonSimError(f"Label {label} not in Pauli product basis levels. Expected element in {self.vector_labels}")
+        return self.vector_labels.index(label)
+
+    def vector_for_label(self, label:str) -> Vector: 
+        return self.vectors[self.index_of_label(label)]
+
     def label_of_pauli_transfer_matrix_element(self, i: int, j: int):
         """ Returns Pauli operator label corresponding to the R[i,j] for a Pauli transfer matrix R """
         labels = self.vector_labels

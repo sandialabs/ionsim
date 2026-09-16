@@ -11,7 +11,8 @@ import unittest
 import numpy as np
 from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.energy_level import EnergyEigenstate
-from ionsim.basis import StandardBasis, ZPauliBasis, XPauliBasis
+from ionsim.basis import StandardBasis, ZPauliBasis, XPauliBasis, PauliProductBasis
+from ionsim.named_operators import Pauli
 from ionsim.testing import assert_array_close
 
 class TestBasis(unittest.TestCase):
@@ -151,6 +152,49 @@ class TestBasis(unittest.TestCase):
         for state1, state2 in zip(reduced_basis.states, reduced_basis_v2.states):
             self.assertAlmostEqual(state1.energy, state2.energy, places=10) 
             self.assertEqual(state1.name, state2.name)
+
+    def test_1Q_pauli_product_basis(self):
+        """ Test pauli product basis methods """ 
+        Pauli_1Q_basis = PauliProductBasis([self.spin_a]) 
+
+        actual_vectors = Pauli_1Q_basis.vectors
+        expected_vectors = [
+            np.array([1.0, 0.0, 0.0, 1.0]),
+            np.array([0.0, 1.0, 1.0, 0.0]),
+            np.array([0.0, 1j, -1j, 0.0]),
+            np.array([1.0, 0.0, 0.0, -1.0])
+        ]
+        normalization = 1./np.sqrt((2**1))
+        for v in expected_vectors:
+            v *= normalization
+
+        labels = Pauli.vector_as_string
+        vecs_as_dict = dict(zip(labels, expected_vectors))
+
+        # Test labels 
+        for l1, l2 in zip(labels, Pauli_1Q_basis.vector_labels):
+            self.assertEqual(l1, l2)
+
+        for expected, actual in zip(expected_vectors, actual_vectors):
+            with self.subTest(expected=expected, actual=actual):
+                assert_array_close(expected, actual)
+
+        assert_array_close(vecs_as_dict['X'], Pauli_1Q_basis.vector_for_label('X'))
+
+ #    def test_2Q_pauli_product_basis(self):
+ #        """ Test pauli product basis methods """ 
+ #        Pauli_2Q_basis = Pauli.product_operators([self.spin_a, self.spin_b]) 
+ #        #Pauli_3Q_basis = Pauli.product_operators() 
+ #        pauli_vectors = Pauli_2Q_basis.vectors
+ #
+ #        normalization = 1./np.sqrt((2**2))
+ #        label1 = 'II'
+ #        label2 = 'YZ'
+ #        label3 = 'YX'
+ #
+ #        
+ #        print(pauli)
+
 
 
 if __name__ == '__main__':
