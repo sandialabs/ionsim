@@ -279,6 +279,7 @@ class Gate(Process):
             dof_to_trace_out = dofs_to_trace_out[0]
             initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
 
+        projection = False 
         if reduced_basis or states_to_project or levels_to_project: 
             reduced_basis, states_to_project = _parse_projection_input(reduced_basis, states_to_project, levels_to_project, basis)
             projection = True
