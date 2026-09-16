@@ -113,10 +113,10 @@ class TestProcess(unittest.TestCase):
         theta = np.pi/16.
         duration = (np.pi/16.)/target_rabi_rate
         undesired_levels = [self.spin_c.energy_levels[2]] # P1/2 level to project out        
-        projection_input = {'levels' : undesired_levels}
+        #projection_input = {'levels' : undesired_levels}
         dt = 0.002 * 1E-6 
         times = np.arange(0, duration + dt, dt)
-        X_pi16_Raman_gate = Gate.from_hamiltonian(full_basis, hamiltonian, duration, projection_input = projection_input, ode_solver = 'odeintz', time_evals = times) 
+        X_pi16_Raman_gate = Gate.from_hamiltonian(full_basis, hamiltonian, duration, levels_to_project = undesired_levels, ode_solver = 'odeintz', time_evals = times) 
         reduced_basis = X_pi16_Raman_gate.basis
 
         # Process fidelity 

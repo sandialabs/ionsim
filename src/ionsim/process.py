@@ -20,7 +20,7 @@ from icecream import ic
 
 from ionsim.custom_math import trapz_for_matrix
 from ionsim.custom_types import Vector, Matrix
-from ionsim.energy_level import EnergyEigenstate
+from ionsim.energy_level import EnergyLevel, EnergyEigenstate
 from ionsim.noise import Noise
 from ionsim.basis import DegreeOfFreedom, Basis, StandardBasis, PauliProductBasis
 from ionsim.ionsim_error import IonSimError
@@ -32,59 +32,60 @@ from ionsim.ionsim_error import IonSimError
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
 
-def parse_projection_input(projection_input: dict | None=None, full_basis: StandardBasis | None=None):
-    """ Function to parse user input for projection information. Projection info is a dictionary, e.g.
-
-        projection_input['reduced basis']: StandardBasis
-        projection_input['states to project']: list[EnergyEigenstate] 
-        projection_input['levels to project']: list[EnergyLevel] 
-
-    """
-    if (projection_input is None) or projection_input == {}:
-        return None
-    
+#def parse_projection_input(projection_input: dict | None=None, full_basis: StandardBasis | None=None):
+def _parse_projection_input(reduced_basis: StandardBasis | None=None, states_to_project: list[EnergyEigenstate] | None=None, 
+                            levels_to_project: list[EnergyLevel] | None = None, full_basis: StandardBasis | None=None) -> tuple:
+    """ Function to parse user input for projection information. """
     # Parse for states or levels to project 
-    match_states = [key for key in projection_input.keys() if 'states' in key]
-    states_to_project = None
-    if len(match_states) > 0: 
-        if len(match_states) > 1:
-            raise IonSimError(f"More than one key with 'states' found: {match_states}")
-        states_to_project = projection_input[match_states[0]]
+ #    match_states = [key for key in projection_input.keys() if 'states' in key]
+ #    states_to_project = None
+ #    if len(match_states) > 0: 
+ #        if len(match_states) > 1:
+ #            raise IonSimError(f"More than one key with 'states' found: {match_states}")
+ #        states_to_project = projection_input[match_states[0]]
 
-    if states_to_project is None: 
-        match_levels = [key for key in projection_input.keys() if 'levels' in key]
-        if len(match_levels) == 0 and len(match_states) == 0: 
+    #if states_to_project is None or states_to_project == []: 
+    #    if levels_to_project is None or levels_to_project == []:
+    if not states_to_project: 
+        if not levels_to_project: 
             raise IonSimError("Projection dictionary must include levels or states to project out. Received keys: {projection_input.keys()}") 
-        else:
-            if len(match_levels) > 1:
-                raise IonSimError(f"More than one key with 'levels' found: {match_levels}")
-            levels_to_project = projection_input[match_levels[0]]
 
-            # Extract states to project from levels 
-            states_to_project = []
-            if full_basis is None:
-                raise IonSimError(f"Specify full Hilbert space basis if providing levels instead of states to project out.")
+ #        match_levels = [key for key in projection_input.keys() if 'levels' in key]
+ #        if len(match_levels) == 0 and len(match_states) == 0: 
+ #            raise IonSimError("Projection dictionary must include levels or states to project out. Received keys: {projection_input.keys()}") 
+ #        else:
+ #            if len(match_levels) > 1:
+ #                raise IonSimError(f"More than one key with 'levels' found: {match_levels}")
+        #levels_to_project = projection_input[match_levels[0]]
 
-            for s in full_basis.states:
-                for l in levels_to_project:
-                    if l in s.components:
-                        states_to_project.append(s)
+        # Extract states to project from levels 
+        states_to_project = []
+        if full_basis is None:
+            raise IonSimError(f"Specify full Hilbert space basis if providing levels instead of states to project out.")
+
+        for s in full_basis.states:
+            for l in levels_to_project:
+                if l in s.components:
+                    states_to_project.append(s)
 
     # build basis or retrieve 
-    basis_matching = [key for key in projection_input.keys() if 'basis' in key]
-    if len(basis_matching) == 0: # basis not found  
+    #basis_matching = [key for key in projection_input.keys() if 'basis' in key]
+    #if len(basis_matching) == 0: # basis not found  
+    if reduced_basis is None:
+        # Build reduced basis from full basis + projection states 
         if full_basis is None:
             raise IonSimError(f"Specify full Hilbert space basis if not providing reduced basis.")
         reduced_basis = full_basis.build_subspace_basis_from_states_to_project(states_to_project)
-    else:
-        if len(basis_matching) > 1:
-            raise IonSimError(f"More than one key with 'basis' found: {matching}")
-        reduced_basis = projection_input[basis_matching[0]]
+ #    else:
+ # #        if len(basis_matching) > 1:
+ # #            raise IonSimError(f"More than one key with 'basis' found: {matching}")
+ #        reduced_basis = projection_input[basis_matching[0]]
 
-    projection_info = {}
-    projection_info['reduced basis'] = reduced_basis 
-    projection_info['states'] = states_to_project 
-    return projection_info
+ #    projection_info = {}
+ #    projection_info['reduced basis'] = reduced_basis 
+ #    projection_info['states'] = states_to_project 
+ #    return projection_info
+    return (reduced_basis, states_to_project)
 
 
 
@@ -171,7 +172,10 @@ class Gate(Process):
     def from_hamiltonian(cls, basis: StandardBasis, hamiltonian: Hamiltonian, duration: float,
             dofs_to_trace_out: list[DegreeOfFreedom] | None = None,
             initial_wavefunctions_for_dofs_to_trace_out: list[Vector] | None = None,
-            projection_input: dict[StandardBasis, list[EnergyEigenstate]] | None=None, 
+            reduced_basis: StandardBasis | None=None, 
+            states_to_project: list[EnergyEigenstate] | None=None,
+            levels_to_project: list[EnergyLevel] | None=None,
+            #projection_input: dict[StandardBasis, list[EnergyEigenstate]] | None=None, 
             ode_solver: str = 'odeintz',
             **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
         """ Build a gate by solving the Schrodinger equation for a complete set of initial states.
@@ -191,17 +195,19 @@ class Gate(Process):
             initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
 
         # Parse whether projection / tracing out is needed 
-        projection_info = parse_projection_input(projection_input, basis)
-        if not projection_info:
+        if reduced_basis or states_to_project or levels_to_project: 
+            reduced_basis, states_to_project = _parse_projection_input(reduced_basis, states_to_project, levels_to_project, basis)
+            projection = True
+
+        if not projection:
             states_to_project = []
             if dofs_to_trace_out is None:
                 reduced_basis = basis
             else:
                 reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
         else:
-            states_to_project = projection_info['states']
-            reduced_basis = projection_info['reduced basis']
-
+            #states_to_project = projection_info['states']
+            #reduced_basis = projection_info['reduced basis']
             unwanted_state_indices = [basis.states.index(state) for state in states_to_project] 
             computational_indices = [i for i in range(len(basis.states)) if i not in unwanted_state_indices] 
             if dofs_to_trace_out is not None:
@@ -236,7 +242,7 @@ class Gate(Process):
                 # At the end of each evolution, project out the unwanted states.  
                 # It is equivalent to do the projection at this stage (before building the process matrix) 
                 #  compared to projecting the full process matrix. 
-                if projection_info: 
+                if projection: 
                     final_states[-1] = final_states[-1].project_out_states(states_to_project, reduced_basis) 
 
         # TODO: how can we do multiprocessing outside of main?
@@ -264,7 +270,7 @@ class Gate(Process):
         for final_state_p in final_states:
             for final_state in final_states: # iterate rows with inner loop for column-stacked supervectors
                 density_matrix = np.outer(final_state.wavefunction, final_state_p.wavefunction.conj().T)
-                if dofs_to_trace_out is None and projection_info is None:
+                if dofs_to_trace_out is None and (not projection):
                     spin_state = State.from_density_matrix(basis, density_matrix)
                 else:
                     if dofs_to_trace_out is None:
@@ -285,7 +291,10 @@ class Gate(Process):
     def from_lindbladian(cls, basis: StandardBasis, lindbladian: Lindbladian, duration: float, 
             dofs_to_trace_out: list[DegreeOfFreedom] | None = None,
             initial_density_matrices_for_dofs_to_trace_out: list[State] | None = None,
-            projection_input: dict | None = None,
+            #projection_input: dict | None = None,
+            reduced_basis: StandardBasis | None=None, 
+            states_to_project: list[EnergyEigenstate] | None=None,
+            levels_to_project: list[EnergyLevel] | None=None,
             lindbladian_time_independent: bool = False, 
             lindbladian_commutes_at_later_times: bool = False, 
             ode_solver: str = 'odeintz',
@@ -304,16 +313,22 @@ class Gate(Process):
             dof_to_trace_out = dofs_to_trace_out[0]
             initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
 
+        if reduced_basis or states_to_project or levels_to_project: 
+            reduced_basis, states_to_project = _parse_projection_input(reduced_basis, states_to_project, levels_to_project, basis)
+            projection = True
+
+    
         # Check if building the gate requires projection or tracing out from a larger Hilbert space  
-        projection_info = parse_projection_input(projection_input, basis)
-        if projection_info is None:
+        #projection_info = parse_projection_input(projection_input, basis)
+        #if projection_info is None:
+        if not projection:
             if dofs_to_trace_out is None:
                 reduced_basis = basis
             else:
                 reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
         else:
-            states_to_project = projection_info['states']
-            reduced_basis = projection_info['reduced basis']
+            #states_to_project = projection_info['states']
+            #reduced_basis = projection_info['reduced basis']
             unwanted_state_indices = [basis.states.index(state) for state in states_to_project] 
             computational_indices = [i for i in range(len(basis.states)) if i not in unwanted_state_indices] 
 
@@ -324,14 +339,14 @@ class Gate(Process):
         if lindbladian_time_independent:
             # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
             process_matrix = scipy.linalg.expm(lindbladian.matrix_function(0) * duration)
-            if projection_info:
+            if projection:
                process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
 
         elif lindbladian_commutes_at_later_times:
             # Lindbladian is time dependent but commutes with itself at later times: Integrate the lindbladian matrix forward in time from t = 0 to t = duration            
             L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
             process_matrix = scipy.linalg.expm(L_integral)
-            if projection_info:
+            if projection:
                 process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
         else:
             # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
@@ -345,7 +360,7 @@ class Gate(Process):
                 # Projection does this redundantly by setting the appropriate parts to zero. But skipping t-evolution saves substantially on computation.
             for i, vector in enumerate(basis.vectors):
                 for j, vector_p in enumerate(basis.vectors):
-                    if projection_info is not None and ((i in unwanted_state_indices) or (j in unwanted_state_indices)):
+                    if projection and ((i in unwanted_state_indices) or (j in unwanted_state_indices)):
                         # Skip pure non-computational basis states, e.g. Rydberg or Raman states  
                         pass 
                     else:
@@ -357,7 +372,7 @@ class Gate(Process):
                         else:
                             final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
 
-                        if projection_info: 
+                        if projection: 
                             final_state = final_state.project_out_states(states_to_project, reduced_basis) 
                         # Supervector of final state gives you 1 column of the process matrix  
                         process_matrix_columns.append(final_state.supervector) 
