@@ -31,32 +31,13 @@ from ionsim.operator import Operator
 from ionsim.ionsim_error import IonSimError
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
-
-#def parse_projection_input(projection_input: dict | None=None, full_basis: StandardBasis | None=None):
 def _parse_projection_input(reduced_basis: StandardBasis | None=None, states_to_project: list[EnergyEigenstate] | None=None, 
                             levels_to_project: list[EnergyLevel] | None = None, full_basis: StandardBasis | None=None) -> tuple:
     """ Function to parse user input for projection information. """
     # Parse for states or levels to project 
- #    match_states = [key for key in projection_input.keys() if 'states' in key]
- #    states_to_project = None
- #    if len(match_states) > 0: 
- #        if len(match_states) > 1:
- #            raise IonSimError(f"More than one key with 'states' found: {match_states}")
- #        states_to_project = projection_input[match_states[0]]
-
-    #if states_to_project is None or states_to_project == []: 
-    #    if levels_to_project is None or levels_to_project == []:
     if not states_to_project: 
         if not levels_to_project: 
             raise IonSimError("Projection dictionary must include levels or states to project out. Received keys: {projection_input.keys()}") 
-
- #        match_levels = [key for key in projection_input.keys() if 'levels' in key]
- #        if len(match_levels) == 0 and len(match_states) == 0: 
- #            raise IonSimError("Projection dictionary must include levels or states to project out. Received keys: {projection_input.keys()}") 
- #        else:
- #            if len(match_levels) > 1:
- #                raise IonSimError(f"More than one key with 'levels' found: {match_levels}")
-        #levels_to_project = projection_input[match_levels[0]]
 
         # Extract states to project from levels 
         states_to_project = []
@@ -68,23 +49,12 @@ def _parse_projection_input(reduced_basis: StandardBasis | None=None, states_to_
                 if l in s.components:
                     states_to_project.append(s)
 
-    # build basis or retrieve 
-    #basis_matching = [key for key in projection_input.keys() if 'basis' in key]
-    #if len(basis_matching) == 0: # basis not found  
+    # Build basis or retrieve 
     if reduced_basis is None:
         # Build reduced basis from full basis + projection states 
         if full_basis is None:
             raise IonSimError(f"Specify full Hilbert space basis if not providing reduced basis.")
         reduced_basis = full_basis.build_subspace_basis_from_states_to_project(states_to_project)
- #    else:
- # #        if len(basis_matching) > 1:
- # #            raise IonSimError(f"More than one key with 'basis' found: {matching}")
- #        reduced_basis = projection_input[basis_matching[0]]
-
- #    projection_info = {}
- #    projection_info['reduced basis'] = reduced_basis 
- #    projection_info['states'] = states_to_project 
- #    return projection_info
     return (reduced_basis, states_to_project)
 
 
@@ -175,7 +145,6 @@ class Gate(Process):
             reduced_basis: StandardBasis | None=None, 
             states_to_project: list[EnergyEigenstate] | None=None,
             levels_to_project: list[EnergyLevel] | None=None,
-            #projection_input: dict[StandardBasis, list[EnergyEigenstate]] | None=None, 
             ode_solver: str = 'odeintz',
             **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
         """ Build a gate by solving the Schrodinger equation for a complete set of initial states.
@@ -206,8 +175,6 @@ class Gate(Process):
             else:
                 reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
         else:
-            #states_to_project = projection_info['states']
-            #reduced_basis = projection_info['reduced basis']
             unwanted_state_indices = [basis.states.index(state) for state in states_to_project] 
             computational_indices = [i for i in range(len(basis.states)) if i not in unwanted_state_indices] 
             if dofs_to_trace_out is not None:
@@ -275,7 +242,6 @@ class Gate(Process):
                 else:
                     if dofs_to_trace_out is None:
                         # Set the reduced basis to the new basis specified by the projection 
-                        #reduced_basis = basis.build_subspace_basis_from_states_to_project(projection_info['states to project out']) 
                         spin_state = State.from_density_matrix(reduced_basis, density_matrix)
                     else:
                         spin_state = State.from_density_matrix(
@@ -316,19 +282,14 @@ class Gate(Process):
         if reduced_basis or states_to_project or levels_to_project: 
             reduced_basis, states_to_project = _parse_projection_input(reduced_basis, states_to_project, levels_to_project, basis)
             projection = True
-
     
         # Check if building the gate requires projection or tracing out from a larger Hilbert space  
-        #projection_info = parse_projection_input(projection_input, basis)
-        #if projection_info is None:
         if not projection:
             if dofs_to_trace_out is None:
                 reduced_basis = basis
             else:
                 reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
         else:
-            #states_to_project = projection_info['states']
-            #reduced_basis = projection_info['reduced basis']
             unwanted_state_indices = [basis.states.index(state) for state in states_to_project] 
             computational_indices = [i for i in range(len(basis.states)) if i not in unwanted_state_indices] 
 
