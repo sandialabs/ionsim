@@ -285,7 +285,7 @@ class PauliProductBasis(Basis):
             raise IonSimError(f"Label {label} not in Pauli product basis levels. Expected element in {self.vector_labels}")
         return self.vector_labels.index(label)
 
-    def vector_for_label(self, label:str) -> Vector: 
+    def vector_from_label(self, label:str) -> Vector: 
         return self.vectors[self.index_of_label(label)]
 
     def label_of_pauli_transfer_matrix_element(self, i: int, j: int):

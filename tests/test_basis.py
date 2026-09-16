@@ -180,7 +180,7 @@ class TestBasis(unittest.TestCase):
             with self.subTest(expected=expected, actual=actual):
                 assert_array_close(expected, actual)
 
-        assert_array_close(vecs_as_dict['X'], Pauli_1Q_basis.vector_for_label('X'))
+        assert_array_close(vecs_as_dict['X'], Pauli_1Q_basis.vector_from_label('X'))
 
     def test_2Q_pauli_product_basis(self):
         """ Test pauli product basis methods """ 
