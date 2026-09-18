@@ -425,7 +425,6 @@ class GSTCircuitPlanner:
         circuit_pm_function = ism_circuit.process_matrix_function 
 
         # Test outcome probability function  
-        # TODO: include SNR? 
         if len(outcome_operators) == 1:
             prob_function = ism_circuit.build_outcome_probabilities_function(initial_state, outcome_operators[0])
             prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
@@ -449,6 +448,7 @@ class GSTCircuitPlanner:
             raise ValueError("Gate models must be provided for sensitivity analysis.")
 
         # Generate ionsim circuit model 
+        # TODO: Take advantage of caching for total FI calculation 
         ism_gates = []
         for gate in circuit.expanded_gates:
             pm_function = self.gate_models[gate]
@@ -465,11 +465,16 @@ class GSTCircuitPlanner:
             
         ism_circuit = Circuit.from_gates(ism_gates)
         circuit_pm_function = ism_circuit.process_matrix_function 
+        # Parse args for circuit process matrix function and ensure matching:
+        possible_args = list(inspect.signature(circuit_pm_function).parameters.keys())
+        input_args = {}
+        for p in circuit_parameters.keys():
+            if p in possible_args:
+                input_args[p] = circuit_parameters[p]  
 
         if len(outcome_operators) == 1:
             prob_function = ism_circuit.build_outcome_probabilities_function(initial_state, list(outcome_operators.values())[0])
             prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
-            eps = 1e-4
             hessian = circuit_pm_function.hessian(prob_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
             fisher_info = self.compute_fisher_information(prob, prob_gradients, N)
             return fisher_info
@@ -477,8 +482,10 @@ class GSTCircuitPlanner:
             if len(outcome_operators) == 0:
                 raise IonSimError(f"You must provide at least one outcome operator. Received {len(outcome_operators)}.")
             probs_function = ism_circuit.build_outcome_probabilities_function(initial_state, outcome_operators.values())
-            prob, prob_gradients = circuit_pm_function.jacobian(probs_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
-            hessian = circuit_pm_function.hessian_per_outcome(probs_function, wrt = list(circuit_parameters.keys()), outcome_labels = outcome_operators.keys(), **circuit_parameters) 
+            prob, prob_gradients = circuit_pm_function.jacobian(probs_function, wrt = list(input_args.keys()), **input_args) 
+            hessian = circuit_pm_function.hessian_per_outcome(probs_function, wrt = list(input_args.keys()), outcome_labels = outcome_operators.keys(), **input_args) 
+            #prob, prob_gradients = circuit_pm_function.jacobian(probs_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
+            #hessian = circuit_pm_function.hessian_per_outcome(probs_function, wrt = list(circuit_parameters.keys()), outcome_labels = outcome_operators.keys(), **circuit_parameters) 
             fisher_info = self.compute_fisher_information(prob, prob_gradients, hessian, N)
             return fisher_info
 

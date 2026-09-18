@@ -28,6 +28,7 @@ import inspect
 import functools
 from functools import reduce, wraps 
 from icecream import ic
+from scipy.integrate import quad_vec
 
 @dataclass(frozen=True, eq=False)
 class Process(ABC): 
@@ -473,7 +474,7 @@ class Circuit_Process_Matrix_Function_Helper():
             - requires jax, jaxlib  
     """ 
 
-    def __init__(self, gate_models: Sequence[Callable], separator: str = "__", jax_native: bool=False, forward_diff_eps: float = 1e-6):
+    def __init__(self, gate_models: Sequence[Callable], separator: str = "__", jax_native: bool=False, forward_diff_eps: float = 1e-7):
         """ 
             gate_models: a sequence to represent the order of gates applied in the circuit 
 
@@ -689,7 +690,7 @@ class Circuit_Process_Matrix_Function_Helper():
 
     # TODO: code _is_black_box_param
 
-    def hessian(self, wrapped_scalar_fn: Callable, wrt: list[str], fd_eps: float=1e-4, **kwargs):
+    def hessian(self, wrapped_scalar_fn: Callable, wrt: list[str], fd_eps: float=1e-7, **kwargs):
         """ 2nd derivative of the scalar fxns """  
         scalar_function = wrapped_scalar_fn.scalar_function
         unknown = set(wrt) - set(self.__signature__.parameters)
@@ -773,7 +774,7 @@ class Circuit_Process_Matrix_Function_Helper():
 
 
 ### Helper function to interface with jax library; converting a complicated python callable to jax differentiable 
-def make_matrix_function_jax_differentiable(function: Callable, eps: float = 1e-6, diff_params: list[str] = None) -> Callable:
+def make_matrix_function_jax_differentiable(function: Callable, eps: float = 1e-7, diff_params: list[str] = None) -> Callable:
     """ Wraps an arbitrarily complicated python function mapping named parameters to a matrix into a 
         JAX-differentiable function via jax.custom_jvp with a central finite-difference backward rule. 
 
