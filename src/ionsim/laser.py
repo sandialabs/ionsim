@@ -83,7 +83,6 @@ class PlaneWave(BeamProfile):
         return 1. + 0j
 
 
-
 # TODO: add a beam profile constructor by name, e.g. 'gaussian' 
 # Change name to just "Gaussian" (rm "beam")
 @dataclass(frozen=True, eq=False)
@@ -129,6 +128,7 @@ class Laser():
     beam_profile: BeamProfile 
     power: float
     modulation_functions: dict | None=None #e.g. {'phase': Callable, 'amplitude' : Callable, 'frequency' : Callable}
+    # TODO: Can set propagation vector from polarization 
 
     def __post_init__(self):
         # Safety checks on propagation vector  
@@ -181,12 +181,12 @@ class Laser():
         return cls.from_frequency(frequency, propagation_vector, phase, polarization, profile, power, modulation_functions) 
 
 
-    @property
-    def peak_field_amplitude(self) -> float:
-        """ Peak E0 [V/m], e.g. at beam focus for a Gaussian beam """ 
-        if isinstance(self.profile, PlaneWave):
-            return self.profile.peak_field(self.power) 
-        return self.profile.peak_field(self.power)
+ #    @property
+ #    def peak_field_amplitude(self) -> float:
+ #        """ Peak E0 [V/m], e.g. at beam focus for a Gaussian beam """ 
+ #        if isinstance(self.profile, PlaneWave):
+ #            return self.profile.peak_field(self.power) 
+ #        return self.profile.peak_field(self.power)
 
     @property
     def peak_intensity(self) -> float:
@@ -208,13 +208,19 @@ class Laser():
     def wavevector(self):
         return self.propagation_unit_vector * np.pi * 2. / self.wavelength
         
-
     ## Helper methods for calculations / AMO simulations  
-    def detuning_from(self, transition_frequency: float) -> float:
+    def detuning_from_transition_frequency(self, transition_frequency: float) -> float:
         """ Computes detuning defined as laser_frequency - transition_frequency in rad/s of the laser from a transition frequency in rad/s """ 
+        # TODO: ensure detuning convention is set to what we want  
         return self.frequency - transition_frequency
-    
 
+    def detuning_from_level_transition(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel) -> float:
+        """ Computes detuning defined as laser_frequency - transition_frequency in rad/s of the laser from a transition frequency in rad/s """ 
+        transition_frequency = excited_level.energy - ground_level.energy
+        if transition_frequency <= 0.:
+            raise IonSimError(f"Excited level is lower energy than ground level input. Transition frequency is negative or zero: {transition_frequency}")
+        return self.detuning_from_transition_frequency(transition_frequency) 
+    
     @property
     def modulation_function(self) -> Callable: 
         """ Returns the laser's modulation function f(t) of the laser profile """ 
@@ -229,7 +235,7 @@ class Laser():
         if self.modulation_functions.keys() != allowed_keys:
             raise ValueError("Modulation functions should be specified as callables for the allowed keys: {allowed_keys}. Received keys {self.modulation_functions.keys()} instead.")
 
- #                    if self.mod_functions is not None and None not in self.mod_functions.values():
+        # if self.mod_functions is not None and None not in self.mod_functions.values():
         # Unpack modulation functions and check which exist 
         amplitude_mod = self.modulation_functions['amplitude']
         phase_mod = self.modulation_functions['phase']
@@ -255,10 +261,10 @@ class Laser():
         return mod_function
 
 
-
     # Method for IA laser  
     def build_individual_atom_laser_coupling_operators(self, basis: Basis, addressed_atom: AtomicStructure, ground_levels: list[AtomicInternalEnergyLevel], 
-                                                        excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int): 
+                                                        excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int) -> list[CouplingOperator]: 
+        """ Builds a list of coupling operators corresponding to |g> <-> |e> couplings from laser light upon a particular atom. """
         if addressed_atom not in basis.atomic_structure_DOFs:
             raise ValueError(f"Addressed atom {addressed_atom} has not been included in the basis degrees of freedom.") 
 
@@ -347,37 +353,12 @@ class Laser():
                                             atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int) -> Matrix: 
         """ Builds a coupling matrix representing a laser light-atom coupling """ 
         rabi_frequency = compute_rabi_frequency_between_atomic_levels(ground_level, excited_level, self.polarization.spherical_components(), 
-                                                                        atomic_levels, multipole_order) 
- #        if ground_level not in atomic_levels:
- #            raise ValueError(f"Ground level {ground_level.name} not found in the atomic structure {atomic_levels}.")
- #        if excited_level not in atomic_levels:
- #            raise ValueError(f"Excited level {excited_level.name} not found in the atomic structure {atomic_levels}.")
- #
- #        q = list(np.arange(-multipole_order, multipole_order+1))
- #        if multipole_order != 1 and multipole_order != 2:
- #            raise ValueError(f"Multipole order be either 1 or 2, corresponding to E1 dipole or E2 quadrupole transitions. Received {multipole_order}.")
- #
- #        # Estimate rabi frequency from laser polarization and multipole amplitude components  
- #        # Compute dot product w.r.t q of spherical polarization components and multipole amplitude components 
- #        coupling_amplitudes = {}
- #        for _q in q: 
- #            coupling_amplitudes[_q] = compute_multipole_amplitude(ground_level, excited_level, multipole_order, _q) 
- #        
- #        # Compute dot product with laser field polarization vector 
- #        # TODO: should we use vdot? 
- #        # TODO: do we need hbar?  
- #        # TODO: do we normalize the spherical polarization components? 
- #        polarization = self.polarization.spherical_components()
- #        rabi_frequency = 0. + 1j*0.
- #        rabi_frequency = np.abs(2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values())))) 
-        #rabi_frequency = 2. * self.peak_electric_field_magnitude * np.dot(polarization, np.array(list(coupling_amplitudes.values()))) / const.hbar 
-        #print(f"Rabi frequency: {rabi_frequency}")
-    
+                                                                        atomic_levels, multipole_order, self.peak_electric_field_magnitude) 
         # Build coupling operator matrix: 
         single_atom_matrix_size = len(atomic_levels)
         coupling_matrix = np.zeros((single_atom_matrix_size,single_atom_matrix_size), dtype=complex) 
 
-        if rabi_frequency < SMALLEST_ENERGY_SCALE: 
+        if np.abs(rabi_frequency) < SMALLEST_ENERGY_SCALE: 
             return coupling_matrix
         
         ground_index = atomic_levels.index(ground_level) 
@@ -389,7 +370,6 @@ class Laser():
         coupling_matrix[excited_index, ground_index] = 0.5 * rabi_frequency * np.exp(1j*self.phase) 
         coupling_matrix[ground_index, excited_index] = np.conj(coupling_matrix[excited_index,ground_index]) 
         return coupling_matrix
-
 
     #==============================================================================================
     #==============================================================================================

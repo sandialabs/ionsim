@@ -33,7 +33,7 @@ levels:
 
   - term_symbol: 'P1' # 3P_1: l = 1; j = 1
     coupling_scheme: 'ls'
-    fine_energy: 539.1950683453238e+12 # Hz 
+    fine_energy: 539.3884268412e+12 # Hz 
     hyperfine_A: 3.95785e+9 # Hz
     lifetime: 872.6e-9 # s 
     n: 6

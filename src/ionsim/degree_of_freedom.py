@@ -34,6 +34,7 @@ class DegreeOfFreedom(ABC):
 class AtomicStructure(DegreeOfFreedom):
     """An atomic structure object, containing atomic internal energy levels corresponding to angular momentum eigenstates.""" 
     energy_levels: list[AtomicInternalEnergyLevel]
+    # TODO: Take in quantization axis or magnetic field as a vector to set the quantization axis 
 
     @classmethod
     def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None, 
