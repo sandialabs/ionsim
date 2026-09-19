@@ -128,7 +128,7 @@ class Laser():
     beam_profile: BeamProfile 
     power: float
     modulation_functions: dict | None=None #e.g. {'phase': Callable, 'amplitude' : Callable, 'frequency' : Callable}
-    # TODO: Can set propagation vector from polarization 
+    # TODO: Can set propagation vector from polarization, or should we allow specification here and check compatibility with polarization?  
 
     def __post_init__(self):
         # Safety checks on propagation vector  
@@ -142,7 +142,7 @@ class Laser():
         if np.abs(np.linalg.norm(self.propagation_unit_vector) - 1.) > NUMERICAL_ERROR_THRESHOLD:
             raise IonSimError(f"Propagation unit vector is not normalized! Norm = {np.linalg.norm(self.propagation_unit_vector)}")
 
-        if np.abs(np.dot(self.polarization.vector,self.propagation_unit_vector)) > NUMERICAL_ERROR_THRESHOLD :
+        if np.abs(np.dot(self.polarization.vector, self.propagation_unit_vector)) > NUMERICAL_ERROR_THRESHOLD :
             raise ValueError('Laser polarization is not perpendicular to k vector')
 
         # Check frequency - wavelength relationship 
