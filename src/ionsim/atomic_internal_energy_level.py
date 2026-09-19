@@ -270,6 +270,7 @@ def compute_hyperfine_clebsch_gordan_coefficient(ground_level: AtomicInternalEne
 
 def compute_rabi_frequency_between_atomic_levels(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, polarization_components: Vector, 
                                             atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int, peak_E0_amplitude: float) -> complex | float:
+    """ Computes the Rabi frequency between a ground level |g> and an excited level |e>, given polarization components and selection rules. """  
     return peak_E0_amplitude * compute_coupling_amplitude_between_atomic_levels(ground_level, excited_level, polarization_components, atomic_levels, multipole_order)
 
 
@@ -280,6 +281,9 @@ def compute_coupling_amplitude_between_atomic_levels(ground_level: AtomicInterna
         Returns Omega/E0, the Rabi frequency up to the E_0 electric field amplitude scaling. 
 
     """  
+    if multipole_order != 1:
+        raise NotImplementedError(f"Only dipole couplings are currently implemented. Set multipole order = 1.")
+
     if ground_level not in atomic_levels:
         raise ValueError(f"Ground level {ground_level.name} not found in the atomic structure {atomic_levels}.")
     if excited_level not in atomic_levels:
@@ -297,11 +301,9 @@ def compute_coupling_amplitude_between_atomic_levels(ground_level: AtomicInterna
     
     # Compute dot product with laser field polarization vector 
     # TODO: should we use vdot? 
-    # TODO: do we need hbar?  
     # TODO: do we normalize the spherical polarization components? 
+    scientific_consts = const.e * const.value('Bohr radius') / const.hbar # from dipole moment and definition of Rabi frequency from electric dipole operator 
     coupling = 0. + 1j*0.
-    #coupling = 2.*np.dot(polarization_components, np.array(list(coupling_amplitudes.values())))
-    scientific_consts = const.e * const.value('Bohr radius') / const.hbar
     coupling = 2.*np.dot(polarization_components, np.array(list(coupling_amplitudes.values()))) * scientific_consts 
-    #print(f"Rabi frequency: {coupling}")
+    # TODO: Update for multipole 
     return coupling 
