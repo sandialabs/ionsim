@@ -196,7 +196,6 @@ class Laser():
     def propagation_unit_vector(self):
         return _unit_vector(self.propagation_vector)
 
-
     @property
     def wavevector(self):
         return self.propagation_unit_vector * np.pi * 2. / self.wavelength
@@ -256,7 +255,7 @@ class Laser():
 
     # Method for IA laser  
     def build_individual_atom_laser_coupling_operators(self, basis: Basis, addressed_atom: AtomicStructure, ground_levels: list[AtomicInternalEnergyLevel], 
-                                                        excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int) -> list[CouplingOperator]: 
+                                                        excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift: float=0.) -> list[CouplingOperator]: 
         """ Builds a list of coupling operators corresponding to |g> <-> |e> couplings from laser light upon a particular atom. """
         if addressed_atom not in basis.atomic_structure_DOFs:
             raise ValueError(f"Addressed atom {addressed_atom} has not been included in the basis degrees of freedom.") 
@@ -283,24 +282,12 @@ class Laser():
                     continue 
 
                 enlarged_matrix = basis.enlarge_matrix(coupling_matrix, [addressed_atom]) 
-                coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, self.frequency, modulation_function = self.modulation_function))
+                coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, self.frequency + frequency_shift, modulation_function = self.modulation_function))
 
         return coupling_operators 
 
- #    def build_all_atom_laser_coupling_operators(self, basis: Basis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int): 
- #
-        # Find which atoms are the same, handle each list separately;
-        # within each list, check if level structures are the same
-
-        # If all atoms are the same, user only needs to specify the ground levels and excited levels for that atom since all structures are the same 
-        # If atoms are different, user needs to specify a dictionary for which ground - excited couplings they want for each atom. 
-
- #        atomic_DOFs = basis.atomic_structure_DOFs
- #        atomic_species = [atom.species for atom in atomic_DOFs]
- #        num_unique_species = 1
-
     def build_laser_coupling_operators_multiple_atoms(self, basis: Basis, atom_DOFs: list[AtomicStructure], ground_levels: list[AtomicInternalEnergyLevel], 
-                                        excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, all_atoms_are_same: bool = True) -> list[Operator]: 
+                                        excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift: float=0., all_atoms_are_same: bool = True) -> list[Operator]: 
         """ Builds light-atom coupling operators for all atoms in the basis using AMO physics details for requested ground levels and excited levels via Atomic Structure details """ 
         # TODO: Generalize for varied-species atom ensembles 
         coupling_operators = []
@@ -327,12 +314,12 @@ class Laser():
                     mod_function = self.modulation_function 
                     if not all_atoms_are_same:
                         enlarged_matrix = basis.enlarge_matrix(coupling_matrix, [atom]) 
-                        coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, self.frequency, modulation_function=mod_function))
+                        coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, self.frequency + frequency_shift, modulation_function=mod_function))
                     else:
                         enlarged_coupling_matrices = [basis.enlarge_matrix(coupling_matrix, [atom]) for atom in basis.atomic_structure_DOFs]
                         coupling_matrices = [large_matrix for large_matrix in enlarged_coupling_matrices] 
                         for matrix in coupling_matrices:
-                            coupling_operators.append(CouplingOperator.from_matrix(basis, matrix, self.frequency, modulation_function=mod_function))
+                            coupling_operators.append(CouplingOperator.from_matrix(basis, matrix, self.frequency + frequency_shift, modulation_function=mod_function))
 
             # Break from the loop if all the Atomic Structure DOFs are the same 
             if all_atoms_are_same:
@@ -340,8 +327,6 @@ class Laser():
 
         return coupling_operators 
 
-
-    # TODO: Naming, remove "ge"? more readable but less precisely informative  
     def build_atom_laser_ge_coupling_matrix(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, 
                                             atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int) -> Matrix: 
         """ Builds a coupling matrix representing a laser light-atom coupling """ 
