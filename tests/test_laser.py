@@ -40,7 +40,6 @@ class TestProcess(unittest.TestCase):
         phase = np.pi 
         # Create polarization 
         laser_polarization = Polarization.circular(propagation_vector, '+')
-        #laser_polarization = Polarization.linear(propagation_vector, angle=np.pi/2.)
 
         # Create Gaussian beam profile  
         wavelength = 355*1E-9 # nm -> meters 
@@ -51,7 +50,6 @@ class TestProcess(unittest.TestCase):
         wavelength_laser_c = 556*1E-9 # nm -> meters
         laser_c_power = 1e-3 # Watt 
         laser_c_waist = (1e-3)/2 # m 
-        #laser_c_polarization = Polarization.circular(propagation_vector, '+')
         laser_c_polarization = Polarization.linear(propagation_vector, angle=0.)
         phase = np.pi
         self.laser_c = Laser.gaussian_from_wavelength(wavelength_laser_c, laser_c_power, laser_c_waist, propagation_vector, laser_c_polarization, phase) 
@@ -62,11 +60,8 @@ class TestProcess(unittest.TestCase):
         self.assertAlmostEqual(self.laser_c.peak_electric_field_magnitude*1E-3, 1.3851612653205, places=10)
         self.assertAlmostEqual(self.laser_c.beam_profile.peak_electric_field_magnitude(laser_c_power)*1E-3, 1.3851612653205, places=10)
 
-
-
     def test_laser_coupling_builder(self):
         """Test the process fidelity of the extra noisy gate."""
-        print(f"Testing laser coupling builder operations and classes")
         # Test building coupling operators between 
         ground_levels = [self.atom_a.energy_levels[0]] 
         excited_levels = [*self.atom_a.energy_levels[1:]] 
@@ -97,7 +92,6 @@ class TestProcess(unittest.TestCase):
 
     def test_1S0_3P1_transition_coupling_from_laser(self):
         """ Following the reference https://arxiv.org/pdf/2509.04416v1, testing rabi frequency for 556 nm laser on 3P1 transition"""
-        print(f"Testing laser coupling building for neutral Yb171")
         TPI = 2.*np.pi
         ground_levels = [self.atom_c.energy_levels[0]] 
         excited_levels = [self.atom_c.energy_levels[1]] 
@@ -119,22 +113,6 @@ class TestProcess(unittest.TestCase):
         dipole_factor = 0.5398 # Table 10 of reference 
         rabi_frequency = dipole_factor * atom_c_coupling_operators[0].couplings[0].strength/TPI/1E6
         self.assertAlmostEqual(np.abs(rabi_frequency), 3.905827783900461, places = 8) 
- #        print(len(atom_c_coupling_operators))
- #        for op in atom_c_coupling_operators:
- #            print(f"Coupling operator contains {len(op.couplings)} couplings.")
- #            for coupling in op.couplings:
- #                print(f"Coupling between {coupling.row_state.name} and {coupling.column_state.name}.")
- #                print(f"Strength: {coupling.strength} [rad/s]\n")
- #                print(f"Strength: {coupling.strength/(2*np.pi*1E6)} [MHz]\n")
- #            print()
-
- #        self.assertEqual(len(atom_a_coupling_operators), 0)
- #
- #        ground_levels = [self.atom_b.energy_levels[0]] 
- #        excited_levels = [*self.atom_b.energy_levels[1:]] 
- #        atom_b_coupling_operators = self.laser.build_individual_atom_laser_coupling_operators(self.basis, self.atom_b, ground_levels, excited_levels, 1) 
-        
-        
 
         
         
