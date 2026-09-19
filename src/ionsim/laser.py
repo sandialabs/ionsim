@@ -180,24 +180,17 @@ class Laser():
         profile = Gaussian(waist, focus, wavelength)
         return cls.from_frequency(frequency, propagation_vector, phase, polarization, profile, power, modulation_functions) 
 
-
- #    @property
- #    def peak_field_amplitude(self) -> float:
- #        """ Peak E0 [V/m], e.g. at beam focus for a Gaussian beam """ 
- #        if isinstance(self.profile, PlaneWave):
- #            return self.profile.peak_field(self.power) 
- #        return self.profile.peak_field(self.power)
+    @property
+    def peak_electric_field_magnitude(self) -> float:
+        """ Peak electric field magnitude E_0 [V/m] """  
+        return self.beam_profile.peak_electric_field_magnitude(self.power) 
 
     @property
     def peak_intensity(self) -> float:
-        """ Peak intensity [W/m^2] """  
+        """ Peak intensity I_0 [W/m^2] """  
         # Impedence of free space is Z0 = 1/(epsilon0 x speed of light)
-        E0 = self.peak_field_amplitude
+        E0 = self.peak_electric_field_amplitude
         return 0.5 * const.c * const.epsilon_0 * (E0**2)
-
-    @property
-    def peak_electric_field_magnitude(self) -> float:
-        return self.beam_profile.peak_electric_field_magnitude(self.power) 
 
     @property 
     def propagation_unit_vector(self):
