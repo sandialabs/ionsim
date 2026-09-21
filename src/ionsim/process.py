@@ -469,6 +469,7 @@ def _parse_projection_input(reduced_basis: StandardBasis | None=None, states_to_
 
 def _determine_projection_components(reduced_basis: StandardBasis | None=None, states_to_project: list[EnergyEigenstate] | None=None, 
                                     levels_to_project: list[EnergyLevel] | None=None, basis: StandardBasis | None=None, dofs_to_trace_out: list[DegreeOfFreedom] | None = None):
+    """ Organizes the projection input arguments/components. Calls a parsing function to ensure all the necessary information is included."""
     projection = reduced_basis or states_to_project or levels_to_project
     if projection:
         reduced_basis, states_to_project = _parse_projection_input(reduced_basis, states_to_project, levels_to_project, basis)
