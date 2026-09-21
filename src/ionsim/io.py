@@ -7,7 +7,6 @@ from ionsim.custom_types import AnyMatrix
 """ Module for input/output, read/write functionality with common data used in IonSim """ 
 # Opening the file with 'w' allows reading and writing and
 # truncates existing data. See https://docs.h5py.org/en/stable/high/file.html
-
 def write_results_to_file(data_filename: str, results: dict, mode: str='w', attributes: dict=None):
     """ Write a set of results to a data file """
     with h5py.File(data_filename, mode) as datafile: 
