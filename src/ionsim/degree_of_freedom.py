@@ -182,7 +182,12 @@ class AtomicStructure(DegreeOfFreedom):
     @staticmethod
     def compute_l(term_symbol: str):
         """Compute the total electronic orbital angular momentum "l" from a term symbol."""
-        return {'S': 0, 'P': 1, 'D': 2, 'F': 3}[term_symbol[0]]
+        orbitals = {'S': 0, 'P': 1, 'D': 2, 'F': 3}
+        match = [k for k in orbitals if k in term_symbol]
+        if not len(match) == 1: 
+            raise IonSimError(f"Computing L from the term symbol requires one corresponding letter: {orbitals}. Found {len(match)} matches from list: {match}, should be only 1 match.")    
+        return {'S': 0, 'P': 1, 'D': 2, 'F': 3}[match[0]]
+        #return {'S': 0, 'P': 1, 'D': 2, 'F': 3}[term_symbol[0]]
 
     @staticmethod
     def compute_k(term_symbol: str):
