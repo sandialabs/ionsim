@@ -17,6 +17,20 @@ from icecream import ic
 from ionsim.ionsim_error import IonSimError
 from ionsim.energy_level import EnergyLevel
 
+def check_n_from_term_symbol(term_symbol: str, n_expected: int):
+    """ Checks whether a term symbol violates internal consistency """ 
+    # Principal quantum number n is expected before a space in the term symbol
+    spaces = term_symbol.count(' ') 
+    if spaces > 1:
+        raise IonSimError(f"Term symbol should only have 1 space, separating principal quantum number from electronic manifold part of the term symbol.")    
+    if spaces == 0:
+        return True # no n specified 
+    assert spaces == 1
+    # Parse n from term symbol and check against expectation 
+    n_parsed = int(term_symbol[0:term_symbol.find(' ')])
+    if n_parsed == n_expected:
+        return True
+
 @dataclass(frozen=True, eq=False)
 class AtomicInternalEnergyLevel(EnergyLevel):
     """An internal energy level of an atom, i.e., an energy eigenstate of the electronic and nuclear degrees of freedom."""
@@ -26,6 +40,9 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     fine_energy: float 
     hyperfine_A: float
     alias: str | None = field(default=None, kw_only=True)
+
+    def __post_init__(self):
+        check_n_from_term_symbol(self.term_symbol, self.n)
 
     @property
     @abstractmethod
@@ -53,6 +70,7 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     def energy(self):
         # Total energy: bare energy + external shifts (e.g. Zeeman, light shifts)
         return self.bare_energy + self.external_energy_shift
+
 
 @dataclass(frozen=True, eq=False)
 class LSFineLevel(AtomicInternalEnergyLevel): 
