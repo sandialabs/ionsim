@@ -30,6 +30,8 @@ def check_n_from_term_symbol(term_symbol: str, n_expected: int):
     n_parsed = int(term_symbol[0:term_symbol.find(' ')])
     if n_parsed == n_expected:
         return True
+    else:
+        raise IonSimError(f"Term symbol is inconsistent with principal quantum number specification. Term symbol gave {n_parsed}, expected {n_expected}.")    
 
 @dataclass(frozen=True, eq=False)
 class AtomicInternalEnergyLevel(EnergyLevel):
@@ -42,7 +44,8 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     alias: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self):
-        check_n_from_term_symbol(self.term_symbol, self.n)
+        if not check_n_from_term_symbol(self.term_symbol, self.n):
+            raise IonSimError(f"Term symbol is inconsistent with principal quantum number specification. Term symbol gave {n_parsed}, expected {n_expected}.")    
 
     @property
     @abstractmethod
@@ -83,6 +86,8 @@ class LSFineLevel(AtomicInternalEnergyLevel):
     branching_ratios: dict[str, float] | None=None 
     hyperfine_B: float | None=None
 
+    def __post_init__(self):
+        super().__post_init__()
 
     @property
     def i(self):
@@ -115,6 +120,9 @@ class LSHyperfineLevel(AtomicInternalEnergyLevel):
     branching_ratios: dict[str, float] | None=None 
     hyperfine_B: float | None=None
 
+    def __post_init__(self):
+        super().__post_init__()
+
     @property
     def coupling_scheme(self):
         """The coupling scheme for the electronic orbital and spin angular momenta."""
@@ -138,6 +146,8 @@ class J1L2FineLevel(AtomicInternalEnergyLevel):
     branching_ratios: dict[str, float] | None=None 
     hyperfine_B: float | None=None
 
+    def __post_init__(self):
+        super().__post_init__()
 
     @property
     def i(self):
@@ -170,6 +180,8 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
     branching_ratios: dict[str, float] | None = None 
     hyperfine_B: float | None=None
 
+    def __post_init__(self):
+        super().__post_init__()
 
     @property
     def coupling_scheme(self):
