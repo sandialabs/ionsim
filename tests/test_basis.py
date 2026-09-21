@@ -11,7 +11,9 @@ import unittest
 import numpy as np
 from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.energy_level import EnergyEigenstate
-from ionsim.basis import StandardBasis, ZPauliBasis, XPauliBasis
+from ionsim.basis import StandardBasis, ZPauliBasis, XPauliBasis, PauliProductBasis
+from ionsim.named_operators import Pauli
+from ionsim.process import Gate
 from ionsim.testing import assert_array_close
 
 class TestBasis(unittest.TestCase):
@@ -20,6 +22,8 @@ class TestBasis(unittest.TestCase):
         """Set up the necessary objects for testing."""
         self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'], level_aliases=['0', '1'])
         self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'], level_aliases=['0', '1'])
+        self.spin_c = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2','P1/2'], level_names=['S1/2,0,0', 'S1/2,1,0', 'P1/2,1,0'], level_aliases=['0', '1', 'R'])
+        self.spin_d = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2','P1/2'], level_names=['S1/2,0,0', 'S1/2,1,0', 'P1/2,1,0'], level_aliases=['0', '1', 'R'])
         self.mode_0 = MotionalMode.from_frequency(frequency=3e6*2*np.pi, fock_dimension=3, level_aliases = ['Mode 0, n = ' + str(n) for n in range(3)])
         self.mode_1 = MotionalMode.from_frequency(frequency=4e6*2*np.pi, fock_dimension=2, level_aliases = ['Mode 1, n = ' + str(n) for n in range(2)])
 
@@ -129,6 +133,87 @@ class TestBasis(unittest.TestCase):
         for expected, actual in zip(expected_vectors, actual_vectors):
             with self.subTest(expected=expected, actual=actual):
                 assert_array_close(expected, actual)
+
+    def test_subspace_bases(self):
+        """ Test projection from 3-level ions to 2-level ions via 2 methods """ 
+        full_basis = StandardBasis([self.spin_c, self.spin_d])
+
+        # Test projection by specifying levels to project out. 
+        undesired_levels = [self.spin_c.energy_levels[2], self.spin_d.energy_levels[2]] # P1/2 level to project out        
+        reduced_basis = full_basis.build_subspace_basis_from_levels_to_project(undesired_levels)
+
+        # Test projection by specifying states          
+        states_to_project = []
+        for s in full_basis.states:
+            for l in undesired_levels:
+                if l in s.components:
+                    states_to_project.append(s)
+
+        reduced_basis_v2 = full_basis.build_subspace_basis_from_states_to_project(states_to_project)
+        for state1, state2 in zip(reduced_basis.states, reduced_basis_v2.states):
+            self.assertAlmostEqual(state1.energy, state2.energy, places=10) 
+            self.assertEqual(state1.name, state2.name)
+
+    def test_1Q_pauli_product_basis(self):
+        """ Test pauli product basis methods """ 
+        Pauli_1Q_basis = PauliProductBasis([self.spin_a]) 
+
+        actual_vectors = Pauli_1Q_basis.vectors
+        expected_vectors = [
+            np.array([1.0, 0.0, 0.0, 1.0]),
+            np.array([0.0, 1.0, 1.0, 0.0]),
+            np.array([0.0, 1j, -1j, 0.0]),
+            np.array([1.0, 0.0, 0.0, -1.0])
+        ]
+        normalization = 1./np.sqrt((2**1))
+        for v in expected_vectors:
+            v *= normalization
+
+        labels = Pauli.vector_as_string
+        vecs_as_dict = dict(zip(labels, expected_vectors))
+
+        # Test labels 
+        for l1, l2 in zip(labels, Pauli_1Q_basis.vector_labels):
+            self.assertEqual(l1, l2)
+
+        for expected, actual in zip(expected_vectors, actual_vectors):
+            with self.subTest(expected=expected, actual=actual):
+                assert_array_close(expected, actual)
+
+        assert_array_close(vecs_as_dict['X'], Pauli_1Q_basis.vector_from_label('X'))
+
+    def test_2Q_pauli_product_basis(self):
+        """ Test pauli product basis methods """ 
+        Pauli_2Q_basis = PauliProductBasis([self.spin_a, self.spin_b]) 
+        actual_vectors = Pauli_2Q_basis.vectors_with_labels
+
+        # Get reference 1-qubit operators, which are used to build N-qubit operators  
+        pauli_1Q = dict(zip(Pauli.vector_as_string, Pauli.vector)) 
+        
+        # Test a set of pauli operators
+        labels = ['II', 'YZ', 'YX', 'ZI', 'XX']
+        encodings = [
+            np.array([0, 0, 0, 0]),
+            np.array([1, 0, 1, 1]),
+            np.array([1, 1, 1, 0]),
+            np.array([0, 0, 1, 0]),
+            np.array([1, 1, 0, 0]),
+        ]
+        expected_encodings = dict(zip(labels, encodings))
+
+        normalization = 1./np.sqrt((2**2))
+
+        for l in labels:
+            q1 = l[0]
+            q2 = l[1]
+            expected = np.kron(pauli_1Q[q1], pauli_1Q[q2])
+            # Column-wise flattening 
+            expected = (expected.T).flatten() * normalization
+            assert_array_close(expected, actual_vectors[l])
+
+            # Test symplectic representation 
+            sympl = Pauli_2Q_basis.pauli_to_symplectic(l) 
+            assert_array_close(sympl, expected_encodings[l]) 
 
 if __name__ == '__main__':
     unittest.main()

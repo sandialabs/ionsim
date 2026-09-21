@@ -276,7 +276,6 @@ class GateInterpolator():
         """ Returns a function that returns a Gate object evaluated at grid parameter values. """
         # Build and return a general interpolating function for a Gate object  
         # Retrieve process matrix interpolating function --> should only compute this once. 
-        #process_matrix_interpolator = self.process_matrix_interpolator
         N_parameters = len(self.parameter_list)
 
         def _gate_interpolating_function(*args, **kwargs) -> Gate:

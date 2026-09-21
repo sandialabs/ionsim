@@ -134,7 +134,9 @@ class ZVODE(OdeSolver):
         """Solves the ODE."""
         if self.time_evals is None:
             num_steps = 3
+            time_evals = np.linspace(0., self.duration, num_steps)
         else:
+            time_evals = self.time_evals
             num_steps = len(self.time_evals)
             assert(self.time_evals[-1] == self.duration)
 
@@ -159,12 +161,11 @@ class ZVODE(OdeSolver):
         r = ode(schrodinger, jacobian)
         r.set_integrator('zvode', method='adams', with_jacobian=True, atol = self.atol, rtol = self.rtol, nsteps=self.nsteps) # use method='bdf' for stiff ode
         r.set_initial_value(initial_state, 0)
-        for k, t in enumerate(self.time_evals[1:], start=1):
+        for k, t in enumerate(time_evals[1:], start=1):
             r.integrate(t)
             intermediate_states += [r.y]
             if not r.successful():
                 raise RuntimeError(f"Integration failed at t={t}")
-
         return self.time_evals, intermediate_states
 
 # working version

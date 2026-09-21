@@ -195,7 +195,7 @@ class DissipatorSpontaneousEmission(Dissipator):
                             decay_operator = np.sqrt(decay_rate) * enlarged_lowering_matrix
                             lindblad_operators.append(CouplingOperator.from_matrix(basis, decay_operator, 0.))
                         else:
-                            enlarged_lowering_matrices = [basis.enlarge_matrix(lowering_matrix, [spin]) for spin in basis.spin_DOFs]
+                            enlarged_lowering_matrices = [basis.enlarge_matrix(lowering_matrix, [spin]) for spin in basis.atomic_structure_DOFs]
                             decay_operators = [large_matrix for large_matrix in enlarged_lowering_matrices] 
                             for decay_operator in decay_operators:
                                 lindblad_operators.append(CouplingOperator.from_matrix(basis, decay_operator, 0.))
