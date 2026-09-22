@@ -203,7 +203,6 @@ class Laser():
     ## Helper methods for calculations / AMO simulations  
     def detuning_from_transition_frequency(self, transition_frequency: float) -> float:
         """ Computes detuning defined as laser_frequency - transition_frequency in rad/s of the laser from a transition frequency in rad/s """ 
-        # TODO: ensure detuning convention is set to what we want  
         return self.frequency - transition_frequency
 
     def detuning_from_level_transition(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel) -> float:
@@ -773,20 +772,21 @@ class Laser():
     #==============================================================================================
 
 #TODO: Should we factor these methods out of this class since it may be used elsewhere in ionsim?
-def _spherical_basis_vectors(quantization_axis: Vector) -> Dict[int, Vector]:
+def _spherical_basis_vectors(quantization_axis: Vector) -> dict[int, Vector]:
+    """ Spherical basis vectors eps +1, 0, -1. See eq. 7.188 from "Quantum and Atom Optics by Daniel Steck""" 
     z = _unit_vector(quantization_axis)
     x, y = _perpendicular_basis(z)
-
     return {1: -(x + 1j*y)/np.sqrt(2.), 0: z.astype(complex), -1 : (x - 1j*y)/np.sqrt(2.)}
 
 
 def _project_spherical(v: Vector, quantization_axis: Vector) -> dict[int, complex]:
     """ Spherical components v_+1, v_0, v_-1 of a lab-frame vector "v", relative to the 
         quantization axis."""
-
     v = np.asarray(v, dtype=complex)
     sph_basis = _spherical_basis_vectors(quantization_axis) 
-    return {q: np.vdot(basis[q], vec) for q in (1, 0, -1)} 
+    # np.vdot(a,b) = sum a*_i b_i 
+    # For components via spherical basis dot product, the e_q vectors need conjugation, therefore put in first arg: 
+    return {q: np.vdot(sph_basis[q], v) for q in (1, 0, -1)} 
 
 
 @dataclass(frozen=True, eq=False)
@@ -828,18 +828,18 @@ class Polarization:
         polarization_vector = np.cos(angle) * e1 + np.sin(angle) * e2
         return cls(polarization_vector, propagation_direction)
 
-
     @classmethod
     def circular(cls, propagation_direction: Vector, handedness: str, ref_axis: Vector | None=None):
         """ Circular polarization built in the (e1, e2) plane perpendicular to the laser propagation direction (n hat)
 
             - handedness is specified by '+' or '-'
             - eps_{+/-} = (e1 +/- ie2)/sqrt(2) 
+            - '+' <==> left-circular polarization; '-' <==> right-circular polarization
+            - looks at wave from behind. 
 
             NOTE: Corresponding with atomic raising/lowering angular momentum operators depends on quantization axis. 
 
         """
-
         e1, e2 = _perpendicular_basis(propagation_direction, ref_axis)
 
         if handedness == '+':
@@ -861,33 +861,26 @@ class Polarization:
             epsilon vector specified with 3 componenets: eps_+1, eps_0, eps_-1, 
 
         """
-        # TODO: factor this using _spherical_basis_vectors method 
-        z = _unit_vector(quantization_axis)
-        x, y = _perpendicular_basis(z)
-        # See eq. 7.188 from "Quantum and Atom Optics by Daniel Steck"  
-        e_p1 = -(x + 1j*y)/np.sqrt(2.)
-        e_0 = z.astype(complex) 
-        e_m1 = (x - 1j*y)/np.sqrt(2.)
-        #sph_basis_vectors = _spherical_basis_vectors(quantization_axis)
+        # should the input vector be in a dictionary form? {+1: value, 0: value, -1: value}?
+        e_q = _spherical_basis_vectors(quantization_axis)
+        e_p1 = e_q[1]
+        e_0 = e_q[0]
+        e_m1 = e_q[-1]
 
         #polarization_vector = np.array([epsilon_vector, np.array(list(sph_basis_vectors.values())) for  ]) 
         polarization_vector = e_p1 * epsilon_vector[0] + e_0 * epsilon_vector[1] + e_m1 * epsilon_vector[2] 
         return cls(polarization_vector, propagation_direction)
 
-    # TODO: make quantization axis an attribute of the class?     
+    # TODO: make quantization axis an attribute of the class? Then this would become a property method 
     def spherical_components(self, quantization_axis: Vector = np.array([0., 0., 1.])) -> Vector: 
         """ Projects the polarization vector's components along a specified quantization axis. """ 
+        e_q = _spherical_basis_vectors(quantization_axis)
         # TODO Decide - return as a tuple or a Vector? 
-        z = _unit_vector(quantization_axis)
-        x, y = _perpendicular_basis(z)
-        e_p1 = -(x + 1j*y)/np.sqrt(2.)
-        e_0 = z.astype(complex) 
-        e_m1 = (x - 1j*y)/np.sqrt(2.)
-        
-        eps_p1 = np.vdot(e_p1, self.vector)
-        eps_0 = np.vdot(e_0, self.vector)
-        eps_m1 = np.vdot(e_m1, self.vector)
+        eps_p1 = np.vdot(e_q[1], self.vector)
+        eps_0 = np.vdot(e_q[0], self.vector)
+        eps_m1 = np.vdot(e_q[-1], self.vector)
         return np.array([eps_p1, eps_0, eps_m1])
+        #return _project_spherical(self.vector, quantization_axis).values() 
 
  #    def quadrupole_tensor_components(self, quantization_axis: Vector) -> dict[int, complex]:
  #        """ Rank-2 spherical tensor T_q(n_hat, eps), q = -2, -1, 0, 1, 2, which is built

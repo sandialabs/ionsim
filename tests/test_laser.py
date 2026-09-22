@@ -60,28 +60,33 @@ class TestProcess(unittest.TestCase):
         self.assertAlmostEqual(self.laser_c.peak_electric_field_magnitude*1E-3, 1.3851612653205, places=10)
         self.assertAlmostEqual(self.laser_c.beam_profile.peak_electric_field_magnitude(laser_c_power)*1E-3, 1.3851612653205, places=10)
 
+
+ #    def test_polarization(self):
+ #        """ Test polarization vector functionality """ 
+ #        laser_polarization = self.laser.polarization
+
+
     def test_laser_coupling_builder(self):
         """Test the process fidelity of the extra noisy gate."""
-        # Test building coupling operators between 
+        # Test building coupling operators from laser and polarization information  
         ground_levels = [self.atom_a.energy_levels[0]] 
         excited_levels = [*self.atom_a.energy_levels[1:]] 
         atom_a_coupling_operators = self.laser.build_individual_atom_laser_coupling_operators(self.basis, self.atom_a, ground_levels, excited_levels, 1) 
+        # These are not dipole allowed: should be zero operators 
         self.assertEqual(len(atom_a_coupling_operators), 0)
 
         ground_levels = [self.atom_b.energy_levels[0]] 
         excited_levels = [*self.atom_b.energy_levels[1:]] 
+        # Addresses atom B in a 2-atom basis 
         atom_b_coupling_operators = self.laser.build_individual_atom_laser_coupling_operators(self.basis, self.atom_b, ground_levels, excited_levels, 1) 
-        #all_atom_coupling_operators = self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, [self.atom_a, self.atom_b], ground_levels, excited_levels, 1, True) 
+        # Expect one transition |s1/2, 1,0> --> |P1/2,1,+1> transition, and 4 couplings since atom A has 4 levels, so the 2-qubit basis has 4 couplings  
+        self.assertEqual(len(atom_b_coupling_operators), 1)
+        self.assertEqual(len(atom_b_coupling_operators[0].couplings), 4)
 
- #        print(len(atom_a_coupling_operators))
- #        for op in atom_a_coupling_operators:
- #            print(f"Coupling operator contains {len(op.couplings)} couplings.")
- #            for coupling in op.couplings:
- #                print(f"Coupling between {coupling.row_state.name} and {coupling.column_state.name}.")
- #                print(f"Strength: {coupling.strength}\n")
- #            print()
- #
- #        print(len(atom_b_coupling_operators))
+        # Check that the transition is with P1/2,1,+1;
+        excited_level_name = atom_b_coupling_operators[0].couplings[0].column_state.name[-8:]
+        expected_name = 'P1/2,1,1'
+        self.assertEqual(expected_name, excited_level_name)
  #        for op in atom_b_coupling_operators:
  #            print(f"Coupling operator contains {len(op.couplings)} couplings.")
  #            for coupling in op.couplings:
