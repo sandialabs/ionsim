@@ -243,8 +243,6 @@ def compute_multipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited
         return float(sympy.simplify(wigner_3j_term * wigner_6j_term))
     
 
-
-
 def compute_dipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, q: int) -> float:
     ''' Method to compute E1 dipole transition operator between two states using the Clebsch-Gordan
         or Wigner-3,6j coefficients. 
@@ -257,7 +255,7 @@ def compute_dipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited_le
     compute_multipole_amplitude(ground_level, excited_level, 1, q)
 
 
-def compute_hyperfine_clebsch_gordan_coefficient(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, q: int) -> float:
+def compute_hyperfine_clebsch_gordan_coefficient(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, q: int, multipole_order) -> float:
     ''' Method to compute E1 dipole transition operator between two states using the Clebsch-Gordan
         or Wigner-3,6j coefficients. 
 
@@ -266,7 +264,7 @@ def compute_hyperfine_clebsch_gordan_coefficient(ground_level: AtomicInternalEne
             - 6j part (Eq. 36 style): (-1)^(Fp+J+1+I) sqrt((2Fp+1)(2J+1)) {J Jp 1; Fp F I}
     '''
     # Extract angular momentum quantum numbers for each state: 
-    return compute_multipole_amplitude(ground_level, excited_level, 1, q, False)
+    return compute_multipole_amplitude(ground_level, excited_level, multipole_order, q, False)
 
 def compute_rabi_frequency_between_atomic_levels(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, polarization_components: Vector, 
                                             atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int, peak_E0_amplitude: float) -> complex | float:
@@ -301,7 +299,6 @@ def compute_coupling_amplitude_between_atomic_levels(ground_level: AtomicInterna
     
     # Compute dot product with laser field polarization vector 
     # TODO: should we use vdot? 
-    # TODO: do we normalize the spherical polarization components? 
     scientific_consts = const.e * const.value('Bohr radius') / const.hbar # from dipole moment and definition of Rabi frequency from electric dipole operator 
     coupling = 0. + 1j*0.
     coupling = 2.*np.dot(polarization_components, np.array(list(coupling_amplitudes.values()))) * scientific_consts 

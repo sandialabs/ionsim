@@ -24,6 +24,8 @@ class TestDegreeOfFreedom(unittest.TestCase):
         self.spin_c = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', '[3/2]1/2'], level_names=['S1/2,0,0', 'S1/2,1,0', '[3/2]1/2,0,0'])
         neutral_171Yb_levels = ['S0,1/2,-1/2', 'S0,1/2,1/2', 'P1,1/2,-1/2', 'P1,1/2,1/2', 'P1,3/2,-3/2', 'P1,3/2,-1/2', 'P1,3/2,1/2', 'P1,3/2,3/2']
         self.Yb_atom = AtomicStructure.from_species(species='171Yb', term_symbols=['S0', 'P1'], level_names=neutral_171Yb_levels)
+        neutral_171Yb_levels2 = ['S0,1/2,-1/2', 'S0,1/2,1/2', 'P0,1/2,-1/2', 'P0,1/2,1/2']
+        self.Yb_atom2 = AtomicStructure.from_species(species='171Yb', term_symbols=['S0', 'P0'], level_names=neutral_171Yb_levels2)
         self.mode_0 = MotionalMode.from_frequency(frequency=3e6 * 2 * np.pi, fock_dimension=3)
 
     def test_spin_a_energy_levels(self):
@@ -73,7 +75,7 @@ class TestDegreeOfFreedom(unittest.TestCase):
             for excited_level in self.Yb_atom.energy_levels[2:]:
                 cg_coeffs[(ground_level.name, excited_level.name)] = {} 
                 for q in range(-1,2):
-                    cg_coeffs[(ground_level.name, excited_level.name)][q] = compute_hyperfine_clebsch_gordan_coefficient(ground_level, excited_level, q) 
+                    cg_coeffs[(ground_level.name, excited_level.name)][q] = compute_hyperfine_clebsch_gordan_coefficient(ground_level, excited_level, q, 1) 
 
         # Using this arxiv for CG coefficient tests: https://arxiv.org/pdf/2509.04416v1            
         self.assertAlmostEqual(cg_coeffs[('S0,1/2,-1/2','P1,1/2,-1/2')][0], -1/3, places = 8)
@@ -82,7 +84,32 @@ class TestDegreeOfFreedom(unittest.TestCase):
         self.assertAlmostEqual(cg_coeffs[('S0,1/2,-1/2','P1,1/2,1/2')][-1], np.sqrt(2/9), places = 8)
         self.assertAlmostEqual(cg_coeffs[('S0,1/2,-1/2','P1,1/2,1/2')][-1], np.sqrt(2/9), places = 8)
         self.assertAlmostEqual(cg_coeffs[('S0,1/2,-1/2','P1,3/2,-1/2')][0], -np.sqrt(2/9), places = 8)
-        
+
+    def test_neutral_atom_clebsch_gordan_coeffs_quadrupole(self):
+        """Test the energy levels of spin_c."""
+        expected_levels_count = 4  # Based on the output for spin_c
+        self.assertEqual(len(self.Yb_atom2.energy_levels), expected_levels_count)
+
+        # Check specific properties of the third energy level
+        cg_coeffs = {}
+        for ground_level in self.Yb_atom2.energy_levels[0:2]:
+            for excited_level in self.Yb_atom2.energy_levels[2:]:
+                cg_coeffs[(ground_level.name, excited_level.name)] = {} 
+                for q in range(-1,2):
+                    cg_coeffs[(ground_level.name, excited_level.name)][q] = compute_hyperfine_clebsch_gordan_coefficient(ground_level, excited_level, q, 1) 
+                    self.assertAlmostEqual(cg_coeffs[(ground_level.name, excited_level.name)][q], 0., places=8)
+
+ #        print(self.Yb_atom2.energy_levels[2].name)
+ #        cg_coeffs = {}
+ #        for ground_level in self.Yb_atom2.energy_levels[0:2]:
+ #            for excited_level in self.Yb_atom2.energy_levels[2:]:
+ #                cg_coeffs[(ground_level.name, excited_level.name)] = {} 
+ #                for q in range(-2,3):
+ #                    cg_coeffs[(ground_level.name, excited_level.name)][q] = compute_hyperfine_clebsch_gordan_coefficient(ground_level, excited_level, q, 2) 
+ #                    print((ground_level.name, excited_level.name))
+ #                    self.assertAlmostEqual(cg_coeffs[(ground_level.name, excited_level.name)][q], 0., places=8)
+ #                    print(cg_coeffs[(ground_level.name, excited_level.name)][q])
+    
 
     def test_mode_0_energy_levels(self):
         """Test the energy levels of mode_0."""
