@@ -329,8 +329,16 @@ class Laser():
     def build_atom_laser_ge_coupling_matrix(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, 
                                             atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int) -> Matrix: 
         """ Builds a coupling matrix representing a laser light-atom coupling """ 
-        rabi_frequency = compute_rabi_frequency_between_atomic_levels(ground_level, excited_level, self.polarization.spherical_components(), 
+
+        if multipole_order == 1:
+            rabi_frequency = compute_rabi_frequency_between_atomic_levels(ground_level, excited_level, self.polarization.spherical_components(), 
                                                                         atomic_levels, multipole_order, self.peak_electric_field_magnitude) 
+        elif multipole_order == 2:
+            rabi_frequency = compute_rabi_frequency_between_atomic_levels(ground_level, excited_level, self.polarization.quadrupole_components(), 
+                                                                        atomic_levels, multipole_order, self.peak_electric_field_magnitude) 
+        else:
+            raise IonSimError(f"Multipole order must be 1 or 2 for dipole or quadrupole transitions, respectively.")
+
         # Build coupling operator matrix: 
         single_atom_matrix_size = len(atomic_levels)
         coupling_matrix = np.zeros((single_atom_matrix_size,single_atom_matrix_size), dtype=complex) 
@@ -880,6 +888,23 @@ class Polarization:
         eps_0 = np.vdot(e_q[0], self.vector)
         eps_m1 = np.vdot(e_q[-1], self.vector)
         return np.array([eps_p1, eps_0, eps_m1])
+
+
+ #    def quadrupole_components(self, quantization_axis):
+ #        """ Computes quadrupole polarization components"""
+ #        circular_basis = _spherical_basis_vectors(quantization_axis)
+ #        circular_tensor = { q: sum( [ np.sqrt(10./3)*(-1)**q * complex(sp.N(wigner_3j(1, 1, 2, m1, m2, -q)) ) * 
+ #                              np.array((np.mat(circular_basis[m1]).T *
+ #                              np.mat(circular_basis[m2])).tolist())
+ #                          for m1 in [1,0,-1]
+ #                          for m2 in [1,0,-1]], 0)
+ #                      for q in [2,1,0,-1,-2] }
+ #
+ #        quadrupole_polarizations = {q:np.vdot(self.vector, np.vdot(circular_tensor[q], self.)) for q in [2,1,0,-1,-2]}
+#            quadrupole_pols = {q:_np.dot(pol, _np.dot(amo.circular_tensor[q], self.nhat)) for q in [2,1,0,-1,-2]}
+ #        return circuilar_t
+ #
+
         #return _project_spherical(self.vector, quantization_axis).values() 
 
  #    def quadrupole_tensor_components(self, quantization_axis: Vector) -> dict[int, complex]:
@@ -896,23 +921,24 @@ class Polarization:
         propagation_in_spherical = _project_spherical(self.propagation_direction, quantization_axis)
 
         cq_ij = {}
-        sph_basis_vectors = _spherical_basis_vectors(quantization_axis)
+        spherical_basis_vectors = _spherical_basis_vectors(quantization_axis)
         for q in (-2, -1, 0, 1, 2):
             T = np.zeros((3,3),dtype=complex) 
             for m1 in (-1, 0, 1):
                 for m2 in (-1, 0, 1):
                     w = complex(sp.N(wigner_3j(1, 1, 2, m1, m2, -q)) )
-                    T += w * np.outer(sph_basis_vectors[m1], spherical_basis_vectors[m2])
+                    T += w * np.outer(spherical_basis_vectors[m1], spherical_basis_vectors[m2])
 
                 cq_ij[q] = np.sqrt(10/3) * ((-1)**q) * T
 
         return cq_ij
 
-    def e2_q_components(self, quantization_axis: Vector) -> dict:
-        # TODO: add doc strings 
+    def quadrupole_components(self, quantization_axis: Vector) -> dict:
+        """ Computes quadrupole polarization components"""
         cq_ij = self.rank2_spherical_basis(quantization_axis)
         eps = self.vector
         n_hat = self.EM_field_propagation_direction
-        return {q: np.einsum('ij,i,j->', cq_ij[q], self.vector, self.EM_field_propagation_direction) for q in range(-2,3)}
+        return {q: np.einsum('ij,i,j->', cq_ij[q], eps, n_hat) for q in range(-2,3)}
 
+ 
      
