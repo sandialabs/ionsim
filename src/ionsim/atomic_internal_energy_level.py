@@ -281,8 +281,8 @@ def compute_coupling_amplitude_between_atomic_levels(ground_level: AtomicInterna
         Returns Omega/E0, the Rabi frequency up to the E_0 electric field amplitude scaling. 
 
     """  
-    if multipole_order != 1:
-        raise NotImplementedError(f"Only dipole couplings are currently implemented. Set multipole order = 1.")
+    if multipole_order != 1 or multipole_order != 2:
+        raise NotImplementedError(f"Only dipole couplings are currently implemented. Set multipole order = 1 or 2.")
 
     if ground_level not in atomic_levels:
         raise ValueError(f"Ground level {ground_level.name} not found in the atomic structure {atomic_levels}.")
@@ -305,5 +305,4 @@ def compute_coupling_amplitude_between_atomic_levels(ground_level: AtomicInterna
     scientific_consts = const.e * const.value('Bohr radius') / const.hbar # from dipole moment and definition of Rabi frequency from electric dipole operator 
     coupling = 0. + 1j*0.
     coupling = 2.*np.dot(polarization_components, np.array(list(coupling_amplitudes.values()))) * scientific_consts 
-    # TODO: Update for multipole 
     return coupling 
