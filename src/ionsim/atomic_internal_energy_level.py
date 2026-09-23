@@ -13,25 +13,20 @@ from fractions import Fraction
 from sympy.physics.wigner import wigner_3j, wigner_6j 
 import sympy 
 from icecream import ic
+import re
 
 from ionsim.ionsim_error import IonSimError
 from ionsim.energy_level import EnergyLevel
 
+term_symbol_matcher = re.compile(r"^([0-9]+ )?[SPDF]?[0-9/\[\]]*$")
 def check_n_from_term_symbol(term_symbol: str, n_expected: int):
     """ Checks whether a term symbol violates internal consistency """ 
-    # Principal quantum number n is expected before a space in the term symbol
-    spaces = term_symbol.count(' ') 
-    if spaces > 1:
-        raise IonSimError(f"Term symbol should only have 1 space, separating principal quantum number from electronic manifold part of the term symbol.")    
-    if spaces == 0:
-        return True # no n specified 
-    assert spaces == 1
-    # Parse n from term symbol and check against expectation 
-    n_parsed = int(term_symbol[0:term_symbol.find(' ')])
-    if n_parsed == n_expected:
-        return True
-    else:
-        raise IonSimError(f"Term symbol is inconsistent with principal quantum number specification. Term symbol gave {n_parsed}, expected {n_expected}.")    
+    m = term_symbol_matcher.match(term_symbol)
+    # The regex must match, and then if there is a principal quantum number in front it must match expectation
+    if not m:
+        raise IonSimError(f"Term symbols consist of an optional principal quantum number separated from the electronic manifold part of the term symbol by a space, got {term_symbol}.")
+    if m.groups()[0] is not None and int(m.groups()[0]) != n_expected:
+        raise IonSimError(f"Term symbol is inconsistent with principal quantum number specification. Term symbol gave {m.groups()[0]}, expected {n_expected}.")
 
 @dataclass(frozen=True, eq=False)
 class AtomicInternalEnergyLevel(EnergyLevel):
@@ -44,8 +39,7 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     alias: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self):
-        if not check_n_from_term_symbol(self.term_symbol, self.n):
-            raise IonSimError(f"Term symbol is inconsistent with principal quantum number specification. Term symbol gave {n_parsed}, expected {n_expected}.")    
+        check_n_from_term_symbol(self.term_symbol, self.n)
 
     @property
     @abstractmethod
