@@ -13,9 +13,20 @@ from fractions import Fraction
 from sympy.physics.wigner import wigner_3j, wigner_6j 
 import sympy 
 from icecream import ic
+import re
 
 from ionsim.ionsim_error import IonSimError
 from ionsim.energy_level import EnergyLevel
+
+term_symbol_matcher = re.compile(r"^([0-9]+ )?[SPDF]?[0-9/\[\]]*$")
+def check_n_from_term_symbol(term_symbol: str, n_expected: int):
+    """ Checks whether a term symbol violates internal consistency """ 
+    m = term_symbol_matcher.match(term_symbol)
+    # The regex must match, and then if there is a principal quantum number in front it must match expectation
+    if not m:
+        raise IonSimError(f"Term symbols consist of an optional principal quantum number separated from the electronic manifold part of the term symbol by a space, got {term_symbol}.")
+    if m.groups()[0] is not None and int(m.groups()[0]) != n_expected:
+        raise IonSimError(f"Term symbol is inconsistent with principal quantum number specification. Term symbol gave {m.groups()[0]}, expected {n_expected}.")
 
 @dataclass(frozen=True, eq=False)
 class AtomicInternalEnergyLevel(EnergyLevel):
@@ -26,6 +37,9 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     fine_energy: float 
     hyperfine_A: float
     alias: str | None = field(default=None, kw_only=True)
+
+    def __post_init__(self):
+        check_n_from_term_symbol(self.term_symbol, self.n)
 
     @property
     @abstractmethod
@@ -54,6 +68,7 @@ class AtomicInternalEnergyLevel(EnergyLevel):
         # Total energy: bare energy + external shifts (e.g. Zeeman, light shifts)
         return self.bare_energy + self.external_energy_shift
 
+
 @dataclass(frozen=True, eq=False)
 class LSFineLevel(AtomicInternalEnergyLevel): 
     """A fine-structure energy level of an atom."""
@@ -65,6 +80,8 @@ class LSFineLevel(AtomicInternalEnergyLevel):
     branching_ratios: dict[str, float] | None=None 
     hyperfine_B: float | None=None
 
+    def __post_init__(self):
+        super().__post_init__()
 
     @property
     def i(self):
@@ -97,6 +114,9 @@ class LSHyperfineLevel(AtomicInternalEnergyLevel):
     branching_ratios: dict[str, float] | None=None 
     hyperfine_B: float | None=None
 
+    def __post_init__(self):
+        super().__post_init__()
+
     @property
     def coupling_scheme(self):
         """The coupling scheme for the electronic orbital and spin angular momenta."""
@@ -120,6 +140,8 @@ class J1L2FineLevel(AtomicInternalEnergyLevel):
     branching_ratios: dict[str, float] | None=None 
     hyperfine_B: float | None=None
 
+    def __post_init__(self):
+        super().__post_init__()
 
     @property
     def i(self):
@@ -152,6 +174,8 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
     branching_ratios: dict[str, float] | None = None 
     hyperfine_B: float | None=None
 
+    def __post_init__(self):
+        super().__post_init__()
 
     @property
     def coupling_scheme(self):

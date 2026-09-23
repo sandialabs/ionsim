@@ -22,6 +22,7 @@ class TestDegreeOfFreedom(unittest.TestCase):
         self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'P1/2'])
         self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.spin_c = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', '[3/2]1/2'], level_names=['S1/2,0,0', 'S1/2,1,0', '[3/2]1/2,0,0'])
+        self.atom_a = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'], level_names=['S1/2,1,0', 'S1/2,2,0', '6 P3/2,3,-1','53 S1/2,1,0'], magnetic_field = 0.01) 
         self.mode_0 = MotionalMode.from_frequency(frequency=3e6 * 2 * np.pi, fock_dimension=3)
 
     def test_spin_a_energy_levels(self):
@@ -56,7 +57,15 @@ class TestDegreeOfFreedom(unittest.TestCase):
         self.assertIsInstance(third_level, J1L2HyperfineLevel)
         self.assertEqual(third_level.term_symbol, '[3/2]1/2')
 
+    def test_Rydberg_Rb_atom(self):
+        """Test the energy levels of spin_c."""
+        expected_levels_count = 4  # Based on the output for atom_a 
 
+        # Check specific properties of the fourth energy level
+        fourth_level = self.atom_a.energy_levels[3]
+        self.assertEqual(fourth_level.term_symbol, '53 S1/2')
+        self.assertEqual(fourth_level.n, 53)
+        
     def test_mode_0_energy_levels(self):
         """Test the energy levels of mode_0."""
         expected_levels_count = 3  # Based on the output for mode_0
