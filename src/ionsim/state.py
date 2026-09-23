@@ -8,15 +8,18 @@
 #***************************************************************************************************
 
 from ionsim.basis import Basis, StandardBasis
-from ionsim.degree_of_freedom import DegreeOfFreedom
+from ionsim.energy_level import EnergyEigenstate
+from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
+from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure, MotionalMode
 from ionsim.custom_types import Vector, Matrix
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.lindbladian import Dissipator, Lindbladian
+from ionsim.named_operators import Fock, Pauli
 
 import numpy as np
 # from typing import Any
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from numpy.linalg import multi_dot
 
 from icecream import ic
@@ -121,6 +124,27 @@ class State:
         rhos = [self.basis.compute_density_matrix_from_supervector(psi) for psi in supervectors]
         return [State(self.basis, rho) for rho in rhos]
 
+    def propagate_using_pauli_channel(self, Pauli_error_rates: dict[str, float]):
+        """ Propagates a state under the action of a Pauli channel, specified by its error rates 
+
+            Pauli channel acting on a state rho: 
+                E[rho] = sum_{a} P_a rho P_a 
+                
+                - E is the channel
+                - P_a is a Pauli operator from the N-qubit Pauli group 
+                - rho is the input state's density matrix  
+                - E[rho] is the output state's density matrix  
+        """
+        d2 = len(Pauli_error_rates)
+        N_qubits = int(np.log2(d2))//2
+
+        propagated_density_matrix = np.zeros_like(self.density_matrix) 
+        assert d2 == propagated_density_matrix.size 
+        pauli_operators = Pauli.product_operators(N_qubits)
+        for pauli_label in Pauli_error_rates.keys(): 
+            propagated_density_matrix += Pauli_error_rates[pauli_label] * (pauli_operators[pauli_label] @ self.density_matrix @ pauli_operators[pauli_label]) 
+        return State.from_density_matrix(self.basis, propagated_density_matrix) 
+    
     def get_wavefunction_in_new_basis(self, new_basis: Basis):
         """Get the wavefunction in a new basis."""
         if new_basis is self.basis or self.wavefunction is None:
@@ -139,11 +163,22 @@ class State:
     
     def compute_basis_state_probabilities(self):
         """Compute the probability of measuring each basis state."""
-        return [
+        probabilities = [
             np.trace(self.basis.compute_projector_matrix(vector).dot(self.density_matrix)).real
             for vector in self.basis.vectors
         ]
+        # There are numerical issues where it's possible to get probabilities like 1.0000..01 and -1e-16
+        return np.clip(probabilities, 0., 1.)
 
+    def compute_basis_state_probabilities_from_effect_matrix(self, effect_matrix):
+        """ Computes probability of measuring each basis state via a d x d^2 measurement effect matrix """ 
+        d = int(np.sqrt(len(self.supervector)))
+        if effect_matrix.shape != (d, d**2):
+            raise ValueError(f"Effect matrix must have shape {(d, d2)}.")
+
+        probabilities = (effect_matrix @ self.supervector).real
+        return np.clip(probabilities, 0., 1.)
+ 
     def compute_density_matrix_traced_over_degree_of_freedom(self, degree_of_freedom: DegreeOfFreedom):
         """Compute a reduced density matrix by tracing out a degree of freedom in the basis."""
         size = len(degree_of_freedom.energy_levels)
@@ -158,6 +193,64 @@ class State:
             small_density_matrix += multi_dot([proj_left, self.density_matrix, proj_right])
         return small_density_matrix
 
+    def project_to_qubit_subspace(self, non_qubit_levels: list[AtomicInternalEnergyLevel]):
+        """ Projects the state onto the qubit subspace """
+        # Return self if already in qubit subspace
+        if self.basis.is_qubit_basis():
+            return self
+        else:
+            return self.project_out_levels(non_qubit_levels)
+
+    def project_out_levels(self, levels: list, new_basis: StandardBasis | None=None):
+        """ Project state into a subspace without the requested levels. Returns the projected state """ 
+        # Create basis as subspace of the current state's basis  
+        if new_basis is None:
+            new_basis = build_subspace_basis_from_levels_to_project(levels)
+
+        # Get indices to project out by finding where the levels are in the basis
+        projection_indices = [] 
+        for i, state in enumerate(self.basis.states):
+            project = any([l in state.components for l in levels]) 
+            if project:
+                projection_indices.append(i)
+
+        projection_indices = set(projection_indices)
+        states_to_project = [self.basis.states[i] for i in projection_indices] 
+        return self.project_out_states(states_to_project, new_basis) 
+                    
+    def project_out_states(self, states_to_project_out: list[EnergyEigenstate], new_basis: StandardBasis | None=None):
+        """Return a projected state by projecting out a set of levels in the enlarged basis into a new basis."""
+
+        if not isinstance(self.basis, StandardBasis):
+            raise IonSimError("Projection of density matrix requires a Standard Basis of EnergyEigenstates.")
+
+        # Get indices corresponding to these states' locations in the enlarged basis
+        projection_indices = [self.basis.states.index(state) for state in states_to_project_out] 
+        if projection_indices == []:
+            return self
+
+        computational_indices = [i for i in range(len(self.basis.states)) if i not in projection_indices] 
+
+        # Compute projected density matrix
+        projected_density_matrix = self.density_matrix[np.ix_(computational_indices, computational_indices)] 
+
+        # Check if we need to re-order the basis to match the sorted order in new_basis  
+        permutation = np.argsort(computational_indices)
+        projected_density_matrix = projected_density_matrix[np.ix_(permutation, permutation)] 
+
+        # Create the new basis from the list of states to project if not provided 
+        if new_basis is None:
+            new_basis = self.basis.build_subspace_basis_from_states_to_project(states_to_project_out)
+
+        if len(new_basis.states) != len(self.basis.states) - len(states_to_project_out):
+            raise IonSimError("The specified new basis dimensionality should match the current basis without the projected states.")
+
+        if self.wavefunction is not None:        
+            projected_wavefunction = self.wavefunction[computational_indices] 
+            return State(basis = new_basis, density_matrix = projected_density_matrix, wavefunction = projected_wavefunction) 
+        else:
+            return State.from_density_matrix(new_basis, projected_density_matrix) 
+
     def trace_out_degree_of_freedom(self, degree_of_freedom: DegreeOfFreedom):
         """Trace out a degree of freedom in the basis and return a new state in a new basis."""
         density_matrix = self.compute_density_matrix_traced_over_degree_of_freedom(degree_of_freedom)
@@ -168,7 +261,7 @@ class State:
         """Compute the coherent displacement (expectation value of the lowering operator) for each spin state."""
         assert(len(self.basis.degrees_of_freedom) == len(spin_dofs) + 1) # TODO: trace out other degrees of freedom
         spin_basis = StandardBasis(spin_dofs)
-        lowering = lowering_motion(len(motional_dof.energy_levels))
+        lowering = Fock.lowering(len(motional_dof.energy_levels))
         diplacements = []
         for vector in spin_basis.vectors:
             spin_proj = spin_basis.compute_projector_matrix(vector)
@@ -176,7 +269,6 @@ class State:
             diplacements.append(displacement)
         return diplacements
 
-    # def transform_to_spin_eigenbasis(self):
+    # TODO: maybe add a method for checking if the state is normalized 
 
-def lowering_motion(fock_dimension: int):
-    return np.diag([np.sqrt(n+1) for n in range(fock_dimension-1)], k=1)
+    # def transform_to_spin_eigenbasis(self):

@@ -14,9 +14,20 @@ import numpy as np
 import sympy 
 from sympy.physics.wigner import wigner_3j, wigner_6j 
 from scipy import constants as const
+import re
 
 from ionsim.ionsim_error import IonSimError
 from ionsim.energy_level import EnergyLevel
+
+term_symbol_matcher = re.compile(r"^([0-9]+ )?[SPDF]?[0-9/\[\]]*$")
+def check_n_from_term_symbol(term_symbol: str, n_expected: int):
+    """ Checks whether a term symbol violates internal consistency """ 
+    m = term_symbol_matcher.match(term_symbol)
+    # The regex must match, and then if there is a principal quantum number in front it must match expectation
+    if not m:
+        raise IonSimError(f"Term symbols consist of an optional principal quantum number separated from the electronic manifold part of the term symbol by a space, got {term_symbol}.")
+    if m.groups()[0] is not None and int(m.groups()[0]) != n_expected:
+        raise IonSimError(f"Term symbol is inconsistent with principal quantum number specification. Term symbol gave {m.groups()[0]}, expected {n_expected}.")
 
 @dataclass(frozen=True, eq=False)
 class AtomicInternalEnergyLevel(EnergyLevel):
@@ -27,6 +38,9 @@ class AtomicInternalEnergyLevel(EnergyLevel):
     fine_energy: float 
     hyperfine_A: float
     alias: str | None = field(default=None, kw_only=True)
+
+    def __post_init__(self):
+        check_n_from_term_symbol(self.term_symbol, self.n)
 
     @property
     @abstractmethod
@@ -55,6 +69,7 @@ class AtomicInternalEnergyLevel(EnergyLevel):
         # Total energy: bare energy + external shifts (e.g. Zeeman, light shifts)
         return self.bare_energy + self.external_energy_shift
 
+
 @dataclass(frozen=True, eq=False)
 class LSFineLevel(AtomicInternalEnergyLevel): 
     """A fine-structure energy level of an atom."""
@@ -66,6 +81,8 @@ class LSFineLevel(AtomicInternalEnergyLevel):
     branching_ratios: dict[str, float] | None=None 
     hyperfine_B: float | None=None
 
+    def __post_init__(self):
+        super().__post_init__()
 
     @property
     def i(self):
@@ -98,6 +115,9 @@ class LSHyperfineLevel(AtomicInternalEnergyLevel):
     branching_ratios: dict[str, float] | None=None 
     hyperfine_B: float | None=None
 
+    def __post_init__(self):
+        super().__post_init__()
+
     @property
     def coupling_scheme(self):
         """The coupling scheme for the electronic orbital and spin angular momenta."""
@@ -121,6 +141,8 @@ class J1L2FineLevel(AtomicInternalEnergyLevel):
     branching_ratios: dict[str, float] | None=None 
     hyperfine_B: float | None=None
 
+    def __post_init__(self):
+        super().__post_init__()
 
     @property
     def i(self):
@@ -153,6 +175,8 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
     branching_ratios: dict[str, float] | None = None 
     hyperfine_B: float | None=None
 
+    def __post_init__(self):
+        super().__post_init__()
 
     @property
     def coupling_scheme(self):
@@ -252,7 +276,7 @@ def compute_dipole_amplitude(ground_level: AtomicInternalEnergyLevel, excited_le
             - 6j part (Eq. 36 style): (-1)^(Fp+J+1+I) sqrt((2Fp+1)(2J+1)) {J Jp 1; Fp F I}
     '''
     # Extract angular momentum quantum numbers for each state: 
-    compute_multipole_amplitude(ground_level, excited_level, 1, q)
+    return compute_multipole_amplitude(ground_level, excited_level, 1, q)
 
 
 def compute_hyperfine_clebsch_gordan_coefficient(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, q: int, multipole_order) -> float:
@@ -279,9 +303,6 @@ def compute_coupling_amplitude_between_atomic_levels(ground_level: AtomicInterna
         Returns Omega/E0, the Rabi frequency up to the E_0 electric field amplitude scaling. 
 
     """  
-    if multipole_order != 1 or multipole_order != 2:
-        raise NotImplementedError(f"Only dipole couplings are currently implemented. Set multipole order = 1 or 2.")
-
     if ground_level not in atomic_levels:
         raise ValueError(f"Ground level {ground_level.name} not found in the atomic structure {atomic_levels}.")
     if excited_level not in atomic_levels:

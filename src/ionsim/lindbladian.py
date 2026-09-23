@@ -22,7 +22,7 @@ from ionsim.ionsim_error import IonSimError
 from ionsim.composite_operator import CompositeOperator
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
-from ionsim.atomic_internal_energy_level import compute_multipole_amplitude
+from ionsim.atomic_internal_energy_level import compute_dipole_amplitude, compute_multipole_amplitude
 from ionsim.config import SMALLEST_ENERGY_SCALE
 
 
@@ -78,7 +78,7 @@ class Dissipator(CompositeOperator):
 
     def create_lindblad_matrix_function(self, lindblad_operator: Operator) -> Callable:
         """Converts a lindblad Operator object to a callable that returns a matrix at a given time point"""
-        
+
         def _lindblad_function(t: float) -> AnyMatrix:
             if self.sparse:
                 L_matrix = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex') 
@@ -87,7 +87,8 @@ class Dissipator(CompositeOperator):
             
             # Static, diagonal contribution 
             if isinstance(lindblad_operator, GeneralOperator):
-                L_matrix += lindblad_operator.energy_shift_operator_contribution.static_matrix
+                if lindblad_operator.energy_shift_operator_contribution:
+                    L_matrix += lindblad_operator.energy_shift_operator_contribution.static_matrix
             elif isinstance(lindblad_operator, EnergyShiftOperator):
                 L_matrix += lindblad_operator.static_matrix
 
@@ -157,15 +158,16 @@ class DissipatorSpontaneousEmission(Dissipator):
                         # Extract lifetime and branching ratio for this excited level
                         e_lifetime = e_level.lifetime # dict with ground-manifold as key 
                         e_branching_ratios = e_level.branching_ratios
-    
+        
                         g_amplitudes = {} 
                         for g_level in ground_levels:
                             if e_level.energy <= g_level.energy:
                                 raise IonSimError('Error: Excited level should be higher in energy than the lower level. Excited energy: {e_level.energy}, Ground energy: {g_level.energy}')
                                 
-                            for _q in q:
+                            for _q in q:#[-1,0,1]: #q:
                                 # Compute multipole amplitude between |e> and |g>, append if non-zero 
                                 amplitude = compute_multipole_amplitude(g_level, e_level, k, _q)
+                                #amplitude = compute_dipole_amplitude(g_level, e_level, _q) #(g_level, e_level, k, _q)
                                 if np.abs(amplitude) >  SMALLEST_ENERGY_SCALE:
                                     g_amplitudes[(g_level, _q)] = np.abs(amplitude**2) 
 
@@ -186,7 +188,7 @@ class DissipatorSpontaneousEmission(Dissipator):
                             # Create lowering operator  
                             g_level_index = DOF.energy_levels.index(g_level)
                             lowering_matrix = np.zeros((len(DOF.energy_levels), len(DOF.energy_levels)))
-                            lowering_matrix[g_level_index, e_level_index] = np.sqrt(decay_rate) 
+                            lowering_matrix[g_level_index, e_level_index] = 1.*np.sqrt(decay_rate) 
     
                             # Enlarge lowering opearator to live in entire basis 
                             if not all_atoms_are_same:
@@ -194,7 +196,7 @@ class DissipatorSpontaneousEmission(Dissipator):
                                 decay_operator = np.sqrt(decay_rate) * enlarged_lowering_matrix
                                 lindblad_operators.append(CouplingOperator.from_matrix(basis, decay_operator, 0.))
                             else:
-                                enlarged_lowering_matrices = [basis.enlarge_matrix(lowering_matrix, [spin]) for spin in basis.spin_DOFs]
+                                enlarged_lowering_matrices = [basis.enlarge_matrix(lowering_matrix, [spin]) for spin in basis.atomic_structure_DOFs]
                                 decay_operators = [large_matrix for large_matrix in enlarged_lowering_matrices] 
                                 for decay_operator in decay_operators:
                                     lindblad_operators.append(CouplingOperator.from_matrix(basis, decay_operator, 0.))
@@ -235,27 +237,32 @@ class Lindbladian:
         elif self.dissipator and self.hamiltonian is None:
             return self.dissipator.size**2
 
-    def evolve_supervector(self, initial_supervector: Vector, duration: float, time_evals: Vector | None = None, **kwargs):
-        """ Evolve a supervector by solving the time-dependent Lindblad master equation with pure dissipation (no Hamiltonian).
-            e.g. evolves supervector "y" using dy/dt = Dy, where D is the N^2 x N^2 dissipator matrix. 
-        """
-        assert(self.size == len(initial_supervector))
+    @cached_property
+    def matrix_function(self) -> Callable:
+        """ Lindbladian matrix function L(t), corresponding to an N^2 x N^2 superoperator at time t. """
         if self.hamiltonian:
-            super_ham = lambda t: (
+            super_ham = lambda t: -1j*(
                   matrix_AYB_multiply_to_superoperator(A = self.hamiltonian.hamiltonian_function(t), B = None) 
                 - matrix_AYB_multiply_to_superoperator(A = None, B = self.hamiltonian.hamiltonian_function(t))
                 )
         else:
             super_ham = lambda t: 0. 
 
-        # solve_time_evolution_equation() assumes a Schrodinger equation form dy/dt = (-i*A)y, where i = sqrt(-1) and A <==> Hamiltonian matrix. 
-        # For dissipation, we compensate the input by multiplying the RHS by i to get dy/dt = Ay form. 
         if self.dissipator:
-            super_dissipator = lambda t: 1j*self.dissipator.dissipator_matrix_function(t) 
+            super_dissipator = self.dissipator.dissipator_matrix_function
         else:
             super_dissipator = lambda t: 0. 
 
         # Lindbladian superoperator from hamiltonian and dissipation contributions: 
         lindbladian_function = lambda t: super_ham(t) + super_dissipator(t)
+        return lindbladian_function
 
-        return solve_time_evolution_equation(lindbladian_function, initial_supervector, duration, time_evals, **kwargs)
+    def evolve_supervector(self, initial_supervector: Vector, duration: float, time_evals: Vector | None = None, **kwargs):
+        """ Evolve a supervector by solving the time-dependent Lindblad master equation.
+            e.g. evolves supervector "y" using dy/dt = Ly, where L is the N^2 x N^2 dissipator matrix. 
+        """
+        # solve_time_evolution_equation() assumes a Schrodinger equation form dy/dt = (-i*A)y, where i = sqrt(-1) and A <==> the function input, e.g. a Hamiltonian matrix. 
+        # Therfore, we must compensate this form by multiplying the lindbladian by i 
+        assert(self.size == len(initial_supervector))
+        dynamical_matrix = lambda t: self.matrix_function(t) * 1j
+        return solve_time_evolution_equation(dynamical_matrix, initial_supervector, duration, time_evals, **kwargs)

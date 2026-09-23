@@ -16,7 +16,7 @@ from icecream import ic
 
 from ionsim.basis import StandardBasis
 from ionsim.operator import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
-from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix
+from ionsim.custom_types import Vector, Matrix, SparseMatrix 
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, SMALLEST_ENERGY_SCALE
 from ionsim.custom_math import solve_time_evolution_equation
 from ionsim.composite_operator import CompositeOperator
@@ -96,7 +96,9 @@ class Hamiltonian(CompositeOperator):
         # Coupling operators:  
         for operator in self.coupling_operators:
             # Extract offdiagonal elements --> Hint and Oscillation rate 
-            Hint, Rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(operator)
+            # Build Hint, Rate from half matrices since the operators are Hermitian and will be treated as such in subsequent functions  
+            unique_couplings = operator._unique_couplings_from_hermitian_coupling_matrix(operator.basis, operator.static_matrix, operator.rate_matrix) 
+            Hint, Rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(CouplingOperator(operator.basis, unique_couplings, operator.modulation_function))
             Hints.append(Hint)
             Rates.append(Rate)
 
@@ -237,7 +239,10 @@ class Hamiltonian(CompositeOperator):
                             else:
                                 Hint = np.zeros((self.size, self.size), dtype='complex')
                                 for Ham, Rate, mod in zip(Hints, Rates, self.coupling_modulation_functions):
-                                    Hint += Ham * np.exp(-1j * Rate * t) * mod(t)
+                                    if mod is not None:
+                                        Hint += Ham * np.exp(-1j * Rate * t) * mod(t)
+                                    else:
+                                        Hint += Ham * np.exp(-1j * Rate * t)
                             Hint += Hint.conj().T
 
                             H0_shift = np.zeros_like(Hint)

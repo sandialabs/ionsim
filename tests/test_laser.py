@@ -81,7 +81,8 @@ class TestProcess(unittest.TestCase):
         atom_b_coupling_operators = self.laser.build_individual_atom_laser_coupling_operators(self.basis, self.atom_b, ground_levels, excited_levels, 1) 
         # Expect one transition |s1/2, 1,0> --> |P1/2,1,+1> transition, and 4 couplings since atom A has 4 levels, so the 2-qubit basis has 4 couplings  
         self.assertEqual(len(atom_b_coupling_operators), 1)
-        self.assertEqual(len(atom_b_coupling_operators[0].couplings), 4)
+        # For 2-qubits and a + transition on qubit 2 and 4 levels on qubit 1, there are 4 unique couplings and 8 total couplings (h.c.) 
+        self.assertEqual(len(atom_b_coupling_operators[0].couplings), 8)
 
         # Check that the transition is with P1/2,1,+1;
         excited_level_name = atom_b_coupling_operators[0].couplings[0].column_state.name[-8:]

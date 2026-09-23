@@ -63,11 +63,29 @@ class Noise:
         """Replace a function with one averaged over the noisy parameter."""
         if parameter_index is None:
             return matrix_function
+
         @wraps(matrix_function)
         def wrapper(*args, **kwargs):
-            function_arguments = np.array([[float(arg) for arg in args]]*len(self.domain_arguments)) # TODO: is float right here? Then, arguments will accept ints but they must be real
-            function_arguments[:, parameter_index] += self.domain_arguments
-            function_values = [matrix_function(*arguments) for arguments in function_arguments]
+            args = list(args)
+            param_in_kwargs = self.parameter_name in kwargs
+            if param_in_kwargs:
+                base_value = float(kwargs[self.parameter_name])
+            else:
+                if parameter_index >= len(args):
+                    raise IonSimError(f"Noisy parameter at position {parameter_index} was not provided positionally nor specified as a keyword argument.")
+                base_value = float(args[parameter_index])
+
+            function_values = []
+            for darg in self.domain_arguments:
+                noisy_value = base_value + darg
+                if param_in_kwargs:
+                    call_kwargs = dict(kwargs)
+                    call_kwargs[self.parameter_name] = noisy_value
+                    function_values.append(matrix_function(*args, **call_kwargs))
+                else:
+                    call_args = list(args)
+                    call_args[parameter_index] = noisy_value
+                    function_values.append(matrix_function(*call_args, **kwargs))
             probs = [self.probability_density_function(darg) for darg in self.domain_arguments]
             ys = np.array([p*fv for p, fv in zip(probs, function_values)])
             return trapz_for_matrix(ys, self.domain_arguments)

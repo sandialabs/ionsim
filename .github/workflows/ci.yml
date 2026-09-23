@@ -24,7 +24,22 @@ jobs:
         run: |
           python -m pip install -U pip
           pip install -e .
+          pip install coverage
 
-      - name: Run unit tests
+      - name: Run unit tests with coverage
         run: |
-          python -m unittest discover
+          coverage run -m unittest
+          coverage html
+          coverage xml
+
+      - name: Upload coverage HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: htmlcov/
+
+      - name: Upload coverage XML
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml

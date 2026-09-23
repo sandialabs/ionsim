@@ -12,7 +12,7 @@ import unittest
 import numpy as np
 
 from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
-from ionsim.atomic_internal_energy_level import LSHyperfineLevel, J1L2HyperfineLevel, compute_hyperfine_clebsch_gordan_coefficient
+from ionsim.atomic_internal_energy_level import LSHyperfineLevel, J1L2HyperfineLevel, compute_hyperfine_clebsch_gordan_coefficient, compute_multipole_amplitude
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel
 
 class TestDegreeOfFreedom(unittest.TestCase):
@@ -26,7 +26,12 @@ class TestDegreeOfFreedom(unittest.TestCase):
         self.Yb_atom = AtomicStructure.from_species(species='171Yb', term_symbols=['S0', 'P1'], level_names=neutral_171Yb_levels)
         neutral_171Yb_levels2 = ['S0,1/2,-1/2', 'S0,1/2,1/2', 'P0,1/2,-1/2', 'P0,1/2,1/2']
         self.Yb_atom2 = AtomicStructure.from_species(species='171Yb', term_symbols=['S0', 'P0'], level_names=neutral_171Yb_levels2)
+        self.atom_a = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'], level_names=['S1/2,1,0', 'S1/2,2,0', '6 P3/2,3,-1','53 S1/2,1,0'], magnetic_field = 0.01) 
         self.mode_0 = MotionalMode.from_frequency(frequency=3e6 * 2 * np.pi, fock_dimension=3)
+
+        # Ca40+ 
+        Ca_levels = ['S1/2,1/2','D3/2,3/2']
+        self.Ca_ion = AtomicStructure.from_species(species='40Ca+', term_symbols=['S1/2', 'D3/2'], level_names=Ca_levels)
 
     def test_spin_a_energy_levels(self):
         """Test the energy levels of spin_a."""
@@ -109,8 +114,43 @@ class TestDegreeOfFreedom(unittest.TestCase):
  #                    print((ground_level.name, excited_level.name))
  #                    self.assertAlmostEqual(cg_coeffs[(ground_level.name, excited_level.name)][q], 0., places=8)
  #                    print(cg_coeffs[(ground_level.name, excited_level.name)][q])
-    
 
+    def test_Ca40_transition_amplitudes(self):
+        """Test the energy levels of spin_c."""
+        expected_levels_count = 2  # Based on the output for spin_c
+        self.assertEqual(len(self.Ca_ion.energy_levels), expected_levels_count)
+
+        # Check specific properties of the third energy level
+        # Should be no dipole allowed couplings between S1/2 and D3/2 
+        cg_coeffs = {}
+        for ground_level in [self.Ca_ion.energy_levels[0]]:
+            for excited_level in [self.Ca_ion.energy_levels[1]]:
+                cg_coeffs[(ground_level.name, excited_level.name)] = {} 
+                for q in range(-1,2):
+                    cg_coeffs[(ground_level.name, excited_level.name)][q] = compute_multipole_amplitude(ground_level, excited_level, 1, q, True) 
+                    self.assertAlmostEqual(cg_coeffs[(ground_level.name, excited_level.name)][q], 0., places=8)
+
+        cg_coeffs = {}
+        # Should be a quadrupole allowed coupling  
+        for ground_level in [self.Ca_ion.energy_levels[0]]:
+            for excited_level in [self.Ca_ion.energy_levels[1]]:
+                cg_coeffs[(ground_level.name, excited_level.name)] = {} 
+                for q in range(-2,3):
+                    #cg_coeffs[(ground_level.name, excited_level.name)][q] = compute_hyperfine_clebsch_gordan_coefficient(ground_level, excited_level, q, 2) 
+                    cg_coeffs[(ground_level.name, excited_level.name)][q] = compute_multipole_amplitude(ground_level, excited_level, 2, q, True) 
+                    if q == -1:
+                        self.assertAlmostEqual(cg_coeffs[(ground_level.name, excited_level.name)][q], 0.2, places=8)
+                    else:
+                        self.assertAlmostEqual(cg_coeffs[(ground_level.name, excited_level.name)][q], 0., places=8)
+    
+    def test_Rydberg_Rb_atom(self):
+        """Test the energy levels of spin_c."""
+        expected_levels_count = 4  # Based on the output for atom_a 
+        # Check specific properties of the fourth energy level
+        fourth_level = self.atom_a.energy_levels[3]
+        self.assertEqual(fourth_level.term_symbol, '53 S1/2')
+        self.assertEqual(fourth_level.n, 53)
+        
     def test_mode_0_energy_levels(self):
         """Test the energy levels of mode_0."""
         expected_levels_count = 3  # Based on the output for mode_0
