@@ -484,11 +484,8 @@ class GSTCircuitPlanner:
             probs_function = ism_circuit.build_outcome_probabilities_function(initial_state, outcome_operators.values())
             prob, prob_gradients = circuit_pm_function.jacobian(probs_function, wrt = list(input_args.keys()), **input_args) 
             hessian = circuit_pm_function.hessian_per_outcome(probs_function, wrt = list(input_args.keys()), outcome_labels = outcome_operators.keys(), **input_args) 
-            #prob, prob_gradients = circuit_pm_function.jacobian(probs_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
-            #hessian = circuit_pm_function.hessian_per_outcome(probs_function, wrt = list(circuit_parameters.keys()), outcome_labels = outcome_operators.keys(), **circuit_parameters) 
             fisher_info = self.compute_fisher_information(prob, prob_gradients, hessian, N)
             return fisher_info
-
 
     def compute_fisher_information(self, prob, prob_gradients: dict, hessian: dict, N: int) -> dict:
         """ returns fisher information matrix from the parameters """ 
@@ -496,7 +493,9 @@ class GSTCircuitPlanner:
         for param1, gradient1 in prob_gradients.items():
             for param2, gradient2 in prob_gradients.items():
                 hessians = list(hessian[param1][param2].values())
-                FI[(param1, param2)] = N*sum([((grad1*grad2)/p - H) for grad1, grad2, p, H in zip(gradient1, gradient2, prob, hessians)])
+                FI_contribution = N*sum([((grad1*grad2)/p - H) for grad1, grad2, p, H in zip(gradient1, gradient2, prob, hessians)])
+                key = (param1, param2)
+                FI[key] = FI_contribution 
         return FI 
 
 

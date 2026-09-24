@@ -474,7 +474,7 @@ class Circuit_Process_Matrix_Function_Helper():
             - requires jax, jaxlib  
     """ 
 
-    def __init__(self, gate_models: Sequence[Callable], separator: str = "__", jax_native: bool=False, forward_diff_eps: float = 1e-7):
+    def __init__(self, gate_models: Sequence[Callable], separator: str = "__", jax_native: bool=False, forward_diff_eps: float = 1e-9):
         """ 
             gate_models: a sequence to represent the order of gates applied in the circuit 
 
@@ -688,9 +688,7 @@ class Circuit_Process_Matrix_Function_Helper():
         jac = jax.jacobian(f)(diff_values)
         return value, jac 
 
-    # TODO: code _is_black_box_param
-
-    def hessian(self, wrapped_scalar_fn: Callable, wrt: list[str], fd_eps: float=1e-7, **kwargs):
+    def hessian(self, wrapped_scalar_fn: Callable, wrt: list[str], fd_eps: float=1e-9, **kwargs):
         """ 2nd derivative of the scalar fxns """  
         scalar_function = wrapped_scalar_fn.scalar_function
         unknown = set(wrt) - set(self.__signature__.parameters)
