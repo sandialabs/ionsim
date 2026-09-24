@@ -474,7 +474,7 @@ class Circuit_Process_Matrix_Function_Helper():
             - requires jax, jaxlib  
     """ 
 
-    def __init__(self, gate_models: Sequence[Callable], separator: str = "__", jax_native: bool=False, forward_diff_eps: float = 1e-9):
+    def __init__(self, gate_models: Sequence[Callable], separator: str = "__", jax_native: bool=False, forward_diff_eps: float = 1e-11):
         """ 
             gate_models: a sequence to represent the order of gates applied in the circuit 
 
@@ -688,7 +688,7 @@ class Circuit_Process_Matrix_Function_Helper():
         jac = jax.jacobian(f)(diff_values)
         return value, jac 
 
-    def hessian(self, wrapped_scalar_fn: Callable, wrt: list[str], fd_eps: float=1e-9, **kwargs):
+    def hessian(self, wrapped_scalar_fn: Callable, wrt: list[str], fd_eps: float=1e-11, **kwargs):
         """ 2nd derivative of the scalar fxns """  
         scalar_function = wrapped_scalar_fn.scalar_function
         unknown = set(wrt) - set(self.__signature__.parameters)
@@ -726,7 +726,7 @@ class Circuit_Process_Matrix_Function_Helper():
         return hess 
     
     def hessian_per_outcome(self, wrapped_vector_fn: Callable, wrt: list[str], outcome_labels: list[str] | None=None, 
-                                fd_eps: float=1e-4, **kwargs):
+                                fd_eps: float=1e-11, **kwargs):
         """ 2nd derivative of the scalar fxns """  
         vector_function = wrapped_vector_fn.vector_function
         unknown = set(wrt) - set(self.__signature__.parameters)
@@ -772,7 +772,7 @@ class Circuit_Process_Matrix_Function_Helper():
 
 
 ### Helper function to interface with jax library; converting a complicated python callable to jax differentiable 
-def make_matrix_function_jax_differentiable(function: Callable, eps: float = 1e-7, diff_params: list[str] = None) -> Callable:
+def make_matrix_function_jax_differentiable(function: Callable, eps: float = 1e-11, diff_params: list[str] = None) -> Callable:
     """ Wraps an arbitrarily complicated python function mapping named parameters to a matrix into a 
         JAX-differentiable function via jax.custom_jvp with a central finite-difference backward rule. 
 
