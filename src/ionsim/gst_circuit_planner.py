@@ -69,6 +69,7 @@ class GSTCircuitPlanner:
 
         # Check that gate models correspond with gate names if gate models are provided  
         self.gate_models = None
+        self.ism_gate_cache = {}
         self.num_model_parameters = None
         if gate_models is not None:
  #            gate_model_names = gate_models.keys()
@@ -396,23 +397,22 @@ class GSTCircuitPlanner:
         if do_nothing_circuit in circuits:
             circuits = circuits.remove(do_nothing_circuit) 
 
+        if self.gate_models is None:
+            raise ValueError("Gate models must be provided for sensitivity analysis.")
+
+        # Refresh gate model cache if necessary :
+        if not self.ism_gate_cache:
+            self.refresh_ism_gate_cache(circuit_parameters, initial_state)
+
         for circ in circuits:
             fisher_information[tuple(circ.expanded_gates)], fisher_information_matrices[tuple(circ.expanded_gates)] = self.compute_circuit_fisher_information(circ, circuit_parameters, initial_state, outcome_operators)
         return fisher_information, fisher_information_matrices 
 
 
-    def compute_circuit_sensitivity(self, circuit: ParsedCircuit, circuit_parameters: dict, initial_state: State, outcome_operators: list[Operator]):
-        """ Computes sensitivty of a circuit to gate model parameters """ 
-        outcomes = circuit.measurement_data.counts
-        N = circuit.measurement_data.total_counts
-
-        ## Get list of unique parameters 
-        if self.gate_models is None:
-            raise ValueError("Gate models must be provided for sensitivity analysis.")
-
-        # Generate ionsim circuit model 
-        ism_gates = []
-        for gate in circuit.expanded_gates:
+    def refresh_ism_gate_cache(self, circuit_parameters: dict, initial_state: State):
+        """ Rebuilds the caache of IonSim (ism) Gate objects """ 
+        self.ism_gate_cache = {}
+        for gate in self.gate_models: 
             pm_function = self.gate_models[gate]
             parameters = (inspect.signature(pm_function)).parameters.keys()
             fxn_name = pm_function.__name__
@@ -422,8 +422,25 @@ class GSTCircuitPlanner:
                 if p in circuit_parameters.keys():
                     values.append(circuit_parameters[p])                    
             parameters_values = dict(zip(parameters, values))  
-            gate = Gate.from_process_matrix_function(initial_state.basis, pm_function, parameters_values)
-            ism_gates.append(gate)
+            self.ism_gate_cache[gate] = Gate.from_process_matrix_function(initial_state.basis, pm_function, parameters_values)
+
+    def compute_circuit_sensitivity(self, circuit: ParsedCircuit, circuit_parameters: dict, initial_state: State, outcome_operators: list[Operator]):
+        """ Computes sensitivty of a circuit to gate model parameters """ 
+        outcomes = circuit.measurement_data.counts
+        N = circuit.measurement_data.total_counts
+
+        # Get list of unique parameters 
+        if self.gate_models is None:
+            raise ValueError("Gate models must be provided for sensitivity analysis.")
+
+        # Build gate model cache:
+        if not self.ism_gate_cache:
+            self.refresh_ism_gate_cache(circuit_parameters, initial_state)
+
+        # Generate ionsim circuit model 
+        ism_gates = []
+        for gate in circuit.expanded_gates:
+            ism_gates.append(self.ism_gate_cache[gate])
             
         ism_circuit = Circuit.from_gates(ism_gates)
         circuit_pm_function = ism_circuit.process_matrix_function 
@@ -445,25 +462,17 @@ class GSTCircuitPlanner:
         outcomes = circuit.measurement_data.counts
         N = circuit.measurement_data.total_counts
 
-        ## Get list of unique parameters 
+        # Get list of unique parameters 
         if self.gate_models is None:
             raise ValueError("Gate models must be provided for sensitivity analysis.")
 
         # Generate ionsim circuit model 
-        # TODO: Take advantage of caching for total FI calculation 
+        if not self.ism_gate_cache:
+            self.refresh_ism_gate_cache(circuit_parameters, initial_state)
+
         ism_gates = []
         for gate in circuit.expanded_gates:
-            pm_function = self.gate_models[gate]
-            parameters = (inspect.signature(pm_function)).parameters.keys()
-            fxn_name = pm_function.__name__
-            parameters = [fxn_name + "__" + param for param in parameters]
-            values = []
-            for p in parameters:
-                if p in circuit_parameters.keys():
-                    values.append(circuit_parameters[p])                    
-            parameters_values = dict(zip(parameters, values))  
-            gate = Gate.from_process_matrix_function(initial_state.basis, pm_function, parameters_values)
-            ism_gates.append(gate)
+            ism_gates.append(self.ism_gate_cache[gate])
             
         ism_circuit = Circuit.from_gates(ism_gates)
         circuit_pm_function = ism_circuit.process_matrix_function 
@@ -488,9 +497,6 @@ class GSTCircuitPlanner:
             hessian = circuit_pm_function.hessian_per_outcome(probs_function, wrt = list(input_args.keys()), outcome_labels = outcome_operators.keys(), **input_args) 
             fisher_dict, fisher_info_matrix = self.compute_fisher_information(prob, prob_gradients, hessian, N)
             return fisher_dict, fisher_info_matrix
- #            fisher_dict = fisher[0]
- #            fisher_info_matrix = fisher[1]
- #            return fisher_dict, fisher_info_matrix
 
     def compute_fisher_information(self, prob, prob_gradients: dict, hessian: dict, N: int) -> (dict, Matrix):
         """ returns fisher information matrix from the parameters """ 
