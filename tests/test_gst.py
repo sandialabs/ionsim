@@ -136,6 +136,10 @@ class TestGST(unittest.TestCase):
             "shared" : {"SPAM_error_probability" : (0., 1.)}, 
             Gxpi8_q0 : {"amplitude_noise_strength" : (0.0001, 10.0)}  
         } 
+
+        ## TODO: Replace with 
+        #GST_analyzer.specify_parameter("amplitude_noise_strength", model = "shared", guess = 0.01, bounds = (0.0001, 10))
+        #GST_analyzer.specify_parameter("amplitude_noise_strength", model = "Gxpi2:0", guess = 0.01, bounds = (0.0001, 10))
     
         # Define parameters which are shared among models 
         self.shared_model_parameters = {'SPAM_error_probability' : [("prep", 0), ("POVM", 0)]}

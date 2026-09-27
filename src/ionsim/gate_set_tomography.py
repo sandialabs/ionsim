@@ -31,8 +31,9 @@ def depth_bin(depth):
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: dict[str, Callable], parsed_circuits: list[GstCircuit], 
-                    gate_models: dict[str, Callable], parameter_bounds: dict[dict[str, tuple]] | None=None, circuit_design: GSTCircuitPlanner | None=None, 
-                    ideal_gate_set: dict | None=None, verbose: bool=False, shared_model_parameters: dict[str, list[tuple[str, int]]] | None=None): 
+                    gate_models: dict[str, Callable], circuit_design: GSTCircuitPlanner | None=None, ideal_gate_set: dict | None=None, verbose: bool=False): 
+                    #gate_models: dict[str, Callable], parameter_bounds: dict[dict[str, tuple]] | None=None, circuit_design: GSTCircuitPlanner | None=None, 
+                    #ideal_gate_set: dict | None=None, verbose: bool=False, shared_model_parameters: dict[str, list[tuple[str, int]]] | None=None): 
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms. 
     
             Member variables include:
@@ -104,6 +105,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self.shared_model_parameters = shared_model_parameters or {}
         self.gst_parameter_indices, self.num_gst_parameters = self._build_parameter_organization()
         self.gst_parameters = np.zeros(self.num_gst_parameters) 
+
+        # initialize parameter bounds 
+        self.parameter_bounds = None
 
         # 4. Debugging / diagnostics 
         self.LL_eval = 0 
@@ -232,6 +236,21 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             raise ValueError(f"Unknown parameter names: {unmatched}.\n Available parameters:\n {available}")
 
         return theta
+
+
+    #GST_analyzer.specify_parameter("amplitude_noise_strength", model = "shared", guess = 0.01, bounds = (0.0001, 10))
+    def specify_parameter(self, parameter: str, model_key: str, guess_value: float, bounds: tuple):
+        """ User-facing function to specify a parameter's guess value, bounds, and whether its shared or belongs to a specific model. """
+
+        # Handle cases:
+        # 1. Parameter may have the same name in multiple models but are distinct values  
+        # 2. Parameter may have the same name in multiple models and are truly the same (shared)  
+
+        # Get index of parameter in that model  
+        index_of_parameter_in_theta = 
+        self.parameter_bounds
+
+
 
     def _parse_parameter_bounds(self, parameter_bounds) -> list[tuple[float | None, float | None]] | None:
         # Parse the documented dictionary form to the flat list of
