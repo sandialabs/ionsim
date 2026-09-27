@@ -257,6 +257,36 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
         """A unique name for the hyperfine-structure level."""
         return ','.join([self.term_symbol, str(Fraction(self.f)), str(Fraction(self.mf))])
 
+@dataclass(frozen=True, eq=False)
+class J1L2UncoupledLevel(AtomicInternalEnergyLevel): 
+    """A hyperfine-structure energy level of an atom: k = j1 + l2 ; J = k + s2 
+        Corresponding term symbol: (2S_2 + 1)[K] """ 
+    j1: float
+    l2: float
+    k: float
+    s2: float
+    i: float
+    mi: float
+    mj: float
+    gj: float
+    external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
+    lifetime: float | str = 'null'
+    branching_ratios: dict[str, float] | None = None 
+    hyperfine_B: float | None=None
+
+    def __post_init__(self):
+        super().__post_init__()
+
+    @property
+    def coupling_scheme(self):
+        """The coupling scheme for the electronic orbital and spin angular momenta."""
+        return 'j1l2'
+
+    @property
+    def name(self):
+        """A unique name for the hyperfine-structure level."""
+        return ','.join([self.term_symbol, str(Fraction(self.mj)), str(Fraction(self.mi))])
+
 
 # def _check_uniqueness_of_term_symbols(term_symbols: list[str], levels_data: list[dict]):
 #     """Check whether the term symbol corresponds to a single energy level in the configuration data."""

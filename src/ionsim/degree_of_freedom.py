@@ -60,7 +60,9 @@ class AtomicStructure(DegreeOfFreedom):
             level_data['unique_branching_ratios'] = level_data.get('branching_ratios', None)
             # level_data['unique_term_symbol'] = _get_unique_term_symbol(level_data, levels_data)
 
-            get_fine_data, FineLevel, HyperfineLevel = cls.get_level_factory(level_data['coupling_scheme'])
+            # TODO: Add treatment for uncoupled state, request by mJ, mI 
+
+            get_fine_data, FineLevel, HyperfineLevel, UncoupledLevel = cls.get_level_factory(level_data['coupling_scheme'])
             fine_data = get_fine_data(level_data)
             j = fine_data['j']
             # ic(FineLevel.__annotations__, FineLevel(**fine_data, mj={'key': 1}))
@@ -129,14 +131,33 @@ class AtomicStructure(DegreeOfFreedom):
                                 # Overwrite the level to include its alias
                                 level = replace(level, alias = level_alias)
                             levels.append(level)
+                # TODO: Does this work generally? Are there ambiguous conflicts where |F, mF> and |mJ, mI> is ambiguous by numbers alone? 
+                for j in np.arange(np.abs(j), j + 1):
+                    for mj in np.arange(-j, j + 1):
+                        for mi in np.arange(-nuclear_spin, nuclear_spin + 1):
+                            # Extract any Zeeman shifts for this mF state 
+                            zeeman_shift_energy = 0.
+                            if magnetic_field != 0. :
+                                # Hyperfine A shift is already accounted for in AtomicInternalEnergyLevel 
+                                state_energy = Zeeman_solver.get_state_energy_from_mJmI_pair(zeeman_energy_shifts, zeeman_eigenvecs, mj = mj, mi = mi)
+    
+                        # Create the level 
+                        level = UncoupledLevel(**fine_data, i=nuclear_spin, mi=mi, mj=mj, external_energy_shift = state_energy * np.pi * 2.)
+                        if level_names is None or level.name in level_names:
+                            if level_aliases:
+                                level_name_index = level_names.index(level.name)
+                                level_alias = level_aliases[level_name_index]
+                                # Overwrite the level to include its alias
+                                level = replace(level, alias = level_alias)
+                            levels.append(level)
         return cls(levels, name)
 
     @classmethod
     def get_level_factory(cls, coupling_scheme: str):
         """Get a factory to build energy levels with a particular coupling scheme."""
         factories = {
-            'ls': (cls.get_ls_fine_data, LSFineLevel, LSHyperfineLevel),
-            'j1l2': (cls.get_j1l2_fine_data, J1L2FineLevel, J1L2HyperfineLevel),
+            'ls': (cls.get_ls_fine_data, LSFineLevel, LSHyperfineLevel, LSHyperfineUncoupledLevel),
+            'j1l2': (cls.get_j1l2_fine_data, J1L2FineLevel, J1L2HyperfineLevel, J1L2UncoupledLevel),
             # 'ls1': (_get_ls1_fine_data, LS1FineLevel, LS1HyperfineLevel),
             # 'j1j2': (_get_j1j2_fine_data, J1J2FineLevel, J1J2HyperfineLevel),
         }
