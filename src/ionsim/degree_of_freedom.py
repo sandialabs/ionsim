@@ -9,7 +9,7 @@
 
 from ionsim.energy_level import EnergyLevel
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
-from ionsim.atomic_internal_energy_level import LSFineLevel, LSHyperfineLevel, J1L2FineLevel, J1L2HyperfineLevel
+from ionsim.atomic_internal_energy_level import LSFineLevel, LSHyperfineLevel, J1L2FineLevel, J1L2HyperfineLevel, LSHyperfineUncoupledLevel, J1L2UncoupledLevel
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel
 from ionsim.zeeman_solver import ZeemanHyperfineSolver
 
@@ -132,24 +132,25 @@ class AtomicStructure(DegreeOfFreedom):
                                 level = replace(level, alias = level_alias)
                             levels.append(level)
                 # TODO: Does this work generally? Are there ambiguous conflicts where |F, mF> and |mJ, mI> is ambiguous by numbers alone? 
-                for j in np.arange(np.abs(j), j + 1):
-                    for mj in np.arange(-j, j + 1):
-                        for mi in np.arange(-nuclear_spin, nuclear_spin + 1):
-                            # Extract any Zeeman shifts for this mF state 
-                            zeeman_shift_energy = 0.
-                            if magnetic_field != 0. :
-                                # Hyperfine A shift is already accounted for in AtomicInternalEnergyLevel 
-                                state_energy = Zeeman_solver.get_state_energy_from_mJmI_pair(zeeman_energy_shifts, zeeman_eigenvecs, mj = mj, mi = mi)
-    
-                        # Create the level 
-                        level = UncoupledLevel(**fine_data, i=nuclear_spin, mi=mi, mj=mj, external_energy_shift = state_energy * np.pi * 2.)
-                        if level_names is None or level.name in level_names:
-                            if level_aliases:
-                                level_name_index = level_names.index(level.name)
-                                level_alias = level_aliases[level_name_index]
-                                # Overwrite the level to include its alias
-                                level = replace(level, alias = level_alias)
-                            levels.append(level)
+                if magnetic_field != 0.:
+                    for j in np.arange(np.abs(j), j + 1):
+                        for mj in np.arange(-j, j + 1):
+                            for mi in np.arange(-nuclear_spin, nuclear_spin + 1):
+                                # Extract any Zeeman shifts for this mF state 
+                                zeeman_shift_energy = 0.
+                                if magnetic_field != 0. :
+                                    # Hyperfine A shift is already accounted for in AtomicInternalEnergyLevel 
+                                    zeeman_shift_energy = Zeeman_solver.get_state_energy_from_mjmi_pair(zeeman_energy_shifts, zeeman_eigenvecs, mj = mj, mi = mi)
+        
+                                # Create the level 
+                                level = UncoupledLevel(**fine_data, i=nuclear_spin, mi=mi, mj=mj, external_energy_shift = zeeman_shift_energy * np.pi * 2.)
+                                if level_names is None or level.name in level_names:
+                                    if level_aliases:
+                                        level_name_index = level_names.index(level.name)
+                                        level_alias = level_aliases[level_name_index]
+                                        # Overwrite the level to include its alias
+                                        level = replace(level, alias = level_alias)
+                                    levels.append(level)
         return cls(levels, name)
 
     @classmethod

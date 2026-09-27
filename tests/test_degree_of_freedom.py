@@ -25,7 +25,7 @@ class TestDegreeOfFreedom(unittest.TestCase):
         # Test Rydberg level parsing  
         self.atom_a = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'], level_names=['S1/2,1,0', 'S1/2,2,0', '6 P3/2,3,-1','53 S1/2,1,0'], magnetic_field = 0.01) 
         # Test uncoupled mJ, mI state parsing for uncoupled hyperfine level (Paschen-Back regime)   
-        self.atom_b = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'], level_names=['S1/2,1,0', 'S1/2,2,0', '6 P3/2,3,-1','53 S1/2,-1/2,0', '53 S1/2,1/2,0'], magnetic_field = 10.0) 
+        self.atom_b = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'], level_names=['S1/2,1,0', 'S1/2,2,0', '6 P3/2,3,-1','53 S1/2,-1/2,1/2', '53 S1/2,1/2,1/2'], magnetic_field = 10.0) 
         self.mode_0 = MotionalMode.from_frequency(frequency=3e6 * 2 * np.pi, fock_dimension=3)
 
     def test_spin_a_energy_levels(self):

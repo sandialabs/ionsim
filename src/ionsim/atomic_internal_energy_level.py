@@ -141,8 +141,6 @@ class LSHyperfineUncoupledLevel(AtomicInternalEnergyLevel):
     i: float
     mj: float
     mi: float
-    #ml: float
-    #ms: float
     external_energy_shift: float = 0.
     lifetime: float | str='null'
     branching_ratios: dict[str, float] | None=None 
@@ -154,12 +152,11 @@ class LSHyperfineUncoupledLevel(AtomicInternalEnergyLevel):
     @property
     def coupling_scheme(self):
         """The coupling scheme for the electronic orbital and spin angular momenta."""
-        return None # or "uncoupled" or "high-field"??
-        #return 'ls' # Paschen-back?
+        return 'ls' 
 
     @property
     def name(self):
-        """A unique name for the hyperfine-structure level."""
+        """A unique name for the uncoupled (mJ, mI) level."""
         return ','.join([self.term_symbol, str(Fraction(self.mj)), str(Fraction(self.mi))])
 
 
@@ -195,7 +192,7 @@ class FullyUncoupledLevel(AtomicInternalEnergyLevel):
     @property
     def name(self):
         """A unique name for the hyperfine-structure level."""
-        return ','.join([self.term_symbol, str(Fraction(self.mi)), str(Fraction(self.ml)), str(Fraction(self.ms)])
+        return ','.join([self.term_symbol, str(Fraction(self.mi)), str(Fraction(self.ml)), str(Fraction(self.ms))])
 
 @dataclass(frozen=True, eq=False)
 class J1L2FineLevel(AtomicInternalEnergyLevel): 
