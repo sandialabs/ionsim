@@ -97,13 +97,9 @@ class LSFineLevel(AtomicInternalEnergyLevel):
         """A unique name for the fine-structure level."""
         return ','.join([self.term_symbol, str(Fraction(self.mj))])
  
-# @update_annotations   
 @dataclass(frozen=True, eq=False)
 class LSHyperfineLevel(AtomicInternalEnergyLevel): 
     """A hyperfine-structure energy level of an atom."""
-    # ct.update_annotations(__annotations__, [AtomicInternalEnergyLevel]) #TODO: is this proper?
-    # why doesn't this stop me from passing None to branching ratios and lifetime?
-
     l: float
     s: float
     i: float
@@ -127,11 +123,10 @@ class LSHyperfineLevel(AtomicInternalEnergyLevel):
         """A unique name for the hyperfine-structure level."""
         return ','.join([self.term_symbol, str(Fraction(self.f)), str(Fraction(self.mf))])
 
-# ===========Draft============ 
+
 @dataclass(frozen=True, eq=False)
 class LSBackGoudsmitLevel(AtomicInternalEnergyLevel): 
     """An energy level of an atom at strong magnetic field such that F no longer a good quantum number, described by mJ, mI quantum numbers."""
-
     l: float
     s: float
     i: float
@@ -181,8 +176,7 @@ class LSPaschenBackLevel(AtomicInternalEnergyLevel):
     @property
     def coupling_scheme(self):
         """The coupling scheme for the electronic orbital and spin angular momenta."""
-        return None # or "uncoupled" or "high-field"??
-        #return 'ls' # Paschen-back?
+        return None 
 
     @property
     def name(self):

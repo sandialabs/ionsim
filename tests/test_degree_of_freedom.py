@@ -24,15 +24,6 @@ class TestDegreeOfFreedom(unittest.TestCase):
         self.spin_c = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', '[3/2]1/2'], level_names=['S1/2,0,0', 'S1/2,1,0', '[3/2]1/2,0,0'])
         # Test Rydberg level parsing  
         self.atom_a = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'], level_names=['S1/2,1,0', 'S1/2,2,0', '6 P3/2,3,-1','53 S1/2,1,0'], magnetic_field = 0.01) 
-        # Test uncoupled mJ, mI state parsing for uncoupled hyperfine level (Paschen-Back regime)   
-
-        # TODO: Discuss with Brandon
-        # Maybe pass information in this way?  
-        # Make this a required argument if magnetic field is nonzero??  
-        #term_symbols_bases = ['hyperfine', 'hyperfine', 'uncoupled'] # sort order matches term_symbols list 
-        # or 
-        #term_symbols_bases = {"S1/2" : "hyperfine", "6 P3/2" : "hyperfine", "53 S1/2" : "uncoupled"}
-
         # Consider just using the quantum numbers to specify the level 
         ground_level_dict = {'n' : 5, 'l' : 0, 's' : 0.5, 'j' : 1/2, 'f' : 1, 'mf' : 0}
         ground_level_dict2 = {'n' : 5, 'l' : 0, 's' : 0.5, 'j' : 1/2, 'f' : 2, 'mf' : 0}
@@ -40,12 +31,8 @@ class TestDegreeOfFreedom(unittest.TestCase):
         rydberg_level_dict = {'n' : 53, 'l' : 0, 's' : 0.5, 'j' : 1/2, 'mj' : -1/2, 'mi' : 1/2}
         rydberg_level2_dict = {'n' : 53, 'l' : 0, 's' : 0.5, 'j' : 1/2, 'mj' : +1/2, 'mi' : 1/2}
         quantum_numbers = [ground_level_dict, ground_level_dict2, excited_level_dict, rydberg_level_dict, rydberg_level2_dict]
-        # specify level_names (as before) or quatnum_numbers (dict) see above 
         #self.atom_b = AtomicStructure.from_species(species='87Rb', manifolds=['S1/2', '6 P3/2', '53 S1/2'], levels=['S1/2,1,0', 'S1/2,2,0', '6 P3/2,3,-1','53 S1/2,-1/2,1/2', '53 S1/2,1/2,1/2'], magnetic_field = 13.6, term_symbols_bases = term_symbols_bases) 
         self.atom_b = AtomicStructure.from_species(species='87Rb', manifolds=['S1/2', '6 P3/2', '53 S1/2'], quantum_numbers=quantum_numbers, magnetic_field = 13.6) 
-        print((self.atom_b.energy_levels[-1].energy - self.atom_b.energy_levels[-2].energy)/(2.*np.pi*1E6))
-        print(self.atom_b.energy_levels[-1].name)
-        print(self.atom_b.energy_levels[-2].name)
         self.mode_0 = MotionalMode.from_frequency(frequency=3e6 * 2 * np.pi, fock_dimension=3)
 
     def test_spin_a_energy_levels(self):
