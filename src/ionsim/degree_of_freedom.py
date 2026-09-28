@@ -12,6 +12,7 @@ from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.atomic_internal_energy_level import LSFineLevel, LSHyperfineLevel, J1L2FineLevel, J1L2HyperfineLevel, LSHyperfineUncoupledLevel, J1L2UncoupledLevel
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel
 from ionsim.zeeman_solver import ZeemanHyperfineSolver
+from ionsim.ionsim_error import IonSimError
 
 import importlib.resources
 from pathlib import Path
@@ -37,7 +38,8 @@ class AtomicStructure(DegreeOfFreedom):
 
     @classmethod
     def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None, 
-            level_aliases: list[str] | None=None, name: str | None = None, magnetic_field: float=0., **kwargs):
+            level_aliases: list[str] | None=None, name: str | None = None, magnetic_field: float=0., term_symbols_bases: dict | None=None, **kwargs):
+            #level_aliases: list[str] | None=None, name: str | None = None, magnetic_field: float=0., **kwargs):
         """Build the atomic structure degree of freedom for a particular species of atom."""
         config_data = cls.get_config_data(species)
         nuclear_spin = config_data['nuclear_spin']
@@ -58,6 +60,7 @@ class AtomicStructure(DegreeOfFreedom):
 
             level_data['unique_term_symbol'] = level_data['term_symbol']
             level_data['unique_branching_ratios'] = level_data.get('branching_ratios', None)
+            term_symbol = level_data['unique_term_symbol']
             # level_data['unique_term_symbol'] = _get_unique_term_symbol(level_data, levels_data)
 
             # TODO: Add treatment for uncoupled state, request by mJ, mI 
@@ -114,25 +117,34 @@ class AtomicStructure(DegreeOfFreedom):
                             level = replace(level, alias = level_alias)
                         levels.append(level)
             else:
-                for f in np.arange(np.abs(j - nuclear_spin), j + nuclear_spin + 1):
-                    for mf in np.arange(-f, f + 1):
-                        # Extract any Zeeman shifts for this mF state 
-                        zeeman_shift_energy = 0.
-                        if magnetic_field != 0. :
-                            # Hyperfine A shift is already accounted for in AtomicInternalEnergyLevel 
-                            zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = f, mf = mf, subtract_hyperfineA_shift=True)
+                if term_symbols_bases:
+                    basis = term_symbols_bases[term_symbol]
+                else:
+                    basis = 'hyperfine'
 
-                        # Create the level 
-                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy * np.pi * 2.)
-                        if level_names is None or level.name in level_names:
-                            if level_aliases:
-                                level_name_index = level_names.index(level.name)
-                                level_alias = level_aliases[level_name_index]
-                                # Overwrite the level to include its alias
-                                level = replace(level, alias = level_alias)
-                            levels.append(level)
-                # TODO: Does this work generally? Are there ambiguous conflicts where |F, mF> and |mJ, mI> is ambiguous by numbers alone? 
-                if magnetic_field != 0.:
+                if basis == "hyperfine": 
+                    for f in np.arange(np.abs(j - nuclear_spin), j + nuclear_spin + 1):
+                        for mf in np.arange(-f, f + 1):
+                            # Extract any Zeeman shifts for this mF state 
+                            zeeman_shift_energy = 0.
+                            if magnetic_field != 0. :
+                                # Hyperfine A shift is already accounted for in AtomicInternalEnergyLevel 
+                                zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = f, mf = mf, subtract_hyperfineA_shift=True)
+        
+                            # Create the level 
+                            level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy * np.pi * 2.)
+                            if level_names is None or level.name in level_names:
+                                if level_aliases:
+                                    level_name_index = level_names.index(level.name)
+                                    level_alias = level_aliases[level_name_index]
+                                    # Overwrite the level to include its alias
+                                    level = replace(level, alias = level_alias)
+                                levels.append(level)
+                elif basis == "uncoupled": 
+                    if magnetic_field == 0.:
+                        raise IonSimError(f"Uncoupled basis should be chosen if magnetic field is nonzero.")
+                
+                    ##### TODO: Does this work generally? Are there ambiguous conflicts where |F, mF> and |mJ, mI> is ambiguous by numbers alone? 
                     for j in np.arange(np.abs(j), j + 1):
                         for mj in np.arange(-j, j + 1):
                             for mi in np.arange(-nuclear_spin, nuclear_spin + 1):

@@ -29,10 +29,10 @@ class TestDegreeOfFreedom(unittest.TestCase):
         # TODO: Discuss with Brandon
         # Maybe pass information in this way?  
         # Make this a required argument if magnetic field is nonzero??  
-        term_symbols_basis = ['hyperfine', 'hyperfine', 'uncoupled'] # sort order matches term_symbols list 
+        term_symbols_bases = ['hyperfine', 'hyperfine', 'uncoupled'] # sort order matches term_symbols list 
         # or 
-        term_symbols_basis = {"S1/2" : "hyperfine", "6 P3/2" : "hyperfine", "53 S1/2" : "uncoupled"}
-        self.atom_b = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'], level_names=['S1/2,1,0', 'S1/2,2,0', '6 P3/2,3,-1','53 S1/2,-1/2,1/2', '53 S1/2,1/2,1/2'], magnetic_field = 10.0) 
+        term_symbols_bases = {"S1/2" : "hyperfine", "6 P3/2" : "hyperfine", "53 S1/2" : "uncoupled"}
+        self.atom_b = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'], level_names=['S1/2,1,0', 'S1/2,2,0', '6 P3/2,3,-1','53 S1/2,-1/2,1/2', '53 S1/2,1/2,1/2'], magnetic_field = 10.0, term_symbols_bases = term_symbols_bases) 
         self.mode_0 = MotionalMode.from_frequency(frequency=3e6 * 2 * np.pi, fock_dimension=3)
 
     def test_spin_a_energy_levels(self):
