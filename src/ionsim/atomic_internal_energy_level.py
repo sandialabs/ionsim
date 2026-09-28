@@ -129,12 +129,8 @@ class LSHyperfineLevel(AtomicInternalEnergyLevel):
 
 # ===========Draft============ 
 @dataclass(frozen=True, eq=False)
-class LSHyperfineUncoupledLevel(AtomicInternalEnergyLevel): 
-#class HighFieldLevel(AtomicInternalEnergyLevel): 
-#class LSPaschenBackLevel(AtomicInternalEnergyLevel): 
+class LSBackGoudsmitLevel(AtomicInternalEnergyLevel): 
     """An energy level of an atom at strong magnetic field such that F no longer a good quantum number, described by mJ, mI quantum numbers."""
-    # ct.update_annotations(__annotations__, [AtomicInternalEnergyLevel]) #TODO: is this proper?
-    # why doesn't this stop me from passing None to branching ratios and lifetime?
 
     l: float
     s: float
@@ -165,14 +161,9 @@ class LSHyperfineUncoupledLevel(AtomicInternalEnergyLevel):
         return 0. 
 
 @dataclass(frozen=True, eq=False)
-class FullyUncoupledLevel(AtomicInternalEnergyLevel): 
-#class HighFieldLevel(AtomicInternalEnergyLevel): 
-#class LSPaschenBackLevel(AtomicInternalEnergyLevel): 
+class LSPaschenBackLevel(AtomicInternalEnergyLevel): 
     """An energy level of an atom at very strong magnetic field such that J is no longer a good quantum number, 
         described by mS, mL, mI quantum numbers."""
-    # ct.update_annotations(__annotations__, [AtomicInternalEnergyLevel]) #TODO: is this proper?
-    # why doesn't this stop me from passing None to branching ratios and lifetime?
-
     l: float
     s: float
     i: float
@@ -197,6 +188,19 @@ class FullyUncoupledLevel(AtomicInternalEnergyLevel):
     def name(self):
         """A unique name for the hyperfine-structure level."""
         return ','.join([self.term_symbol, str(Fraction(self.mi)), str(Fraction(self.ml)), str(Fraction(self.ms))])
+
+    @property
+    def hyperfine_energy_shift(self):
+        """ Hyperfine shift not included here."""
+        return 0. 
+
+    @property
+    def bare_energy(self): 
+        """The field-free energy of the hyperfine-structure level."""
+        if self.i == 0:
+            return self.fine_energy
+        else:
+            return self.fine_energy + self.hyperfine_energy_shift
 
 @dataclass(frozen=True, eq=False)
 class J1L2FineLevel(AtomicInternalEnergyLevel): 
