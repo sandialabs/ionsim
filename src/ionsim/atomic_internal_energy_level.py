@@ -159,6 +159,10 @@ class LSHyperfineUncoupledLevel(AtomicInternalEnergyLevel):
         """A unique name for the uncoupled (mJ, mI) level."""
         return ','.join([self.term_symbol, str(Fraction(self.mj)), str(Fraction(self.mi))])
 
+    @property
+    def hyperfine_energy_shift(self):
+        """The energy shift of the level from the hyperfine interaction."""
+        return 0. 
 
 @dataclass(frozen=True, eq=False)
 class FullyUncoupledLevel(AtomicInternalEnergyLevel): 

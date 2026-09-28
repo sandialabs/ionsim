@@ -32,7 +32,10 @@ class TestDegreeOfFreedom(unittest.TestCase):
         term_symbols_bases = ['hyperfine', 'hyperfine', 'uncoupled'] # sort order matches term_symbols list 
         # or 
         term_symbols_bases = {"S1/2" : "hyperfine", "6 P3/2" : "hyperfine", "53 S1/2" : "uncoupled"}
-        self.atom_b = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'], level_names=['S1/2,1,0', 'S1/2,2,0', '6 P3/2,3,-1','53 S1/2,-1/2,1/2', '53 S1/2,1/2,1/2'], magnetic_field = 10.0, term_symbols_bases = term_symbols_bases) 
+        self.atom_b = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'], level_names=['S1/2,1,0', 'S1/2,2,0', '6 P3/2,3,-1','53 S1/2,-1/2,1/2', '53 S1/2,1/2,1/2'], magnetic_field = 13.6, term_symbols_bases = term_symbols_bases) 
+        print((self.atom_b.energy_levels[-1].energy - self.atom_b.energy_levels[-2].energy)/(2.*np.pi*1E6))
+        print(self.atom_b.energy_levels[-1].name)
+        print(self.atom_b.energy_levels[-2].name)
         self.mode_0 = MotionalMode.from_frequency(frequency=3e6 * 2 * np.pi, fock_dimension=3)
 
     def test_spin_a_energy_levels(self):
