@@ -92,7 +92,7 @@ class AtomicStructure(DegreeOfFreedom):
         """Build the atomic structure degree of freedom for a particular species of atom.
 
         Args:
-            species: Name of the species config file, e.g. '87Rb'.
+            species: Name of the species config file, e.g. '171Yb+'.
             manifolds: Term symbols of the config-file manifolds to include. ``term_symbols`` is accepted as an alias.
             level_names: Names of individual levels to keep, e.g. 'S1/2,1,0'. Mutually exclusive with ``quantum_numbers``.
             quantum_numbers: One dict per level. Structural keys (n, l, s, j for LS coupling; n, k, j, ... for j1l2)
@@ -130,6 +130,9 @@ class AtomicStructure(DegreeOfFreedom):
                 raise IonSimError(f"Term symbols {missing} not found in the {species} config data. Available: {available}.")
             levels_data = cls.select_some_data(manifolds, levels_data)
 
+        if level_aliases and level_names is None:
+            raise IonSimError("level_aliases requires level_names or quantum_numbers, so each alias maps to a specific level.")
+
         if level_aliases:
             if level_names:
                 if len(level_names) != len(level_aliases):
@@ -145,11 +148,14 @@ class AtomicStructure(DegreeOfFreedom):
             builders.append(_ManifoldBuilder(level_data, nuclear_spin, mass, magnetic_moment, z, magnetic_field,
                                              cls.get_level_factory, kwargs))
 
+        # Atomic levels are built either by quantum numbers or by specified level names 
         if quantum_numbers is not None:
             levels = cls._levels_from_quantum_numbers(quantum_numbers, builders, nuclear_spin, level_aliases)
             return cls(levels, name)
 
+
         levels = []
+        keep_all = level_names is None  # no filter: every level in the selected manifolds
         for builder in builders:
             j = builder.j
             # Construct levels based on coupling structure
@@ -160,12 +166,16 @@ class AtomicStructure(DegreeOfFreedom):
                               for f in np.arange(np.abs(j - nuclear_spin), j + nuclear_spin + 1)
                               for mf in np.arange(-f, f + 1))
             for level in candidates:
-                if level_names is None or level.name in level_names:
+                if keep_all or level.name in level_names:
                     if level_aliases:
-                        level_name_index = level_names.index(level.name)
                         # Overwrite the level to include its alias
-                        level = replace(level, alias=level_aliases[level_name_index])
+                        level = replace(level, alias=level_aliases[level_names.index(level.name)])
                     levels.append(level)
+        if not keep_all:
+            missing = set(level_names) - {level.name for level in levels}
+            if missing:
+                raise IonSimError(f"Level names {sorted(missing)} were not found in the selected manifolds.")
+
         return cls(levels, name)
 
     @classmethod
