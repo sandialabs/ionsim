@@ -323,7 +323,6 @@ class Circuit(Process):
  #            if not (self.process_matrix_function(*arguments) == self.process_matrix).all:
  #                raise IonSimError(f"Error, process matrix function and process matrix attributes do not correspond.")
 
-    # TODO: Should the user be adding noise at the circuit level? Is it an essential feature? We could just have them specify it at the gate level? 
     @classmethod
     def from_gates(cls, gates: list[Gate], noise: Noise | None = None):
         """Build a circuit from a series of gates in the same basis."""
