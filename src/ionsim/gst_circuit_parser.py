@@ -22,7 +22,7 @@ class CircuitData:
         
 
     @staticmethod
-    def from_timestamped_shots(cls, single_shot_data):
+    def from_timestamped_shots(single_shot_data):
         return CircuitData(timestamped_shots = single_shot_data) 
 
 
@@ -34,7 +34,7 @@ class CircuitData:
         c = {}
         # Loop through times and incriment the count of each outcome
         for _, outcome in self.timestamped_shots:
-            c[outcome] += c.get(outcome, 0) + 1 
+            c[outcome] = c.get(outcome, 0) + 1
         return c
 
     def time_binned(self, bin_edges: list[float]):
@@ -64,50 +64,122 @@ class CircuitData:
 
 
 
-@dataclass(frozen=True) 
-class ParsedGate:
-    """ Parsed gate from GST file with information on the gate and involved qubits """
+# Accepted spellings of the global idle gate (acts on all qubits, takes no qubit arguments).
+# '[]' is the pyGSTi-style token used in .gstdata files; 'idle' is the canonical label in IonSim.
+IDLE_LABEL = 'idle'
+IDLE_ALIASES = ('idle', '[]')
 
-    name: str 
-    qubits: tuple[int, ...] # qubits are indexed by integers starting at 0 
+# Gate names: start with a letter; may contain letters, digits, '_', '+', '-'. (':' separates qubits.)
+_GATE_NAME_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_+\-]*")
 
-    def __repr__(self):
-        if (self.name == "idle") or (self.name == "I"):
-            return "[]"
-        if not self.qubits:
-            return self.name
-        q = ":".join(str(q) for q in self.qubits)
-        return f"{self.name}:{q}"
 
+@dataclass(frozen=True)
+class GstGate:
+    """ A GST gate: a gate name acting on a tuple of qubit indices (indexed from 0).
+
+        Users specify gates by string label throughout the GST modules, e.g.
+            'Gxpi2:0'   -> GstGate('Gxpi2', (0,))
+            'MS:0:1'    -> GstGate('MS', (0, 1))
+            'idle' or '[]' -> the global idle gate GstGate('idle', ())
+
+        Every gate other than idle must specify its qubit(s) with a colon. Use GstGate.from_string()
+        to convert a label; str(gate) (or gate.label) converts back to the canonical label.
+    """
+
+    name: str
+    qubits: tuple[int, ...] = ()
+
+    def __post_init__(self):
+        # Canonicalize so that 'idle' and '[]' always produce the same (equal, same-hash) object.
+        name = IDLE_LABEL if self.name in IDLE_ALIASES else self.name
+        qubits = tuple(int(q) for q in self.qubits)
+
+        if name == IDLE_LABEL:
+            if qubits:
+                raise ValueError(f"The '{IDLE_LABEL}' gate is a global idle and takes no qubit arguments; received qubits {qubits}. "
+                                 f"For a qubit-specific idle, use a distinct gate name, e.g. 'Gi:{qubits[0]}'.")
+        else:
+            if not _GATE_NAME_PATTERN.fullmatch(name):
+                raise ValueError(f"Invalid gate name {name!r}. Gate names must start with a letter and contain only letters, digits, '_', '+', or '-'.")
+            if not qubits:
+                raise ValueError(f"Gate {name!r} must specify the qubit(s) it acts on, e.g. '{name}:0' or '{name}:0:1'.")
+            if any(q < 0 for q in qubits):
+                raise ValueError(f"Qubit indices must be non-negative; received {qubits} for gate {name!r}.")
+            if len(set(qubits)) != len(qubits):
+                raise ValueError(f"Repeated qubit index in gate {name!r}: {qubits}.")
+
+        object.__setattr__(self, 'name', name)
+        object.__setattr__(self, 'qubits', qubits)
 
     @classmethod
-    def from_string(cls, gate_str: str): #qubit_indices: list[int] | None=None):
-        """ Creates an instance using a gate string """  
-        if gate_str == 'idle' or gate_str == '[]':
-            return cls('idle', ())
-        parts = gate_str.split(':')
-        name = parts[0]
-        if len(parts) == 1:
-            qubits = (0, ) 
-        else:
-            qubits = tuple(int(q) for q in parts[1:])
-        return cls(name, qubits)
+    def from_string(cls, gate_str: str) -> "GstGate":
+        """ Creates an instance from a gate label, e.g. 'Gxpi2:0', 'MS:0:1', 'idle', or '[]'.
 
+            The qubit argument(s) are required (colon-separated) for every gate except idle.
+        """
+        if not isinstance(gate_str, str):
+            raise TypeError(f"Gates must be specified by string label (e.g. 'Gxpi2:0', 'MS:0:1', 'idle'); received {type(gate_str).__name__}: {gate_str!r}.")
+        label = gate_str.strip()
+        if label in IDLE_ALIASES:
+            return cls.idle()
+
+        name, *qubit_strs = label.split(':')
+        if not qubit_strs:
+            raise ValueError(f"Gate {label!r} must specify the qubit(s) it acts on with a colon, e.g. '{label}:0' or '{label}:0:1'.")
+        if not all(q.strip().isdigit() for q in qubit_strs):
+            raise ValueError(f"Could not parse qubit indices in gate label {label!r}; expected the form 'name:q' or 'name:q0:q1' with integer q.")
+        return cls(name.strip(), tuple(int(q) for q in qubit_strs))
+
+    @classmethod
+    def idle(cls) -> "GstGate":
+        """ The global idle gate. """
+        return cls(IDLE_LABEL, ())
+
+    @property
+    def is_idle(self) -> bool:
+        return self.name == IDLE_LABEL
+
+    @property
+    def label(self) -> str:
+        """ Canonical string label, e.g. 'Gxpi2:0', 'MS:0:1', or 'idle'. """
+        if self.is_idle:
+            return IDLE_LABEL
+        return self.name + ":" + ":".join(str(q) for q in self.qubits)
+
+    def to_circuit_token(self) -> str:
+        """ Token used when writing circuit strings to .gstdata files ('[]' for idle). """
+        return "[]" if self.is_idle else self.label
+
+    def __str__(self):
+        return self.label
+
+    def __repr__(self):
+        return self.label
+
+
+def gate_from_label(gate: str) -> GstGate:
+    """ Converts a user-specified gate label (string) into a GstGate. Raises TypeError for non-strings. """
+    return GstGate.from_string(gate)
+
+
+def canonical_gate_label(gate: str) -> str:
+    """ Returns the canonical label of a user gate string, e.g. '[]' -> 'idle', ' Gxpi2:0 ' -> 'Gxpi2:0'. """
+    return GstGate.from_string(gate).label
 
 
 @dataclass
-class ParsedCircuit:
+class GstCircuit:
     """ Parsed circuit from GST file, optionally with measurement outcomes 
 
         - follows convention of Prep gates --> {(Germ_gates)^germ_power} --> measure gates  
         - Stores the file string contents
 
     """
-    # ParsedCircuit class should remain unfrozen so its measurement_data attribute can be modified by an experiment. 
+    # GstCircuit class should remain unfrozen so its measurement_data attribute can be modified by an experiment. 
     unparsed_data: str
-    fiducial_prep_gates: list[ParsedGate]
-    germ_gates: list[ParsedGate]
-    fiducial_measurement_gates: list[ParsedGate]
+    fiducial_prep_gates: list[GstGate]
+    germ_gates: list[GstGate]
+    fiducial_measurement_gates: list[GstGate]
     germ_power: int 
 
     line_labels: list[int]   # not as important, TODO: delete?   
@@ -115,10 +187,15 @@ class ParsedCircuit:
 
 
     @property
-    def expanded_gates(self) -> list[ParsedGate]:
+    def expanded_gates(self) -> list[GstGate]:
         """ List of gates, expanded (no germ power included) """
         return self.fiducial_prep_gates + self.germ_gates * self.germ_power + self.fiducial_measurement_gates
 
+
+    @property
+    def expanded_gate_labels(self) -> list[str]:
+        """ Canonical string labels of the expanded gate sequence, e.g. ['Gxpi2:0', 'idle', 'MS:0:1'] """
+        return [gate.label for gate in self.expanded_gates]
 
     @property
     def total_counts(self) -> int:
@@ -134,7 +211,7 @@ class ParsedCircuit:
 
     def __repr__(self):
         gates_readable = " ".join(repr(gate) for gate in self.expanded_gates) or "(empty)"
-        return f"ParsedCircuit({gates_readable}, data={self.measurement_data})"
+        return f"GstCircuit({gates_readable}, data={self.measurement_data})"
 
     @property
     def num_qubits(self):
@@ -146,8 +223,8 @@ class ParsedCircuit:
         # Ex] Gxpi2:0(Gxpi2:0)^{2}Gypi2:0@(0)
 
         # Helper function for chaining gate names into a single string 
-        def _gates_to_str(gates: list[ParsedGate]):
-            return "".join(repr(g) for g in gates)
+        def _gates_to_str(gates: list[GstGate]):
+            return "".join(g.to_circuit_token() for g in gates)
 
         prep = _gates_to_str(self.fiducial_prep_gates)
         measure = _gates_to_str(self.fiducial_measurement_gates)
@@ -180,11 +257,25 @@ class ParsedCircuit:
 
 
     @staticmethod
-    def plan(prep_gates: list[ParsedGate], germ_gates: list[ParsedGate], germ_power: int, measure_gates: list[ParsedGate], line_labels: list[int]):
-        """ Constructs and returns a circuit that is planned - no measurement data exists yet. """ 
-        planned_circ = ParsedCircuit("", prep_gates, germ_gates, measure_gates, germ_power, line_labels, measurement_data = None)
+    def plan(prep_gates: list[str], germ_gates: list[str], germ_power: int, measure_gates: list[str], line_labels: list[int]) -> "GstCircuit":
+        """ Constructs and returns a circuit that is planned - no measurement data exists yet.
+
+            Gates are specified by string label, e.g. GstCircuit.plan(['Gxpi2:0'], ['Gypi2:0'], 4, [], [0]).
+        """
+        def _to_gates(labels, role):
+            if isinstance(labels, str):
+                raise TypeError(f"{role} gates must be a list of gate labels, e.g. ['Gxpi2:0']; received the string {labels!r}.")
+            return [gate_from_label(g) for g in labels]
+
+        return GstCircuit._from_gates(_to_gates(prep_gates, 'Prep'), _to_gates(germ_gates, 'Germ'), germ_power,
+                                      _to_gates(measure_gates, 'Measure'), line_labels)
+
+    @staticmethod
+    def _from_gates(prep_gates: list[GstGate], germ_gates: list[GstGate], germ_power: int, measure_gates: list[GstGate], line_labels: list[int]) -> "GstCircuit":
+        """ Internal constructor for a planned circuit from GstGate objects (used by the circuit planner). """
+        planned_circ = GstCircuit("", list(prep_gates), list(germ_gates), list(measure_gates), germ_power, list(line_labels), measurement_data = None)
         planned_circ.unparsed_data = planned_circ.build_circuit_string()
-        return planned_circ  
+        return planned_circ
 
     def append_to_file(self, filename):
         """ Appends circuit information to a gstdata type file"""
@@ -192,30 +283,38 @@ class ParsedCircuit:
             f.write(self._format_circuit_line() + "\n")
 
 
-def parse_circuit_string(circ: str) -> list[ParsedGate]:
-    """ Extract the gate sequence from the circuit string """
+def parse_circuit_string(circ: str) -> list[GstGate]:
+    """ Extract the gate sequence from a circuit string, e.g. 'Gxpi2:0[]Gypi2:1' -> [Gxpi2:0, idle, Gypi2:1].
 
-    # Extracts from patterns like '', '[]', '{}', 'Gxpi2:0'
-
-    # Check that we have a valid circuit string 
+        Recognized tokens are 'name:q' / 'name:q0:q1' gates and the idle token '[]' (a standalone 'idle' is also accepted).
+        Raises ValueError on any unrecognized content, e.g. a gate missing its qubit argument.
+    """
+    # Check that we have a valid circuit string
     if not circ or not circ.strip():
         return []
 
     gates = []
+    # 'idle' must not be part of a longer gate name (e.g. 'idleGx:0' is a gate named 'idleGx') and takes no qubits
+    pattern = r"\[\]|(?<![A-Za-z_])idle(?![A-Za-z0-9_:+\-])|([A-Za-z][A-Za-z0-9_+\-]*):(\d+(?::\d+)*)"
 
-    pattern = r"([A-Za-z][A-Za-z0-9_+\-]*):(\d+(?::\d+)*)|\[\]"
-
-    # Find matches for the pattern and build a ParsedGate object for each match 
+    # Find matches for the pattern and build a GstGate object for each match, tracking unmatched text
+    unmatched = []
+    position = 0
     for m in re.finditer(pattern, circ):
-        if m.group(0) == "[]":
-            gates.append(ParsedGate("idle", ()))
+        unmatched.append(circ[position:m.start()])
+        position = m.end()
+        if m.group(1) is None:
+            gates.append(GstGate.idle())
         else:
-            name = m.group(1)
             qubits = tuple(int(qubit) for qubit in m.group(2).split(":"))
-            gates.append(ParsedGate(name, qubits))
+            gates.append(GstGate(m.group(1), qubits))
+    unmatched.append(circ[position:])
 
-    return gates 
-
+    leftover = "".join(unmatched).strip()
+    if leftover:
+        raise ValueError(f"Could not parse {leftover!r} in circuit string {circ!r}. Gates must have the form 'name:q' "
+                         f"(e.g. 'Gxpi2:0', 'MS:0:1'), and idle is written as '[]'.")
+    return gates
 
 
 def parse_measurement_outcome_labels(header: str) -> list[str]:
@@ -232,7 +331,7 @@ def parse_measurement_outcome_labels(header: str) -> list[str]:
 
 
 
-def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
+def parse_circuit_line(line: str, outcome_labels: list[str]) -> GstCircuit:
     """ Parse a GST circuit line, containing a sequence of gates and possibly measurement count outcomes. """ 
     ## TODO: Add parsing functionality for t-dependent data. This is currently not handled 
     # For GST data files, this is of the format circuit list then measurement counts 
@@ -270,7 +369,7 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
     
     # Parse circuit sequence, starting with empty (do nothing -- prep then measure) string 
     if circuit_sequence == "{}":
-        return ParsedCircuit(unparsed_data = line, fiducial_prep_gates=[], germ_gates = [], fiducial_measurement_gates = [],
+        return GstCircuit(unparsed_data = line, fiducial_prep_gates=[], germ_gates = [], fiducial_measurement_gates = [],
                             germ_power = 1, line_labels = line_labels, measurement_data = parsed_measurement_data) 
 
     # Find the germ block if it exists  
@@ -293,13 +392,13 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> ParsedCircuit:
         measure_gates = []
         germ_power = 1
         
-    return ParsedCircuit(line, prep_gates, germ_gates, measure_gates, germ_power, line_labels, parsed_measurement_data) 
+    return GstCircuit(line, prep_gates, germ_gates, measure_gates, germ_power, line_labels, parsed_measurement_data) 
 
 
-def parse_gst_circuit_file(filepath: str | Path) -> list[ParsedCircuit]:
+def parse_gst_circuit_file(filepath: str | Path) -> list[GstCircuit]:
     """ Parse a GST circuit results file, containing circuits and outcomes on each line. """
     filepath = Path(filepath)
-    results: list[ParsedCircuit] = []
+    results: list[GstCircuit] = []
     outcome_labels: list[str] | None = None
 
     # Open file and parse each line: 
