@@ -982,13 +982,13 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
         gram_matrix_det = np.linalg.det(gram_matrix)
         if np.abs(gram_matrix_det) < 1E-12:
-            ValueError(f"Gram matrix is not invertible, determinant = {gram_matrix_det}") 
+            raise ValueError(f"Gram matrix is not invertible, determinant = {gram_matrix_det}") 
         
         # 2. Compute SVD to get projector to linear-independent subspace  
         U, S, Vh = np.linalg.svd(gram_matrix)
 
         if len(S) < self.d2:
-            ValueError(f"Gram matrix is not informationally complete. It has rank {len(S)} instead of {self.d2}.")
+            raise ValueError(f"Gram matrix is not informationally complete. It has rank {len(S)} instead of {self.d2}.")
 
         # Projector onto k = d^2 top right singular vectors  
         Pi = Vh[:self.d2, :]
@@ -997,7 +997,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         TOL = 1E-10
         N_significant_vals = np.sum(S > TOL)
         if N_significant_vals < self.d2:
-            ValueError(f" Fiducials are not informationally complete. Only {N_significant_vals} singular values instead of {self.d2}.")
+            raise ValueError(f" Fiducials are not informationally complete. Only {N_significant_vals} singular values instead of {self.d2}.")
 
         # Check separation between complete and excess subspaces
         if len(S) > self.d2:
