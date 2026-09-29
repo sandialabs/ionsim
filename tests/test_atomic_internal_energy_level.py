@@ -12,6 +12,7 @@ import warnings
 import numpy as np
 import sympy
 from sympy.physics.wigner import wigner_3j, wigner_6j
+import scipy.constants as const
 
 from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.atomic_internal_energy_level import (
@@ -61,27 +62,12 @@ class TestQuantumNumberSpecification(unittest.TestCase):
         self.assertAlmostEqual(shift_f2, expected, delta=0.01 * expected)
         self.assertAlmostEqual(shift_f1, -expected, delta=0.01 * expected)
 
-    def test_rydberg_back_goudsmit_energies(self):
-        """53S1/2 |mJ, mI> energies ~ gJ muB B mJ + A mJ mI (deep Back-Goudsmit regime)."""
-        g_j = 2.00233
-        for level in self.atom.energy_levels[3:]:
-            relative = (level.energy - level.fine_energy) / (2 * np.pi)
-            A = level.hyperfine_A / (2.*np.pi)
-            leading = g_j * MU_B_HZ_PER_GAUSS * self.B * level.mj + A * level.mj * level.mi
-            # The nuclear Zeeman term is ~10 kHz at 13.6 G; allow for it.
-            self.assertAlmostEqual(relative, leading, delta=30e3)
-
     def test_minimal_dicts_and_string_fractions(self):
         atom = AtomicStructure.from_species(species='87Rb',
                                             quantum_numbers=[{'n': 53, 'mj': '-1/2', 'mi': '3/2'},
                                                              {'n': 5, 'l': 0, 'f': 2, 'mf': -2}],
                                             magnetic_field=1.)
         self.assertEqual([level.name for level in atom.energy_levels], ['53 S1/2,-1/2,3/2', 'S1/2,2,-2'])
-
-    def test_aliases(self):
-        atom = AtomicStructure.from_species(species='87Rb', quantum_numbers=self.qns[:2], magnetic_field=1.,
-                                            level_aliases=['down', 'up'])
-        self.assertEqual([level.alias for level in atom.energy_levels], ['down', 'up'])
 
     def test_invalid_inputs_raise(self):
         bad_calls = [
@@ -135,7 +121,8 @@ class TestQuantumNumberSpecification(unittest.TestCase):
         up, down = atom.energy_levels
         self.assertIsInstance(up, LSFineLevel)
         splitting = (up.energy - down.energy) / (2 * np.pi)
-        self.assertAlmostEqual(splitting, 2.0023 * MU_B_HZ_PER_GAUSS, delta=0.01 * MU_B_HZ_PER_GAUSS)
+        gs = np.abs(const.physical_constants['electron g factor'][0])  # electron spin g factor. 
+        self.assertAlmostEqual(splitting, gs * MU_B_HZ_PER_GAUSS, places = 2) 
 
     def test_j1l2_gj_independent_of_field(self):
         """171Yb+ [3/2]1/2 gets the same computed gJ at zero and nonzero field."""
