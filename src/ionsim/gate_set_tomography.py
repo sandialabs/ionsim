@@ -1142,8 +1142,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 total_cost += np.linalg.norm(modeled_effects[outcome] - effect)**2
             return total_cost.real
             
-        # TODO: potentially seed from independent fits with average parameter values? see if this is necessary  
-        #theta_0 = self._seed_from_independent_fits(theta_0)
         if theta_0 is None:
             theta_0 = self.parameter_initial_guess
 
