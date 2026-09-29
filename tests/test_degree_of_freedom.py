@@ -23,15 +23,15 @@ class TestDegreeOfFreedom(unittest.TestCase):
         self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.spin_c = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', '[3/2]1/2'], level_names=['S1/2,0,0', 'S1/2,1,0', '[3/2]1/2,0,0'])
         # Test Rydberg level parsing  
-        self.atom_a = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'], level_names=['S1/2,1,0', 'S1/2,2,0', '6 P3/2,3,-1','53 S1/2,1,0'], magnetic_field = 0.01) 
-        # Consider just using the quantum numbers to specify the level 
+        self.atom_a = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'], level_names=['S1/2,1,0', 'S1/2,2,0', '6 P3/2,3,-1','53 S1/2,1,0'], magnetic_field = 0.001) 
+
+        # Alternative method using quantum numbers to specify the level 
         ground_level_dict = {'n' : 5, 'l' : 0, 's' : 0.5, 'j' : 1/2, 'f' : 1, 'mf' : 0}
         ground_level_dict2 = {'n' : 5, 'l' : 0, 's' : 0.5, 'j' : 1/2, 'f' : 2, 'mf' : 0}
         excited_level_dict = {'n' : 6, 'l' : 1, 's' : 0.5, 'j' : 3/2, 'f' : 3, 'mf' : -1}
         rydberg_level_dict = {'n' : 53, 'l' : 0, 's' : 0.5, 'j' : 1/2, 'mj' : -1/2, 'mi' : 1/2}
         rydberg_level2_dict = {'n' : 53, 'l' : 0, 's' : 0.5, 'j' : 1/2, 'mj' : +1/2, 'mi' : 1/2}
         quantum_numbers = [ground_level_dict, ground_level_dict2, excited_level_dict, rydberg_level_dict, rydberg_level2_dict]
-        #self.atom_b = AtomicStructure.from_species(species='87Rb', manifolds=['S1/2', '6 P3/2', '53 S1/2'], levels=['S1/2,1,0', 'S1/2,2,0', '6 P3/2,3,-1','53 S1/2,-1/2,1/2', '53 S1/2,1/2,1/2'], magnetic_field = 13.6, term_symbols_bases = term_symbols_bases) 
         self.atom_b = AtomicStructure.from_species(species='87Rb', manifolds=['S1/2', '6 P3/2', '53 S1/2'], quantum_numbers=quantum_numbers, magnetic_field = 13.6) 
         self.mode_0 = MotionalMode.from_frequency(frequency=3e6 * 2 * np.pi, fock_dimension=3)
 
@@ -75,6 +75,12 @@ class TestDegreeOfFreedom(unittest.TestCase):
         fourth_level = self.atom_a.energy_levels[3]
         self.assertEqual(fourth_level.term_symbol, '53 S1/2')
         self.assertEqual(fourth_level.n, 53)
+
+        # Check zeeman splitting of two rydberg levels in the high-field regime:
+        r1 = self.atom_b.energy_levels[-2]
+        r2 = self.atom_b.energy_levels[-1]
+        energy_diff = r2.energy - r1.energy
+        self.assertAlmostEqual(energy_diff/(2. * np.pi * 1E6), 38.18975921748056, places=8)
         
     def test_mode_0_energy_levels(self):
         """Test the energy levels of mode_0."""
