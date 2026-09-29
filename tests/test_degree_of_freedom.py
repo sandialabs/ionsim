@@ -33,6 +33,8 @@ class TestDegreeOfFreedom(unittest.TestCase):
         rydberg_level2_dict = {'n' : 53, 'l' : 0, 's' : 0.5, 'j' : 1/2, 'mj' : +1/2, 'mi' : 1/2}
         quantum_numbers = [ground_level_dict, ground_level_dict2, excited_level_dict, rydberg_level_dict, rydberg_level2_dict]
         self.atom_b = AtomicStructure.from_species(species='87Rb', manifolds=['S1/2', '6 P3/2', '53 S1/2'], quantum_numbers=quantum_numbers, magnetic_field = 13.6) 
+
+        # Test motional mode 
         self.mode_0 = MotionalMode.from_frequency(frequency=3e6 * 2 * np.pi, fock_dimension=3)
 
     def test_spin_a_energy_levels(self):
