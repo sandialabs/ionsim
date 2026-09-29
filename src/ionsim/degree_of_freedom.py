@@ -7,25 +7,32 @@
 # http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
 #***************************************************************************************************
 
+from __future__ import annotations
+
+import importlib.resources
+import warnings
+from abc import ABC
+from dataclasses import dataclass, fields, replace
+from fractions import Fraction
+from functools import cached_property
+from typing import Sequence
+
+import numpy as np
+import yaml
+
 from ionsim.energy_level import EnergyLevel
-from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
-from ionsim.atomic_internal_energy_level import LSFineLevel, LSHyperfineLevel, J1L2FineLevel, J1L2HyperfineLevel, LSBackGoudsmitLevel, J1L2BackGoudsmitLevel 
+from ionsim.atomic_internal_energy_level import (AtomicInternalEnergyLevel, LSFineLevel, LSHyperfineLevel, LSBackGoudsmitLevel,
+                                                J1L2FineLevel, J1L2HyperfineLevel, J1L2BackGoudsmitLevel)
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel
 from ionsim.zeeman_solver import ZeemanHyperfineSolver
 from ionsim.ionsim_error import IonSimError
-from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, STRUCTURAL_KEYS, PROJECTION_KEYS, ALLOWED_QUANTUM_NUMBER_KEYS 
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, STRUCTURAL_KEYS, PROJECTION_KEYS, ALLOWED_QUANTUM_NUMBER_KEYS
 
-import importlib.resources
-from pathlib import Path
-from dataclasses import dataclass, replace
-from abc import ABC
-import yaml
-from fractions import Fraction
-import numpy as np
-import warnings
-from typing import Sequence
-
-from icecream import ic
+# Level classes for each coupling scheme: (|J, mJ> fine, |F, mF> hyperfine, |mJ, mI> uncoupled).
+ #LEVEL_CLASSES = {
+ #    'ls': (LSFineLevel, LSHyperfineLevel, LSBackGoudsmitLevel),
+ #    'j1l2': (J1L2FineLevel, J1L2HyperfineLevel, J1L2BackGoudsmitLevel),
+ #}
 
 @dataclass(frozen=True, eq=False)
 class DegreeOfFreedom(ABC):
@@ -92,82 +99,61 @@ class AtomicStructure(DegreeOfFreedom):
                 select the manifold; they only need to be specific enough to identify one manifold. Projection keys
                 select the basis and the state:
                     {'f', 'mf'}  -> hyperfine level |F, mF>   (LSHyperfineLevel / J1L2HyperfineLevel)
-                    {'mj', 'mi'} -> uncoupled level |mJ, mI>  (LSBackGoudsmitLevel / J1L2UncoupledLevel), needs B != 0
+                    {'mj', 'mi'} -> uncoupled level |mJ, mI>  (LSBackGoudsmitLevel / J1L2BackGoudsmitLevel), needs B != 0
                     {'mj'}       -> fine level |J, mJ>        (nuclear spin zero only)
                 Levels are returned in the order given.
             level_aliases: Optional alias per requested level (same length as level_names / quantum_numbers).
             name: Name of the degree of freedom.
-            magnetic_field: Static magnetic field used for Zeeman shifts.
-            **kwargs: Passed to ZeemanHyperfineSolver.
+            magnetic_field: Static magnetic field used for Zeeman shifts, in the Zeeman solver's field units (gauss by default).
+            **kwargs: Options passed to ZeemanHyperfineSolver, e.g. ``approximation``.
+
+            Without ``level_names`` or ``quantum_numbers``, every sublevel of the selected manifolds is included, in the
+            |F, mF> basis (or |J, mJ> when the nuclear spin is zero).
         """
+        # Import configuration data and levels for the species 
         config_data = cls.get_config_data(species)
-        nuclear_spin = config_data['nuclear_spin']
         levels_data = config_data['levels']
-        mass = config_data['mass'] # Daltons
-        z = config_data['Z'] # Atomic number, number of protons
-        magnetic_moment = config_data['magnetic_moment'] # units of \mu_{N}
-        structure = 'fine' if nuclear_spin == 0 else 'hyperfine'
 
         if level_names and quantum_numbers:
-            raise IonSimError(f"Specify either level names or quantum numbers, not both.")
-
+            raise IonSimError("Specify either level names or quantum numbers, not both.")
         if manifolds is not None and term_symbols is not None:
             raise IonSimError("Specify either manifolds or term_symbols (they are aliases), not both.")
         if manifolds is None:
             manifolds = term_symbols
+
+        requested = level_names if level_names is not None else quantum_numbers
+        if level_aliases:
+            if requested is None:
+                raise IonSimError("level_aliases requires level_names or quantum_numbers, so each alias maps to a specific level.")
+            if len(level_aliases) != len(requested):
+                raise IonSimError(f"Specify one level alias per requested level: expected {len(requested)}, got {len(level_aliases)}.")
 
         if manifolds is not None:
             available = [data['term_symbol'] for data in levels_data]
             missing = [ts for ts in manifolds if ts not in available]
             if missing:
                 raise IonSimError(f"Term symbols {missing} not found in the {species} config data. Available: {available}.")
-            levels_data = cls.select_some_data(manifolds, levels_data)
+            levels_data = [data for data in levels_data if data['term_symbol'] in manifolds]
 
-        if level_aliases and level_names is None:
-            raise IonSimError("level_aliases requires level_names or quantum_numbers, so each alias maps to a specific level.")
+        # Manifolds of electronic levels may differ in character and thus quantum numbers; therefore we use a manifold builder 
+        #  that can accomodate differences in character for each term symbols' levels. This depends on the angular momentum couplings and any magnetic fields. 
+        builders = [_ManifoldBuilder(cls.get_fine_data(level_data), level_data['coupling_scheme'], config_data,
+                                     magnetic_field, cls.get_level_factory, kwargs) for level_data in levels_data]
 
-        if level_aliases:
-            if level_names:
-                if len(level_names) != len(level_aliases):
-                    raise IonSimError(f'User should specify a level alias for each level in the atomic structure. Expected {len(level_names)} but have {level_aliases}')
-            if quantum_numbers:
-                if len(quantum_numbers) != len(level_aliases):
-                    raise IonSimError(f'User should specify a level alias for each level in the atomic structure. Expected {len(quantum_numbers)} but have {level_aliases}')
-
-        builders = []
-        for level_data in levels_data:
-            level_data['unique_term_symbol'] = level_data['term_symbol']
-            level_data['unique_branching_ratios'] = level_data.get('branching_ratios', None)
-            builders.append(_ManifoldBuilder(level_data, nuclear_spin, mass, magnetic_moment, z, magnetic_field,
-                                             cls.get_level_factory, kwargs))
-
-        # Atomic levels are built either by quantum numbers or by specified level names 
+        # Build structure from a list of quantum numbers from each level or from specified level names 
         if quantum_numbers is not None:
-            levels = cls._levels_from_quantum_numbers(quantum_numbers, builders, nuclear_spin, level_aliases)
-            return cls(levels, name)
+            return cls(cls._levels_from_quantum_numbers(quantum_numbers, builders, config_data['nuclear_spin'], level_aliases), name)
 
-        levels = []
-        keep_all = level_names is None  # no filter: every level in the selected manifolds
-        for builder in builders:
-            j = builder.j
-            # Construct levels based on coupling structure
-            if structure == 'fine':
-                candidates = (builder.fine_level(mj) for mj in np.arange(-j, j + 1))
-            else:
-                candidates = (builder.hyperfine_level(f, mf)
-                              for f in np.arange(np.abs(j - nuclear_spin), j + nuclear_spin + 1)
-                              for mf in np.arange(-f, f + 1))
-            for level in candidates:
-                if keep_all or level.name in level_names:
-                    if level_aliases:
-                        # Overwrite the level to include its alias
-                        level = replace(level, alias=level_aliases[level_names.index(level.name)])
-                    levels.append(level)
-        if not keep_all:
+        # Extract levels that are requested by the user OR include all levels if only manifold/term symbol is specified.  
+        levels = [level for builder in builders for level in builder.all_levels()
+                  if level_names is None or level.name in level_names]
+
+        if level_names is not None:
             missing = set(level_names) - {level.name for level in levels}
             if missing:
                 raise IonSimError(f"Level names {sorted(missing)} were not found in the selected manifolds.")
-
+            if level_aliases:
+                levels = [replace(level, alias=level_aliases[level_names.index(level.name)]) for level in levels]
         return cls(levels, name)
 
     @classmethod
@@ -180,26 +166,20 @@ class AtomicStructure(DegreeOfFreedom):
             qn = cls._parse_quantum_numbers(raw_qn, nuclear_spin)
             builder = cls._match_manifold(qn, builders)
             basis = cls._identify_basis(qn, nuclear_spin)
-            j = builder.j
 
             if basis == 'fine':
-                _check_projection(qn['mj'], j, 'mj', 'j', raw_qn)
+                _check_projection(qn['mj'], builder.j, 'mj', 'j', raw_qn)
                 level = builder.fine_level(qn['mj'])
             elif basis == 'hyperfine':
-                f, mf = qn['f'], qn['mf']
-                f_min, f_max = abs(j - nuclear_spin), j + nuclear_spin
-                if f < f_min - NUMERICAL_EQUIVALENCE_THRESHOLD or f > f_max + NUMERICAL_EQUIVALENCE_THRESHOLD or not _is_equal(f - f_min, np.round(f - f_min)):
-                    allowed = [float(x) for x in np.arange(f_min, f_max + 1)]
-                    raise IonSimError(f"f={f} is not allowed for manifold {builder.describe()} with I={nuclear_spin}; "
-                                      f"allowed values are {allowed}. Got {raw_qn}.")
-                _check_projection(mf, f, 'mf', 'f', raw_qn)
-                level = builder.hyperfine_level(f, mf)
-            elif basis == 'uncoupled':
-                _check_projection(qn['mj'], j, 'mj', 'j', raw_qn)
+                if not any(_is_equal(qn['f'], f) for f in builder.f_values):
+                    raise IonSimError(f"f={qn['f']} is not allowed for manifold {builder.describe()} with I={nuclear_spin}; "
+                                      f"allowed values are {[float(f) for f in builder.f_values]}. Got {raw_qn}.")
+                _check_projection(qn['mf'], qn['f'], 'mf', 'f', raw_qn)
+                level = builder.hyperfine_level(qn['f'], qn['mf'])
+            else:  # 'uncoupled'
+                _check_projection(qn['mj'], builder.j, 'mj', 'j', raw_qn)
                 _check_projection(qn['mi'], nuclear_spin, 'mi', 'i', raw_qn)
                 level = builder.uncoupled_level(qn['mj'], qn['mi'])
-            else:  
-                raise IonSimError(f"Unsupported basis '{basis}'.")
 
             if level.name in seen_names:
                 raise IonSimError(f"Quantum numbers {raw_qn} specify the level '{level.name}', which was already requested.")
@@ -246,7 +226,7 @@ class AtomicStructure(DegreeOfFreedom):
         """Find the unique manifold consistent with the structural quantum numbers in qn."""
         structural = {k: v for k, v in qn.items() if k in STRUCTURAL_KEYS}
         matches = [b for b in builders
-                   if all(k in b.fine_data and b.fine_data[k] is not None and _is_equal(float(b.fine_data[k]), v)
+                   if all(b.fine_data.get(k) is not None and _is_equal(float(b.fine_data[k]), v)
                           for k, v in structural.items())]
         if len(matches) == 1:
             return matches[0]
@@ -258,67 +238,60 @@ class AtomicStructure(DegreeOfFreedom):
                           f"Add structural quantum numbers (e.g. 'n', 'l', 'j') or restrict `manifolds`.")
 
     @classmethod
+    def get_fine_data(cls, level_data: dict) -> dict:
+        """Fine-structure data for one manifold from its config entry, with energies converted from Hz to rad/s."""
+        term_symbol = level_data['term_symbol']
+        fine_data = {key: value for key, value in level_data.items() if key != 'coupling_scheme'}
+        fine_data['fine_energy'] = 2 * np.pi * level_data['fine_energy']
+        fine_data['hyperfine_A'] = 2 * np.pi * level_data['hyperfine_A']
+        hyperfine_B = level_data.get('hyperfine_B')
+        fine_data['hyperfine_B'] = None if hyperfine_B is None else 2 * np.pi * hyperfine_B
+        fine_data['branching_ratios'] = level_data.get('branching_ratios')
+        fine_data['j'] = cls.compute_j(term_symbol)
+        if level_data['coupling_scheme'] == 'j1l2':
+            fine_data['k'] = cls.compute_k(term_symbol)
+            if fine_data.get('gj') is None:
+                fine_data['gj'] = cls.compute_j1l2_gj(fine_data['j1'], fine_data['l2'], fine_data['s2'], fine_data['k'], fine_data['j'])
+        else:
+            fine_data['l'] = cls.compute_l(term_symbol)
+        return fine_data
+
+    @staticmethod
+    def compute_j1l2_gj(j1: float, l2: float, s2: float, k: float, j: float) -> float:
+        """Lande g-factor of a j1l2-coupled level (K = J1 + L2, J = K + S2).
+
+        See p. 100 of B. G. Wybourne, Spectroscopic Properties of Rare Earths (Interscience, New York, 1965),
+        and pp. 6-7 of https://nvlpubs.nist.gov/nistpubs/Legacy/NSRDS/nbsnsrds60.pdf
+        """
+        gj1 = 1. + (j1*(j1+1) + s2*(s2+1) - l2*(l2+1))/(2. * j1*(j1+1))  # from LS formula
+        gj = 2. * (gj1 - 1.) * (k*(k+1) + j1*(j1+1) - l2*(l2 + 1))/((2*j + 1)*(2*k + 1))
+        return gj + (3*j*(j+1) - k*(k+1) + s2*(s2+1))/(2.*j*(j+1))
+
+    @classmethod
     def get_level_factory(cls, coupling_scheme: str):
         """Get a factory to build energy levels with a particular coupling scheme."""
         factories = {
-            'ls': (cls.get_ls_fine_data, LSFineLevel, LSHyperfineLevel, LSBackGoudsmitLevel),
-            'j1l2': (cls.get_j1l2_fine_data, J1L2FineLevel, J1L2HyperfineLevel, J1L2BackGoudsmitLevel),
+            'ls': (cls.get_fine_data, LSFineLevel, LSHyperfineLevel, LSBackGoudsmitLevel),
+            'j1l2': (cls.get_fine_data, J1L2FineLevel, J1L2HyperfineLevel, J1L2BackGoudsmitLevel),
             # 'ls1': (_get_ls1_fine_data, LS1FineLevel, LS1HyperfineLevel),
             # 'j1j2': (_get_j1j2_fine_data, J1J2FineLevel, J1J2HyperfineLevel),
         }
         return factories[coupling_scheme]
-
-    @classmethod
-    def get_ls_fine_data(cls, level_data: dict):
-        """Get fine-structure data from energy-level configuration data."""
-        fine_data = dict(level_data)
-        fine_data['fine_energy'] = 2 * np.pi * fine_data['fine_energy'] # convert from Hz to rad./s
-        fine_data['hyperfine_A'] = 2 * np.pi * fine_data['hyperfine_A'] # convert from Hz to rad./s
-        try: 
-            hyperfine_B = fine_data['hyperfine_B'] * 2. * np.pi
-        except:
-            hyperfine_B = None
-        fine_data['hyperfine_B'] = hyperfine_B 
-        fine_data['l'] = cls.compute_l(level_data['term_symbol'])
-        fine_data['j'] = cls.compute_j(level_data['term_symbol'])
-        fine_data['term_symbol'] = level_data['unique_term_symbol']
-        fine_data['branching_ratios'] = level_data['unique_branching_ratios']
-        [fine_data.pop(key) for key in ['coupling_scheme', 'unique_term_symbol', 'unique_branching_ratios']]
-        return fine_data
-
-    @classmethod
-    def get_j1l2_fine_data(cls, level_data: dict):
-        """Get fine-structure data from energy-level configuration data."""
-        fine_data = dict(level_data)
-        fine_data['fine_energy'] = 2 * np.pi * fine_data['fine_energy'] # convert from Hz to rad./s
-        fine_data['hyperfine_A'] = 2 * np.pi * fine_data['hyperfine_A'] # convert from Hz to rad./s
-        try: 
-            hyperfine_B = fine_data['hyperfine_B'] * np.pi * 2.
-        except:
-            hyperfine_B = None
-        fine_data['hyperfine_B'] = hyperfine_B 
-        fine_data['k'] = cls.compute_k(level_data['term_symbol'])
-        fine_data['j'] = cls.compute_j(level_data['term_symbol'])
-        fine_data['gj'] = fine_data.get('gj', None)
-        fine_data['term_symbol'] = level_data['unique_term_symbol']
-        fine_data['branching_ratios'] = level_data['unique_branching_ratios']
-        [fine_data.pop(key) for key in ['coupling_scheme', 'unique_term_symbol', 'unique_branching_ratios']]
-        return fine_data
 
     @staticmethod
     def compute_l(term_symbol: str):
         """Compute the total electronic orbital angular momentum "l" from a term symbol."""
         orbitals = {'S': 0, 'P': 1, 'D': 2, 'F': 3}
         match = [k for k in orbitals if k in term_symbol]
-        if not len(match) == 1: 
-            raise IonSimError(f"Computing L from the term symbol requires exactly one corresponding letter: {list(orbitals.keys())}. Found {match} in {term_symbol}.")    
+        if not len(match) == 1:
+            raise IonSimError(f"Computing L from the term symbol requires exactly one corresponding letter: {list(orbitals.keys())}. Found {match} in {term_symbol}.")
         return orbitals[match[0]]
 
     @staticmethod
     def compute_k(term_symbol: str):
         """Compute the intermediate electronic angluar momentum "k" from a term symbol."""
         if term_symbol[2] == '/':
-            return float(Fraction(term_symbol[1:4])) 
+            return float(Fraction(term_symbol[1:4]))
         return float(term_symbol[1])
 
     @staticmethod
@@ -329,51 +302,43 @@ class AtomicStructure(DegreeOfFreedom):
         return float(term_symbol[-1])
 
     @staticmethod
-    def select_some_data(term_symbols: list[str], levels_data: list[dict]):
-        """Select a subset of data from the energy-levels configuration data."""
-        selected_data = [data for data in levels_data if data['term_symbol'] in term_symbols]
-        return selected_data
-
-    @staticmethod
     def get_config_data(species: str):
         """Load the configuration data for the internal energy levels of a particular species of atom."""
         with importlib.resources.files('ionsim.atomic_config_data').joinpath(f'{species}.yaml').open('r') as file:
             config_data = yaml.safe_load(file)
         return config_data
 
-    @staticmethod
-    def check_uniqueness_of_term_symbol(term_symbol: str, levels_data: list[dict]):
-        """Check whether a term symbol corresponds to a single energy level in the energy-levels configuration data."""
-        all_term_symbols = [data['term_symbol'] for data in levels_data]
-        assert(term_symbol in all_term_symbols)
-        return all_term_symbols.count(term_symbol) == 1
+
+def _make_level(level_class: type, fine_data: dict, **quantum_numbers) -> AtomicInternalEnergyLevel:
+    """ Construct a level from the manifold's fine data, passing only the fields the level class declares.
+
+        Config files can therefore carry data that only some level classes use (e.g. gj, or future polarizabilities).
+    """
+    field_names = {f.name for f in fields(level_class)}
+    return level_class(**{k: v for k, v in fine_data.items() if k in field_names}, **quantum_numbers)
 
 
 class _ManifoldBuilder:
-    """ Builds energy levels belonging to one manifold (one entry of the species config file).
+    """ Builds the energy levels of one manifold (one entry of the species config file) at a given magnetic field.
 
-        The Zeeman solver is constructed and cached, so it is only diagonalized for manifolds
-        that actually contribute a level.
+        Every level's external energy shift comes from `_energy_shift`, the single place to extend when other static-field
+        terms (e.g. a DC Stark shift) are added. The Zeeman solution is computed on first use and cached, so manifolds
+        that contribute no levels are never diagonalized.
     """
 
-    def __init__(self, level_data: dict, nuclear_spin: float, mass: float, magnetic_moment: float, z: int,
-                 magnetic_field: float, get_level_factory, solver_kwargs: dict):
-        self.level_data = level_data
-        self.coupling_scheme = level_data['coupling_scheme']
-        get_fine_data, self.FineLevel, self.HyperfineLevel, self.UncoupledLevel = get_level_factory(self.coupling_scheme)
-        self.fine_data = get_fine_data(level_data)
-        self.nuclear_spin = nuclear_spin
-        self.mass = mass
-        self.magnetic_moment = magnetic_moment
-        self.z = z
+    def __init__(self, fine_data: dict, coupling_scheme: str, species_data: dict, magnetic_field: float, get_level_factory, solver_kwargs: dict):
+        self.fine_data = fine_data
+        self.coupling_scheme = coupling_scheme
+        #self.FineLevel, self.HyperfineLevel, self.UncoupledLevel = LEVEL_CLASSES[coupling_scheme]
+        _, self.FineLevel, self.HyperfineLevel, self.UncoupledLevel = get_level_factory(self.coupling_scheme)
+        self.nuclear_spin = species_data['nuclear_spin']
+        self.species_data = species_data
         self.magnetic_field = magnetic_field
         self.solver_kwargs = dict(solver_kwargs)
-        if nuclear_spin == 0:
+        if self.nuclear_spin == 0:
             # ZeemanHyperfineSolver.lande_gi computes nuclear_moment / i, which fails for i = 0.
             # With no nuclear spin the nuclear Zeeman term vanishes anyway.
             self.solver_kwargs.setdefault('gi', 0.)
-        self._zeeman = None
-        self._assigned_eigenstates = {}  # eigenvector index -> (mj, mi) label, for |mJ, mI> levels  # (solver, energy_shifts, eigenvecs), filled on first use
 
     @property
     def j(self) -> float:
@@ -383,98 +348,88 @@ class _ManifoldBuilder:
     def term_symbol(self) -> str:
         return self.fine_data['term_symbol']
 
+    @property
+    def f_values(self) -> np.ndarray:
+        """Allowed total angular momenta F = |J - I|, ..., J + I."""
+        return np.arange(abs(self.j - self.nuclear_spin), self.j + self.nuclear_spin + 1)
+
     def describe(self) -> str:
         """Human-readable summary of the structural quantum numbers of this manifold (for error messages)."""
         items = ', '.join(f"{k}={self.fine_data[k]}" for k in sorted(STRUCTURAL_KEYS) if k in self.fine_data)
         return f"'{self.term_symbol}' ({items})"
 
+    @cached_property
     def zeeman(self):
-        """Return (solver, energy_shifts, eigenvecs), or None at zero magnetic field."""
+        """(solver, energy_shifts, eigenvecs) for this manifold at the magnetic field, or None at zero field."""
         if self.magnetic_field == 0.:
             return None
-        if self._zeeman is None:
-            fine_data = self.fine_data
-            j = self.j
-            # Hyperfine A coefficient is converted to rad/s prior to this function
-            if fine_data['hyperfine_B'] is None:
-                hyperfine_B = None
-            else:
-                hyperfine_B = fine_data['hyperfine_B'] / (2. * np.pi)
+        data = self.fine_data
+        hyperfine_A = data['hyperfine_A'] / (2. * np.pi)  # solver works in Hz
+        hyperfine_B = None if data['hyperfine_B'] is None else data['hyperfine_B'] / (2. * np.pi)
+        if self.coupling_scheme == 'j1l2':
+            l, s, options = None, data['s2'], {'gj': data['gj']}
+        else:
+            l, s, options = data['l'], data['s'], {}
+        solver = ZeemanHyperfineSolver(self.nuclear_spin, self.j, l, s, hyperfine_A, hyperfine_B,
+                                       self.species_data['mass'], self.species_data['magnetic_moment'],
+                                       self.species_data['Z'], **{**options, **self.solver_kwargs})
+        energy_shifts, eigenvecs = solver.solve_at_field(self.magnetic_field)
+        return solver, energy_shifts, eigenvecs
 
-            if self.coupling_scheme == 'j1l2':
-                s2 = fine_data['s2']
-                if fine_data['gj'] is None:
-                    k = fine_data['k']
-                    j1 = fine_data['j1']
-                    l2 = fine_data['l2']
-                    # See p. 100 of B. G. Wybourne, Spectroscopic Properties of Rare Earths (Interscience, New York, 1965).
-                    # and p. 6 and 7 of https://nvlpubs.nist.gov/nistpubs/Legacy/NSRDS/nbsnsrds60.pdf
-                    gj1 = 1. + (j1*(j1+1) + s2*(s2+1) - l2*(l2+1))/(2. * j1*(j1+1)) # from LS formula
-                    gj = 2. * (gj1 - 1.) * (k*(k+1) + j1*(j1+1) - l2*(l2 + 1))/((2*j + 1)*(2*k + 1))
-                    gj += (3*j*(j+1) - k*(k+1) + s2*(s2+1))/(2.*j*(j+1))
-                    fine_data['gj'] = gj
-                solver = ZeemanHyperfineSolver(self.nuclear_spin, j, None, s2, fine_data['hyperfine_A']/(2.*np.pi), hyperfine_B,
-                                               self.mass, self.magnetic_moment, self.z, gj=fine_data['gj'], **self.solver_kwargs)
-            else:
-                solver = ZeemanHyperfineSolver(self.nuclear_spin, j, fine_data['l'], fine_data['s'], fine_data['hyperfine_A']/(2. * np.pi),
-                                               hyperfine_B, self.mass, self.magnetic_moment, self.z, **self.solver_kwargs)
-            energy_shifts, eigenvecs = solver.solve_at_field(self.magnetic_field)
-            self._zeeman = (solver, energy_shifts, eigenvecs)
-        return self._zeeman
+    def _energy_shift(self, **label) -> float:
+        """External energy shift (rad/s) of the level labeled {'f', 'mf'} or {'mj', 'mi'}.
+
+            For |F, mF> labels the hyperfine A shift is removed, since AtomicInternalEnergyLevel already includes it.
+            For |mJ, mI> labels the full solver energy (Zeeman + hyperfine) is returned, since the level's
+            hyperfine_energy_shift is 0.
+        """
+        if self.zeeman is None:
+            return 0.
+        solver, energy_shifts, eigenvecs = self.zeeman
+        if 'mi' in label:
+            shift_hz = solver.get_state_energy_from_mjmi_pair(energy_shifts, eigenvecs, **label)
+        else:
+            shift_hz = solver.get_state_energy(energy_shifts, eigenvecs, **label, subtract_hyperfineA_shift=True)
+        return 2. * np.pi * shift_hz
+
+    def all_levels(self) -> list[AtomicInternalEnergyLevel]:
+        """Every sublevel of the manifold in the low-field basis: |J, mJ> if the nuclear spin is zero, else |F, mF>."""
+        if self.nuclear_spin == 0:
+            return [self.fine_level(mj) for mj in np.arange(-self.j, self.j + 1)]
+        return [self.hyperfine_level(f, mf) for f in self.f_values for mf in np.arange(-f, f + 1)]
 
     def fine_level(self, mj: float):
         """|J, mJ> level (nuclear spin zero)."""
-        shift = 0.
-        zeeman = self.zeeman()
-        if zeeman is not None:
-            solver, energy_shifts, eigenvecs = zeeman
-            # For fine couplings, F = J since I = 0, so F <==> J and mf <==> mj labels are interchangable.
-            shift = solver.get_state_energy(energy_shifts, eigenvecs, f=self.j, mf=mj)
-        return self.FineLevel(**self.fine_data, mj=mj, external_energy_shift=shift * 2. * np.pi)
+        # With I = 0, F = J and mF = mJ, so the solver's |F, mF> lookup gives the |J, mJ> energy.
+        shift = self._energy_shift(f=self.j, mf=mj)
+        return _make_level(self.FineLevel, self.fine_data, mj=mj, external_energy_shift=shift)
 
     def hyperfine_level(self, f: float, mf: float):
         """|F, mF> level (low-field basis)."""
-        shift = 0.
-        zeeman = self.zeeman()
-        if zeeman is not None:
-            solver, energy_shifts, eigenvecs = zeeman
-            # Hyperfine A shift is already accounted for in AtomicInternalEnergyLevel
-            shift = solver.get_state_energy(energy_shifts, eigenvecs, f=f, mf=mf, subtract_hyperfineA_shift=True)
-        return self.HyperfineLevel(**self.fine_data, i=self.nuclear_spin, f=f, mf=mf, external_energy_shift=shift * 2. * np.pi)
+        shift = self._energy_shift(f=f, mf=mf)
+        return _make_level(self.HyperfineLevel, self.fine_data, i=self.nuclear_spin, f=f, mf=mf, external_energy_shift=shift)
 
     def uncoupled_level(self, mj: float, mi: float):
         """|mJ, mI> level (high-field / Back-Goudsmit basis)."""
-        zeeman = self.zeeman()
-        if zeeman is None:
+        if self.zeeman is None:
             raise IonSimError(f"|mJ, mI> levels were requested for manifold '{self.term_symbol}' at zero magnetic field. "
                               f"These are not energy eigenstates at zero field; specify (f, mf) instead or set a nonzero magnetic_field.")
-        solver, energy_shifts, eigenvecs = zeeman
+        solver, _, eigenvecs = self.zeeman
         if solver.approximation is not None:
             raise IonSimError(f"|mJ, mI> levels require the exact Zeeman solver, but approximation='{solver.approximation}' "
                               f"was requested. The weak-field approximation works in the |F, mF> basis; specify (f, mf) instead.")
 
-        # Identify which eigenstate the solver will assign to this label, so we can check that the
-        # label is meaningful (max_overlap) and that no two requested labels land on the same eigenstate.
-        basis_index = solver.basis_states.index((mj, mi))
-        overlaps = np.abs(eigenvecs[basis_index, :])**2
-        eigen_index = int(np.argmax(overlaps))
-        max_overlap = float(overlaps[eigen_index])
-        previous = self._assigned_eigenstates.get(eigen_index)
-        if previous is not None and previous != (mj, mi):
-            raise IonSimError(f"In manifold '{self.term_symbol}' at B = {self.magnetic_field}, |mJ, mI> = {(mj, mi)} and {previous} "
-                              f"map to the same energy eigenstate. mJ, mI are not good quantum numbers at this field; "
-                              f"use (f, mf) or a stronger field.")
-        self._assigned_eigenstates[eigen_index] = (mj, mi)
-        # Minimum |<mJ, mI|psi>|^2 for the eigenstate assigned to a requested |mJ, mI> label before a warning is issued.
+        # Overlap of the requested |mJ, mI> with the eigenstate the solver assigns to it. If two labels were assigned
+        # the same eigenstate, normalization forces at least one overlap <= 0.5, so this warning also catches that case.
+        # Minimum |<mJ, mI|psi>|^2 between a requested |mJ, mI> label and its assigned energy eigenstate before a warning is issued.
         # Below this, mJ and mI are not good quantum numbers at the chosen field and the label is only nominal.
         UNCOUPLED_OVERLAP_WARNING_THRESHOLD = 0.9
-
+        overlaps = np.abs(eigenvecs[solver.basis_states.index((mj, mi)), :])**2
+        max_overlap = float(np.max(overlaps))
         if max_overlap < UNCOUPLED_OVERLAP_WARNING_THRESHOLD:
             warnings.warn(f"|mJ={Fraction(mj)}, mI={Fraction(mi)}> in manifold '{self.term_symbol}' at B = {self.magnetic_field} "
                           f"has only {max_overlap:.1%} overlap with its assigned energy eigenstate; the label is nominal. "
                           f"Consider specifying (f, mf) at this field.", stacklevel=4)
 
-        # Returns the full eigenvalue (Zeeman + hyperfine), relative to the fine-structure energy, in solver freq units (Hz).
-        # LSBackGoudsmitLevel.hyperfine_energy_shift is 0, so all of it goes into the external shift.
-        shift = solver.get_state_energy_from_mjmi_pair(energy_shifts, eigenvecs, mj=mj, mi=mi)
-        return self.UncoupledLevel(**self.fine_data, i=self.nuclear_spin, mj=mj, mi=mi, external_energy_shift=shift * 2. * np.pi)
+        shift = self._energy_shift(mj=mj, mi=mi)
+        return _make_level(self.UncoupledLevel, self.fine_data, i=self.nuclear_spin, mj=mj, mi=mi, external_energy_shift=shift)
