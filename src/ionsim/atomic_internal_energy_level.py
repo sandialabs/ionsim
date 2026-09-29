@@ -257,7 +257,7 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
         return ','.join([self.term_symbol, str(Fraction(self.f)), str(Fraction(self.mf))])
 
 @dataclass(frozen=True, eq=False)
-class J1L2UncoupledLevel(AtomicInternalEnergyLevel): 
+class J1L2BackGoudsmitLevel(AtomicInternalEnergyLevel): 
     """A hyperfine-structure energy level of an atom: k = j1 + l2 ; J = k + s2 
         Corresponding term symbol: (2S_2 + 1)[K] """ 
     j1: float

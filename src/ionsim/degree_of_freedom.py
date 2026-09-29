@@ -9,7 +9,7 @@
 
 from ionsim.energy_level import EnergyLevel
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
-from ionsim.atomic_internal_energy_level import LSFineLevel, LSHyperfineLevel, J1L2FineLevel, J1L2HyperfineLevel, LSBackGoudsmitLevel, J1L2UncoupledLevel
+from ionsim.atomic_internal_energy_level import LSFineLevel, LSHyperfineLevel, J1L2FineLevel, J1L2HyperfineLevel, LSBackGoudsmitLevel, J1L2BackGoudsmitLevel 
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel
 from ionsim.zeeman_solver import ZeemanHyperfineSolver
 from ionsim.ionsim_error import IonSimError
@@ -153,7 +153,6 @@ class AtomicStructure(DegreeOfFreedom):
             levels = cls._levels_from_quantum_numbers(quantum_numbers, builders, nuclear_spin, level_aliases)
             return cls(levels, name)
 
-
         levels = []
         keep_all = level_names is None  # no filter: every level in the selected manifolds
         for builder in builders:
@@ -270,7 +269,7 @@ class AtomicStructure(DegreeOfFreedom):
         """Get a factory to build energy levels with a particular coupling scheme."""
         factories = {
             'ls': (cls.get_ls_fine_data, LSFineLevel, LSHyperfineLevel, LSBackGoudsmitLevel),
-            'j1l2': (cls.get_j1l2_fine_data, J1L2FineLevel, J1L2HyperfineLevel, J1L2UncoupledLevel),
+            'j1l2': (cls.get_j1l2_fine_data, J1L2FineLevel, J1L2HyperfineLevel, J1L2BackGoudsmitLevel),
             # 'ls1': (_get_ls1_fine_data, LS1FineLevel, LS1HyperfineLevel),
             # 'j1j2': (_get_j1j2_fine_data, J1J2FineLevel, J1J2HyperfineLevel),
         }
@@ -359,8 +358,8 @@ class AtomicStructure(DegreeOfFreedom):
 class _ManifoldBuilder:
     """Builds energy levels belonging to one manifold (one entry of the species config file).
 
-    The Zeeman solver is constructed lazily and cached, so it is only diagonalized for manifolds
-    that actually contribute a level.
+        The Zeeman solver is constructed and cached, so it is only diagonalized for manifolds
+        that actually contribute a level.
     """
 
     def __init__(self, level_data: dict, nuclear_spin: float, mass: float, magnetic_moment: float, z: int,
