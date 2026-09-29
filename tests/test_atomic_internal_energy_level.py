@@ -21,8 +21,6 @@ from ionsim.atomic_internal_energy_level import (
 )
 from ionsim.ionsim_error import IonSimError
 
-MU_B_HZ_PER_GAUSS = 1.39962449e6  # Bohr magneton / h, Hz per gauss
-
 
 def _half_integers(x):
     return np.arange(-x, x + 1)
@@ -122,6 +120,7 @@ class TestQuantumNumberSpecification(unittest.TestCase):
         self.assertIsInstance(up, LSFineLevel)
         splitting = (up.energy - down.energy) / (2 * np.pi)
         gs = np.abs(const.physical_constants['electron g factor'][0])  # electron spin g factor. 
+        MU_B_HZ_PER_GAUSS = 1.39962449e6  # Bohr magneton / h, Hz per gauss
         self.assertAlmostEqual(splitting, gs * MU_B_HZ_PER_GAUSS, places = 2) 
 
     def test_j1l2_gj_independent_of_field(self):

@@ -68,6 +68,18 @@ class AtomicInternalEnergyLevel(EnergyLevel):
         # Total energy: bare energy + external shifts (e.g. Zeeman, light shifts)
         return self.bare_energy + self.external_energy_shift
 
+@dataclass(frozen=True, eq=False)
+class SinkLevel(EnergyLevel):
+    """ Auxiliary level that collects population decaying to states outside the simulated levels.
+
+        It has no internal structure and no coherent couplings; it only receives spontaneous emission
+        (DissipatorSpontaneousEmission with decay_to_sink=True). Its energy only sets a phase and does not affect the dynamics.
+    """
+    energy: float = 0.
+    name: str = 'sink'
+    term_symbol: str = 'sink'  # lets code that filters levels by term symbol skip the sink without special-casing it
+    alias: str | None = field(default='sink', kw_only=True)
+
 
 @dataclass(frozen=True, eq=False)
 class LSFineLevel(AtomicInternalEnergyLevel): 

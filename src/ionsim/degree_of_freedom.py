@@ -21,7 +21,7 @@ import numpy as np
 import yaml
 
 from ionsim.energy_level import EnergyLevel
-from ionsim.atomic_internal_energy_level import (AtomicInternalEnergyLevel, LSFineLevel, LSHyperfineLevel, LSBackGoudsmitLevel,
+from ionsim.atomic_internal_energy_level import (AtomicInternalEnergyLevel, SinkLevel, LSFineLevel, LSHyperfineLevel, LSBackGoudsmitLevel,
                                                 J1L2FineLevel, J1L2HyperfineLevel, J1L2BackGoudsmitLevel)
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel
 from ionsim.zeeman_solver import ZeemanHyperfineSolver
@@ -83,12 +83,12 @@ class MotionalMode(DegreeOfFreedom):
 @dataclass(frozen=True, eq=False)
 class AtomicStructure(DegreeOfFreedom):
     """An atomic structure object, containing atomic internal energy levels corresponding to angular momentum eigenstates."""
-    energy_levels: list[AtomicInternalEnergyLevel]
+    energy_levels: list[AtomicInternalEnergyLevel | SinkLevel]
 
     @classmethod
     def from_species(cls, species: str, manifolds: list[str] | None = None, level_names: list[str] | None = None,
             quantum_numbers: list[dict] | None = None, level_aliases: list[str] | None = None, name: str | None = None,
-            magnetic_field: float = 0., term_symbols: list[str] | None = None, **kwargs):
+            magnetic_field: float = 0., term_symbols: list[str] | None = None, include_sink: bool = False, **kwargs):
         """Build the atomic structure degree of freedom for a particular species of atom.
 
         Args:
@@ -105,6 +105,8 @@ class AtomicStructure(DegreeOfFreedom):
             level_aliases: Optional alias per requested level (same length as level_names / quantum_numbers).
             name: Name of the degree of freedom.
             magnetic_field: Static magnetic field used for Zeeman shifts, in the Zeeman solver's field units (gauss by default).
+            include_sink: Append a SinkLevel (named 'sink') after the other levels, to collect population that decays to
+                states outside the simulated levels (see DissipatorSpontaneousEmission, decay_to_sink=True).
             **kwargs: Options passed to ZeemanHyperfineSolver, e.g. ``approximation``.
 
             Without ``level_names`` or ``quantum_numbers``, every sublevel of the selected manifolds is included, in the
@@ -142,7 +144,8 @@ class AtomicStructure(DegreeOfFreedom):
 
         # Build structure from a list of quantum numbers from each level or from specified level names 
         if quantum_numbers is not None:
-            return cls(cls._levels_from_quantum_numbers(quantum_numbers, builders, config_data['nuclear_spin'], level_aliases), name)
+            levels = cls._levels_from_quantum_numbers(quantum_numbers, builders, config_data['nuclear_spin'], level_aliases)
+            return cls(levels + [SinkLevel()] if include_sink else levels, name)
 
         # Extract levels that are requested by the user OR include all levels if only manifold/term symbol is specified.  
         levels = [level for builder in builders for level in builder.all_levels()
@@ -154,7 +157,7 @@ class AtomicStructure(DegreeOfFreedom):
                 raise IonSimError(f"Level names {sorted(missing)} were not found in the selected manifolds.")
             if level_aliases:
                 levels = [replace(level, alias=level_aliases[level_names.index(level.name)]) for level in levels]
-        return cls(levels, name)
+        return cls(levels + [SinkLevel()] if include_sink else levels, name)
 
     @classmethod
     def _levels_from_quantum_numbers(cls, quantum_numbers: list[dict], builders: list[_ManifoldBuilder],
@@ -307,6 +310,9 @@ class AtomicStructure(DegreeOfFreedom):
         with importlib.resources.files('ionsim.atomic_config_data').joinpath(f'{species}.yaml').open('r') as file:
             config_data = yaml.safe_load(file)
         return config_data
+
+def levels_in_manifold(structure: AtomicStructure, term_symbol: str):
+    return [level for level in structure.energy_levels if level.term_symbol == term_symbol]
 
 
 def _make_level(level_class: type, fine_data: dict, **quantum_numbers) -> AtomicInternalEnergyLevel:

@@ -52,7 +52,7 @@ levels:
     fine_energy: 734.1659811608636e+12 # 1S0->3P0->3D1: 215.87014457 + 518.29583659086363 
     hyperfine_A: -2.03830e+9 # Hz
     lifetime: 0.0527 # seconds, decay from 3D_1 to 3P_0, 
-    branching_ratios: {'3P2': 0.01, '3P1': 0.352, '3P0': 0.638}
+    branching_ratios: {'P2': 0.01, 'P1': 0.352, 'P0': 0.638}
     n: 5
     s: 0.5
 
