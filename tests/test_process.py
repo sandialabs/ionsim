@@ -80,12 +80,11 @@ class TestProcess(unittest.TestCase):
 
     def test_circuit_process_matrix_functions(self):
         """ Test the process matrix function of a circuit and derivatives of probability outcomes """ 
-        # TODO: This currently works without circuit noise only; we need to fix this to work with Noise objects 
+        # Circuit-level noise is covered in test_circuit_function_with_circuit_noise
         noisy_R_gate = Gate.from_unitary_function(self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.phi_noise)
 
         ramsey_circuit = Circuit.from_gates([noisy_R_gate, noisy_R_gate])
 
-        #ramsey_circuit = Circuit.from_gates([noisy_R_gate, noisy_R_gate], self.theta_noise) # functions but not accurate  
         ## Fixed a bug where a noisy process matrix function would not work with kwargs 
         circuit_pm_function = ramsey_circuit.process_matrix_function 
 
@@ -108,6 +107,71 @@ class TestProcess(unittest.TestCase):
 
         probs, jacobian = circuit_pm_function.jacobian(probs_function, wrt = ["R__phi", "R__theta"], **circuit_parameters)
         #print(f"Jacobian: \n{jacobian}")
+
+
+    def test_circuit_function_with_circuit_noise(self):
+        """ The circuit process matrix function reproduces the circuit's process matrix with gate- and circuit-level noise """
+        # Gate-level phi noise (varies gate-to-gate) and circuit-level theta noise (constant within the circuit)
+        circuit = Circuit.from_gates([self.noisy_phi_gate, self.noisy_phi_gate], self.theta_noise)
+        function_matrix = circuit.process_matrix_function(R__phi = 0., R__theta = np.pi/2)
+        np.testing.assert_allclose(function_matrix, circuit.process_matrix, atol=1e-13)
+
+        # Circuit-level theta noise (same displacement for both gates) differs from gate-level theta noise (independent per gate)
+        R_gate = Gate.from_unitary_function(self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a])
+        correlated = Circuit.from_gates([R_gate, R_gate], self.theta_noise)
+        independent = Circuit.from_gates([self.noisy_theta_gate, self.noisy_theta_gate])
+        np.testing.assert_allclose(correlated.process_matrix_function(R__phi = 0., R__theta = np.pi/2), correlated.process_matrix, atol=1e-13)
+        self.assertGreater(np.linalg.norm(correlated.process_matrix - independent.process_matrix), 1e-3)
+
+    def test_outcome_probability_derivatives(self):
+        """ Finite-difference derivatives of an outcome probability match analytic values """
+        R_gate = Gate.from_unitary_function(self.basis, Unitary.R, {'phi': 0.3, 'theta': np.pi/3}, [self.spin_a])
+        circuit = Circuit.from_gates([R_gate])
+        outcome_operator = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_1, Pauli.projector_0))
+        initial_state = State.from_coefficients(self.basis, [1., 0., 0., 0.])
+        prob_function = circuit.build_outcome_probability_function(initial_state, outcome_operator)
+
+        # P(spin a in |1>) = sin^2(theta/2), independent of phi
+        theta = np.pi/3
+        parameters = {'R__phi': 0.3, 'R__theta': theta}
+        prob, jacobian, hessian = circuit.process_matrix_function.derivatives(prob_function, wrt=['R__phi', 'R__theta'], order=2, **parameters)
+        self.assertAlmostEqual(prob, np.sin(theta/2)**2, places=12)
+        self.assertAlmostEqual(jacobian['R__theta'], np.sin(theta)/2., places=9)
+        self.assertAlmostEqual(jacobian['R__phi'], 0., places=9)
+        self.assertAlmostEqual(hessian['R__theta']['R__theta'], np.cos(theta)/2., places=6)
+        self.assertAlmostEqual(hessian['R__phi']['R__theta'], 0., places=6)
+        self.assertAlmostEqual(hessian['R__phi']['R__phi'], 0., places=6)
+
+        # gradient / hessian wrappers agree with derivatives()
+        _, gradients = circuit.process_matrix_function.gradient(prob_function, wrt=['R__theta'], **parameters)
+        self.assertAlmostEqual(gradients['R__theta'], np.sin(theta)/2., places=9)
+
+    def test_gate_cache(self):
+        """ Caching gate process matrices does not change results and avoids repeated gate evaluations """
+        # Two distinct gate functions: perturbing a parameter of one should reuse the cached matrix of the other
+        def Rz(angle: float):
+            return np.diag([np.exp(-0.5j*angle), np.exp(0.5j*angle)])
+        z_gate = Gate.from_unitary_function(self.basis, Rz, {'angle': 0.2}, [self.spin_a])
+        ramsey_circuit = Circuit.from_gates([self.noisy_phi_gate, z_gate, self.noisy_phi_gate])
+        function = ramsey_circuit.process_matrix_function
+        outcome_operators = [EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_1, Pauli.projector_0)),
+                             EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_0, Pauli.projector_0))]
+        initial_state = State.from_coefficients(self.basis, [1., 0., 0., 0.])
+        probs_function = ramsey_circuit.build_outcome_probabilities_function(initial_state, outcome_operators)
+        parameters = {'R__phi': 0.1, 'R__theta': np.pi/2, 'Rz__angle': 0.2}
+        wrt = ['R__phi', 'R__theta', 'Rz__angle']
+
+        _, jac_cached, hess_cached = function.derivatives(probs_function, wrt=wrt, **parameters)
+        self.assertGreater(function.cache_hits, 0)
+
+        function.cache_size = 0
+        function.clear_cache()
+        _, jac, hess = function.derivatives(probs_function, wrt=wrt, **parameters)
+        self.assertEqual(function.cache_hits, 0)
+        for name in jac:
+            np.testing.assert_array_equal(jac[name], jac_cached[name])
+            for other in jac:
+                np.testing.assert_array_equal(hess[name][other], hess_cached[name][other])
 
 
 if __name__ == '__main__':

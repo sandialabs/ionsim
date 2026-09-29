@@ -7,7 +7,7 @@
 # http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
 #***************************************************************************************************
 
-from ionsim.custom_math import trapz_for_matrix
+from ionsim.custom_math import trapz_for_matrix, finite_difference_derivatives
 from ionsim.custom_types import Vector, Matrix
 from ionsim.noise import Noise
 from ionsim.basis import DegreeOfFreedom, Basis, StandardBasis
@@ -27,6 +27,7 @@ from typing import Callable, Dict, List, Sequence, get_type_hints, get_origin, g
 import inspect 
 import functools
 from functools import reduce, wraps 
+from collections import OrderedDict
 from icecream import ic
 from scipy.integrate import quad_vec
 
@@ -343,7 +344,7 @@ class Circuit(Process):
 
             # Reverse gate function order by convention (last gate in original list is first gate to apply)  
             gate_functions = gate_functions[::-1]
-            circuit_process_matrix_function = Circuit_Process_Matrix_Function_Helper(gate_functions)
+            circuit_process_matrix_function = Circuit_Process_Matrix_Function_Helper(gate_functions, noise = None if deterministic else noise)
 
         #if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
         if deterministic: 
@@ -407,7 +408,6 @@ class Circuit(Process):
         outcome_probability_function.__signature__ = self.process_matrix_function.__signature__
         outcome_probability_function.__name__ = "outcome_probability" 
         outcome_probability_function.__doc__ = "Outcome probability given a circuit acted on an initial state.\n"
-        outcome_probability_function.scalar_function = scalar_function # Needed by jax for gradient / derivative work 
         outcome_probability_function.process_matrix_function = self.process_matrix_function 
         return outcome_probability_function
 
@@ -426,7 +426,6 @@ class Circuit(Process):
         outcome_probabilities_function.__signature__ = self.process_matrix_function.__signature__
         outcome_probabilities_function.__name__ = "outcome_probabilities" 
         outcome_probabilities_function.__doc__ = "Outcome probabilities given a circuit acted on an initial state.\n"
-        outcome_probabilities_function.vector_function = vector_function # Needed by jax for jacobian 
         outcome_probabilities_function.process_matrix_function = self.process_matrix_function 
         return outcome_probabilities_function
 
@@ -442,67 +441,61 @@ def _combine_process_matrices(process_matrices: list[Matrix]):
 def predict_outcome_probability_from_process_matrix(initial_state: State, process_matrix: Matrix, outcome_operator: Operator) -> float:
     """ Predicts the outcome of a process matrix on a state after measurement/projection <==> outcome operator """   
     propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
-    # Using @ operator facilitates jax compatibility; np.dot does not 
     return (outcome_operator.superbra @ propagated_state.supervector).real  
 
 def predict_outcome_probabilities_from_process_matrix(initial_state: State, process_matrix: Matrix, outcome_matrix: Matrix) -> Vector:
     """ Predicts the probabilities of outcomes of a process matrix on a state after measurement/projection <==> outcome operator """   
     propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
-    # Using @ operator facilitates jax compatibility; np.dot does not 
     return (outcome_matrix @ propagated_state.supervector).real  
     #return (outcome_operator.superbra @ propagated_state.supervector).real  
 
 
-import jax 
-import jax.numpy as jnp 
-jax.config.update("jax_enable_x64", True)
-
-#class Circuit_Process_Matrix_Helper():
-#@dataclass(frozen=True, eq=False)
 class Circuit_Process_Matrix_Function_Helper():
-    """ Builds a single process matrix function for a circuit, represented as a composition of gates 
-            where each gate is represented by its own gate process matrix function. 
+    """ Builds a single process matrix function for a circuit, represented as a composition of gates
+            where each gate is represented by its own gate process matrix function.
 
-        - This class builds a single callable that returns the process matrix for the circuit. 
+        - This class builds a single callable that returns the process matrix for the circuit.
 
-        - The class organizes and tracks each gate model input arguments in order to avoid namespace 
-            conflicts.  
+        - The class organizes and tracks each gate model input arguments in order to avoid namespace
+            conflicts: the argument 'theta' of gate function 'R' becomes 'R__theta'.
 
-        - Functions that are repeated are computed once and reused to avoid excess compution.  
+        - Functions that are repeated are computed once per call and reused. Gate process matrices are also cached
+            across calls by their argument values, so perturbing one parameter (e.g. for finite differences) only
+            re-evaluates the gate functions that depend on it.
 
-        - Includes JAX functionality for derivative computation of the proess matrix function w.r.t. gate parameters
-            - requires jax, jaxlib  
-    """ 
+        - Circuit-level (quasistatic) noise: when a Noise object is given, the process matrix is averaged over the noisy
+            parameter, with the same displacement applied to every gate that takes that parameter (i.e. the noise is
+            constant within the circuit and varies circuit-to-circuit). Gate-level noise is handled by the gate functions.
 
-    def __init__(self, gate_models: Sequence[Callable], separator: str = "__", jax_native: bool=False, forward_diff_eps: float = 1e-11):
-        """ 
-            gate_models: a sequence to represent the order of gates applied in the circuit 
+        - Derivatives of functions of the circuit process matrix (e.g. outcome probabilities) with respect to gate
+            parameters are computed by finite differences; see gradient(), jacobian(), hessian(), derivatives().
+    """
+
+    def __init__(self, gate_models: Sequence[Callable], separator: str = "__", noise: Noise | None = None,
+                    cache_size: int = 2048, evaluator_tolerance: float | None = None):
+        """
+            gate_models: a sequence to represent the order of gates applied in the circuit
 
             separator: a string used for namespacing parameters within a gate model, e.g. "X_pi2__thetaX"
-                refers to the parameter arg thetaX within the gate model function X_pi2.  
+                refers to the parameter arg thetaX within the gate model function X_pi2.
 
-            jax_native: either a bool or a dictionary containing boolean for each gate in the gate sequence  
+            noise: optional circuit-level quasistatic Noise; see class docstring.
 
+            cache_size: maximum number of gate process matrices cached across calls (0 disables caching, e.g. for
+                gate functions that are not deterministic).
+
+            evaluator_tolerance: relative accuracy of the gate functions, used to size finite-difference steps.
+                Defaults to machine precision (appropriate for matrix exponentials); use the ODE solver tolerance for
+                solver-based gates.
         """
-        self.separator = separator 
-
-        if isinstance(jax_native, bool):
-            flags = {f.__name__: jax_native for f in list(gate_models)}
-        else:
-            flags = {f.__name__: jax_native.get(f.__name__, False) for f in list(gate_models)}
-
-        # Wrap each gate model once and then reuse it whenever the gate appears: 
-        wrap_cache = {}
-        def get_effective(function: Callable) -> int:
-            # Key by id is safer than function name to avoid possible name conflicts 
-            if id(function) not in wrap_cache:
-                wrap_cache[id(function)] = function if flags[function.__name__] else make_matrix_function_jax_differentiable(function, eps=forward_diff_eps) 
-            return wrap_cache[id(function)] 
-
-        self.gate_sequence = [get_effective(f) for f in list(gate_models)] 
-
-        # Record which functions are black-box wrapped for hessisan calcs
-        self._black_box_func_names = {fname for fname, is_native in flags.items() if not is_native}
+        self.separator = separator
+        self.gate_sequence = list(gate_models)
+        self.noise = noise
+        self.cache_size = int(cache_size)
+        self.evaluator_tolerance = evaluator_tolerance
+        self._gate_cache = OrderedDict()
+        self.cache_hits = 0
+        self.cache_misses = 0
 
         self.unique_functions = list({id(f): f for f in self.gate_sequence}.values())
         self._param_map: dict[str, tuple] = {} # namespaced name -> (function name, original name)
@@ -511,15 +504,15 @@ class Circuit_Process_Matrix_Function_Helper():
 
         self._build_signature()
 
-
-    def _is_black_box_param(self, namespaced_name: str) -> bool:
-        """ True if input string belongs to a function that was not jax-compatible (wrapped) """
-        fname, _ = self._param_map[namespaced_name]
-        return fname in self._black_box_func_names
+        # Namespaced parameters displaced by circuit-level noise
+        self._noisy_parameters = []
+        if self.noise is not None:
+            self._noisy_parameters = [namespace for namespace, (_, orig_name) in self._param_map.items()
+                                      if orig_name == self.noise.parameter_name]
 
 
     def _build_signature(self):
-        """ Builds the circuit process matrix function signature """ 
+        """ Builds the circuit process matrix function signature """
         params = []
         seen_names = set()
         for f in self.unique_functions:
@@ -533,8 +526,8 @@ class Circuit_Process_Matrix_Function_Helper():
             try:
                 hints = get_type_hints(f)
             except Exception:
-                hints = {} # skip if this fails 
-        
+                hints = {} # skip if this fails
+
             for name, param in sig.parameters.items():
                 if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
                     raise NotImplementedError(f"{fname} uses *args/**kwargs, not supported.")
@@ -575,7 +568,7 @@ class Circuit_Process_Matrix_Function_Helper():
             except TypeError:
                 return True
 
-        return True # unrecognized hint, don't fail in this case 
+        return True # unrecognized hint, don't fail in this case
 
     def check_types(self, **kwargs) -> list[str]:
         """ Returns human readable messages for type-hint vs. actual type mismatch """
@@ -589,16 +582,16 @@ class Circuit_Process_Matrix_Function_Helper():
                 fname, orig_name = self._param_map[namespace]
                 expected_repr = getattr(expected, "__name__", str(expected))
                 errors.append(f"{namespace} (={value!r}) expected {expected_repr} for {fname}'s '{orig_name}', got {type(value).__name__}")
-        return errors 
+        return errors
 
     def missing_required(self, **kwargs) -> list[str]:
         """ Returns namespaced names of required parameters not supplied"""
         provided = set(kwargs)
-        return [name for name, p in self.__signature__.parameters.items() 
+        return [name for name, p in self.__signature__.parameters.items()
                 if p.default is inspect.Parameter.empty and name not in provided]
 
-    def __call__(self, **kwargs):
-        """ method for Callable behavior """
+    def _bind_arguments(self, kwargs: dict) -> dict:
+        """ Validates keyword arguments and returns all namespaced arguments with defaults applied """
         missing = self.missing_required(**kwargs)
         if missing:
             by_func: dict[str,list] = {}
@@ -610,236 +603,170 @@ class Circuit_Process_Matrix_Function_Helper():
 
         valid_names = set(self.__signature__.parameters)
         unexpected = set(kwargs) - valid_names
-
         if unexpected:
             raise TypeError(f"Unexpected argument(s): {sorted(unexpected)}. Valid arguments are: {sorted(valid_names)}")
-        
+
         errors_type = self.check_types(**kwargs)
         if errors_type:
-            raise TypeError("Type mismatch: " + "; ".join(errors_type)) 
+            raise TypeError("Type mismatch: " + "; ".join(errors_type))
 
         bound = self.__signature__.bind(**kwargs)
         bound.apply_defaults()
+        return dict(bound.arguments)
 
+    @staticmethod
+    def _cache_key_part(value):
+        """ Hashable representation of an argument value, or None if it cannot be cached """
+        if isinstance(value, np.ndarray):
+            return ('ndarray', value.shape, value.dtype.str, value.tobytes())
+        if isinstance(value, (bool, int, float, complex, np.number)):
+            return value
+        try:
+            hash(value)
+            return value
+        except TypeError:
+            return None
+
+    def _evaluate_gate(self, fname: str, arguments: dict) -> Matrix:
+        """ Evaluate one gate function, using the process matrix cache when possible """
+        function = self._name_to_function[fname]
+        if self.cache_size <= 0:
+            return function(**arguments)
+
+        key_parts = tuple((name, self._cache_key_part(value)) for name, value in arguments.items())
+        if any(part is None for _, part in key_parts):
+            return function(**arguments)
+        key = (fname, key_parts)
+
+        if key in self._gate_cache:
+            self._gate_cache.move_to_end(key)
+            self.cache_hits += 1
+            return self._gate_cache[key]
+
+        self.cache_misses += 1
+        matrix = function(**arguments)
+        self._gate_cache[key] = matrix
+        if len(self._gate_cache) > self.cache_size:
+            self._gate_cache.popitem(last=False)
+        return matrix
+
+    def clear_cache(self):
+        """ Empty the gate process matrix cache """
+        self._gate_cache.clear()
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+    def _compose(self, arguments: dict) -> Matrix:
+        """ Circuit process matrix for fully bound namespaced arguments (no circuit-level noise) """
         per_function_kwargs = {fname: {} for fname in self._name_to_function}
-        for namespace, value in bound.arguments.items():
+        for namespace, value in arguments.items():
             fname, orig_name = self._param_map[namespace]
             per_function_kwargs[fname][orig_name] = value
 
-        # call each unique function once and store the result to reuse at every instance of that function 
-        results = {fname: f(**per_function_kwargs[fname]) for fname, f in self._name_to_function.items()}
-
-        # Build list of matrices 
+        # call each unique function once and reuse the result at every instance of that function
+        results = {fname: self._evaluate_gate(fname, per_function_kwargs[fname]) for fname in self._name_to_function}
         matrices = [results[f.__name__] for f in self.gate_sequence]
-
         return reduce(lambda g1,g2: g1 @ g2, matrices)
 
-    def gradient(self, wrapped_scalar_function: Callable, wrt: list[str], **kwargs):
-        """ Computes a derivative of a scalar function with respect to (wrt) a list of parameters with all else (kwargs) fixed. 
+    def __call__(self, **kwargs):
+        """ method for Callable behavior """
+        arguments = self._bind_arguments(kwargs)
 
-            scalar function takes in a matrix function and returns a scalar. 
+        if not self._noisy_parameters:
+            return self._compose(arguments)
 
-            kwargs specifies the point where the gradient is evaluated, e.g. "Rx__theta" = value
+        # Circuit-level quasistatic noise: same displacement for every gate taking the noisy parameter, then average
+        weighted_matrices = []
+        for darg in self.noise.domain_arguments:
+            displaced = dict(arguments)
+            for namespace in self._noisy_parameters:
+                displaced[namespace] = arguments[namespace] + darg
+            weighted_matrices.append(self.noise.probability_density_function(darg) * self._compose(displaced))
+        return trapz_for_matrix(np.array(weighted_matrices), self.noise.domain_arguments)
+
+
+    ### Derivatives (finite differences) ###
+    def derivatives(self, function: Callable, wrt: list[str], order: int = 2, bounds: dict[str, tuple] | None = None,
+                        evaluator_tolerance: float | None = None, relative_step: float | None = None,
+                        relative_step_second_order: float | None = None, **kwargs):
+        """ Value, first, and (for order = 2) second derivatives of a function of the circuit parameters.
+
+            - function: callable taking the namespaced circuit parameters as keyword arguments, e.g. the output of
+                Circuit.build_outcome_probability_function() or build_outcome_probabilities_function().
+            - wrt: namespaced parameter names to differentiate with respect to, e.g. ["R__theta", "R__phi"].
+            - bounds: optional {parameter name: (lower, upper)}; one-sided differences are used next to a bound, and
+                automatically wherever the function is non-finite on one side (e.g. a rate at zero).
+            - evaluator_tolerance / relative_step / relative_step_second_order: step-size control, see
+                ionsim.custom_math.finite_difference_derivatives. evaluator_tolerance defaults to the helper's setting.
+            - kwargs: parameter values where the derivatives are evaluated (all required parameters).
+
+            Returns (value, jacobian, hessian) with jacobian[name] = dValue/dName and hessian[name1][name2]
+            = d2Value/dName1 dName2 (each shaped like the function output); hessian is None for order = 1.
+        """
+        if isinstance(wrt, str):
+            raise TypeError(f"wrt must be a list of parameter names; received the string {wrt!r}.")
+        wrt = list(wrt)
+        unknown = set(wrt) - set(self.__signature__.parameters)
+        if unknown:
+            raise ValueError(f"Unknown parameter name(s) in 'wrt': {sorted(unknown)}")
+        missing = [name for name in wrt if name not in kwargs]
+        if missing:
+            raise ValueError(f"Values must be given for every parameter in 'wrt'; missing {missing}.")
+        if bounds is not None:
+            unknown_bounds = set(bounds) - set(wrt)
+            if unknown_bounds:
+                raise ValueError(f"Bounds given for parameter(s) not in 'wrt': {sorted(unknown_bounds)}")
+
+        fixed_values = {k: v for k, v in kwargs.items() if k not in wrt}
+        x0 = np.array([float(kwargs[name]) for name in wrt])
+
+        def vector_argument_function(x):
+            return function(**fixed_values, **dict(zip(wrt, x)))
+
+        if evaluator_tolerance is None:
+            evaluator_tolerance = self.evaluator_tolerance
+        bound_list = None if bounds is None else [tuple(bounds.get(name, (None, None))) for name in wrt]
+        value, jac, hess = finite_difference_derivatives(vector_argument_function, x0, order=order, evaluator_tolerance=evaluator_tolerance,
+                                    relative_step=relative_step, relative_step_second_order=relative_step_second_order, bounds=bound_list)
+
+        jacobian = {name: jac[i] for i, name in enumerate(wrt)}
+        hessian = None
+        if hess is not None:
+            hessian = {name_i: {name_j: hess[i, j] for j, name_j in enumerate(wrt)} for i, name_i in enumerate(wrt)}
+        return value, jacobian, hessian
+
+    def gradient(self, scalar_function: Callable, wrt: list[str], **kwargs):
+        """ Derivatives of a scalar function (e.g. an outcome probability) with respect to (wrt) a list of parameters,
+            with all else (kwargs) fixed. kwargs specifies the point where the gradient is evaluated, e.g. "Rx__theta" = value.
 
             Returns (value, gradients) where gradients is {name: dValue/dName} for every name in 'wrt'.
-
+            Accepts the step-control keyword arguments of derivatives().
         """
-        # Assumes the a wrapping like such: 
-        scalar_function = wrapped_scalar_function.scalar_function
-        unknown = set(wrt) - set(self.__signature__.parameters)
-
-        if unknown:
-            raise ValueError(f"Unknown parameter name(s) in 'wrt': {sorted(unknown)}")
-
-        diff_values = {k: kwargs[k] for k in wrt}
-        fixed_values = {k: v for k, v in kwargs.items() if k not in wrt}
-        
-        # Set a 1-parameter function taking a dictionary for jax usage  
-        def f(diff_params: dict):
-            merged = {**fixed_values, **diff_params}
-            # Evaluate (self) process matrix function using the parameters 
-            U = self(**merged)
-            return scalar_function(U)
-    
-        value, gradients = jax.value_and_grad(f)(diff_values)
+        value, gradients, _ = self.derivatives(scalar_function, wrt, order=1, **kwargs)
         return value, gradients
 
-
-    def jacobian(self, wrapped_vector_function: Callable, wrt: list[str], **kwargs):
+    def jacobian(self, vector_function: Callable, wrt: list[str], **kwargs):
         """ Same as gradient (above) but for a vector-valued output (e.g. multiple outcome probabilities)
-            Returns (value, jac) where jac[name] has shape (len(output), *shape(param))
+            Returns (value, jac) where jac[name] has shape (len(output),)
         """
-        # Assumes the a wrapping like such: 
-        vector_function = wrapped_vector_function.vector_function
-        unknown = set(wrt) - set(self.__signature__.parameters)
+        value, jac, _ = self.derivatives(vector_function, wrt, order=1, **kwargs)
+        return value, jac
 
-        if unknown:
-            raise ValueError(f"Unknown parameter name(s) in 'wrt': {sorted(unknown)}")
+    def hessian(self, scalar_function: Callable, wrt: list[str], **kwargs) -> dict:
+        """ Second derivatives of a scalar function: returns {name1: {name2: d2Value/dName1 dName2}} """
+        _, _, hess = self.derivatives(scalar_function, wrt, order=2, **kwargs)
+        return hess
 
-        diff_values = {k: kwargs[k] for k in wrt}
-        fixed_values = {k: v for k, v in kwargs.items() if k not in wrt}
-
-        # Set a 1-parameter function taking a dictionary for jax usage  
-        def f(diff_params: dict):
-            merged = {**fixed_values, **diff_params}
-            return vector_function(self(**merged))
-
-        value = f(diff_values)    
-        jac = jax.jacobian(f)(diff_values)
-        return value, jac 
-
-    def hessian(self, wrapped_scalar_fn: Callable, wrt: list[str], fd_eps: float=1e-11, **kwargs):
-        """ 2nd derivative of the scalar fxns """  
-        scalar_function = wrapped_scalar_fn.scalar_function
-        unknown = set(wrt) - set(self.__signature__.parameters)
-        if unknown:
-            raise ValueError(f"Unknown parameter name(s) in 'wrt' : {sorted(unknown)}")
-
-        black_box_wrt = [n for n in wrt if self._is_black_box_param(n)]
-        jax_native_wrt = [n for n in wrt if n not in black_box_wrt]
-
-        # jax-native:  
-        if jax_native_wrt:
-            diff_values = {k: kwargs[k] for k in jax_native_wrt}
-            fixed_Values = {k: v for k, v in kwargs.items() if k not in jax_native_wrt}
-
-            def f(diff_params: dict):
-                merged = {**fixed_values, **diff_params}
-                return scalar_fn(self(**merged))
-
-                exact_block = jax.hessian(f)(diff_values)
-                for i in jax_native_wrt:
-                    for j in jax_native_wrt:
-                        hess[i][j] = exact_block[i][j]
-
-        # black box 
-        for j in black_box_wrt:
-            kw_plus = dict(kwargs); kw_plus[j] = kwargs[j] + fd_eps
-            kw_minus = dict(kwargs); kw_minus[j] = kwargs[j] - fd_eps
-            _, grad_plus = self.gradient(scalar_fn, wrt = wrt, **kw_plus)
-            _, grad_minus = self.gradient(scalar_fn, wrt = wrt, **kw_minus)
-            for i in wrt:
-                d2 = (grad_plus[i] - grad_minus[i]) / (2. * fd_eps)
-                hess[i][j] = d2
-                hess[j][i] = d2 # symmetric 
-            # Consider storing just half the matrix 
-        return hess 
-    
-    def hessian_per_outcome(self, wrapped_vector_fn: Callable, wrt: list[str], outcome_labels: list[str] | None=None, 
-                                fd_eps: float=1e-11, **kwargs):
-        """ 2nd derivative of the scalar fxns """  
-        vector_function = wrapped_vector_fn.vector_function
-        unknown = set(wrt) - set(self.__signature__.parameters)
-        if unknown:
-            raise ValueError(f"Unknown parameter name(s) in 'wrt' : {sorted(unknown)}")
-
-        black_box_wrt = [n for n in wrt if self._is_black_box_param(n)]
-        jax_native_wrt = [n for n in wrt if n not in black_box_wrt]
-        raw: dict[str, dict[str, object]] = {i: {} for i in wrt}
-
-        # jax-native:  
-        if jax_native_wrt:
-            diff_values = {k: kwargs[k] for k in jax_native_wrt}
-            fixed_Values = {k: v for k, v in kwargs.items() if k not in jax_native_wrt}
-
-            def f(diff_params: dict):
-                merged = {**fixed_values, **diff_params}
-                return vector_function(self(**merged))
-
-                exact_block = jax.hessian(f)(diff_values)
-                for i in jax_native_wrt:
-                    for j in jax_native_wrt:
-                        hess[i][j] = exact_block[i][j]
-
-        # black box 
-        for j in black_box_wrt:
-            kw_plus = dict(kwargs); kw_plus[j] = kwargs[j] + fd_eps
-            kw_minus = dict(kwargs); kw_minus[j] = kwargs[j] - fd_eps
-            _, jac_plus = self.jacobian(wrapped_vector_fn, wrt = wrt, **kw_plus)
-            _, jac_minus = self.jacobian(wrapped_vector_fn, wrt = wrt, **kw_minus)
-            for i in wrt:
-                d2 = (jac_plus[i] - jac_minus[i]) / (2. * fd_eps)
-                raw[i][j] = d2
-                raw[j][i] = d2 # symmetric 
-
-        n_outcomes = raw[wrt[0]][wrt[0]].shape[0]
-        if outcome_labels is None:
-            outcome_labels = list(range(n_outcomes))
-        elif len(outcome_labels) != n_outcomes:
+    def hessian_per_outcome(self, vector_function: Callable, wrt: list[str], outcome_labels: list[str] | None = None, **kwargs) -> dict:
+        """ Second derivatives of a vector-valued function (e.g. outcome probabilities), per output component.
+            Returns {name1: {name2: {outcome label: d2p_label/dName1 dName2}}}; labels default to 0, 1, ...
+        """
+        _, _, hess = self.derivatives(vector_function, wrt, order=2, **kwargs)
+        n_outcomes = hess[wrt[0]][wrt[0]].shape[0]
+        outcome_labels = list(range(n_outcomes)) if outcome_labels is None else list(outcome_labels)
+        if len(outcome_labels) != n_outcomes:
             raise ValueError(f"Outcome labels has {len(outcome_labels)} instead of {n_outcomes}.")
-        return {i: {j: {label: raw[i][j][k] for k, label in enumerate(outcome_labels)} for j in wrt} for i in wrt} 
-        #return {label: {i: {j: raw[i][j][k] for j in wrt} for i in wrt} for k, label in enumerate(outcome_labels)}
-
-
-### Helper function to interface with jax library; converting a complicated python callable to jax differentiable 
-def make_matrix_function_jax_differentiable(function: Callable, eps: float = 1e-11, diff_params: list[str] = None) -> Callable:
-    """ Wraps an arbitrarily complicated python function mapping named parameters to a matrix into a 
-        JAX-differentiable function via jax.custom_jvp with a central finite-difference backward rule. 
-
-        This avoids an explicit tracing of the function's body by Jax, leading to no restrictions on the 
-        function to make it compatible with JAX. 
-
-        - diff_params are the parameters that the function is differentiated with respect to 
-
-        Note: custom_vjp operates correctly by separating the output's real and imaginary parts 
-    """
-    sig = inspect.signature(function) 
-    param_names = list(sig.parameters.keys())
-
-    try: 
-        hints = get_type_hints(function) 
-    except Exception:
-        hints = {}
-
-    if diff_params is not None:
-        is_diff = {name: name in diff_params for name in param_names}
-    else:
-        is_diff = {name: (True if hints.get(name) is None else hints[name] in (float, complex)) for name in param_names}
-
-    diff_names = [n for n in param_names if is_diff[n]]
-    nondiff_names = [n for n in param_names if not is_diff[n]]
-
-    def positional_function(nondiff_args, diff_args):
-        kwargs = dict(zip(nondiff_names, nondiff_args))
-        kwargs.update(dict(zip(diff_names, diff_args)))
-        return function(**kwargs)
-
-    @functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
-    def wrapped_real_imaginary(nondiff_args, diff_args):
-        U = positional_function(nondiff_args, diff_args)
-        return jnp.real(U), jnp.imag(U)
-
-    def wrapped_real_imaginary_fwd(nondiff_args, diff_args):
-        U = positional_function(nondiff_args, diff_args)
-        return (jnp.real(U), jnp.imag(U)), diff_args
-
-    def wrapped_real_imaginary_bwd(nondiff_args, residual_diff_args, cotangent):
-        ct_real, ct_imag = cotangent 
-        grads = []
-        for i, arg in enumerate(residual_diff_args):
-            plus = list(residual_diff_args); plus[i] = arg + eps
-            minus = list(residual_diff_args); minus[i] = arg - eps
-            dU = (positional_function(nondiff_args, tuple(plus)) - positional_function(nondiff_args, tuple(minus)))/(2. * eps)
-            grads.append( jnp.sum(ct_real * jnp.real(dU)) + jnp.sum(ct_imag * jnp.imag(dU)) )
-        return (tuple(grads), ) 
-
-    wrapped_real_imaginary.defvjp(wrapped_real_imaginary_fwd, wrapped_real_imaginary_bwd)
-
-    def wrapped(**kwargs):
-        bound = sig.bind(**kwargs)
-        bound.apply_defaults()
-        nondiff_args = tuple(bound.arguments[n] for n in nondiff_names)
-        diff_args = tuple(bound.arguments[n] for n in diff_names)
-        U_real, U_imag = wrapped_real_imaginary(nondiff_args, diff_args)
-        return U_real + 1j*U_imag
-
-    wrapped.__name__ = function.__name__
-    wrapped.__signature__ = sig 
-    wrapped.__doc__ = function.__doc__ 
-    return wrapped 
-
-
-
+        return {i: {j: {label: hess[i][j][k] for k, label in enumerate(outcome_labels)} for j in wrt} for i in wrt}
 
 
 

@@ -9,7 +9,7 @@
 
 import unittest
 import numpy as np
-from ionsim.custom_math import slow_trapz_for_matrix, trapz_for_matrix
+from ionsim.custom_math import finite_difference_derivatives, slow_trapz_for_matrix, trapz_for_matrix
 from ionsim.testing import assert_array_close
 
 class TestCustomMath(unittest.TestCase):
@@ -45,6 +45,37 @@ class TestCustomMath(unittest.TestCase):
             exp = slow_trapz_for_matrix(ys, self.xs)
             act = trapz_for_matrix(ys, self.xs)
             assert_array_close(act, exp)
+
+    def test_finite_difference_derivatives(self):
+        """ Central finite differences for a vector-valued function """
+        f = lambda x: np.array([np.sin(x[0]) * np.exp(x[1]), x[0]**2 * x[1]**3])
+        x0 = np.array([0.3, -0.7])
+        value, jacobian, hessian = finite_difference_derivatives(f, x0, order=2)
+        a, b = x0
+        np.testing.assert_allclose(value, f(x0))
+        np.testing.assert_allclose(jacobian, [[np.cos(a)*np.exp(b), 2*a*b**3], [np.sin(a)*np.exp(b), 3*a**2*b**2]], atol=1e-10)
+        np.testing.assert_allclose(hessian[0, 0], [-np.sin(a)*np.exp(b), 2*b**3], atol=1e-6)
+        np.testing.assert_allclose(hessian[1, 1], [np.sin(a)*np.exp(b), 6*a**2*b], atol=1e-6)
+        np.testing.assert_allclose(hessian[0, 1], [np.cos(a)*np.exp(b), 6*a*b**2], atol=1e-6)
+        np.testing.assert_allclose(hessian[0, 1], hessian[1, 0])
+        _, _, no_hessian = finite_difference_derivatives(f, x0, order=1)
+        self.assertIsNone(no_hessian)
+
+    def test_finite_difference_derivatives_at_boundary(self):
+        """ One-sided differences at a bound and where the function is undefined on one side """
+        # A rate parameter at zero: sqrt(rate) is NaN for rate < 0, but the function is smooth for rate >= 0
+        f = lambda x: np.sqrt(x[0])**2 * np.exp(-x[0]) + x[1]
+        _, jacobian, hessian = finite_difference_derivatives(f, np.array([0., 1.]), order=2)
+        self.assertAlmostEqual(jacobian[0], 1., places=8)
+        self.assertAlmostEqual(hessian[0, 0], -2., places=5)
+        self.assertAlmostEqual(jacobian[1], 1., places=8)
+
+        # Explicit bounds force one-sided stencils
+        g = lambda x: x[0]**3
+        _, jacobian, hessian = finite_difference_derivatives(g, np.array([1.]), order=2, bounds=[(None, 1.)])
+        self.assertAlmostEqual(jacobian[0], 3., places=8)
+        self.assertAlmostEqual(hessian[0, 0], 6., places=5)
+
 
 if __name__ == '__main__':
     unittest.main()
