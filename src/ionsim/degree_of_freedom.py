@@ -13,6 +13,7 @@ from ionsim.atomic_internal_energy_level import LSFineLevel, LSHyperfineLevel, J
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel
 from ionsim.zeeman_solver import ZeemanHyperfineSolver
 from ionsim.ionsim_error import IonSimError
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, STRUCTURAL_KEYS, PROJECTION_KEYS, ALLOWED_QUANTUM_NUMBER_KEYS 
 
 import importlib.resources
 from pathlib import Path
@@ -32,36 +33,28 @@ class DegreeOfFreedom(ABC):
     energy_levels: Sequence[EnergyLevel]
     name: str | None = None # TODO: will we use these names?
 
-# Keys accepted in each quantum-number dictionary passed to AtomicStructure.from_species(quantum_numbers=...).
-# Structural keys identify the manifold (config-file level); projection keys identify the state within it.
-_STRUCTURAL_KEYS = {'n', 'l', 's', 'j', 'k', 'j1', 'l2', 's2'}
-_PROJECTION_KEYS = {'f', 'mf', 'mj', 'mi', 'ml', 'ms'}
-_ALLOWED_QUANTUM_NUMBER_KEYS = _STRUCTURAL_KEYS | _PROJECTION_KEYS | {'i'}
-
-# Minimum |<mJ, mI|psi>|^2 for the eigenstate assigned to a requested |mJ, mI> label before a warning is issued.
-# Below this, mJ and mI are not good quantum numbers at the chosen field and the label is only nominal.
-UNCOUPLED_PURITY_WARNING_THRESHOLD = 0.9
-
-
 def _to_float(value) -> float:
     """Convert a user-supplied quantum number (int, float, Fraction, or string like '3/2') to float."""
     if isinstance(value, str):
         return float(Fraction(value))
     return float(value)
 
+def _is_equal(a: float, b: float) -> bool:
+    """True if a and b agree to within NUMERICAL_EQUIVALENCE_THRESHOLD (absolute)."""
+    return abs(a - b) < NUMERICAL_EQUIVALENCE_THRESHOLD
 
 def _is_half_integer_multiple(x: float) -> bool:
     """True if x is an integer or half-integer."""
-    return np.isclose(2 * x, np.round(2 * x))
+    return _is_equal(2 * x, np.round(2 * x))
 
 
 def _check_projection(m: float, total: float, m_name: str, total_name: str, qn: dict):
     """Check that a projection quantum number m is allowed for angular momentum `total`."""
     if not _is_half_integer_multiple(m):
         raise IonSimError(f"{m_name}={m} must be an integer or half-integer, got quantum numbers {qn}.")
-    if abs(m) > total + 1e-9:
+    if abs(m) > total + NUMERICAL_EQUIVALENCE_THRESHOLD:
         raise IonSimError(f"|{m_name}| must be <= {total_name}={total}, got {m_name}={m} in {qn}.")
-    if not np.isclose(total - m, np.round(total - m)):
+    if not _is_equal(total - m, np.round(total - m)):
         raise IonSimError(f"{total_name} - {m_name} must be an integer, got {total_name}={total}, {m_name}={m} in {qn}.")
 
 
@@ -195,7 +188,7 @@ class AtomicStructure(DegreeOfFreedom):
             elif basis == 'hyperfine':
                 f, mf = qn['f'], qn['mf']
                 f_min, f_max = abs(j - nuclear_spin), j + nuclear_spin
-                if f < f_min - 1e-9 or f > f_max + 1e-9 or not np.isclose(f - f_min, np.round(f - f_min)):
+                if f < f_min - NUMERICAL_EQUIVALENCE_THRESHOLD or f > f_max + NUMERICAL_EQUIVALENCE_THRESHOLD or not _is_equal(f - f_min, np.round(f - f_min)):
                     allowed = [float(x) for x in np.arange(f_min, f_max + 1)]
                     raise IonSimError(f"f={f} is not allowed for manifold {builder.describe()} with I={nuclear_spin}; "
                                       f"allowed values are {allowed}. Got {raw_qn}.")
@@ -222,19 +215,19 @@ class AtomicStructure(DegreeOfFreedom):
         """Parse a user-supplied quantum-number dict: check its keys against the allowed set, convert values to floats, and check any given nuclear spin against the species."""
         if not isinstance(raw_qn, dict):
             raise IonSimError(f"Each entry of quantum_numbers must be a dict, got {type(raw_qn).__name__}: {raw_qn}.")
-        unknown = set(raw_qn) - _ALLOWED_QUANTUM_NUMBER_KEYS
+        unknown = set(raw_qn) - ALLOWED_QUANTUM_NUMBER_KEYS
         if unknown:
             raise IonSimError(f"Unknown quantum-number keys {sorted(unknown)} in {raw_qn}. "
-                              f"Allowed keys: {sorted(_ALLOWED_QUANTUM_NUMBER_KEYS)}.")
+                              f"Allowed keys: {sorted(ALLOWED_QUANTUM_NUMBER_KEYS)}.")
         qn = {key: _to_float(value) for key, value in raw_qn.items()}
-        if 'i' in qn and not np.isclose(qn['i'], nuclear_spin):
+        if 'i' in qn and not _is_equal(qn['i'], nuclear_spin):
             raise IonSimError(f"Nuclear spin i={qn['i']} in {raw_qn} does not match the species nuclear spin {nuclear_spin}.")
         return qn
 
     @staticmethod
     def _identify_basis(qn: dict, nuclear_spin: float) -> str:
         """Decide which basis a quantum-number dict refers to from its projection quantum numbers."""
-        projections = frozenset(k for k in qn if k in _PROJECTION_KEYS)
+        projections = frozenset(k for k in qn if k in PROJECTION_KEYS)
         if nuclear_spin == 0:
             if projections == {'mj'}:
                 return 'fine'
@@ -251,9 +244,9 @@ class AtomicStructure(DegreeOfFreedom):
     @staticmethod
     def _match_manifold(qn: dict, builders: list[_ManifoldBuilder]) -> _ManifoldBuilder:
         """Find the unique manifold consistent with the structural quantum numbers in qn."""
-        structural = {k: v for k, v in qn.items() if k in _STRUCTURAL_KEYS}
+        structural = {k: v for k, v in qn.items() if k in STRUCTURAL_KEYS}
         matches = [b for b in builders
-                   if all(k in b.fine_data and b.fine_data[k] is not None and np.isclose(float(b.fine_data[k]), v)
+                   if all(k in b.fine_data and b.fine_data[k] is not None and _is_equal(float(b.fine_data[k]), v)
                           for k, v in structural.items())]
         if len(matches) == 1:
             return matches[0]
@@ -391,7 +384,7 @@ class _ManifoldBuilder:
 
     def describe(self) -> str:
         """Human-readable summary of the structural quantum numbers of this manifold (for error messages)."""
-        items = ', '.join(f"{k}={self.fine_data[k]}" for k in sorted(_STRUCTURAL_KEYS) if k in self.fine_data)
+        items = ', '.join(f"{k}={self.fine_data[k]}" for k in sorted(STRUCTURAL_KEYS) if k in self.fine_data)
         return f"'{self.term_symbol}' ({items})"
 
     def zeeman(self):
@@ -460,25 +453,27 @@ class _ManifoldBuilder:
                               f"was requested. The weak-field approximation works in the |F, mF> basis; specify (f, mf) instead.")
 
         # Identify which eigenstate the solver will assign to this label, so we can check that the
-        # label is meaningful (purity) and that no two requested labels land on the same eigenstate.
+        # label is meaningful (max_overlap) and that no two requested labels land on the same eigenstate.
         basis_index = solver.basis_states.index((mj, mi))
         overlaps = np.abs(eigenvecs[basis_index, :])**2
         eigen_index = int(np.argmax(overlaps))
-        purity = float(overlaps[eigen_index])
+        max_overlap = float(overlaps[eigen_index])
         previous = self._assigned_eigenstates.get(eigen_index)
         if previous is not None and previous != (mj, mi):
             raise IonSimError(f"In manifold '{self.term_symbol}' at B = {self.magnetic_field}, |mJ, mI> = {(mj, mi)} and {previous} "
                               f"map to the same energy eigenstate. mJ, mI are not good quantum numbers at this field; "
                               f"use (f, mf) or a stronger field.")
         self._assigned_eigenstates[eigen_index] = (mj, mi)
-        if purity < UNCOUPLED_PURITY_WARNING_THRESHOLD:
+        # Minimum |<mJ, mI|psi>|^2 for the eigenstate assigned to a requested |mJ, mI> label before a warning is issued.
+        # Below this, mJ and mI are not good quantum numbers at the chosen field and the label is only nominal.
+        UNCOUPLED_OVERLAP_WARNING_THRESHOLD = 0.9
+
+        if max_overlap < UNCOUPLED_OVERLAP_WARNING_THRESHOLD:
             warnings.warn(f"|mJ={Fraction(mj)}, mI={Fraction(mi)}> in manifold '{self.term_symbol}' at B = {self.magnetic_field} "
-                          f"has only {purity:.1%} overlap with its assigned energy eigenstate; the label is nominal. "
+                          f"has only {max_overlap:.1%} overlap with its assigned energy eigenstate; the label is nominal. "
                           f"Consider specifying (f, mf) at this field.", stacklevel=4)
 
         # Returns the full eigenvalue (Zeeman + hyperfine), relative to the fine-structure energy, in solver freq units (Hz).
         # LSBackGoudsmitLevel.hyperfine_energy_shift is 0, so all of it goes into the external shift.
         shift = solver.get_state_energy_from_mjmi_pair(energy_shifts, eigenvecs, mj=mj, mi=mi)
         return self.UncoupledLevel(**self.fine_data, i=self.nuclear_spin, mj=mj, mi=mi, external_energy_shift=shift * 2. * np.pi)
-
-
