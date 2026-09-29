@@ -23,6 +23,25 @@ from ionsim.degree_of_freedom import AtomicStructure, levels_in_manifold
 from ionsim.lindbladian import DissipatorSpontaneousEmission, Lindbladian
 from ionsim.ionsim_error import IonSimError
 
+# Reference data. These mirror the species config files (src/ionsim/atomic_config_data), which cite the sources;
+# the tests check that the dissipator reproduces them, so update both together.
+CA40_P12_LIFETIME = 6.904e-9  # s, 40Ca+ 4P1/2 lifetime; 40Ca+.yaml ref [3], PRL 115, 143003 (2015)
+CA40_P12_TO_S12 = 0.93565     # 40Ca+ 4P1/2 -> 4S1/2 branching ratio; 40Ca+.yaml ref [2], PRL 111, 023004 (2013)
+CA40_P12_TO_D32 = 0.06435     # 40Ca+ 4P1/2 -> 3D3/2 branching ratio; same reference (the two sum to 1)
+RB87_P32_LIFETIME = 26.24e-9  # s, 87Rb 5P3/2 (D2) lifetime; 87Rb.yaml, Steck, "Rubidium 87 D Line Data" (ref 1)
+RB87_53S_LIFETIME = 72.0e-6   # s, 87Rb 53S1/2 Rydberg lifetime; 87Rb.yaml (ref 3)
+YB171_3D1_LIFETIME =  332.e-9 # s, 171Yb 3D1 lifetime as given in 171Yb.yaml
+YB171_3D1_BRANCHING = {'P0': 0.638, 'P1': 0.352, 'P2': 0.01}  # 171Yb 3D1 -> 3P0, 3P1, 3P2; 171Yb.yaml
+
+# Test settings.
+PLACES = 10  # rates are compared as rate * lifetime ~ O(1); 1e-10 is far above floating-point error
+RYDBERG_FIELD = 13.6  # gauss; the 53S1/2 Zeeman splitting (~38 MHz) is far above its hyperfine A (150 kHz), so |mJ, mI> is a good basis
+SIX_P32_F_VALUES = (0, 1, 2, 3)  # all F = |J - I|..J + I for 87Rb 6P3/2 (J = 3/2, I = 3/2), i.e. the complete manifold
+
+# 87Rb D2 hyperfine branching from |F'=1>: fraction into F is (2F + 1)(2J' + 1){J J' 1; F' F I}^2 with J = 1/2, J' = 3/2, I = 3/2.
+RB87_F1_PRIME_TO_F2 = 1/6
+RB87_F1_PRIME_TO_F1 = 5/6
+
 
 def decay_rate_matrix(dissipator) -> np.ndarray:
     """R[i, j] = sum over Lindblad operators of |L[i, j]|^2: the decay rate from basis state j to basis state i."""
@@ -52,44 +71,44 @@ class TestSpontaneousEmissionRates(unittest.TestCase):
         ca = AtomicStructure.from_species(species='40Ca+', manifolds=['S1/2', 'D3/2', 'P1/2'])
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(
             StandardBasis([ca]), levels_in_manifold(ca, 'S1/2') + levels_in_manifold(ca, 'D3/2'), levels_in_manifold(ca, 'P1/2'))
-        tau = 6.904e-9
         for excited in levels_in_manifold(ca, 'P1/2'):
             with self.subTest(excited=excited.name):
                 by_manifold = decay_by_manifold(ca, dissipator, excited)
-                self.assertAlmostEqual(by_manifold['S1/2'] * tau, 0.93565, places=10)
-                self.assertAlmostEqual(by_manifold['D3/2'] * tau, 0.06435, places=10)
+                self.assertAlmostEqual(by_manifold['S1/2'] * CA40_P12_LIFETIME, CA40_P12_TO_S12, places=PLACES)
+                self.assertAlmostEqual(by_manifold['D3/2'] * CA40_P12_LIFETIME, CA40_P12_TO_D32, places=PLACES)
 
     def test_three_ground_manifolds_neutral_yb(self):
         """171Yb 3D1 -> 3P0, 3P1, 3P2 in the hyperfine basis, with branching ratios keyed by term symbol."""
         yb = AtomicStructure.from_species(species='171Yb', manifolds=['P0', 'P1', 'P2', 'D1'])
         ground = levels_in_manifold(yb, 'P0') + levels_in_manifold(yb, 'P1') + levels_in_manifold(yb, 'P2')
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(StandardBasis([yb]), ground, levels_in_manifold(yb, 'D1'))
-        tau = 0.0527
         for excited in levels_in_manifold(yb, 'D1'):
             with self.subTest(excited=excited.name):
                 by_manifold = decay_by_manifold(yb, dissipator, excited)
-                for term_symbol, ratio in {'P0': 0.638, 'P1': 0.352, 'P2': 0.01}.items():
-                    self.assertAlmostEqual(by_manifold[term_symbol] * tau, ratio, places=10)
+                for term_symbol, ratio in YB171_3D1_BRANCHING.items():
+                    self.assertAlmostEqual(by_manifold[term_symbol] * YB171_3D1_LIFETIME, ratio, places=PLACES)
 
     def test_single_manifold_without_branching_ratios(self):
         """87Rb 5P3/2 -> 5S1/2 (no branching ratios in config): every excited sublevel decays at 1/tau."""
+        # Any nonzero field works; 1 gauss just makes the sublevels non-degenerate.
         rb = AtomicStructure.from_species(species='87Rb', manifolds=['S1/2', 'P3/2'], magnetic_field=1.)
+        # mF >= 0 only, to keep the test fast; mF < 0 levels are mirror images with the same total rate.
         excited = [level for level in levels_in_manifold(rb, 'P3/2') if level.mf >= 0]
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(StandardBasis([rb]), levels_in_manifold(rb, 'S1/2'), excited)
-        tau = 26.24e-9
         for level in excited:
             with self.subTest(excited=level.name):
-                self.assertAlmostEqual(decay_by_manifold(rb, dissipator, level)['S1/2'] * tau, 1., places=10)
+                # With no branching ratios, all decay goes to 5S1/2: rate * lifetime = 1.
+                self.assertAlmostEqual(decay_by_manifold(rb, dissipator, level)['S1/2'] * RB87_P32_LIFETIME, 1., places=PLACES)
 
     def test_cycling_transition(self):
         """87Rb |F'=3, mF'=3> decays only to |F=2, mF=2>."""
         rb = AtomicStructure.from_species(species='87Rb', manifolds=['S1/2', 'P3/2'])
         cycling = next(level for level in rb.energy_levels if level.name == 'P3/2,3,3')
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(StandardBasis([rb]), levels_in_manifold(rb, 'S1/2'), [cycling])
-        self.assertEqual(len(dissipator.operators), 1)
+        self.assertEqual(len(dissipator.operators), 1)  # the single path |3, 3> -> |2, 2> (sigma, q = -1)
         rates = decay_rate_matrix(dissipator)[:, rb.energy_levels.index(cycling)]
         target = next(i for i, level in enumerate(rb.energy_levels) if level.name == 'S1/2,2,2')
-        self.assertAlmostEqual(rates[target] * 26.24e-9, 1., places=10)
+        self.assertAlmostEqual(rates[target] * RB87_P32_LIFETIME, 1., places=PLACES)  # all decay goes to |2, 2>
 
     def test_truncated_ground_manifold_is_not_renormalized(self):
         """87Rb |F'=1, mF'=0> with only the F=2 ground levels: rate is the true 1/6 of 1/tau, not 1/tau."""
@@ -97,25 +116,29 @@ class TestSpontaneousEmissionRates(unittest.TestCase):
         excited = next(level for level in rb.energy_levels if level.name == 'P3/2,1,0')
         ground = [level for level in levels_in_manifold(rb, 'S1/2') if level.f == 2]
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(StandardBasis([rb]), ground, [excited])
-        self.assertAlmostEqual(decay_by_manifold(rb, dissipator, excited)['S1/2'] * 26.24e-9, 1/6, places=10)
+        self.assertAlmostEqual(decay_by_manifold(rb, dissipator, excited)['S1/2'] * RB87_P32_LIFETIME, RB87_F1_PRIME_TO_F2,
+                               places=PLACES)
 
     def test_mixed_bases(self):
         """87Rb 53S1/2 |mJ, mI> Rydberg level -> complete 6P3/2 |F, mF> manifold: total rate 1/tau."""
-        six_p = [{'n': 6, 'l': 1, 'f': f, 'mf': mf} for f in (0, 1, 2, 3) for mf in np.arange(-f, f + 1)]
+        six_p = [{'n': 6, 'l': 1, 'f': f, 'mf': mf} for f in SIX_P32_F_VALUES for mf in np.arange(-f, f + 1)]
+        # Two arbitrary allowed |mJ, mI> sublevels (J = 1/2, I = 3/2).
         rydberg = [{'n': 53, 'mj': 0.5, 'mi': 1.5}, {'n': 53, 'mj': -0.5, 'mi': 0.5}]
         rb = AtomicStructure.from_species(species='87Rb', manifolds=['6 P3/2', '53 S1/2'], quantum_numbers=six_p + rydberg,
-                                          magnetic_field=13.6)
+                                          magnetic_field=RYDBERG_FIELD)
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(
             StandardBasis([rb]), levels_in_manifold(rb, '6 P3/2'), levels_in_manifold(rb, '53 S1/2'))
         for excited in levels_in_manifold(rb, '53 S1/2'):
             with self.subTest(excited=excited.name):
-                self.assertAlmostEqual(decay_by_manifold(rb, dissipator, excited)['6 P3/2'] * 72.0e-6, 1., places=10)
+                # No branching ratios for 53S1/2 in the config, so all decay goes to 6P3/2: rate * lifetime = 1.
+                self.assertAlmostEqual(decay_by_manifold(rb, dissipator, excited)['6 P3/2'] * RB87_53S_LIFETIME, 1., places=PLACES)
 
     def test_sparse_matches_dense(self):
         ca = AtomicStructure.from_species(species='40Ca+', manifolds=['S1/2', 'D3/2', 'P1/2'])
         args = (StandardBasis([ca]), levels_in_manifold(ca, 'S1/2') + levels_in_manifold(ca, 'D3/2'), levels_in_manifold(ca, 'P1/2'))
         dense = DissipatorSpontaneousEmission.from_atomic_structure_data(*args)
         sparse = DissipatorSpontaneousEmission.from_atomic_structure_data(*args, sparse=True)
+        # Same arithmetic in both representations, so they should agree to near floating-point precision.
         np.testing.assert_allclose(decay_rate_matrix(sparse), decay_rate_matrix(dense), rtol=1e-12)
 
 
@@ -126,7 +149,7 @@ class TestSpontaneousEmissionMultipleIons(unittest.TestCase):
         self.ion_a = AtomicStructure.from_species(species='40Ca+', manifolds=['S1/2', 'P1/2'], name='a')
         self.ion_b = AtomicStructure.from_species(species='40Ca+', manifolds=['S1/2', 'P1/2'], name='b')
         self.basis = StandardBasis([self.ion_a, self.ion_b])
-        self.rate = 0.93565 / 6.904e-9  # P1/2 -> S1/2 only
+        self.rate = CA40_P12_TO_S12 / CA40_P12_LIFETIME  # decay rate of one ion, P1/2 -> S1/2 only (D3/2 not included)
 
     def _total_decay_out_of(self, dissipator):
         """Total decay rate out of each two-ion basis state, keyed by (ion a excited, ion b excited)."""
@@ -134,14 +157,17 @@ class TestSpontaneousEmissionMultipleIons(unittest.TestCase):
         result = {}
         for state, total in zip(self.basis.states, totals):
             a_excited, b_excited = (component.term_symbol == 'P1/2' for component in state.components)
-            result.setdefault((a_excited, b_excited), set()).add(round(total / self.rate, 10))
+            # Rounded so that equal totals collapse into one set entry.
+            result.setdefault((a_excited, b_excited), set()).add(round(total / self.rate, PLACES))
         return result
 
     def test_decay_added_to_every_ion(self):
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(
             self.basis, levels_in_manifold(self.ion_a, 'S1/2'), levels_in_manifold(self.ion_a, 'P1/2'))
-        self.assertEqual(len(dissipator.operators), 8)  # 4 paths per ion
+        # 4 paths per ion (each P1/2 sublevel decays to both S1/2 sublevels: one pi, one sigma), 2 ions.
+        self.assertEqual(len(dissipator.operators), 8)
         totals = self._total_decay_out_of(dissipator)
+        # Total decay in units of one ion's rate equals the number of excited ions.
         self.assertEqual(totals[(False, False)], {0.})
         self.assertEqual(totals[(True, False)], {1.})
         self.assertEqual(totals[(False, True)], {1.})
@@ -151,6 +177,7 @@ class TestSpontaneousEmissionMultipleIons(unittest.TestCase):
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(
             self.basis, levels_in_manifold(self.ion_a, 'S1/2'), levels_in_manifold(self.ion_a, 'P1/2'), select_DOFs=[self.ion_b])
         totals = self._total_decay_out_of(dissipator)
+        # Only ion b decays: an excited ion a contributes nothing.
         self.assertEqual(totals[(True, False)], {0.})
         self.assertEqual(totals[(False, True)], {1.})
 
@@ -201,11 +228,14 @@ class TestSpontaneousEmissionErrors(unittest.TestCase):
 class TestSpontaneousEmissionSink(unittest.TestCase):
     """decay_to_sink=True: decay that does not reach the given ground levels goes to the SinkLevel."""
 
+    rydberg_to_six_p = 0.1  # hypothetical 53S1/2 -> 6P3/2 branching ratio (test input, not physical data); the rest goes to the sink
+
     @staticmethod
     def _rydberg_structure(branching_ratios):
         """87Rb complete 6P3/2 |F, mF> manifold, one 53S1/2 |mJ, mI> level with the given branching ratios, and a sink."""
-        six_p = [{'n': 6, 'l': 1, 'f': f, 'mf': mf} for f in (0, 1, 2, 3) for mf in np.arange(-f, f + 1)]
-        rb = AtomicStructure.from_species(species='87Rb', manifolds=['6 P3/2', '53 S1/2'], magnetic_field=13.6,
+        six_p = [{'n': 6, 'l': 1, 'f': f, 'mf': mf} for f in SIX_P32_F_VALUES for mf in np.arange(-f, f + 1)]
+        # One arbitrary allowed |mJ, mI> sublevel of 53S1/2.
+        rb = AtomicStructure.from_species(species='87Rb', manifolds=['6 P3/2', '53 S1/2'], magnetic_field=RYDBERG_FIELD,
                                           quantum_numbers=six_p + [{'n': 53, 'mj': 0.5, 'mi': 1.5}], include_sink=True)
         return AtomicStructure([replace(level, branching_ratios=branching_ratios) if getattr(level, 'n', None) == 53 else level
                                 for level in rb.energy_levels])
@@ -216,23 +246,22 @@ class TestSpontaneousEmissionSink(unittest.TestCase):
 
     def test_rydberg_remainder_goes_to_sink(self):
         """53S1/2 with 10% branching to 6P3/2: 0.1/tau to 6P3/2, 0.9/tau to the sink, 1/tau in total."""
-        rb = self._rydberg_structure({'6 P3/2': 0.1})
+        rb = self._rydberg_structure({'6 P3/2': self.rydberg_to_six_p})
         rydberg = levels_in_manifold(rb, '53 S1/2')
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(
             StandardBasis([rb]), levels_in_manifold(rb, '6 P3/2'), rydberg, decay_to_sink=True)
         by_manifold = decay_by_manifold(rb, dissipator, rydberg[0])
-        tau = 72.0e-6
-        self.assertAlmostEqual(by_manifold['6 P3/2'] * tau, 0.1, places=10)
+        self.assertAlmostEqual(by_manifold['6 P3/2'] * RB87_53S_LIFETIME, self.rydberg_to_six_p, places=PLACES)
         sink_rate = decay_rate_matrix(dissipator)[rb.energy_levels.index(rb.energy_levels[-1]), rb.energy_levels.index(rydberg[0])]
-        self.assertAlmostEqual(sink_rate * tau, 0.9, places=10)
+        self.assertAlmostEqual(sink_rate * RB87_53S_LIFETIME, 1. - self.rydberg_to_six_p, places=PLACES)
 
     def test_without_sink_excited_level_decays_slower(self):
         """Same structure without decay_to_sink: only the modeled 0.1/tau, no decay to the sink."""
-        rb = self._rydberg_structure({'6 P3/2': 0.1})
+        rb = self._rydberg_structure({'6 P3/2': self.rydberg_to_six_p})
         rydberg = levels_in_manifold(rb, '53 S1/2')
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(StandardBasis([rb]), levels_in_manifold(rb, '6 P3/2'), rydberg)
         total = decay_rate_matrix(dissipator)[:, rb.energy_levels.index(rydberg[0])].sum()
-        self.assertAlmostEqual(total * 72.0e-6, 0.1, places=10)
+        self.assertAlmostEqual(total * RB87_53S_LIFETIME, self.rydberg_to_six_p, places=PLACES)
 
     def test_truncated_manifold_remainder_goes_to_sink(self):
         """87Rb |F'=1, mF'=0> with only F=2 ground levels: 1/6 to F=2, 5/6 to the sink."""
@@ -241,9 +270,9 @@ class TestSpontaneousEmissionSink(unittest.TestCase):
         ground = [level for level in levels_in_manifold(rb, 'S1/2') if level.f == 2]
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(StandardBasis([rb]), ground, [excited],
                                                                               decay_to_sink=True)
-        column = decay_rate_matrix(dissipator)[:, rb.energy_levels.index(excited)] * 26.24e-9
-        self.assertAlmostEqual(column[-1], 5/6, places=10)
-        self.assertAlmostEqual(column.sum(), 1., places=10)
+        column = decay_rate_matrix(dissipator)[:, rb.energy_levels.index(excited)] * RB87_P32_LIFETIME
+        self.assertAlmostEqual(column[-1], RB87_F1_PRIME_TO_F1, places=PLACES)  # the omitted F = 1 share goes to the sink
+        self.assertAlmostEqual(column.sum(), 1., places=PLACES)  # total decay is the full 1/lifetime
 
     def test_complete_channels_add_no_sink_operator(self):
         """40Ca+ P1/2 with both of its decay manifolds included: nothing is left over for the sink."""
@@ -252,7 +281,7 @@ class TestSpontaneousEmissionSink(unittest.TestCase):
         with_sink = DissipatorSpontaneousEmission.from_atomic_structure_data(*args, decay_to_sink=True)
         without_sink = DissipatorSpontaneousEmission.from_atomic_structure_data(*args)
         self.assertEqual(len(with_sink.operators), len(without_sink.operators))
-        self.assertAlmostEqual(decay_rate_matrix(with_sink)[-1].sum(), 0.)
+        self.assertAlmostEqual(decay_rate_matrix(with_sink)[-1].sum(), 0.)  # the sink (last level) receives nothing
 
     def test_all_decay_to_sink(self):
         """No ground levels: the excited level decays entirely to the sink at 1/tau."""
@@ -261,7 +290,8 @@ class TestSpontaneousEmissionSink(unittest.TestCase):
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(StandardBasis([ca]), [], excited, decay_to_sink=True)
         rates = decay_rate_matrix(dissipator)
         for level in excited:
-            self.assertAlmostEqual(rates[-1, ca.energy_levels.index(level)] * 6.904e-9, 1., places=10)
+            # Row -1 is the sink: it receives the full 1/lifetime.
+            self.assertAlmostEqual(rates[-1, ca.energy_levels.index(level)] * CA40_P12_LIFETIME, 1., places=PLACES)
 
     def test_every_ion_uses_its_own_sink(self):
         ion_a = AtomicStructure.from_species(species='40Ca+', manifolds=['S1/2', 'P1/2'], include_sink=True)
@@ -269,11 +299,13 @@ class TestSpontaneousEmissionSink(unittest.TestCase):
         basis = StandardBasis([ion_a, ion_b])
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(
             basis, levels_in_manifold(ion_a, 'S1/2'), levels_in_manifold(ion_a, 'P1/2'), decay_to_sink=True)
-        totals = decay_rate_matrix(dissipator).sum(axis=0) * 6.904e-9
+        # With the sink, every excited ion decays at the full 1/lifetime, so the total (in units of 1/lifetime)
+        # equals the number of excited ions.
+        totals = decay_rate_matrix(dissipator).sum(axis=0) * CA40_P12_LIFETIME
         for state, total in zip(basis.states, totals):
             n_excited = sum(getattr(component, 'term_symbol', None) == 'P1/2' for component in state.components)
             with self.subTest(state=state.name):
-                self.assertAlmostEqual(total, n_excited, places=10)
+                self.assertAlmostEqual(total, n_excited, places=PLACES)
 
     def test_sink_required(self):
         ca = AtomicStructure.from_species(species='40Ca+', manifolds=['S1/2', 'P1/2'])
@@ -287,7 +319,7 @@ class TestSpontaneousEmissionSink(unittest.TestCase):
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(
             StandardBasis([rb]), levels_in_manifold(rb, '6 P3/2'), levels_in_manifold(rb, '53 S1/2'), decay_to_sink=True)
         by_manifold = decay_by_manifold(rb, dissipator, levels_in_manifold(rb, '53 S1/2')[0])
-        self.assertAlmostEqual(by_manifold['6 P3/2'] * 72.0e-6, 1., places=10)
+        self.assertAlmostEqual(by_manifold['6 P3/2'] * RB87_53S_LIFETIME, 1., places=PLACES)
         self.assertNotIn('sink', by_manifold)
 
 if __name__ == '__main__':
