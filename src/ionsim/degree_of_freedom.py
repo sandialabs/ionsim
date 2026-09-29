@@ -198,7 +198,7 @@ class AtomicStructure(DegreeOfFreedom):
                 _check_projection(qn['mj'], j, 'mj', 'j', raw_qn)
                 _check_projection(qn['mi'], nuclear_spin, 'mi', 'i', raw_qn)
                 level = builder.uncoupled_level(qn['mj'], qn['mi'])
-            else:  # pragma: no cover - _identify_basis only returns the cases above
+            else:  
                 raise IonSimError(f"Unsupported basis '{basis}'.")
 
             if level.name in seen_names:
@@ -348,8 +348,9 @@ class AtomicStructure(DegreeOfFreedom):
         assert(term_symbol in all_term_symbols)
         return all_term_symbols.count(term_symbol) == 1
 
+
 class _ManifoldBuilder:
-    """Builds energy levels belonging to one manifold (one entry of the species config file).
+    """ Builds energy levels belonging to one manifold (one entry of the species config file).
 
         The Zeeman solver is constructed and cached, so it is only diagonalized for manifolds
         that actually contribute a level.
