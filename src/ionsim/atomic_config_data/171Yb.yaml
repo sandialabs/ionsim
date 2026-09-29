@@ -54,7 +54,7 @@ levels:
     lifetime: 332.e-9 # seconds, decay from 3D_1 to 3P_0, 
     branching_ratios: {'P2': 0.01, 'P1': 0.352, 'P0': 0.638}
     n: 5
-    s: 2.0
+    s: 1.
 
   - term_symbol: 'S1' # 6s (n=65)s 3S_1 , Rydberg state  
     coupling_scheme: 'ls'
