@@ -22,6 +22,7 @@ from ionsim.lindbladian import Dissipator, Lindbladian
 from ionsim.gst_circuit_planner import GSTCircuitPlanner
 from ionsim.gst_circuit_parser import CircuitData 
 from ionsim.gate_set_tomography import GateSetTomography
+from ionsim.gst_parameters import GstModelParameters
 
 
 def E0_1Q(prob_false_bright:float, prob_false_dark: float):
@@ -105,12 +106,19 @@ class TestGST(unittest.TestCase):
         self.gate_models = {'Gxpi8:0' : X_pi_8_co_prop_simple} 
         self.evaluated_gate_models = {'Gxpi8:0' : X_pi_8_co_prop_simple(self.amplitude_noise_strength)} 
 
+        ## Models and parameter information (initial guesses, bounds, and sharing among models), specified once and used by
+        # both the circuit planner (Fisher information) and the GST analysis.
+        # SPAM_error_probability is an argument of both the prep and POVM models, so model = "shared" ties them together.
+        self.model_parameters = GstModelParameters(self.prep_state_model, self.POVM_models, self.gate_models)
+        self.model_parameters.specify_parameter("SPAM_error_probability", model = "shared", guess = 1e-4, bounds = (0., 1.))
+        self.model_parameters.specify_parameter("amplitude_noise_strength", model = "Gxpi8:0", guess = 0.5, bounds = (0.0001, 10.0))
+
         num_qubits = len(qubit_indices)
         powers = [1, 2, 4, 8, 16, 32, 64, 128]
         fiducials = [[]]
         germs = [['Gxpi8:0']] 
         self.gst_circuit_planner = GSTCircuitPlanner(gate_names, qubit_indices, prep_fiducials = fiducials, measure_fiducials = fiducials, germ_powers = powers, 
-                                                        germs = germs, gate_models = self.gate_models) 
+                                                        germs = germs, parameters = self.model_parameters) 
 
         self.gst_circuits = self.gst_circuit_planner.generate_gst_circuits()
 
@@ -133,13 +141,8 @@ class TestGST(unittest.TestCase):
         self.true_gate_set['POVM'] = self.true_POVM_effects 
         self.true_gate_set['Gxpi8:0'] =  X_pi_8_co_prop_simple(self.amplitude_noise_strength)
 
-        self.GST_analyzer = GateSetTomography(self.basis, self.prep_state_model, self.POVM_models, self.parsed_circuits, self.gate_models, 
+        self.GST_analyzer = GateSetTomography.from_model_parameters(self.basis, self.parsed_circuits, self.model_parameters, 
                                     circuit_design = self.gst_circuit_planner, ideal_gate_set = self.true_gate_set, verbose = False)
-
-        ## Parameter information: initial guesses, bounds, and sharing among models.
-        # SPAM_error_probability is an argument of both the prep and POVM models, so model = "shared" ties them together.
-        self.GST_analyzer.specify_parameter("SPAM_error_probability", model = "shared", guess = 1e-4, bounds = (0., 1.))
-        self.GST_analyzer.specify_parameter("amplitude_noise_strength", model = "Gxpi8:0", guess = 0.5, bounds = (0.0001, 10.0))
 
 
     def test_circuit_simulations_and_outcomes(self):
@@ -179,20 +182,48 @@ class TestGST(unittest.TestCase):
         self.assertAlmostEqual(SPAM_error, 0.00011231981002808708, places=5)
 
     def test_fisher_info(self):
-        """ Test calculation of fisher information""" 
-        circuit_parameters = {"X_pi_8_co_prop_simple__amplitude_noise_strength" :  self.amplitude_noise_strength}
-        outcome_operator0 = EnergyShiftOperator.from_matrix(self.basis, Pauli.projector_0)
-        outcome_operator1 = EnergyShiftOperator.from_matrix(self.basis, Pauli.projector_1)
-        # Outcome operators are keyed by measurement outcome label
-        ideal_outcome_operators = {'0' : outcome_operator0, '1' : outcome_operator1}
+        """ Test calculation of Fisher information, including the SPAM models and the shared SPAM parameter """
+        # Parameters are named as in the GST analysis; unlisted parameters take their specified initial guesses
+        parameter_values = {'shared:SPAM_error_probability' : 0.0025, 'Gxpi8:0.amplitude_noise_strength' : self.amplitude_noise_strength}
         # Returns (Fisher information dictionaries, Fisher information matrices), each keyed by the circuit's expanded gate sequence
-        circuit_design_fisher_info, _ = self.gst_circuit_planner.compute_design_fisher_information(self.parsed_circuits, circuit_parameters, self.rho_0, ideal_outcome_operators)
+        FI_dicts, FI_matrices = self.gst_circuit_planner.compute_design_fisher_information(self.parsed_circuits, parameter_values)
 
-        FI_last_circuit = circuit_design_fisher_info[tuple(self.parsed_circuits[-1].expanded_gates)]
-        param_key = "X_pi_8_co_prop_simple__amplitude_noise_strength"
-        # Relative tolerance: the probability derivatives are computed by finite differences
-        expected_FI = 24283.2431074
-        self.assertAlmostEqual(float(FI_last_circuit[(param_key, param_key)]), expected_FI, delta=1e-5*expected_FI)
+        # Matrices use the same parameter order as the GST analysis
+        self.assertEqual(self.GST_analyzer.parameter_names, self.model_parameters.parameter_names)
+
+        # Independent reference for the deepest circuit: I = N sum_k (dp_k)(dp_k)^T / p_k with derivatives from Richardson-extrapolated
+        # central differences of directly computed probabilities (prep and POVM models share the SPAM parameter)
+        last_circuit = self.parsed_circuits[-1]
+        gate_model = self.gate_models['Gxpi8:0']
+        def probabilities(x):
+            rho = self.prep_state_model(x[0])
+            effects = self.POVM_models(x[0])
+            circuit_map = np.linalg.matrix_power(gate_model(x[1]), len(last_circuit.expanded_gates))
+            return np.real(np.array([effects[label] @ circuit_map @ rho for label in ['0', '1']]))
+        x0 = np.array([0.0025, self.amplitude_noise_strength])
+        central = lambda h: np.array([(probabilities(x0 + h*e) - probabilities(x0 - h*e)) / (2*h) for e in np.eye(2)])
+        gradients = (4*central(5e-5) - central(1e-4)) / 3.
+        FI_reference = last_circuit.total_counts * np.einsum('ik,jk->ij', gradients / probabilities(x0), gradients)
+
+        FI_last_circuit = FI_matrices[tuple(last_circuit.expanded_gates)]
+        np.testing.assert_allclose(FI_last_circuit, FI_reference, rtol=1e-6)
+        amplitude = 'Gxpi8:0.amplitude_noise_strength'
+        self.assertAlmostEqual(FI_dicts[tuple(last_circuit.expanded_gates)][(amplitude, amplitude)], FI_reference[1, 1], delta=1e-6*FI_reference[1, 1])
+
+        # The empty circuit informs only the SPAM parameter
+        FI_empty = FI_matrices[()]
+        self.assertGreater(FI_empty[0, 0], 0.)
+        np.testing.assert_array_equal(FI_empty[1, :], 0.)
+
+        # Accumulated over the design, the Fisher information is symmetric and positive definite (both parameters determined)
+        eigenvalues, inverse_FI = self.gst_circuit_planner.compute_design_eigenvalues_and_inverse_fisher_matrix(FI_matrices)
+        final = tuple(last_circuit.expanded_gates)
+        self.assertGreater(eigenvalues[final][0], 0.)
+        np.testing.assert_allclose(inverse_FI[final] @ sum(FI_matrices.values()), np.eye(2), atol=1e-8)
+
+        # Including the Hessian term changes nothing for a complete POVM (sum_k p_k = 1)
+        _, FI_with_hessian = self.gst_circuit_planner.compute_circuit_fisher_information(last_circuit, parameter_values, include_hessian=True)
+        np.testing.assert_allclose(FI_with_hessian, FI_last_circuit, rtol=1e-5)
 
 if __name__ == '__main__':
     unittest.main()

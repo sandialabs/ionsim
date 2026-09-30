@@ -9,15 +9,19 @@ import warnings
 
 from ionsim.state import State 
 from ionsim.operator import Operator  
-from ionsim.process import Circuit, Gate
-from ionsim.custom_types import Matrix 
+from ionsim.process import Circuit, Gate, Circuit_Process_Matrix_Function_Helper, GateProcessMatrixCache
+from ionsim.custom_types import Matrix, Vector
+from ionsim.custom_math import finite_difference_derivatives
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
+from ionsim.gst_parameters import GstModelParameters
 from ionsim.gst_circuit_parser import GstCircuit, GstGate, gate_from_label
 
 """ Circuit planner has 2 modes: 1) Gate model agnostic, 2) optimized planner based on gate models and germ sensitivies. """ 
 class GSTCircuitPlanner:
     def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials: list[list[str]] | None=None,
                     measure_fiducials: list[list[str]] | None=None, germs: list[list[str]] | None=None, germ_powers: list[int]=[1,2,4,8,16],
-                    gate_models: dict[str, callable] | None=None, long_sequence_GST: bool=True):
+                    parameters: GstModelParameters | None=None, long_sequence_GST: bool=True, evaluator_tolerance: float | None=None,
+                    gate_models=None):
         """ Constructor for GST Circuit Planner class. The user passes in the gate names and qubit labels at a minimum.
 
             - All gates are specified by string label with their qubit argument(s), e.g. 'Gxpi2:0', 'MS:0:1'.
@@ -27,7 +31,11 @@ class GSTCircuitPlanner:
               Defaults are used for any that are not supplied.
             - Sets up list of prep gates, measure gates, and germ gates. The class organizes GST circuits based on those gates requested germ powers.
             - Can write the GST circuit sequences to a file.
-            - Optional arguments to provide a dictionary of gate process matrix models keyed by gate label (e.g. {'Gxpi2:0': model}).
+            - parameters: optional GstModelParameters (prep, POVM, and gate models with their parameter specification, including
+              shared parameters), required for sensitivity and Fisher information analysis. The same object can be given to
+              GateSetTomography.from_model_parameters() so the analysis uses identical parameters.
+            - evaluator_tolerance: relative accuracy of the model functions, used to size finite-difference steps (default:
+              machine precision, appropriate for matrix exponentials; use the ODE solver tolerance for solver-based models).
             - long GST: 'True' will use germs to do long-gst circuits, 'false' will use only linear gst circuits
 
         """
@@ -61,12 +69,16 @@ class GSTCircuitPlanner:
         # Set mode --> either standard (gate model agnostic) or gate-model optimized
         self.mode = 'standard'
 
-        # Gate models (optional, used for sensitivity / Fisher information analysis) are keyed by gate label
-        self.gate_models = None
-        self.ism_gate_cache = {}
-        self.num_model_parameters = None
+        # Models and parameters (optional, used for sensitivity / Fisher information analysis)
         if gate_models is not None:
-            self.gate_models = {self.to_gst_gate(label): model for label, model in gate_models.items()}
+            raise TypeError("gate_models was replaced by parameters = GstModelParameters(prep_state_model, POVM_effect_models, gate_models), "
+                            "which includes the SPAM models and shared-parameter specification.")
+        if parameters is not None and not isinstance(parameters, GstModelParameters):
+            raise TypeError(f"parameters must be a GstModelParameters object; received {type(parameters).__name__}.")
+        self.parameters = parameters
+        self.evaluator_tolerance = evaluator_tolerance
+        # Gate process matrices are cached across every circuit of the design
+        self.gate_cache = GateProcessMatrixCache()
 
         self.long_GST = long_sequence_GST
 
@@ -321,197 +333,177 @@ class GSTCircuitPlanner:
         return [self.to_gst_gate(g) for g in seq]
 
 
-    def _compute_germ_process_matrix(self, germ, theta_dict):
-        """Compute the process matrix for a germ given parameter values for each gate model.
+    ### Circuit sensitivity and Fisher information (requires model parameters) ###
+    def _require_parameters(self) -> GstModelParameters:
+        if self.parameters is None:
+            raise ValueError("Sensitivity and Fisher information analysis requires the gate-set models: construct the planner with "
+                             "parameters = GstModelParameters(prep_state_model, POVM_effect_models, gate_models), or set planner.parameters.")
+        return self.parameters
+
+    def _compute_germ_process_matrix(self, germ, theta):
+        """Compute the process matrix for a germ at the parameter vector theta (see self.parameters.parameter_names).
 
         Args:
             germ: List of GstGate objects representing the germ
-            theta_dict: Dictionary mapping gate labels (e.g. 'Gxpi2:0') to their parameter arrays
+            theta: parameter vector, or a dictionary of parameter names to values
 
         Returns:
             Process matrix for the germ sequence
         """
-        d = 2**len(self.qubit_labels)
-        d2 = d**2
-
+        parameters = self._require_parameters()
+        theta = parameters.resolve_theta(theta)
+        d2 = parameters.prep_state(theta).size
         germ_process_matrix = np.eye(d2, dtype=complex)
-
         for gate in germ:
-            # Get the gate model function for this gate (gate models are keyed by GstGate internally)
-            gate_func = self.gate_models[gate]
-
-            # Get parameters for this specific gate model (theta_dict is keyed by gate label)
-            theta = theta_dict[gate.label]
-
-            # Evaluate at current parameters
-            gate_matrix = gate_func(*theta)
-            germ_process_matrix = gate_matrix @ germ_process_matrix
-
+            germ_process_matrix = parameters.gate_process_matrix(gate, theta) @ germ_process_matrix
         return germ_process_matrix
 
-    def compute_circuit_sensitivities(self, gst_circuits: list[GstCircuit], circuit_parameters, initial_state: State, outcome_operators: list[Operator]):
-        """ Computes sensitivites of each circuit to gate model parameters """ 
-        sensitivities = {}
-        # remove do nothing (empty) circuit(s), which carry no information about gate model parameters
-        circuits = [circ for circ in gst_circuits if circ.depth > 0]
-        #for circ in self.gst_circuits:
-        for circ in circuits:
-            sensitivities[tuple(circ.expanded_gates)] = self.compute_circuit_sensitivity(circ, circuit_parameters, initial_state, outcome_operators)
-        return sensitivities
+    def build_circuit_process_matrix_function(self, circuit: GstCircuit) -> Circuit_Process_Matrix_Function_Helper | None:
+        """ Circuit process matrix function (Circuit_Process_Matrix_Function_Helper) whose keyword arguments are the global
+            parameter names of self.parameters, e.g. 'shared:amplitude_noise_strength' or 'MS:0:1.phi_error', so shared
+            parameters are a single argument. Gate process matrices are cached across all circuits of the planner.
+            Returns None for an empty circuit.
+        """
+        parameters = self._require_parameters()
+        gates = list(circuit.expanded_gates)
+        if not gates:
+            return None
+        missing = sorted({gate.label for gate in gates if gate not in parameters.gate_models})
+        if missing:
+            raise ValueError(f"No gate models for {missing} in the planner's parameters (models exist for {[g.label for g in parameters.gate_models]}).")
 
+        # Map each gate argument, namespaced by gate label, to its global parameter name (shared arguments map to one name)
+        parameter_names = {}
+        for gate in dict.fromkeys(gates):
+            argument_names = inspect.signature(parameters.gate_models[gate]).parameters.keys()
+            for argument, global_name in zip(argument_names, parameters.argument_names(gate)):
+                parameter_names[f"{gate.label}.{argument}"] = global_name
 
-    def compute_design_fisher_information(self, gst_circuits: list[GstCircuit], circuit_parameters, initial_state: State, outcome_operators: list[Operator]):
-        """ Computes sensitivites of each circuit to gate model parameters """ 
+        # The helper composes its gate sequence left to right as matrices, i.e. last-applied gate first
+        return Circuit_Process_Matrix_Function_Helper([parameters.gate_models[g] for g in gates[::-1]], separator='.',
+                    gate_labels=[g.label for g in gates[::-1]], parameter_names=parameter_names,
+                    gate_cache=self.gate_cache, evaluator_tolerance=self.evaluator_tolerance)
+
+    def _circuit_probability_derivatives(self, circuit: GstCircuit, parameter_values, order: int):
+        """ Outcome probabilities of a circuit (prep and POVM models included) and their derivatives with respect to every
+            parameter the circuit depends on.
+
+            Returns (outcome labels, parameter indices, probabilities, jacobian [param, outcome], hessian [param, param, outcome] or None)
+        """
+        parameters = self._require_parameters()
+        theta_0 = parameters.resolve_theta(parameter_values)
+        names = parameters.parameter_names
+        circuit_function = self.build_circuit_process_matrix_function(circuit)
+
+        # Parameters the probabilities depend on: prep, POVM, and the circuit's gates
+        wrt = parameters.parameter_indices_of_models(['prep', 'POVM'] + list(dict.fromkeys(circuit.expanded_gates)))
+        outcome_labels = list(parameters.measurement_effects(theta_0).keys())
+        circuit_arguments = [] if circuit_function is None else [(name, names.index(name)) for name in circuit_function.parameter_names]
+
+        def probabilities(x):
+            theta = theta_0.copy()
+            theta[wrt] = x
+            rho = parameters.prep_state(theta)
+            effects = parameters.measurement_effects(theta)
+            effect_matrix = np.vstack([np.asarray(effects[label]) for label in outcome_labels])
+            if circuit_function is not None:
+                rho = circuit_function(**{name: theta[i] for name, i in circuit_arguments}) @ rho
+            return np.real(effect_matrix @ rho)
+
+        bounds = [parameters.layout['bounds'][i] for i in wrt]
+        probs, jacobian, hessian = finite_difference_derivatives(probabilities, theta_0[wrt], order=order,
+                                        evaluator_tolerance=self.evaluator_tolerance, bounds=bounds)
+        return outcome_labels, wrt, probs, jacobian, hessian
+
+    def compute_circuit_sensitivity(self, circuit: GstCircuit, parameter_values: Vector | dict | None=None) -> dict:
+        """ Derivatives of a circuit's outcome probabilities with respect to the gate-set parameters it depends on
+            (prep, POVM, and the circuit's gates).
+
+            - parameter_values: point of evaluation, as a parameter vector (order of self.parameters.parameter_names) or a
+                dictionary of parameter names to values; unlisted parameters use their specified initial guesses.
+
+            Returns {parameter name: {outcome label: dp_outcome/dparameter}}
+        """
+        names = self._require_parameters().parameter_names
+        outcome_labels, wrt, _, jacobian, _ = self._circuit_probability_derivatives(circuit, parameter_values, order=1)
+        return {names[i]: dict(zip(outcome_labels, jacobian[a])) for a, i in enumerate(wrt)}
+
+    def compute_circuit_sensitivities(self, gst_circuits: list[GstCircuit], parameter_values: Vector | dict | None=None) -> dict:
+        """ compute_circuit_sensitivity() for each circuit, keyed by the circuit's expanded gate sequence """
+        return {tuple(circ.expanded_gates): self.compute_circuit_sensitivity(circ, parameter_values) for circ in gst_circuits}
+
+    def _circuit_shots(self, circuit: GstCircuit, N_shots: int | None) -> int:
+        if N_shots is not None:
+            return N_shots
+        if circuit.measurement_data is None:
+            raise ValueError(f"Circuit {circuit.build_circuit_string()} has no measurement data; pass N_shots for planned circuits.")
+        return circuit.measurement_data.total_counts
+
+    def compute_circuit_fisher_information(self, circuit: GstCircuit, parameter_values: Vector | dict | None=None, N_shots: int | None=None,
+                                            include_hessian: bool=False) -> tuple[dict, Matrix]:
+        """ Fisher information of a circuit's outcomes about the gate-set parameters, including the prep and POVM models.
+
+            I_ij = N sum_k (dp_k/dtheta_i)(dp_k/dtheta_j) / p_k   [ - N sum_k d2p_k/dtheta_i dtheta_j, if include_hessian ]
+
+            The Hessian term sums to zero for a complete POVM (sum_k p_k = 1), so it is excluded by default.
+
+            - parameter_values: point of evaluation (vector or dictionary; unlisted parameters use their initial guesses).
+            - N_shots: number of shots; defaults to the circuit's measurement data counts.
+
+            Returns (dictionary {(name_i, name_j): I_ij} over the parameters the circuit depends on, full matrix in the order of
+            self.parameters.parameter_names)
+        """
+        parameters = self._require_parameters()
+        names = parameters.parameter_names
+        N = self._circuit_shots(circuit, N_shots)
+        _, wrt, probs, jacobian, hessian = self._circuit_probability_derivatives(circuit, parameter_values, order=2 if include_hessian else 1)
+        p = np.clip(probs, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. - NUMERICAL_EQUIVALENCE_THRESHOLD)
+
+        block = N * np.einsum('ik,jk->ij', jacobian / p, jacobian)
+        if include_hessian:
+            block -= N * hessian.sum(axis=-1)
+
+        FI_matrix = np.zeros((len(names), len(names)))
+        FI_matrix[np.ix_(wrt, wrt)] = block
+        FI_dict = {(names[i], names[j]): block[a, b] for a, i in enumerate(wrt) for b, j in enumerate(wrt)}
+        return FI_dict, FI_matrix
+
+    def compute_design_fisher_information(self, gst_circuits: list[GstCircuit], parameter_values: Vector | dict | None=None,
+                                            N_shots: int | None=None, include_hessian: bool=False) -> tuple[dict, dict]:
+        """ compute_circuit_fisher_information() for each circuit (including the empty circuit, which is informative about SPAM),
+            keyed by the circuit's expanded gate sequence.
+
+            Returns (Fisher information dictionaries, Fisher information matrices)
+        """
         fisher_information = {}
         fisher_information_matrices = {}
-        # remove do nothing (empty) circuit(s), which carry no information about gate model parameters
-        circuits = [circ for circ in gst_circuits if circ.depth > 0]
-
-        if self.gate_models is None:
-            raise ValueError("Gate models must be provided for sensitivity analysis.")
-
-        # Refresh gate model cache if necessary :
-        if not self.ism_gate_cache:
-            self.refresh_ism_gate_cache(circuit_parameters, initial_state)
-
-        for circ in circuits:
-            fisher_information[tuple(circ.expanded_gates)], fisher_information_matrices[tuple(circ.expanded_gates)] = self.compute_circuit_fisher_information(circ, circuit_parameters, initial_state, outcome_operators)
-        return fisher_information, fisher_information_matrices 
-
-
-    def refresh_ism_gate_cache(self, circuit_parameters: dict, initial_state: State):
-        """ Rebuilds the caache of IonSim (ism) Gate objects """ 
-        self.ism_gate_cache = {}
-        for gate in self.gate_models: 
-            pm_function = self.gate_models[gate]
-            parameters = (inspect.signature(pm_function)).parameters.keys()
-            fxn_name = pm_function.__name__
-            parameters = [fxn_name + "__" + param for param in parameters]
-            values = []
-            for p in parameters:
-                if p in circuit_parameters.keys():
-                    values.append(circuit_parameters[p])                    
-            parameters_values = dict(zip(parameters, values))  
-            self.ism_gate_cache[gate] = Gate.from_process_matrix_function(initial_state.basis, pm_function, parameters_values)
-
-    def compute_circuit_sensitivity(self, circuit: GstCircuit, circuit_parameters: dict, initial_state: State, outcome_operators: list[Operator]):
-        """ Computes sensitivty of a circuit to gate model parameters """ 
-        outcomes = circuit.measurement_data.counts
-        N = circuit.measurement_data.total_counts
-
-        # Get list of unique parameters 
-        if self.gate_models is None:
-            raise ValueError("Gate models must be provided for sensitivity analysis.")
-
-        # Build gate model cache:
-        if not self.ism_gate_cache:
-            self.refresh_ism_gate_cache(circuit_parameters, initial_state)
-
-        # Generate ionsim circuit model 
-        ism_gates = []
-        for gate in circuit.expanded_gates:
-            ism_gates.append(self.ism_gate_cache[gate])
-            
-        ism_circuit = Circuit.from_gates(ism_gates)
-        circuit_pm_function = ism_circuit.process_matrix_function 
-
-        # Test outcome probability function  
-        if len(outcome_operators) == 1:
-            prob_function = ism_circuit.build_outcome_probabilities_function(initial_state, outcome_operators[0])
-            prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
-            return prob_gradients
-        else:
-            if len(outcome_operators) == 0:
-                raise IonSimError(f"You must provide at least one outcome operator. Received {len(outcome_operators)}.")
-            probs_function = ism_circuit.build_outcome_probabilities_function(initial_state, outcome_operators)
-            prob, prob_gradients = circuit_pm_function.jacobian(probs_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
-            return prob_gradients
-
-    def compute_circuit_fisher_information(self, circuit: GstCircuit, circuit_parameters: dict, initial_state: State, outcome_operators: dict[str, Operator]):
-        """ Computes sensitivty of a circuit to gate model parameters """ 
-        outcomes = circuit.measurement_data.counts
-        N = circuit.measurement_data.total_counts
-
-        # Get list of unique parameters 
-        if self.gate_models is None:
-            raise ValueError("Gate models must be provided for sensitivity analysis.")
-
-        # Generate ionsim circuit model 
-        if not self.ism_gate_cache:
-            self.refresh_ism_gate_cache(circuit_parameters, initial_state)
-
-        ism_gates = []
-        for gate in circuit.expanded_gates:
-            ism_gates.append(self.ism_gate_cache[gate])
-            
-        ism_circuit = Circuit.from_gates(ism_gates)
-        circuit_pm_function = ism_circuit.process_matrix_function 
-        # Parse args for circuit process matrix function and ensure matching:
-        possible_args = list(inspect.signature(circuit_pm_function).parameters.keys())
-        input_args = {}
-        for p in circuit_parameters.keys():
-            if p in possible_args:
-                input_args[p] = circuit_parameters[p]  
-
-        if len(outcome_operators) == 1:
-            prob_function = ism_circuit.build_outcome_probabilities_function(initial_state, list(outcome_operators.values())[0])
-            prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
-            hessian = circuit_pm_function.hessian(prob_function, wrt = list(circuit_parameters.keys()), **circuit_parameters) 
-            fisher_info = self.compute_fisher_information(prob, prob_gradients, N)
-            return fisher_info
-        else:
-            if len(outcome_operators) == 0:
-                raise IonSimError(f"You must provide at least one outcome operator. Received {len(outcome_operators)}.")
-            probs_function = ism_circuit.build_outcome_probabilities_function(initial_state, outcome_operators.values())
-            prob, prob_gradients = circuit_pm_function.jacobian(probs_function, wrt = list(input_args.keys()), **input_args) 
-            hessian = circuit_pm_function.hessian_per_outcome(probs_function, wrt = list(input_args.keys()), outcome_labels = outcome_operators.keys(), **input_args) 
-            fisher_dict, fisher_info_matrix = self.compute_fisher_information(prob, prob_gradients, hessian, N)
-            return fisher_dict, fisher_info_matrix
-
-    def compute_fisher_information(self, prob, prob_gradients: dict, hessian: dict, N: int, include_hessian:bool=False) -> (dict, Matrix):
-        """ returns fisher information matrix from the parameters """ 
-        FI_dict = {}
-        parameters = list(prob_gradients.keys())
-        self.num_model_parameters = len(parameters)
-        size = len(parameters)
-        FI_matrix = np.zeros((size, size)) 
-        for param1, gradient1 in prob_gradients.items():
-            for param2, gradient2 in prob_gradients.items():
-                hessians = list(hessian[param1][param2].values())
-                if include_hessian:
-                    FI_contribution = N*sum([((grad1*grad2)/p - H) for grad1, grad2, p, H in zip(gradient1, gradient2, prob, hessians)])
-                else:
-                    FI_contribution = N*sum([((grad1*grad2)/p) for grad1, grad2, p, H in zip(gradient1, gradient2, prob, hessians)])
-                key = (param1, param2)
-                FI_dict[key] = FI_contribution
-                i = parameters.index(param1) 
-                j = parameters.index(param2) 
-                FI_matrix[i, j] = FI_contribution
-
-        return FI_dict, FI_matrix 
-
+        for circ in gst_circuits:
+            key = tuple(circ.expanded_gates)
+            fisher_information[key], fisher_information_matrices[key] = self.compute_circuit_fisher_information(
+                circ, parameter_values, N_shots=N_shots, include_hessian=include_hessian)
+        return fisher_information, fisher_information_matrices
 
     def compute_design_eigenvalues_and_inverse_fisher_matrix(self, fisher_information_matrices: dict) -> tuple[dict, dict]:
-        """ Compute eigenvalues of accumulated fisher information matrix and matrix inverse across the design """  
-        # Accumulate the fisher information matrix across the design 
-        circuit_indices = np.array(list(range(1, len(fisher_information_matrices)+1)))
-        num_gate_parameters = self.num_model_parameters
-        accumulated_I_matrix = np.zeros((len(circuit_indices), num_gate_parameters, num_gate_parameters))
-
-        eigenvalues = {}   
-        inverse_Fisher_infos = {} # np.zeros_like(accumulated_I_matrix)
-        for i, (circ, fisher_info) in enumerate(fisher_information_matrices.items()):
-            I_accumulated = sum(list(fisher_information_matrices.values())[:(i+1)])
-            #eigenvalues[i, :], _ = np.linalg.eigh(I_accumulated)
-            eigenvalues[circ] = np.zeros(num_gate_parameters)
-            eigenvalues[circ][:], _ = np.linalg.eigh(I_accumulated)
-            inverse_Fisher_infos[circ] = np.zeros_like(accumulated_I_matrix) 
-            try:
+        """ Compute eigenvalues of the Fisher information matrix accumulated over the design, circuit by circuit, and its inverse
+            (the Cramer-Rao bound on the covariance of the parameter estimates). The inverse is None while the accumulated
+            matrix is singular (not yet every parameter is informed by the circuits so far). """
+        eigenvalues = {}
+        inverse_Fisher_infos = {}
+        I_accumulated = None
+        singular = 0
+        for circ, fisher_info in fisher_information_matrices.items():
+            I_accumulated = fisher_info.copy() if I_accumulated is None else I_accumulated + fisher_info
+            eigenvalues[circ] = np.linalg.eigvalsh(I_accumulated)
+            if eigenvalues[circ][0] <= 1e-12 * max(eigenvalues[circ][-1], 1e-300):
+                inverse_Fisher_infos[circ] = None
+                singular += 1
+            else:
                 inverse_Fisher_infos[circ] = np.linalg.inv(I_accumulated)
-            except:
-                warnings.warn(f"Failed to invert on circuit: {circ}")
-
+        if singular == len(fisher_information_matrices) and singular > 0:
+            warnings.warn("The accumulated Fisher information matrix is singular for the whole design: some parameters are not "
+                          "determined by these circuits.")
         return eigenvalues, inverse_Fisher_infos
+
 
 
     def write_circuit_design(self, filepath):

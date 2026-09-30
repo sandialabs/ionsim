@@ -22,6 +22,7 @@ from ionsim.lindbladian import Dissipator, Lindbladian
 from ionsim.gst_circuit_planner import GSTCircuitPlanner
 from ionsim.gst_circuit_parser import CircuitData 
 from ionsim.gate_set_tomography import GateSetTomography
+from ionsim.gst_parameters import GstModelParameters
 
 
 def E0_1Q(prob_false_bright:float, prob_false_dark: float):
@@ -132,7 +133,7 @@ class TestGST(unittest.TestCase):
 
         num_qubits = len(qubit_indices)
         powers = [1, 2, 4]
-        self.gst_circuit_planner = GSTCircuitPlanner(gate_names, qubit_indices, germ_powers = powers, gate_models = self.gate_models) 
+        self.gst_circuit_planner = GSTCircuitPlanner(gate_names, qubit_indices, germ_powers = powers) 
 
         self.gst_circuits = self.gst_circuit_planner.generate_gst_circuits()
 
@@ -216,6 +217,27 @@ class TestGST(unittest.TestCase):
         self.assertAlmostEqual(X_pi2_error, 0.0006672864884890055, places=5)
         self.assertAlmostEqual(Y_pi2_error, 0.0006672864884889269, places=5)
         self.assertAlmostEqual(SPAM_error, 0.0010575712223980156, places=5)
+
+    def test_shared_parameter_sensitivity(self):
+        """ Sensitivity to a parameter shared by two gates equals the sum of the sensitivities to independent copies """
+        circuit = [c for c in self.parsed_circuits if {'Gxpi2:0', 'Gypi2:0'} <= set(c.expanded_gate_labels)][-1]
+
+        shared = GstModelParameters(self.prep_state_model, self.POVM_models, self.gate_models)
+        shared.specify_parameter("amplitude_noise_strength", model = "shared")
+        independent = GstModelParameters(self.prep_state_model, self.POVM_models, self.gate_models)
+
+        self.gst_circuit_planner.parameters = shared
+        S = self.gst_circuit_planner.compute_circuit_sensitivity(circuit, {'shared:amplitude_noise_strength': 0.125,
+                            'prep.SPAM_error_probability': 0.0025, 'POVM.SPAM_error_probability': 0.0025})
+        self.gst_circuit_planner.parameters = independent
+        I = self.gst_circuit_planner.compute_circuit_sensitivity(circuit, {'Gxpi2:0.amplitude_noise_strength': 0.125,
+                            'Gypi2:0.amplitude_noise_strength': 0.125, 'prep.SPAM_error_probability': 0.0025, 'POVM.SPAM_error_probability': 0.0025})
+
+        self.assertIn('shared:amplitude_noise_strength', S)
+        for outcome in ['0', '1']:
+            self.assertAlmostEqual(S['shared:amplitude_noise_strength'][outcome],
+                I['Gxpi2:0.amplitude_noise_strength'][outcome] + I['Gypi2:0.amplitude_noise_strength'][outcome], places=7)
+            self.assertAlmostEqual(S['prep.SPAM_error_probability'][outcome], I['prep.SPAM_error_probability'][outcome], places=7)
 
 if __name__ == '__main__':
     unittest.main()

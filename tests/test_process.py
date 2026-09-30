@@ -11,7 +11,7 @@ import unittest
 
 import numpy as np
 
-from ionsim.process import Gate, Circuit
+from ionsim.process import Gate, Circuit, Circuit_Process_Matrix_Function_Helper, GateProcessMatrixCache
 from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis
 from ionsim.named_operators import Unitary, Pauli
@@ -173,6 +173,49 @@ class TestProcess(unittest.TestCase):
             for other in jac:
                 np.testing.assert_array_equal(hess[name][other], hess_cached[name][other])
 
+
+    def test_circuit_function_labels_and_shared_parameters(self):
+        """ Gate labels give independent parameters to one function; parameter_names shares parameters, including non-identifier names """
+        def rotation(theta: float):
+            return np.kron(Unitary.R(0., theta), Unitary.R(0., theta).conj())
+
+        # The same function under two labels: independent parameters
+        independent = Circuit_Process_Matrix_Function_Helper([rotation, rotation], separator='.', gate_labels=['Rx:0', 'Rx:1'])
+        self.assertEqual(independent.parameter_names, ['Rx:0.theta', 'Rx:1.theta'])
+        self.assertFalse(hasattr(independent, '__signature__'))   # names are not Python identifiers
+        np.testing.assert_allclose(independent(**{'Rx:0.theta': 0.3, 'Rx:1.theta': 0.5}), rotation(0.3) @ rotation(0.5))
+
+        # Shared: both arguments fed by one parameter
+        shared = Circuit_Process_Matrix_Function_Helper([rotation, rotation], separator='.', gate_labels=['Rx:0', 'Rx:1'],
+                        parameter_names={'Rx:0.theta': 'shared:theta', 'Rx:1.theta': 'shared:theta'})
+        self.assertEqual(shared.parameter_names, ['shared:theta'])
+        np.testing.assert_allclose(shared(**{'shared:theta': 0.4}), rotation(0.4) @ rotation(0.4))
+
+        # Derivative with respect to the shared parameter is the sum of the partials
+        element = lambda **kw: np.real(shared(**kw)[0, 0])
+        element_independent = lambda **kw: np.real(independent(**kw)[0, 0])
+        _, d_shared = shared.gradient(element, wrt=['shared:theta'], **{'shared:theta': 0.4})
+        _, d_indep = independent.gradient(element_independent, wrt=['Rx:0.theta', 'Rx:1.theta'], **{'Rx:0.theta': 0.4, 'Rx:1.theta': 0.4})
+        self.assertAlmostEqual(d_shared['shared:theta'], d_indep['Rx:0.theta'] + d_indep['Rx:1.theta'], places=9)
+
+        with self.assertRaises(ValueError):
+            Circuit_Process_Matrix_Function_Helper([rotation], gate_labels=['Rx:0'], parameter_names={'Rx:0__phi': 'x'})
+        with self.assertRaises(TypeError):
+            shared(**{'Rx:0.theta': 0.4})
+
+    def test_shared_gate_cache(self):
+        """ A cache shared by two circuit functions reuses gate evaluations across circuits """
+        calls = []
+        def rotation(theta: float):
+            calls.append(theta)
+            return np.kron(Unitary.R(0., theta), Unitary.R(0., theta).conj())
+        cache = GateProcessMatrixCache()
+        first = Circuit_Process_Matrix_Function_Helper([rotation], gate_cache=cache)
+        second = Circuit_Process_Matrix_Function_Helper([rotation, rotation, rotation], gate_cache=cache)
+        first(rotation__theta=0.2)
+        second(rotation__theta=0.2)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(cache.hits, 1)
 
 if __name__ == '__main__':
     unittest.main()

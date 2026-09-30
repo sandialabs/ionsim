@@ -324,8 +324,13 @@ class Circuit(Process):
  #                raise IonSimError(f"Error, process matrix function and process matrix attributes do not correspond.")
 
     @classmethod
-    def from_gates(cls, gates: list[Gate], noise: Noise | None = None):
-        """Build a circuit from a series of gates in the same basis."""
+    def from_gates(cls, gates: list[Gate], noise: Noise | None = None, gate_labels: list[str] | None = None,
+                    parameter_names: dict[str, str] | None = None):
+        """Build a circuit from a series of gates in the same basis.
+
+            gate_labels / parameter_names: optional namespacing labels (one per gate) and shared parameter names for the
+            circuit's process matrix function; see Circuit_Process_Matrix_Function_Helper.
+        """
         if any(gate.basis is not gates[0].basis for gate in gates):
             raise IonSimError('All gates in a circuit must be in the same basis.')
 
@@ -343,7 +348,9 @@ class Circuit(Process):
 
             # Reverse gate function order by convention (last gate in original list is first gate to apply)  
             gate_functions = gate_functions[::-1]
-            circuit_process_matrix_function = Circuit_Process_Matrix_Function_Helper(gate_functions, noise = None if deterministic else noise)
+            labels = None if gate_labels is None else list(gate_labels)[::-1]
+            circuit_process_matrix_function = Circuit_Process_Matrix_Function_Helper(gate_functions, noise = None if deterministic else noise,
+                                                    gate_labels = labels, parameter_names = parameter_names)
 
         #if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
         if deterministic: 
@@ -404,7 +411,8 @@ class Circuit(Process):
         def outcome_probability_function(**kwargs):
             return scalar_function(self.process_matrix_function(**kwargs)) 
 
-        outcome_probability_function.__signature__ = self.process_matrix_function.__signature__
+        if hasattr(self.process_matrix_function, '__signature__'):
+            outcome_probability_function.__signature__ = self.process_matrix_function.__signature__
         outcome_probability_function.__name__ = "outcome_probability" 
         outcome_probability_function.__doc__ = "Outcome probability given a circuit acted on an initial state.\n"
         outcome_probability_function.process_matrix_function = self.process_matrix_function 
@@ -422,7 +430,8 @@ class Circuit(Process):
         def outcome_probabilities_function(**kwargs):
             return vector_function(self.process_matrix_function(**kwargs)) 
 
-        outcome_probabilities_function.__signature__ = self.process_matrix_function.__signature__
+        if hasattr(self.process_matrix_function, '__signature__'):
+            outcome_probabilities_function.__signature__ = self.process_matrix_function.__signature__
         outcome_probabilities_function.__name__ = "outcome_probabilities" 
         outcome_probabilities_function.__doc__ = "Outcome probabilities given a circuit acted on an initial state.\n"
         outcome_probabilities_function.process_matrix_function = self.process_matrix_function 
@@ -449,6 +458,59 @@ def predict_outcome_probabilities_from_process_matrix(initial_state: State, proc
     #return (outcome_operator.superbra @ propagated_state.supervector).real  
 
 
+class GateProcessMatrixCache:
+    """ Least-recently-used cache of gate process matrices, keyed by gate function and argument values.
+
+        One cache can be shared by several circuit process matrix functions (e.g. every circuit of a GST design) so that a
+        gate evaluated at the same arguments is computed once across all circuits.
+    """
+    def __init__(self, max_size: int = 2048):
+        self.max_size = int(max_size)
+        self._entries = OrderedDict()
+        self.hits = 0
+        self.misses = 0
+
+    @staticmethod
+    def _key_part(value):
+        """ Hashable representation of an argument value, or None if it cannot be cached """
+        if isinstance(value, np.ndarray):
+            return ('ndarray', value.shape, value.dtype.str, value.tobytes())
+        if isinstance(value, (bool, int, float, complex, np.number)):
+            return value
+        try:
+            hash(value)
+            return value
+        except TypeError:
+            return None
+
+    def evaluate(self, function: Callable, arguments: dict) -> Matrix:
+        """ function(**arguments), from the cache when possible """
+        if self.max_size <= 0:
+            return function(**arguments)
+        key_parts = tuple((name, self._key_part(value)) for name, value in arguments.items())
+        if any(part is None for _, part in key_parts):
+            return function(**arguments)
+        key = (function, key_parts)
+        if key in self._entries:
+            self._entries.move_to_end(key)
+            self.hits += 1
+            return self._entries[key]
+        self.misses += 1
+        matrix = function(**arguments)
+        self._entries[key] = matrix
+        while len(self._entries) > self.max_size:
+            self._entries.popitem(last=False)
+        return matrix
+
+    def clear(self):
+        self._entries.clear()
+        self.hits = 0
+        self.misses = 0
+
+    def __len__(self):
+        return len(self._entries)
+
+
 class Circuit_Process_Matrix_Function_Helper():
     """ Builds a single process matrix function for a circuit, represented as a composition of gates
             where each gate is represented by its own gate process matrix function.
@@ -456,7 +518,11 @@ class Circuit_Process_Matrix_Function_Helper():
         - This class builds a single callable that returns the process matrix for the circuit.
 
         - The class organizes and tracks each gate model input arguments in order to avoid namespace
-            conflicts: the argument 'theta' of gate function 'R' becomes 'R__theta'.
+            conflicts: the argument 'theta' of gate function 'R' becomes 'R__theta'. With gate_labels, arguments are
+            namespaced by gate label instead, e.g. 'Gxpi2:0.theta' for separator '.'.
+
+        - Shared parameters: parameter_names maps namespaced arguments to circuit parameter names. Arguments mapped to the
+            same name share one value (and derivatives with respect to it include every argument it feeds).
 
         - Functions that are repeated are computed once per call and reused. Gate process matrices are also cached
             across calls by their argument values, so perturbing one parameter (e.g. for finite differences) only
@@ -471,7 +537,8 @@ class Circuit_Process_Matrix_Function_Helper():
     """
 
     def __init__(self, gate_models: Sequence[Callable], separator: str = "__", noise: Noise | None = None,
-                    cache_size: int = 2048, evaluator_tolerance: float | None = None):
+                    cache_size: int = 2048, evaluator_tolerance: float | None = None, gate_labels: Sequence[str] | None = None,
+                    parameter_names: dict[str, str] | None = None, gate_cache: GateProcessMatrixCache | None = None):
         """
             gate_models: a sequence to represent the order of gates applied in the circuit
 
@@ -481,46 +548,84 @@ class Circuit_Process_Matrix_Function_Helper():
             noise: optional circuit-level quasistatic Noise; see class docstring.
 
             cache_size: maximum number of gate process matrices cached across calls (0 disables caching, e.g. for
-                gate functions that are not deterministic).
+                gate functions that are not deterministic). Ignored if gate_cache is given.
 
             evaluator_tolerance: relative accuracy of the gate functions, used to size finite-difference steps.
                 Defaults to machine precision (appropriate for matrix exponentials); use the ODE solver tolerance for
                 solver-based gates.
+
+            gate_labels: optional label for each gate (parallel to gate_models). Arguments are then namespaced by label rather
+                than by function name, so the same function used for two labels has independent parameters, and differently
+                built functions sharing a __name__ are allowed. Gates with the same label must use the same function.
+
+            parameter_names: optional {namespaced argument: circuit parameter name}. Arguments mapped to the same name are
+                shared. Unmapped arguments keep their namespaced names.
+
+            gate_cache: optional GateProcessMatrixCache shared with other circuit functions.
         """
         self.separator = separator
         self.gate_sequence = list(gate_models)
         self.noise = noise
-        self.cache_size = int(cache_size)
         self.evaluator_tolerance = evaluator_tolerance
-        self._gate_cache = OrderedDict()
-        self.cache_hits = 0
-        self.cache_misses = 0
+        self.gate_cache = gate_cache if gate_cache is not None else GateProcessMatrixCache(cache_size)
 
+        if gate_labels is None:
+            self.gate_labels = [f.__name__ for f in self.gate_sequence]
+            labels_given = False
+        else:
+            self.gate_labels = [str(label) for label in gate_labels]
+            labels_given = True
+            if len(self.gate_labels) != len(self.gate_sequence):
+                raise ValueError(f"gate_labels must have one label per gate; received {len(self.gate_labels)} labels for {len(self.gate_sequence)} gates.")
+
+        # Unique gate units (label -> function), in first-appearance order
+        self._unit_functions: dict[str, Callable] = {}
+        for label, function in zip(self.gate_labels, self.gate_sequence):
+            if label in self._unit_functions and self._unit_functions[label] is not function:
+                if labels_given:
+                    raise ValueError(f"Gate label {label!r} is used with two different functions.")
+                raise ValueError(f"Duplicate function name '{label}' -- two distinct functions can't share a name. Rename one or pass gate_labels.")
+            self._unit_functions[label] = function
         self.unique_functions = list({id(f): f for f in self.gate_sequence}.values())
-        self._param_map: dict[str, tuple] = {} # namespaced name -> (function name, original name)
-        self._name_to_function: dict[str, Callable] = {}
+
+        self._param_map: dict[str, tuple] = {} # namespaced name -> (gate label, original name)
         self._type_hints: dict[str, type] = {}
+        self._build_signature(parameter_names)
 
-        self._build_signature()
-
-        # Namespaced parameters displaced by circuit-level noise
-        self._noisy_parameters = []
+        # Namespaced arguments displaced by circuit-level noise
+        self._noisy_arguments = []
         if self.noise is not None:
-            self._noisy_parameters = [namespace for namespace, (_, orig_name) in self._param_map.items()
-                                      if orig_name == self.noise.parameter_name]
+            self._noisy_arguments = [namespace for namespace, (_, orig_name) in self._param_map.items()
+                                     if orig_name == self.noise.parameter_name]
 
+    # Cache controls (kept on the helper for convenience)
+    @property
+    def cache_size(self) -> int:
+        return self.gate_cache.max_size
 
-    def _build_signature(self):
-        """ Builds the circuit process matrix function signature """
-        params = []
-        seen_names = set()
-        for f in self.unique_functions:
-            fname = f.__name__
-            if fname in seen_names:
-                raise ValueError(f"Duplicate function name '{fname}' -- two distinct functions can't share a name. Rename one or pass explicit names.")
-            seen_names.add(fname)
-            self._name_to_function[fname] = f
+    @cache_size.setter
+    def cache_size(self, value: int):
+        self.gate_cache.max_size = int(value)
 
+    @property
+    def cache_hits(self) -> int:
+        return self.gate_cache.hits
+
+    @property
+    def cache_misses(self) -> int:
+        return self.gate_cache.misses
+
+    @property
+    def parameter_names(self) -> list[str]:
+        """ Names of the circuit function's parameters (keyword arguments), in order """
+        return list(self._parameters.keys())
+
+    def _build_signature(self, parameter_names: dict[str, str] | None = None):
+        """ Builds the circuit parameters: namespaced gate arguments, optionally renamed / shared via parameter_names """
+        parameter_names = dict(parameter_names or {})
+        self._parameters: dict[str, list[str]] = OrderedDict()   # circuit parameter name -> namespaced arguments it feeds
+        self._defaults: dict[str, object] = {}
+        for label, f in self._unit_functions.items():
             sig = inspect.signature(f)
             try:
                 hints = get_type_hints(f)
@@ -529,16 +634,26 @@ class Circuit_Process_Matrix_Function_Helper():
 
             for name, param in sig.parameters.items():
                 if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-                    raise NotImplementedError(f"{fname} uses *args/**kwargs, not supported.")
-                namespace = f"{fname}{self.separator}{name}"
+                    raise NotImplementedError(f"{label} uses *args/**kwargs, not supported.")
+                namespace = f"{label}{self.separator}{name}"
                 if namespace in self._param_map:
                     raise ValueError(f"Parameter collision in '{namespace}'")
-                self._param_map[namespace] = (fname, name)
+                self._param_map[namespace] = (label, name)
                 if name in hints:
                     self._type_hints[namespace] = hints[name]
-                params.append(param.replace(name=namespace, kind=inspect.Parameter.KEYWORD_ONLY))
+                circuit_name = parameter_names.pop(namespace, namespace)
+                self._parameters.setdefault(circuit_name, []).append(namespace)
+                if param.default is not inspect.Parameter.empty and circuit_name not in self._defaults:
+                    self._defaults[circuit_name] = param.default
 
-        self.__signature__ = inspect.Signature(params)
+        if parameter_names:
+            raise ValueError(f"parameter_names refers to unknown argument(s) {sorted(parameter_names)}. Arguments are: {sorted(self._param_map)}.")
+
+        # An inspect.Signature is only possible when every parameter name is a Python identifier (not e.g. 'Gxpi2:0.theta')
+        if all(name.isidentifier() for name in self._parameters):
+            params = [inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY,
+                                        default=self._defaults.get(name, inspect.Parameter.empty)) for name in self._parameters]
+            self.__signature__ = inspect.Signature(params)
 
     @staticmethod
     def _type_matches(value, expected) -> bool:
@@ -573,118 +688,79 @@ class Circuit_Process_Matrix_Function_Helper():
         """ Returns human readable messages for type-hint vs. actual type mismatch """
 
         errors = []
-        for namespace, value, in kwargs.items():
-            expected = self._type_hints.get(namespace)
-            if expected is None:
-                continue
-            if not self._type_matches(value, expected):
-                fname, orig_name = self._param_map[namespace]
-                expected_repr = getattr(expected, "__name__", str(expected))
-                errors.append(f"{namespace} (={value!r}) expected {expected_repr} for {fname}'s '{orig_name}', got {type(value).__name__}")
+        for name, value in kwargs.items():
+            for namespace in self._parameters.get(name, []):
+                expected = self._type_hints.get(namespace)
+                if expected is None:
+                    continue
+                if not self._type_matches(value, expected):
+                    fname, orig_name = self._param_map[namespace]
+                    expected_repr = getattr(expected, "__name__", str(expected))
+                    errors.append(f"{name} (={value!r}) expected {expected_repr} for {fname}'s '{orig_name}', got {type(value).__name__}")
         return errors
 
     def missing_required(self, **kwargs) -> list[str]:
-        """ Returns namespaced names of required parameters not supplied"""
-        provided = set(kwargs)
-        return [name for name, p in self.__signature__.parameters.items()
-                if p.default is inspect.Parameter.empty and name not in provided]
+        """ Returns names of required parameters not supplied"""
+        return [name for name in self._parameters if name not in self._defaults and name not in kwargs]
 
     def _bind_arguments(self, kwargs: dict) -> dict:
-        """ Validates keyword arguments and returns all namespaced arguments with defaults applied """
+        """ Validates keyword arguments and returns the value of every namespaced gate argument (defaults applied,
+            shared parameters fanned out to each argument they feed) """
         missing = self.missing_required(**kwargs)
         if missing:
-            by_func: dict[str,list] = {}
-            for namespace in missing:
-                fname, orig_name = self._param_map[namespace]
-                by_func.setdefault(fname, []).append(orig_name)
-            details = "; ".join(f"{fname} missing {names}" for fname, names in by_func.items())
-            raise TypeError(f"Missing required argument(s): {details}")
+            raise TypeError(f"Missing required argument(s): {missing}")
 
-        valid_names = set(self.__signature__.parameters)
-        unexpected = set(kwargs) - valid_names
+        unexpected = set(kwargs) - set(self._parameters)
         if unexpected:
-            raise TypeError(f"Unexpected argument(s): {sorted(unexpected)}. Valid arguments are: {sorted(valid_names)}")
+            raise TypeError(f"Unexpected argument(s): {sorted(unexpected)}. Valid arguments are: {self.parameter_names}")
 
         errors_type = self.check_types(**kwargs)
         if errors_type:
             raise TypeError("Type mismatch: " + "; ".join(errors_type))
 
-        bound = self.__signature__.bind(**kwargs)
-        bound.apply_defaults()
-        return dict(bound.arguments)
+        arguments = {}
+        for name, namespaces in self._parameters.items():
+            value = kwargs[name] if name in kwargs else self._defaults[name]
+            for namespace in namespaces:
+                arguments[namespace] = value
+        return arguments
 
-    @staticmethod
-    def _cache_key_part(value):
-        """ Hashable representation of an argument value, or None if it cannot be cached """
-        if isinstance(value, np.ndarray):
-            return ('ndarray', value.shape, value.dtype.str, value.tobytes())
-        if isinstance(value, (bool, int, float, complex, np.number)):
-            return value
-        try:
-            hash(value)
-            return value
-        except TypeError:
-            return None
-
-    def _evaluate_gate(self, fname: str, arguments: dict) -> Matrix:
-        """ Evaluate one gate function, using the process matrix cache when possible """
-        function = self._name_to_function[fname]
-        if self.cache_size <= 0:
-            return function(**arguments)
-
-        key_parts = tuple((name, self._cache_key_part(value)) for name, value in arguments.items())
-        if any(part is None for _, part in key_parts):
-            return function(**arguments)
-        key = (fname, key_parts)
-
-        if key in self._gate_cache:
-            self._gate_cache.move_to_end(key)
-            self.cache_hits += 1
-            return self._gate_cache[key]
-
-        self.cache_misses += 1
-        matrix = function(**arguments)
-        self._gate_cache[key] = matrix
-        if len(self._gate_cache) > self.cache_size:
-            self._gate_cache.popitem(last=False)
-        return matrix
+    def _evaluate_gate(self, label: str, arguments: dict) -> Matrix:
+        """ Evaluate one gate (by label), using the process matrix cache when possible """
+        return self.gate_cache.evaluate(self._unit_functions[label], arguments)
 
     def clear_cache(self):
         """ Empty the gate process matrix cache """
-        self._gate_cache.clear()
-        self.cache_hits = 0
-        self.cache_misses = 0
+        self.gate_cache.clear()
 
     def _compose(self, arguments: dict) -> Matrix:
-        """ Circuit process matrix for fully bound namespaced arguments (no circuit-level noise) """
-        per_function_kwargs = {fname: {} for fname in self._name_to_function}
+        """ Circuit process matrix for the values of every namespaced gate argument (no circuit-level noise) """
+        per_unit_kwargs = {label: {} for label in self._unit_functions}
         for namespace, value in arguments.items():
-            fname, orig_name = self._param_map[namespace]
-            per_function_kwargs[fname][orig_name] = value
+            label, orig_name = self._param_map[namespace]
+            per_unit_kwargs[label][orig_name] = value
 
-        # call each unique function once and reuse the result at every instance of that function
-        results = {fname: self._evaluate_gate(fname, per_function_kwargs[fname]) for fname in self._name_to_function}
-        matrices = [results[f.__name__] for f in self.gate_sequence]
+        # evaluate each unique gate once and reuse the result at every instance of that gate
+        results = {label: self._evaluate_gate(label, per_unit_kwargs[label]) for label in self._unit_functions}
+        matrices = [results[label] for label in self.gate_labels]
         return reduce(lambda g1,g2: g1 @ g2, matrices)
 
     def __call__(self, **kwargs):
         """ method for Callable behavior """
         arguments = self._bind_arguments(kwargs)
 
-        if not self._noisy_parameters:
+        if not self._noisy_arguments:
             return self._compose(arguments)
 
-        # Circuit-level quasistatic noise: same displacement for every gate taking the noisy parameter, then average
+        # Circuit-level quasistatic noise: same displacement for every gate argument named after the noisy parameter, then average
         weighted_matrices = []
         for darg in self.noise.domain_arguments:
             displaced = dict(arguments)
-            for namespace in self._noisy_parameters:
+            for namespace in self._noisy_arguments:
                 displaced[namespace] = arguments[namespace] + darg
             weighted_matrices.append(self.noise.probability_density_function(darg) * self._compose(displaced))
         return trapz_for_matrix(np.array(weighted_matrices), self.noise.domain_arguments)
 
-
-    ### Derivatives (finite differences) ###
     def derivatives(self, function: Callable, wrt: list[str], order: int = 2, bounds: dict[str, tuple] | None = None,
                         evaluator_tolerance: float | None = None, relative_step: float | None = None,
                         relative_step_second_order: float | None = None, **kwargs):
@@ -705,7 +781,7 @@ class Circuit_Process_Matrix_Function_Helper():
         if isinstance(wrt, str):
             raise TypeError(f"wrt must be a list of parameter names; received the string {wrt!r}.")
         wrt = list(wrt)
-        unknown = set(wrt) - set(self.__signature__.parameters)
+        unknown = set(wrt) - set(self._parameters)
         if unknown:
             raise ValueError(f"Unknown parameter name(s) in 'wrt': {sorted(unknown)}")
         missing = [name for name in wrt if name not in kwargs]

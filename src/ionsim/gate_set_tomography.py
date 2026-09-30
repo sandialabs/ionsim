@@ -19,6 +19,7 @@ from ionsim.custom_math import matrix_AYB_multiply_to_superoperator
 from ionsim.ionsim_error import IonSimError
 from ionsim.custom_types import Vector, Matrix
 from ionsim.gst_circuit_planner import GSTCircuitPlanner
+from ionsim.gst_parameters import GstModelParameters
 from ionsim.state import State
 from ionsim.io import *
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD 
@@ -32,7 +33,7 @@ def depth_bin(depth):
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: Callable, parsed_circuits: list[GstCircuit],
                     gate_models: dict[str, Callable], circuit_design: GSTCircuitPlanner | None=None,
-                    ideal_gate_set: dict | None=None, verbose: bool=False):
+                    ideal_gate_set: dict | None=None, verbose: bool=False, *, parameters: GstModelParameters | None=None):
         """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms.
 
             Arguments:
@@ -57,15 +58,26 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
                 The parameter vector is organized lazily (when first needed, e.g. in solve_for_gate_parameters()), so parameters may
                 be specified in any order after construction.
+
+                Parameters are held in a GstModelParameters object (self.parameters). To share one specification with a circuit
+                planner (for Fisher information / sensitivity analysis), build it once and use GateSetTomography.from_model_parameters().
         """
 
         if verbose:
             print(f"\n\n --- IonSim Gate Set Tomography Analysis --- ")
 
         self.basis = basis
+        # Models and their parameter specification (shared with other GST components, e.g. a circuit planner)
+        if parameters is None:
+            parameters = GstModelParameters(prep_state_model, POVM_effect_models, gate_models)
+        elif not isinstance(parameters, GstModelParameters):
+            raise TypeError(f"parameters must be a GstModelParameters object; received {type(parameters).__name__}.")
+        elif any(model is not None for model in (prep_state_model, POVM_effect_models, gate_models)):
+            raise ValueError("Pass either the model functions or a GstModelParameters object, not both.")
+        self.parameters = parameters
         # Unpack |rho>> and <<E| or <<M|
-        self.prep_state_model = prep_state_model
-        self.POVM_effect_models = POVM_effect_models
+        self.prep_state_model = parameters.prep_state_model
+        self.POVM_effect_models = parameters.POVM_effect_models
 
         # Parse circuits list contanining GST circuit sequences and correpsonding data (observations)
         self.parsed_circuits = parsed_circuits
@@ -80,17 +92,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             for g in circ.expanded_gates:
                 self.gate_set.add(g)
 
-        # 2. Retrieve gate models, keyed internally by GstGate (users key them by string label)
-        if not isinstance(gate_models, dict):
-            raise TypeError(f"gate_models must be a dictionary mapping gate labels (e.g. 'Gxpi2:0') to model functions; received {type(gate_models).__name__}.")
-        self.gate_models = {}
-        for key, model in gate_models.items():
-            gate = gate_from_label(key)
-            if gate in self.gate_models:
-                raise ValueError(f"Gate {key!r} has more than one model (labels {IDLE_ALIASES} all refer to the idle gate).")
-            if not callable(model):
-                raise TypeError(f"The model for gate {key!r} must be callable; received {type(model).__name__}.")
-            self.gate_models[gate] = model
+        # 2. Gate models, keyed internally by GstGate (users key them by string label)
+        self.gate_models = parameters.gate_models
 
         missing = self.gate_set - set(self.gate_models.keys())
         if missing:
@@ -100,17 +103,11 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if verbose:
             print(f"Gate set tomography on gate set: {sorted(g.label for g in self.gate_set)}")
 
-        # 3. Parameters: record every model and its argument names. The parameter vector layout (indices, bounds, and
-        #    initial guesses) is built lazily from user specifications; see specify_parameter() and _ensure_parameter_layout().
-        self._model_functions = {'prep': self.prep_state_model, 'POVM': self.POVM_effect_models}
-        for gate, model in self.gate_models.items():
-            self._model_functions[gate.label] = model
-        self._model_parameter_names = {label: list(inspect.signature(fn).parameters.keys()) for label, fn in self._model_functions.items()}
-
-        self._shared_parameter_specs = {}   # shared name -> {'models': tuple[str] | None, 'guess': float | None, 'bounds': tuple | None}
-        self._model_parameter_specs = {}    # (model label, parameter name) -> {'guess': float | None, 'bounds': tuple | None}
-        self._parameter_layout = None
+        # 3. Parameters: the layout (indices, bounds, initial guesses) is organized lazily by self.parameters. The current parameter
+        #    vector is reset whenever the specification changes (tracked with the parameter object's version).
+        self._model_parameter_names = parameters._model_parameter_names
         self._gst_parameters = None
+        self._parameters_version = None
 
         # 4. Debugging / diagnostics
         self.LL_eval = 0
@@ -154,31 +151,29 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
 
     ### Model / gate label helpers ###
+    @classmethod
+    def from_model_parameters(cls, basis: StandardBasis, parsed_circuits: list[GstCircuit], parameters: GstModelParameters,
+                    circuit_design: GSTCircuitPlanner | None=None, ideal_gate_set: dict | None=None, verbose: bool=False):
+        """ Construct the analysis from a GstModelParameters object (models and parameter specification), e.g. one that is also
+            used by a GSTCircuitPlanner for Fisher information / sensitivity analysis. """
+        return cls(basis, None, None, parsed_circuits, None, circuit_design=circuit_design, ideal_gate_set=ideal_gate_set,
+                   verbose=verbose, parameters=parameters)
+
+
+    ### Model / gate label helpers ###
     def _model_label(self, model: str) -> str:
         """ Returns the canonical model label for 'prep', 'POVM', or a gate label (e.g. '[]' -> 'idle'). """
-        if model in ('prep', 'POVM'):
-            return model
-        if isinstance(model, GstGate):
-            raise TypeError(f"Specify gates by string label (e.g. {model.label!r}) rather than GstGate objects.")
-        if not isinstance(model, str):
-            raise TypeError(f"Model must be 'prep', 'POVM', or a gate label string (e.g. 'Gxpi2:0'); received {type(model).__name__}.")
-        try:
-            label = canonical_gate_label(model)
-        except ValueError as err:
-            raise ValueError(f"Unknown model {model!r}. Available models: {self.model_labels}. ({err})") from None
-        if label not in self._model_functions:
-            raise ValueError(f"No model for gate {model!r}. Available models: {self.model_labels}.")
-        return label
+        return self.parameters.model_label(model)
 
     @property
     def model_labels(self) -> list[str]:
         """ Labels of every model with parameters: 'prep', 'POVM', and each gate label. """
-        return list(self._model_functions.keys())
+        return self.parameters.model_labels
 
     @property
     def model_parameter_names(self) -> dict[str, list[str]]:
-        """ Argument names of each model, keyed by model label, e.g. {'prep': ['SPAM_error_probability'], 'Gxpi2:0': [...], ...} """
-        return {label: list(names) for label, names in self._model_parameter_names.items()}
+        """ Argument names of each model, keyed by model label """
+        return self.parameters.model_parameter_names
 
     def _normalize_ideal_gate_set(self, ideal_gate_set: dict) -> dict:
         """ Converts a user ideal gate set keyed by gate label strings (plus 'prep' and 'POVM') to internal GstGate keys. """
@@ -196,171 +191,25 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return internal
 
 
-    ### Parameter specification ###
-    @staticmethod
-    def _validate_bounds(bounds, context: str) -> tuple | None:
-        if bounds is None:
-            return None
-        if not isinstance(bounds, (tuple, list)) or len(bounds) != 2:
-            raise ValueError(f"Bounds for {context} must be a (lower, upper) pair; use None for an open side. Received {bounds!r}.")
-        lower, upper = bounds
-        if lower is not None and upper is not None and lower > upper:
-            raise ValueError(f"Lower bound exceeds upper bound for {context}: {bounds!r}.")
-        return (lower, upper)
-
-    @staticmethod
-    def _check_guess_within_bounds(guess, bounds, context: str):
-        if guess is None or bounds is None:
-            return
-        lower, upper = bounds
-        if (lower is not None and guess < lower) or (upper is not None and guess > upper):
-            raise ValueError(f"Initial guess {guess} for {context} lies outside its bounds {bounds}.")
-
+    ### Parameter specification (delegated to self.parameters, a GstModelParameters object) ###
     def specify_parameter(self, name: str, model: str | list[str], guess: float | None=None, bounds: tuple | None=None):
-        """ Specify the initial guess, bounds, and/or sharing of a model parameter. Parameters are identified by the argument
-            names of the model functions.
-
-            - name: the model argument name, e.g. "amplitude_noise_strength".
-            - model: which model(s) the parameter belongs to:
-                * a single model label: 'prep', 'POVM', or a gate label such as 'Gxpi2:0', 'MS:0:1', 'idle'.
-                    The parameter is independent to that model.
-                * "shared": one parameter shared by every model that has an argument called `name`.
-                * a list of model labels, e.g. ['Gxpi2:0', 'Gypi2:0']: one parameter shared among only those models.
-            - guess: initial value used by the solvers (default 0, moved inside the bounds if necessary).
-            - bounds: (lower, upper) pair; use None for an open side. Parameters are unbounded by default.
-
-            Calling this again for the same parameter updates it; arguments left as None keep their previous values.
+        """ Specify the initial guess, bounds, and/or sharing of a model parameter; see GstModelParameters.specify_parameter().
 
             Examples:
                 gst.specify_parameter("SPAM_error_probability", model="shared", guess=1e-4, bounds=(0., 1.))
-                gst.specify_parameter("amplitude_noise_strength", model="shared", guess=0.01, bounds=(1e-4, 10.))
                 gst.specify_parameter("phi_error", model="MS:0:1", guess=0., bounds=(0., np.pi/16))
         """
-        if not isinstance(name, str):
-            raise TypeError(f"Parameter name must be a string; received {type(name).__name__}.")
-        if guess is not None:
-            guess = float(guess)
-
-        if isinstance(model, str) and model == 'shared' or isinstance(model, (list, tuple)):
-            # Shared parameter: determine member models now so that errors are reported immediately.
-            if isinstance(model, (list, tuple)):
-                if len(model) == 0:
-                    raise ValueError(f"Specify at least one model to share parameter {name!r} among.")
-                member_models = tuple(self._model_label(m) for m in model)
-                if len(set(member_models)) != len(member_models):
-                    raise ValueError(f"Repeated model in the list of models sharing parameter {name!r}: {list(model)}.")
-                lacking = [m for m in member_models if name not in self._model_parameter_names[m]]
-                if lacking:
-                    raise ValueError(f"Model(s) {lacking} have no parameter named {name!r}. "
-                                     f"Their parameters are: { {m: self._model_parameter_names[m] for m in lacking} }.")
-            else:
-                member_models = None
-                if not any(name in names for names in self._model_parameter_names.values()):
-                    raise ValueError(f"No model has a parameter named {name!r}. Model parameters are: {self._model_parameter_names}.")
-
-            context = f"shared parameter {name!r}"
-            spec = self._shared_parameter_specs.get(name, {'models': None, 'guess': None, 'bounds': None})
-            spec = dict(spec, models=member_models)
-        else:
-            label = self._model_label(model)
-            if name not in self._model_parameter_names[label]:
-                raise ValueError(f"Model {label!r} has no parameter named {name!r}. Its parameters are: {self._model_parameter_names[label]}.")
-            context = f"parameter {name!r} of model {label!r}"
-            spec = dict(self._model_parameter_specs.get((label, name), {'guess': None, 'bounds': None}))
-
-        if bounds is not None:
-            spec['bounds'] = self._validate_bounds(bounds, context)
-        if guess is not None:
-            spec['guess'] = guess
-        self._check_guess_within_bounds(spec['guess'], spec['bounds'], context)
-
-        if 'models' in spec:
-            self._shared_parameter_specs[name] = spec
-        else:
-            self._model_parameter_specs[(label, name)] = spec
-        self._invalidate_parameter_layout()
-
-    def _invalidate_parameter_layout(self):
-        """ Discard the parameter layout; it is rebuilt on next use. """
-        if self._parameter_layout is not None:
-            warnings.warn("The GST parameter specification changed after the parameter vector was organized. The parameter vector "
-                          "is being re-organized; parameter vectors built before this point (e.g. from build_theta_from_dict or a "
-                          "previous solve) may no longer correspond to the new ordering.")
-        self._parameter_layout = None
-        self._gst_parameters = None
-        self.cached_theta = None
-        self.process_matrix_cache = None
+        self.parameters.specify_parameter(name, model, guess=guess, bounds=bounds)
 
     def _ensure_parameter_layout(self) -> dict:
-        """ Builds (once) and returns the parameter layout from the parameter specifications. """
-        if self._parameter_layout is None:
-            self._parameter_layout = self._build_parameter_layout()
-            self._gst_parameters = self._parameter_layout['initial_guess'].copy()
+        """ Returns the parameter layout, resetting the current parameter vector and caches if the specification changed. """
+        layout = self.parameters.layout
+        if self._parameters_version != self.parameters.version:
+            self._parameters_version = self.parameters.version
+            self._gst_parameters = layout['initial_guess'].copy()
             self.cached_theta = None
             self.process_matrix_cache = None
-        return self._parameter_layout
-
-    def _build_parameter_layout(self) -> dict:
-        """ Builds and organizes the independent parameters for GST. This organizes parameters as:
-            1) Shared parameters, in the order they were specified
-            2) Prep state model parameters
-            3) Native measurement (POVM) model parameters
-            4) Each gate model's parameters, for all gates in the set
-
-            Returns a dictionary with the per-model index lists, shared parameter indices, parameter names, bounds, and initial guess.
-        """
-        # Which (model, parameter name) pairs are tied to each shared parameter
-        shared_lookup = {}
-        for shared_name, spec in self._shared_parameter_specs.items():
-            members = spec['models']
-            if members is None:
-                members = [label for label, names in self._model_parameter_names.items() if shared_name in names]
-            for label in members:
-                shared_lookup[(label, shared_name)] = shared_name
-
-        conflicts = [f"{label}.{name}" for (label, name) in self._model_parameter_specs if (label, name) in shared_lookup]
-        if conflicts:
-            raise ValueError(f"Parameter(s) {conflicts} were specified as independent but are also shared (specify_parameter(..., model='shared')). "
-                             f"Either share the parameter among a list of models that excludes these, or drop the independent specification.")
-
-        names, bounds, guesses = [], [], []
-
-        def _add_parameter(label, spec):
-            spec = spec or {}
-            bound = spec.get('bounds') or (None, None)
-            guess = spec.get('guess')
-            if guess is None:
-                # Default guess of 0, moved inside the bounds if needed
-                lower, upper = bound
-                guess = 0.
-                if lower is not None:
-                    guess = max(guess, lower)
-                if upper is not None:
-                    guess = min(guess, upper)
-            names.append(label)
-            bounds.append(bound)
-            guesses.append(guess)
-            return len(names) - 1
-
-        # Allocate shared parameters first
-        shared_indices = {}
-        for shared_name, spec in self._shared_parameter_specs.items():
-            shared_indices[shared_name] = _add_parameter(f"shared:{shared_name}", spec)
-
-        # Build per-model mapping that maps model label -> [theta_idx, ...]
-        indices_by_model = {}
-        for label, parameter_names in self._model_parameter_names.items():
-            theta_indices = []
-            for pname in parameter_names:
-                if (label, pname) in shared_lookup:
-                    # Shared parameter, point to shared slot in theta
-                    theta_indices.append(shared_indices[shared_lookup[(label, pname)]])
-                else:
-                    theta_indices.append(_add_parameter(f"{label}.{pname}", self._model_parameter_specs.get((label, pname))))
-            indices_by_model[label] = theta_indices
-
-        return {'indices_by_model': indices_by_model, 'shared_indices': shared_indices, 'names': names,
-                'bounds': bounds, 'initial_guess': np.array(guesses, dtype=float)}
+        return layout
 
     @property
     def gst_parameter_indices(self) -> dict[str, list[int]]:
@@ -383,20 +232,20 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
     @property
     def parameter_names(self) -> list[str]:
         """ Returns parameter names in the order of the internal parameter vector theta, e.g. 'shared:SPAM_error_probability', 'MS:0:1.phi_error'. """
-        return list(self._ensure_parameter_layout()['names'])
+        self._ensure_parameter_layout()
+        return self.parameters.parameter_names
 
     @property
     def parameter_bounds(self) -> list[tuple[float | None, float | None]] | None:
         """ (lower, upper) bounds for each parameter in theta order, or None if every parameter is unbounded. """
-        bounds = self._ensure_parameter_layout()['bounds']
-        if all(b == (None, None) for b in bounds):
-            return None
-        return list(bounds)
+        self._ensure_parameter_layout()
+        return self.parameters.parameter_bounds
 
     @property
     def parameter_initial_guess(self) -> Vector:
         """ Initial guess for the parameter vector, built from specify_parameter() guesses (0 by default). """
-        return self._ensure_parameter_layout()['initial_guess'].copy()
+        self._ensure_parameter_layout()
+        return self.parameters.initial_guess
 
     @property
     def gst_parameters(self) -> Vector:
@@ -414,89 +263,30 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
     def print_parameter_layout(self):
         """ Prints each entry of the parameter vector with its initial guess and bounds. """
-        layout = self._ensure_parameter_layout()
-        print("\n --- GST parameter layout --- ")
-        for i, (name, guess, bound) in enumerate(zip(layout['names'], layout['initial_guess'], layout['bounds'])):
-            print(f"  [{i:3d}] {name:<45s} guess = {guess:<12.6g} bounds = {bound}")
+        self.parameters.print_layout()
 
     def _normalize_parameter_name(self, key: str) -> str:
-        """ Canonicalizes a user parameter name, e.g. '[].theta' -> 'idle.theta', 'shared:x' unchanged. """
-        if key.startswith('shared:'):
-            return key
-        model, sep, pname = key.rpartition('.')
-        if not sep:
-            return key
-        try:
-            return f"{self._model_label(model)}.{pname}"
-        except (ValueError, TypeError):
-            return key
+        return self.parameters.normalize_parameter_name(key)
 
     def build_theta_from_dict(self, param_values: dict, default_value: float = 0., base: Vector | None=None) -> Vector:
-        """ Builds a theta vector from a dictionary of parameter names to values.
-
-            Accepted forms (and mixtures of them):
-                - flat names as in parameter_names: {'shared:SPAM_error_probability': 1e-3, 'MS:0:1.phi_error': 0.05}
-                - nested by model: {'shared': {'SPAM_error_probability': 1e-3}, 'MS:0:1': {'phi_error': 0.05}}
-
-            Unlisted parameters take default_value, or their value in `base` if a base vector is given.
-        """
-        names = self.parameter_names
-        if base is None:
-            theta = np.full(self.num_gst_parameters, default_value, dtype=float)
-        else:
-            theta = np.array(base, dtype=float, copy=True)
-
-        # Flatten nested dictionaries:
-        flat_values = {}
-        for key, val in param_values.items():
-            if isinstance(val, dict):
-                for param_name, param_val in val.items():
-                    if key == 'shared':
-                        flat_values[f"shared:{param_name}"] = param_val
-                    else:
-                        flat_values[self._normalize_parameter_name(f"{key}.{param_name}")] = param_val
-            else:
-                flat_values[self._normalize_parameter_name(key)] = val
-
-        # Assign values by matching names
-        unmatched = set(flat_values.keys())
-        for i, name in enumerate(names):
-            if name in flat_values:
-                theta[i] = flat_values[name]
-                unmatched.discard(name)
-
-        if unmatched:
-            available = '\n '.join(names)
-            raise ValueError(f"Unknown parameter names: {unmatched}.\n Available parameters:\n {available}")
-
-        return theta
+        """ Builds a theta vector from a dictionary of parameter names to values; see GstModelParameters.build_theta_from_dict(). """
+        self._ensure_parameter_layout()
+        return self.parameters.build_theta_from_dict(param_values, default_value=default_value, base=base)
 
     def get_parameters(self, theta: Vector, key: str | GstGate):
         """ Retrieve parameters for any model by key ('prep', 'POVM', or a gate label) from theta vector """
-        if isinstance(key, GstGate):   # internal use
-            label = key.label
-        else:
-            label = self._model_label(key)
-        return theta[self.gst_parameter_indices[label]]
+        return theta[self.gst_parameter_indices[key.label if isinstance(key, GstGate) else self._model_label(key)]]
 
     def get_parameter_index(self, name: str, model: str) -> int:
         """ Index in the parameter vector of parameter `name` of `model` ('shared', 'prep', 'POVM', or a gate label). """
-        if model == 'shared':
-            if name not in self.shared_indices:
-                raise ValueError(f"Unknown shared parameter {name!r}. Shared parameters: {list(self.shared_indices.keys())}.")
-            return self.shared_indices[name]
-        label = self._model_label(model)
-        parameter_names = self._model_parameter_names[label]
-        if name not in parameter_names:
-            raise ValueError(f"Model parameter {name!r} is not found in model {label!r}. The model has parameters {parameter_names}.")
-        return self.gst_parameter_indices[label][parameter_names.index(name)]
+        self._ensure_parameter_layout()
+        return self.parameters.get_parameter_index(name, model)
 
     def get_parameter_value(self, name: str, model: str, theta: Vector | None=None) -> float:
         """ Value of parameter `name` of `model` in theta (defaults to the current gst_parameters). """
         if theta is None:
             theta = self.gst_parameters
         return theta[self.get_parameter_index(name, model)]
-
 
     def _index_fiducials(self):
         """ Identify unique prep/measure fiducials and build lookup to get observed probabilities. """
@@ -520,33 +310,18 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
     def get_prep_state(self, theta) -> Vector:
         """ Returns prep state supervector (d^2 x 1) given the parameter values theta.
-            - Enforces the constraint Tr[rho] = 1, eliminating 1 parameter.
-        """ 
-        prep_params = self.get_parameters(theta, "prep") #theta[self.gst_parameter_indices["prep"]] # d^2 - 1 column vector  
-        prep_state = self.prep_state_model(*prep_params)
-        trace = np.trace(prep_state.reshape(self.d, self.d)) 
-        if np.abs(trace - 1.) > 1E-6:
-            raise IonSimError(f"Prep state is not normalized, trace = {trace}")
-        return prep_state
+            - Enforces the constraint Tr[rho] = 1.
+        """
+        return self.parameters.prep_state(theta)
 
     def get_measurement_effects(self, theta) -> dict[str, Vector]:
-        """ Returns measurement effects given the parameter values theta. 
+        """ Returns measurement effects given the parameter values theta.
 
-            - Effects are stored in a dictionary {'outcome' : Effect_vector with superoperator d^2 x d^2 shape} 
+            - Effects are stored in a dictionary {'outcome' : Effect_vector with superoperator d^2 x d^2 shape}
             - e.g. E_0 vector is d^2 x 1 corresponding to |0><0| (for d = 2)
             - There is a completeness constraint to enforce: sum_m E_m = identity
-            - By convention, the last effect is constrained. ==> d^2 parameters are constrained. 
-            - Therefore, there are d^2 (d-1) independent parameters for measurment.  
-        """ 
-        M_effects = {}
-        # POVM effect models is a callable that returns a dict 
-        POVM_parameters = self.get_parameters(theta, "POVM") 
-        M_effects = self.POVM_effect_models(*POVM_parameters)
-
-        completeness_violation = np.linalg.norm(sum(M_effects.values()).reshape(self.d, self.d) - np.eye(self.d))
-        if np.abs(completeness_violation) > 1E-7:
-            raise IonSimError(f"Measurement effect models are violating completenss constraint with residual {np.abs(completeness_violation)}") 
-        return M_effects 
+        """
+        return self.parameters.measurement_effects(theta)
 
     def _initialize_likelihood_circuit_cache(self):
         """ Build static and measurement-index metadata for each circuit once. """
