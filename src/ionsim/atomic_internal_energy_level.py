@@ -165,7 +165,17 @@ class LSBackGoudsmitLevel(AtomicInternalEnergyLevel):
     @property
     def hyperfine_energy_shift(self):
         """The energy shift of the level from the hyperfine interaction."""
-        return 0. 
+        return self.mj * self.mi * self.hyperfine_A 
+
+    @property
+    def bare_energy(self): 
+        """The field-free energy of the level. Hyperfine shift is included in the external energy shift."""
+        return self.fine_energy
+
+    @property
+    def energy(self):
+        # Total energy: bare energy + external shifts (e.g. Zeeman, light shifts)
+        return self.bare_energy + self.external_energy_shift
 
 @dataclass(frozen=True, eq=False)
 class LSPaschenBackLevel(AtomicInternalEnergyLevel): 
@@ -197,16 +207,19 @@ class LSPaschenBackLevel(AtomicInternalEnergyLevel):
 
     @property
     def hyperfine_energy_shift(self):
-        """ Hyperfine shift not included here."""
-        return 0. 
+        """The energy shift of the level from the hyperfine interaction."""
+        raise NotImplementedError(f"Not supported currently, requiring hyperfine A coefficients for mL, mS.")
+        return (self.ml + self.ms) * self.mi * self.hyperfine_A 
 
     @property
     def bare_energy(self): 
-        """The field-free energy of the hyperfine-structure level."""
-        if self.i == 0:
-            return self.fine_energy
-        else:
-            return self.fine_energy + self.hyperfine_energy_shift
+        """The field-free energy of the level. Hyperfine shift is included in the external energy shift."""
+        return self.fine_energy
+
+    @property
+    def energy(self):
+        # Total energy: bare energy + external shifts (e.g. Zeeman, light shifts)
+        return self.bare_energy + self.external_energy_shift
 
 @dataclass(frozen=True, eq=False)
 class J1L2FineLevel(AtomicInternalEnergyLevel): 
@@ -298,6 +311,20 @@ class J1L2BackGoudsmitLevel(AtomicInternalEnergyLevel):
         """A unique name for the hyperfine-structure level."""
         return ','.join([self.term_symbol, str(Fraction(self.mj)), str(Fraction(self.mi))])
 
+    @property
+    def hyperfine_energy_shift(self):
+        """The energy shift of the level from the hyperfine interaction."""
+        return self.mj * self.mi * self.hyperfine_A 
+
+    @property
+    def bare_energy(self): 
+        """The field-free energy of the level. Hyperfine shift is included in the external energy shift."""
+        return self.fine_energy
+
+    @property
+    def energy(self):
+        # Total energy: bare energy + external shifts (e.g. Zeeman, light shifts)
+        return self.bare_energy + self.external_energy_shift
 
 # def _check_uniqueness_of_term_symbols(term_symbols: list[str], levels_data: list[dict]):
 #     """Check whether the term symbol corresponds to a single energy level in the configuration data."""
