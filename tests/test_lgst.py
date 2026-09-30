@@ -239,5 +239,29 @@ class TestGST(unittest.TestCase):
                 I['Gxpi2:0.amplitude_noise_strength'][outcome] + I['Gypi2:0.amplitude_noise_strength'][outcome], places=7)
             self.assertAlmostEqual(S['prep.SPAM_error_probability'][outcome], I['prep.SPAM_error_probability'][outcome], places=7)
 
+    def test_analysis_reads_current_data(self):
+        """ Every analysis reads the circuits' current data: no caches to clear after replacing or editing data """
+        theta = self.GST_analyzer.build_theta_from_dict({'shared:SPAM_error_probability': 0.0025, 'shared:amplitude_noise_strength': 0.125})
+        LL = self.GST_analyzer.log_likelihood(theta)
+        self.GST_analyzer.linear_solve_for_gate_parameters()
+
+        # Order of outcomes in the count data does not matter
+        for circ in self.parsed_circuits:
+            counts = circ.measurement_data.counts
+            circ.measurement_data = CircuitData.from_counts({'1': counts['1'], '0': counts['0']})
+        self.assertAlmostEqual(self.GST_analyzer.log_likelihood(theta), LL, places=6)
+
+        # Counts edited in place are picked up (the log-likelihood is linear in the counts)
+        for circ in self.parsed_circuits:
+            for outcome in circ.measurement_data.counts:
+                circ.measurement_data.counts[outcome] *= 2
+        self.assertAlmostEqual(self.GST_analyzer.log_likelihood(theta) / LL, 2., places=12)
+
+        # Replaced data is used by linear GST: the Gram matrix entry for the empty circuit is its new observed frequency
+        empty_circuit = [c for c in self.parsed_circuits if c.depth == 0][0]
+        empty_circuit.measurement_data = CircuitData.from_counts({'0': 9900, '1': 100})
+        self.GST_analyzer.linear_solve_for_gate_parameters()
+        self.assertAlmostEqual(self.GST_analyzer.lgst_results['gram_matrix'][0, 0], 0.99, places=12)
+
 if __name__ == '__main__':
     unittest.main()

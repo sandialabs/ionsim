@@ -1,4 +1,5 @@
 import numpy as np
+from dataclasses import dataclass
 from pathlib import Path
 
 import scipy.stats as stats 
@@ -29,6 +30,31 @@ def depth_bin(depth):
     if depth <= 1.:
         return 1
     return int(2**(np.ceil(np.log2(depth))))
+
+@dataclass
+class _CircuitData:
+    """ Measurement data of a list of circuits, tabulated from the circuits' current data.
+
+        Built at the start of every public GST operation, so it always reflects the data as it is then (including data that
+        was replaced or edited in place); the solvers build it once and reuse it for every objective evaluation.
+    """
+    circuits: list                  # the circuits, in order
+    sequences: list                 # unique expanded gate sequences (tuples of GstGate)
+    sequence_index: np.ndarray      # (n_circuits,) index into sequences for each circuit
+    counts: np.ndarray              # (n_circuits, n_outcomes) counts aligned with the analyzer's outcome labels
+    has_data: np.ndarray            # (n_circuits,) whether each circuit has measurement data
+
+    def frequencies_by_sequence(self, outcome_labels) -> dict:
+        """ Observed outcome frequencies for each unique gate sequence, pooling repeated circuits """
+        pooled = np.zeros((len(self.sequences), self.counts.shape[1]))
+        np.add.at(pooled, self.sequence_index[self.has_data], self.counts[self.has_data])
+        frequencies = {}
+        for k, sequence in enumerate(self.sequences):
+            total = pooled[k].sum()
+            if total > 0:
+                frequencies[sequence] = dict(zip(outcome_labels, pooled[k] / total))
+        return frequencies
+
 
 class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
     def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: Callable, parsed_circuits: list[GstCircuit],
@@ -113,17 +139,12 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self.LL_eval = 0
         self.nll_data = []
 
-        # Set up cached parameters and process matrices
-        self.cached_theta = None
-        self.process_matrix_cache = None
 
-        # Cache metadata for fast likelihood evaluation.
         # Keep a stable outcome ordering so all vectorized probability operations
         # use consistent indices across circuits and evaluations.
         # TODO: Need to generalize this for time-dep. GST
         self.outcome_labels = tuple(parsed_circuits[0].measurement_data.counts.keys())
         self.outcome_to_index = {label: i for i, label in enumerate(self.outcome_labels)}
-        self._likelihood_circuit_cache = {}
 
         self.ideal_gate_set = None
         if ideal_gate_set is not None:
@@ -144,9 +165,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self.lgst_results = None
         self.solver_result = None
 
-        # Organize a lookup table for fiducial prep/measure circuits; needed for linear GST
-        self._index_fiducials()
-        self._initialize_likelihood_circuit_cache()
+        # Validate the measurement data (outcome labels, counts) up front; data is re-read from the circuits by every operation
+        self._tabulate_data(self.parsed_circuits, require_data=False)
         self.parameters_guess = None
 
 
@@ -207,8 +227,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         if self._parameters_version != self.parameters.version:
             self._parameters_version = self.parameters.version
             self._gst_parameters = layout['initial_guess'].copy()
-            self.cached_theta = None
-            self.process_matrix_cache = None
         return layout
 
     @property
@@ -288,25 +306,30 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             theta = self.gst_parameters
         return theta[self.get_parameter_index(name, model)]
 
-    def _index_fiducials(self):
-        """ Identify unique prep/measure fiducials and build lookup to get observed probabilities. """
-        combined_counts = {}
-        # Create keys by full circuit representation and average over duplicates (TODO: Update/change for non-Markovian GST)
-        for circ in self.parsed_circuits:
-            key = tuple(circ.expanded_gates)
-            counts = circ.measurement_data.to_counts().copy()
-
-            if key in combined_counts:
-                for label, n in counts.items():
-                    combined_counts[key][label] = combined_counts[key].get(label, 0) + n
-            else:
-                combined_counts[key] = counts 
-
-        # Set up circuit -> probability dictionary 
-        self.circuit_lookup = {}
-        for key, counts in combined_counts.items(): 
-            total_counts = sum(counts.values())
-            self.circuit_lookup[key] = {outcome: count / total_counts for outcome, count in counts.items()}
+    def _tabulate_data(self, circuits: list[GstCircuit], require_data: bool=True) -> _CircuitData:
+        """ Tabulate the current measurement data of `circuits` (see _CircuitData). Counts are aligned with self.outcome_labels
+            by label, so the order of outcomes in each circuit's data does not matter. """
+        sequences = {}
+        sequence_index = np.zeros(len(circuits), dtype=np.int64)
+        counts = np.zeros((len(circuits), len(self.outcome_labels)))
+        has_data = np.zeros(len(circuits), dtype=bool)
+        for i, circ in enumerate(circuits):
+            sequence_index[i] = sequences.setdefault(tuple(circ.expanded_gates), len(sequences))
+            data = circ.measurement_data
+            if data is None:
+                if require_data:
+                    raise IonSimError(f"Circuit {circ.build_circuit_string()} has no measurement data.")
+                continue
+            if data.counts is None:
+                raise NotImplementedError(f"Time-dependent GST is not available in this version of IonSim.")
+            for outcome, count in data.counts.items():
+                if outcome not in self.outcome_to_index:
+                    raise IonSimError(f"Unexpected measurement outcome '{outcome}' in circuit data.")
+                if count < 0:
+                    raise IonSimError(f"Negative count {count} for outcome '{outcome}' in circuit {circ.build_circuit_string()}.")
+                counts[i, self.outcome_to_index[outcome]] = count
+            has_data[i] = True
+        return _CircuitData(list(circuits), list(sequences.keys()), sequence_index, counts, has_data)
 
     def get_prep_state(self, theta) -> Vector:
         """ Returns prep state supervector (d^2 x 1) given the parameter values theta.
@@ -323,89 +346,6 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         """
         return self.parameters.measurement_effects(theta)
 
-    def _initialize_likelihood_circuit_cache(self):
-        """ Build static and measurement-index metadata for each circuit once. """
-        # This cache stores per-circuit arrays (outcome indices, counts, shots)
-        # so likelihood loops do not repeatedly parse dictionaries/lists.
-        self._likelihood_circuit_cache = {}
-        for circ in self.parsed_circuits:
-            metadata = self._build_likelihood_circuit_metadata(circ)
-            self._likelihood_circuit_cache[id(circ)] = metadata
-
-    def _build_likelihood_circuit_metadata(self, circ: GstCircuit) -> dict:
-        """ Build cached indexing data used by likelihood and chi-squared loops. """
-        # Use gate names instead of GstGate objects so map-composition cache keys
-        # are lightweight and hash quickly.
-        #gates = tuple(gate for gate in circ.expanded_gates)
-        gates = tuple(circ.expanded_gates)
-
-        #gate_names = tuple(gate.name for gate in circ.expanded_gates)
-        measurement_data = circ.measurement_data
-
-        metadata = {
-            'circ': circ,
-            'gates': gates,
-            'measurement_data_id': id(measurement_data),
-            'has_data': measurement_data is not None,
-            'has_counts': False,
-            'count_indices': np.empty(0, dtype=np.int64),
-            'count_values': np.empty(0, dtype=np.float64),
-            'shot_indices': np.empty(0, dtype=np.int64),
-            'total_counts': 0.0,
-        }
-
-        if measurement_data is None:
-            return metadata
-
-        if measurement_data.counts is not None:
-            # Pre-extract non-zero counts into aligned index/value arrays for
-            # vectorized dot products in the likelihood function.
-            count_indices = []
-            count_values = []
-            for outcome, count in measurement_data.counts.items():
-                #if count <= 0:
-                #    continue
-                if count < 0:
-                    continue
-                if outcome not in self.outcome_to_index:
-                    raise IonSimError(f"Unexpected measurement outcome '{outcome}' in circuit data.")
-                count_indices.append(self.outcome_to_index[outcome])
-                count_values.append(float(count))
-
-            metadata['has_counts'] = True
-            metadata['count_indices'] = np.asarray(count_indices, dtype=np.int64)
-            metadata['count_values'] = np.asarray(count_values, dtype=np.float64)
-            metadata['total_counts'] = float(np.sum(metadata['count_values']))
-            return metadata
-
-        # Time-series branch: store only outcome indices (timestamps are currently
-        # not used in the Markovian objective, but preserved in original data).
-        shot_indices = []
-        for _, outcome in measurement_data.timestamped_shots:
-            if outcome not in self.outcome_to_index:
-                raise IonSimError(f"Unexpected measurement outcome '{outcome}' in circuit data.")
-            shot_indices.append(self.outcome_to_index[outcome])
-
-        metadata['shot_indices'] = np.asarray(shot_indices, dtype=np.int64)
-        metadata['total_counts'] = float(len(shot_indices))
-        return metadata
-
-    def _get_likelihood_circuit_metadata(self, circ: GstCircuit) -> dict:
-        """ Return cached metadata; rebuild if the circuit's measurement object changed. """
-        # Bootstrap and other workflows may replace circ.measurement_data, so we
-        # detect that and lazily refresh only the affected cache entry.
-        key = id(circ)
-        measurement_data = circ.measurement_data
-        measurement_data_id = id(measurement_data)
-
-        metadata = self._likelihood_circuit_cache.get(key)
-        if (metadata is None or metadata['circ'] is not circ
-                or metadata['measurement_data_id'] != measurement_data_id):
-            metadata = self._build_likelihood_circuit_metadata(circ)
-            self._likelihood_circuit_cache[key] = metadata
-
-        return metadata
-
     def _refresh_prep_and_measure_elements(self, theta: Vector) -> tuple[np.ndarray, np.ndarray]:
         """ Build theta-dependent prep/effect matrices once per objective evaluation. """
         # Prep state and measurement effects do not depend on circuit identity,
@@ -415,152 +355,95 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         effect_matrix = np.vstack([np.asarray(measurement_effects[label]) for label in self.outcome_labels])
         return rho_supervector, effect_matrix
 
-    def _compose_quantum_map(self, gates: tuple[GstGate, ...], circuit_map_cache: dict) -> np.ndarray:
+    def _compose_quantum_map(self, gates: tuple[GstGate, ...], gate_matrices: dict, circuit_map_cache: dict) -> np.ndarray:
         """ Compose the circuit map once for each unique gate sequence in an evaluation. """
-        # Many circuits can share the same expanded gate sequence; cache the full
-        # composed map for this theta evaluation to avoid repeated matrix chains.
         quantum_map = circuit_map_cache.get(gates)
         if quantum_map is not None:
             return quantum_map
 
         quantum_map = np.eye(self.d2, dtype=complex)
         for gate in gates:
-            quantum_map = self.process_matrix_cache[gate] @ quantum_map
+            quantum_map = gate_matrices[gate] @ quantum_map
 
         circuit_map_cache[gates] = quantum_map
         return quantum_map
 
-    def _predict_probability_vector(self, gates: tuple[GstGate, ...], rho_supervector: Vector, effect_matrix: Matrix, 
+    def _predict_probability_vector(self, gates: tuple[GstGate, ...], gate_matrices: dict, rho_supervector: Vector, effect_matrix: Matrix,
                                         circuit_map_cache: dict) -> np.ndarray:
         """ Predict clipped outcome probabilities as a dense vector in outcome-label order. """
-        # Return dense probabilities in self.outcome_labels order so downstream
-        # indexing (counts/shots) is pure NumPy gather/sum math.
-        quantum_map = self._compose_quantum_map(gates, circuit_map_cache)
+        quantum_map = self._compose_quantum_map(gates, gate_matrices, circuit_map_cache)
         mapped_state = quantum_map @ rho_supervector
         probability_values = np.real(effect_matrix @ mapped_state)
         return np.clip(probability_values, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. -  NUMERICAL_EQUIVALENCE_THRESHOLD)
 
-    def _predict_probabilities(self, circ: GstCircuit, theta: Vector) -> Vector: 
-        """ Predicts outcome probabilities for a GST circuit with gates parametrized by theta """
-        # Compatibility helper for existing callers that still expect a dict.
-        self._refresh_gate_process_matrix_cache(theta)
+    def _predict_sequence_probabilities(self, theta: Vector, sequences: list) -> np.ndarray:
+        """ Outcome probabilities (n_sequences x n_outcomes, outcome-label order) for gate sequences at theta; the gate process
+            matrices, prep state, and effects are evaluated once for all sequences. """
+        gate_matrices = self._gate_process_matrices(theta)
         rho_supervector, effect_matrix = self._refresh_prep_and_measure_elements(theta)
-        metadata = self._get_likelihood_circuit_metadata(circ)
-        probability_values = self._predict_probability_vector(metadata['gates'], rho_supervector, effect_matrix, circuit_map_cache={})
-        outcome_probabilities = dict(zip(self.outcome_labels, probability_values))
-        return outcome_probabilities
-        
-    def _refresh_gate_process_matrix_cache(self, theta): 
-        """ Evaluate each gate's process matrix function once"""
-        if (self.cached_theta is None or self.cached_theta.shape != theta.shape 
-            or not np.array_equal(self.cached_theta, theta)):
-            process_matrix_cache = {} 
-            for gate, gate_model in self.gate_models.items():
-                # Retrieve parameters for the gate model 
-                gate_parameters = self.get_parameters(theta, gate) 
-                # Evaluate gate model at those parameter values and store in the PM cache 
-                process_matrix_cache[gate] = gate_model(*gate_parameters) # gate model returns a process matrix  
+        circuit_map_cache = {}
+        return np.array([self._predict_probability_vector(gates, gate_matrices, rho_supervector, effect_matrix, circuit_map_cache)
+                         for gates in sequences])
 
-            self.cached_theta = np.array(theta, copy=True)
-            self.process_matrix_cache = process_matrix_cache
+    def _predict_probabilities(self, circ: GstCircuit, theta: Vector) -> dict:
+        """ Predicts outcome probabilities for a GST circuit with gates parametrized by theta """
+        probability_values = self._predict_sequence_probabilities(theta, [tuple(circ.expanded_gates)])[0]
+        return dict(zip(self.outcome_labels, probability_values))
 
-        return self.process_matrix_cache 
-
+    def _gate_process_matrices(self, theta: Vector) -> dict:
+        """ Evaluate each gate's process matrix function once at theta """
+        return {gate: gate_model(*self.get_parameters(theta, gate)) for gate, gate_model in self.gate_models.items()}
 
     def log_likelihood(self, theta: Vector | None=None, theta_function=None) -> float:
-        """ Computes total log-likelihood of the parameters given the data.
+        """ Computes total log-likelihood of the parameters given the data (the circuits' current measurement data).
 
-            theta:      parameter vector 
+            theta:      parameter vector
             theta_func:     optional callable(t) -> parameter_vector for time-dependent data.
                             If None, theta is assumed to be t-independent.
 
-            Log likelihood of parameters for each experiment:  
-                l_{exp} = sum_{outcomes} N_{outcome} log( p_{outcome} (theta) ) 
-             - p_outcome (theta)  is the probability of the outcome using gates modeled by theta. 
-             - "outcome" <==> measurement effect. e.g. "0" or "1" for 1Q measurement. 
+            Log likelihood of parameters for each experiment:
+                l_{exp} = sum_{outcomes} N_{outcome} log( p_{outcome} (theta) )
+             - p_outcome (theta)  is the probability of the outcome using gates modeled by theta.
+             - "outcome" <==> measurement effect. e.g. "0" or "1" for 1Q measurement.
 
-        """                
+        """
+        return self._log_likelihood(self.gst_parameters if theta is None else theta, self._tabulate_data(self.parsed_circuits))
+
+    def _log_likelihood(self, theta: Vector, data: _CircuitData) -> float:
+        """ Log-likelihood of theta for tabulated data (used repeatedly by the solvers) """
         if self.verbose:
             print(f"\nEvaluating log likelihood")
-        self.LL_eval += 1 
+        self.LL_eval += 1
         if self.verbose:
             print(f"Evaluation number {self.LL_eval}")
             print(f"\nParameter values: {theta}")
 
-        # TODO: make a separate function for t-dependent parameters 
-        if theta is None:
-            theta = self.gst_parameters
+        # Probabilities for each unique gate sequence (gate process matrices evaluated once)
+        log_probabilities = np.log(self._predict_sequence_probabilities(theta, data.sequences))
 
+        # Accumulate over all GST circuits
         l_likelihood = 0.
-
-        # Improve speed by building gate process matrices once 
-        self._refresh_gate_process_matrix_cache(theta)
-
-        # Build theta-dependent context once, then reuse cached circuit metadata
-        # and map compositions across the full circuit set.
-        rho_supervector, effect_matrix = self._refresh_prep_and_measure_elements(theta)
-        circuit_map_cache = {}
-
-        # Compute log likelihood for each GST circuit, accumulating over all GST circuits 
-        for circ in self.parsed_circuits:
-            metadata = self._get_likelihood_circuit_metadata(circ)
-            if not metadata['has_data']:
-                raise IonSimError("Cannot evaluate log-likelihood with circuits that have no measurement data.")
-
-            probability_values = self._predict_probability_vector(metadata['gates'], rho_supervector, effect_matrix, circuit_map_cache)
-            log_probability_values = np.log(probability_values)
-
-            if metadata['has_counts']:
-                if metadata['count_values'].size > 0:
-                    assert len(metadata['count_values']) == len(log_probability_values)
-                    # Weighted log-likelihood contribution from count data.
-                    l_likelihood += np.dot(metadata['count_values'], log_probability_values)
-            else:
-                raise NotImplementedError(f"Time-dependent GST is not available in this version of IonSim.") 
-                # Time-series data: each shot contributes one log-probability term.
-                if metadata['shot_indices'].size > 0:
-                    l_likelihood += np.sum(log_probability_values[metadata['shot_indices']])
+        for counts, k in zip(data.counts, data.sequence_index):
+            l_likelihood += np.dot(counts, log_probabilities[k])
 
         if self.verbose:
             print(f"Negative log likelihood: {-l_likelihood}")
-        self.nll_data.append(-l_likelihood) 
+        self.nll_data.append(-l_likelihood)
         return l_likelihood
 
-
-    
     def chi_squared(self, theta: Vector | None=None, theta_function=None) -> float:
-        """ chi^2 estimate for least-squares error between observed frequencies and circuit probabilities. """ 
+        """ chi^2 estimate for least-squares error between observed frequencies and circuit probabilities (current data). """
+        return self._chi_squared(self.gst_parameters if theta is None else theta, self._tabulate_data(self.parsed_circuits))
+
+    def _chi_squared(self, theta: Vector, data: _CircuitData) -> float:
+        """ chi^2 of theta for tabulated data """
+        probabilities = self._predict_sequence_probabilities(theta, data.sequences)
         chi_squared = 0.
-
-        if theta is None:
-            theta = self.gst_parameters
-
-        # Improve speed by building gate process matrices once 
-        self._refresh_gate_process_matrix_cache(theta)
-
-        # Reuse the same probability context/circuit-map cache strategy as in
-        # log_likelihood for consistent performance behavior.
-        rho_supervector, effect_matrix = self._refresh_prep_and_measure_elements(theta)
-        circuit_map_cache = {}
-
-        # Compute log likelihood for each GST circuit, accumulating over all GST circuits 
-        for circ in self.parsed_circuits:
-            metadata = self._get_likelihood_circuit_metadata(circ)
-            if not metadata['has_data']:
-                raise IonSimError("Cannot compute chi squared with circuits that have no measurement data.")
-
-            probability_values = self._predict_probability_vector(metadata['gates'], rho_supervector, effect_matrix,
-                                        circuit_map_cache)
-
-            if metadata['has_counts']:
-                if metadata['total_counts'] > 0:
-                    # Chi-squared between observed frequencies and model probs,
-                    # scaled by total shots for that circuit.
-                    p_values = probability_values[metadata['count_indices']]
-                    frequencies = metadata['count_values'] / metadata['total_counts']
-                    chi_squared += metadata['total_counts'] * np.sum(((p_values - frequencies)**2) / p_values)
-            else:
-                raise IonSimError(f"Computing chi squared for time-series data is not yet programmed in IonSim.")
+        for counts, k in zip(data.counts, data.sequence_index):
+            total_counts = counts.sum()
+            if total_counts > 0:
+                # Chi-squared between observed frequencies and model probs, scaled by total shots for that circuit.
+                chi_squared += total_counts * np.sum(((probabilities[k] - counts / total_counts)**2) / probabilities[k])
 
         if self.verbose:
             print(f"Chi squared: {chi_squared}")
@@ -675,7 +558,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         return theta_0
 
     def _initial_parameters(self, parameters_guess: Vector | dict | str | None, solver_name: str) -> Vector:
-        """ Resolve the initial guess for a solver and report it when verbose """
+        """ Resolve the initial guess for a solver, reset the per-solve diagnostics, and report the guess when verbose """
+        self.LL_eval = 0
+        self.nll_data = []
         theta_0 = self._resolve_initial_guess(parameters_guess)
         if self.verbose:
             print(f"\n -- Solving for gate parameters in GST using {solver_name} --- ")
@@ -713,8 +598,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             Returns the scipy OptimizeResult (parameters in result.x, also stored in self.gst_parameters).
         """
         theta_0 = self._initial_parameters(parameters_guess, 'MLE')
-        # GST experiment circuits and outcome data are embedded in log likelihood function evaluations.
-        solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B',
+        # Tabulate the circuits' current data once; every objective evaluation reuses it
+        data = self._tabulate_data(self.parsed_circuits)
+        solver_result = opt.minimize(fun = lambda params: -self._log_likelihood(params, data), x0 = theta_0, method = 'L-BFGS-B',
                                      bounds = self.parameter_bounds, **minimize_kwargs)
         self.solver_result = solver_result
         self.gst_parameters = solver_result.x
@@ -738,11 +624,13 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self.gst_parameters = self.solver_result.x
         return self.solver_result
 
-    def _build_probability_matrix(self, target_gate: GstGate | None=None, outcome: str | None=None):
+    def _build_probability_matrix(self, frequencies: dict, target_gate: GstGate | None=None, outcome: str | None=None):
         """ Builds the d^2 x d^2 matrix of observed probabilities 
             for a gate or empty gate (corresponding to the Gram Matrix).
 
-            M[i,j] = p(outcome | measure_fid_i x gate x prep_fid_j ) 
+            M[i,j] = p(outcome | measure_fid_i x gate x prep_fid_j )
+
+            frequencies: observed outcome frequencies by gate sequence (from the current data)
         """
         outcomes = list(self.outcome_labels)
         if outcome is None:
@@ -759,8 +647,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             for i, measure_fid in enumerate(self.measure_fiducials):
                 #key = (prep_fid, gate, 1, measure_fid)
                 key = tuple(list(prep_fid) + target_list + list(measure_fid)) 
-                if key in self.circuit_lookup:
-                    M[i,j] = self.circuit_lookup[key][outcome]
+                if key in frequencies:
+                    M[i,j] = frequencies[key][outcome]
                 else:
                     print(f"Attempted key: {key}")
                     raise ValueError(f"Missing LGST circuit: prep = {prep_fid}" + 
@@ -774,7 +662,9 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # 1. Build the Gram matrix: <<F_i|F_j>>
         if self.verbose:
             print(f"\n --- Running linear GST ---")
-        gram_matrix = self._build_probability_matrix(target_gate = None)
+        # Observed frequencies from the circuits' current data
+        frequencies = self._tabulate_data(self.parsed_circuits).frequencies_by_sequence(self.outcome_labels)
+        gram_matrix = self._build_probability_matrix(frequencies, target_gate = None)
 
         gram_matrix_det = np.linalg.det(gram_matrix)
         if np.abs(gram_matrix_det) < 1E-12:
@@ -841,7 +731,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Sorted for a reproducible ordering (set order depends on string hashing, which varies between runs)
         for gate in sorted(self.gate_set, key=lambda g: g.label):
             # Compute gate process matrix by inversion: probabilities P = A G_gate B 
-            P_gate = self._build_probability_matrix(target_gate = gate)
+            P_gate = self._build_probability_matrix(frequencies, target_gate = gate)
             gate_estimates[gate] = matrix_prefactor @ P_gate @ matrix_postfactor 
 
         # Find which fiducial index is the empty circuit, corresponding to native prep and measure 
@@ -859,7 +749,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         measurement_effects = gram_matrix @ np.linalg.pinv(prep_states)
         estimated_effects = {}
         for outcome in self.outcome_labels:
-            gram_k = self._build_probability_matrix(outcome = outcome) 
+            gram_k = self._build_probability_matrix(frequencies, outcome = outcome) 
             A_k = gram_k @ Pi.conj().T @ B0_inv
             estimated_effects[outcome] = A_k[measure_idx, :]
 
@@ -1059,21 +949,14 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for stage, L in enumerate(sorted_depths):
             cumulative_circuits.extend(circuit_groups[L])
 
-            # Store a copy of the circuits so we can re-use internal functions that use parsed_circuits attribute
-            original_circuits = self.parsed_circuits
-            self.parsed_circuits = cumulative_circuits
-            try:
-                solver_result = self._minimize_stage(stage, L, parameters_guess, cumulative_circuits, method, bounds, minimize_kwargs)
-            finally:
-                # restore circuit information
-                self.parsed_circuits = original_circuits
+            solver_result = self._minimize_stage(stage, L, parameters_guess, self._tabulate_data(cumulative_circuits), method, bounds, minimize_kwargs)
             solver_results[L] = solver_result.x
 
         # return final result, having used all circuits:
         return solver_result, solver_results
 
-    def _minimize_stage(self, stage: int, L: int, parameters_guess: Vector, cumulative_circuits: list, method: str, bounds, minimize_kwargs: dict):
-        """ One stage of staged MLE on the cumulative circuits (self.parsed_circuits is set to them by the caller) """
+    def _minimize_stage(self, stage: int, L: int, parameters_guess: Vector, data: _CircuitData, method: str, bounds, minimize_kwargs: dict):
+        """ One stage of staged MLE on the tabulated data of the cumulative circuits """
  #        if stage < (num_stages - 1):
  #            objective_function = self.chi_squared
  #        else:
@@ -1085,7 +968,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             theta_init = self.gst_parameters.copy()
 
         # I found that using log likelihood for all stages gave faster and likely better results
-        objective_function = lambda params: -1. * self.log_likelihood(params)
+        objective_function = lambda params: -1. * self._log_likelihood(params, data)
 
         # TODO: Standardize solve result objects between GST solver methods
         solver_result = opt.minimize(fun = lambda params: objective_function(params),  x0 = theta_init, method=method, bounds = bounds, **minimize_kwargs)
@@ -1094,10 +977,10 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
 
 
         if self.verbose:
-            ll = self.log_likelihood(self.gst_parameters)
+            ll = self._log_likelihood(self.gst_parameters, data)
             print()
             print(f"    Stage {stage + 1} (L <= {L}): ")
-            print(f"    {len(cumulative_circuits)} circuits ")
+            print(f"    {len(data.circuits)} circuits ")
             print(f"    LL = {ll:.3f} ")
             print(f"    Converged = {solver_result.success} ")
         return solver_result
@@ -1211,26 +1094,19 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         # Copy the original circuits 
         original_data = [circ.measurement_data for circ in self.parsed_circuits]
 
-        best_theta_samples = np.zeros((N_repetitions, len(self.gst_parameters))) 
+        best_theta_samples = np.zeros((N_repetitions, len(self.gst_parameters)))
+        # True outcome probabilities of every circuit (fixed across repetitions)
+        true_data = self._tabulate_data(self.parsed_circuits, require_data=False)
+        true_probabilities = self._predict_sequence_probabilities(theta_true, true_data.sequences)[true_data.sequence_index]
         gate_set_errors = []
         for n in range(N_repetitions):
-            self.cached_theta = None
-            self.process_matrix_cache = None
-            self._likelihood_circuit_cache = {} 
-            self._initialize_likelihood_circuit_cache()
-
-            # Sample the true probabilities for each circuit  
-            for circ in self.parsed_circuits:
-                p = self._predict_probabilities(circ, theta_true)
-                p_vals = [p[o] for o in self.outcome_labels]
-                #circuit_probabilities.append(p_vals)
-                #for circ, (prob_values) in zip(self.parsed_circuits, circuit_probabilities):
-                outcome_counts = np.random.multinomial(N_shots, p_vals) 
+            # Sample outcomes for each circuit from the true probabilities
+            for circ, p_vals in zip(self.parsed_circuits, true_probabilities):
+                outcome_counts = np.random.multinomial(N_shots, p_vals)
                 circ.measurement_data = CircuitData.from_counts(dict(zip(self.outcome_labels, outcome_counts)))
 
             self.lgst_results = None   
             self.solver_result = None 
-            self._index_fiducials() # Reindex and organize fiducial information for linear GST if needed
 
             # For each repetition, perform the fit (the initial guess is re-resolved, e.g. a new LGST seed for each sample)
             results = solve(parameters_guess = parameters_guess, **kwargs)
