@@ -195,7 +195,7 @@ class TestGST(unittest.TestCase):
 
     def test_linear_gst_analysis(self):
         """ Test linear GST (LGST) """ 
-        solver_results = self.GST_analyzer.solve_for_gate_parameters('linear') 
+        solver_results = self.GST_analyzer.linear_solve_for_gate_parameters() 
         gate_set_error = self.GST_analyzer.compute_gate_set_error_by_element(solver_results, self.true_gate_set)
         X_pi2_error = gate_set_error['Gxpi2:0']
         Y_pi2_error = gate_set_error['Gypi2:0']
@@ -207,7 +207,7 @@ class TestGST(unittest.TestCase):
 
     def test_mle_gst_analysis(self):
         """ Test GST via maximum likelihood estimation (MLE)""" 
-        solver_results = self.GST_analyzer.solve_for_gate_parameters('MLE') 
+        solver_results = self.GST_analyzer.mle_solve_for_gate_parameters() 
         gate_set_error = self.GST_analyzer.compute_gate_set_error_by_element(solver_results.x, self.true_gate_set)
 
         X_pi2_error = gate_set_error['Gxpi2:0']

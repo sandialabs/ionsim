@@ -56,7 +56,7 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                     gst.specify_parameter("amplitude_noise_strength", model="shared", guess=0.01, bounds=(1e-4, 10.))
                     gst.specify_parameter("phi_error", model="MS:0:1", guess=0., bounds=(0., np.pi/16))
 
-                The parameter vector is organized lazily (when first needed, e.g. in solve_for_gate_parameters()), so parameters may
+                The parameter vector is organized lazily (when first needed, e.g. by a solver), so parameters may
                 be specified in any order after construction.
 
                 Parameters are held in a GstModelParameters object (self.parameters). To share one specification with a circuit
@@ -648,6 +648,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
     def _resolve_initial_guess(self, parameters_guess: Vector | dict | str | None) -> Vector:
         """ Interface to parse the initial guess into a vector of initial values for the solvers.
 
+            Used by linear_solve_for_gate_parameters(), mle_solve_for_gate_parameters(), and staged_mle_solve_for_gate_parameters().
+
             - None: use the guesses given with specify_parameter() (0 for unspecified parameters).
             - 'lgst': fit the gate set models to linear GST estimates and use those parameters (requires a circuit design).
             - dict: parameter names to values (see build_theta_from_dict); unlisted parameters use their specified guesses.
@@ -672,50 +674,69 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         self.parameters_guess = theta_0
         return theta_0
 
-    def solve_for_gate_parameters(self, solver: str = 'MLE', parameters_guess: Vector | dict | str | None=None, **kwargs):
-        """ Function to solve for the parametrization values of the gate set.
-
-            - solver: 'MLE' (default), 'staged MLE', or 'linear'.
-            - parameters_guess: initial guess (see _resolve_initial_guess). By default the guesses from specify_parameter() are used;
-                pass 'lgst' to seed the solver from a linear GST fit.
-            - Additional keyword arguments are passed to scipy.optimize.minimize (e.g. options = {...}).
-
-            - Default behavior is a maximum likelihood approach that finds parameters
-                that maximize the likelihood of the gate given the data, i.e. solving:
-
-                max[ Likelihood( {G} | data) ] over parameter set theta.
-
-            - Returns a result object for MLE solvers; parameter results are accessed as a vector via results.x
-              For 'linear', returns the parameter vector.
-        """
-        if not isinstance(solver, str):
-            raise TypeError(f"solver must be a string ('MLE', 'staged MLE', or 'linear'); received {type(solver).__name__}. "
-                            f"Specify the initial guess with specify_parameter() or the parameters_guess keyword argument, "
-                            f"e.g. solve_for_gate_parameters('MLE', parameters_guess='lgst').")
-        if solver not in ('MLE', 'linear', 'staged MLE'):
-            raise IonSimError(f"Invalid solver input {solver!r}; use 'MLE', 'staged MLE', or 'linear'.")
-
+    def _initial_parameters(self, parameters_guess: Vector | dict | str | None, solver_name: str) -> Vector:
+        """ Resolve the initial guess for a solver and report it when verbose """
         theta_0 = self._resolve_initial_guess(parameters_guess)
         if self.verbose:
-            print(f"\n -- Solver for gate parameters in GST using {solver} --- ")
+            print(f"\n -- Solving for gate parameters in GST using {solver_name} --- ")
             print(f"Initial parameters: {dict(zip(self.parameter_names, theta_0))}")
+        return theta_0
 
-        if solver == 'MLE':
-            # GST expeirment circuits and outcome data are imbedded in log likelihood function evaluations.
-            solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds, **kwargs)
-            self.solver_result = solver_result
-            self.gst_parameters = solver_result.x
-            return solver_result
-        elif solver == 'linear':
-            self.solver_result = self.run_linear_gst(self.ideal_gate_set)
-            self.parameters_from_lgst_results(theta_0)
-            return self.gst_parameters
-        else:
-            # Do staged MLE --> MLE done in batches of increasing circuit depths.
-            self.solver_result, results_by_stage = self.staged_objective_minimization(theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds, **kwargs)
-            self.results_by_stage = results_by_stage
-            self.gst_parameters = self.solver_result.x
-            return self.solver_result
+    def linear_solve_for_gate_parameters(self, parameters_guess: Vector | dict | None=None) -> Vector:
+        """ Linear GST (LGST): estimates the gate set from the fiducial circuits by linear inversion (requires a circuit design
+            with informationally complete fiducials), then fits the model parameters to those estimates.
+
+            - parameters_guess: starting point for the fit to the LGST estimates when parameters are shared among models
+                (vector or dictionary; default: the guesses from specify_parameter()). With no shared parameters, each model is
+                fit independently and the guess is not used.
+
+            Returns the parameter vector (also stored in self.gst_parameters); the LGST estimates are in self.lgst_results.
+        """
+        if isinstance(parameters_guess, str):
+            raise ValueError("linear_solve_for_gate_parameters does not accept a string guess; pass None, a dictionary, or a parameter vector.")
+        theta_0 = self._initial_parameters(parameters_guess, 'linear GST')
+        self.solver_result = self.run_linear_gst(self.ideal_gate_set)
+        self.parameters_from_lgst_results(theta_0)
+        return self.gst_parameters
+
+    def mle_solve_for_gate_parameters(self, parameters_guess: Vector | dict | str | None=None, **minimize_kwargs):
+        """ Maximum likelihood estimation (MLE): finds the parameters that maximize the likelihood of the data over all circuits,
+
+                max[ Likelihood( {G} | data) ] over parameter set theta,
+
+            using scipy.optimize.minimize with method L-BFGS-B and the parameter bounds from specify_parameter().
+
+            - parameters_guess: initial guess. None (default) uses the guesses from specify_parameter(); 'lgst' seeds the solver
+                from a linear GST fit; a dictionary or vector gives the values directly.
+            - minimize_kwargs: passed to scipy.optimize.minimize, e.g. options = {'maxiter': 500}.
+
+            Returns the scipy OptimizeResult (parameters in result.x, also stored in self.gst_parameters).
+        """
+        theta_0 = self._initial_parameters(parameters_guess, 'MLE')
+        # GST experiment circuits and outcome data are embedded in log likelihood function evaluations.
+        solver_result = opt.minimize(fun = lambda params: -self.log_likelihood(params), x0 = theta_0, method = 'L-BFGS-B',
+                                     bounds = self.parameter_bounds, **minimize_kwargs)
+        self.solver_result = solver_result
+        self.gst_parameters = solver_result.x
+        return solver_result
+
+    def staged_mle_solve_for_gate_parameters(self, parameters_guess: Vector | dict | str | None=None, organize_circuits_by_germ_power: bool=True,
+                                             **minimize_kwargs):
+        """ Staged MLE: maximum likelihood estimation on cumulative batches of circuits of increasing depth, each stage starting
+            from the previous stage's estimate. This can help avoid local optima for long circuits.
+
+            - parameters_guess: initial guess for the first stage (as for mle_solve_for_gate_parameters, including 'lgst').
+            - organize_circuits_by_germ_power: stage by germ power p (default) or by base circuit depth L.
+            - minimize_kwargs: passed to scipy.optimize.minimize at every stage, e.g. options = {'maxiter': 500}.
+
+            Returns the final stage's scipy OptimizeResult (parameters in result.x, also stored in self.gst_parameters). The
+            estimates from every stage are in self.results_by_stage, keyed by depth.
+        """
+        theta_0 = self._initial_parameters(parameters_guess, 'staged MLE')
+        self.solver_result, self.results_by_stage = self.staged_objective_minimization(theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds,
+                                organize_circuits_by_germ_power = organize_circuits_by_germ_power, **minimize_kwargs)
+        self.gst_parameters = self.solver_result.x
+        return self.solver_result
 
     def _build_probability_matrix(self, target_gate: GstGate | None=None, outcome: str | None=None):
         """ Builds the d^2 x d^2 matrix of observed probabilities 
@@ -1011,7 +1032,8 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             results_to_write[gate.label + '_process_matrix'] = process_matrix
             write_results_to_file('gst_optimal_' + gate.label + '.hdf5', results_to_write)
 
-    def staged_objective_minimization(self, parameters_guess: Vector, method: str='L-BFGS-B', bounds: list | None=None, organize_circuits_by_germ_power: bool=True):
+    def staged_objective_minimization(self, parameters_guess: Vector, method: str='L-BFGS-B', bounds: list | None=None, organize_circuits_by_germ_power: bool=True,
+                                        **minimize_kwargs):
         """ Iterative MLE through batches of data taken at increasing circuit depths """ 
         print(f" --- Running Maximum likelihood estimation analysis --- ")
         if organize_circuits_by_germ_power: 
@@ -1037,44 +1059,48 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
         for stage, L in enumerate(sorted_depths):
             cumulative_circuits.extend(circuit_groups[L])
 
-            # Store a copy of the circuits so we can re-use internal functions that use parsed_circuits attribute  
+            # Store a copy of the circuits so we can re-use internal functions that use parsed_circuits attribute
             original_circuits = self.parsed_circuits
-            self.parsed_circuits = cumulative_circuits 
-
- #            if stage < (num_stages - 1):
- #                objective_function = self.chi_squared 
- #            else:
- #                objective_function = lambda params: -1. * self.log_likelihood(params) 
-
-            if stage == 0:
-                theta_init = parameters_guess
-            else:
-                theta_init = self.gst_parameters.copy()
-
-            # I found that using log likelihood for all stages gave faster and likely better results 
-            objective_function = lambda params: -1. * self.log_likelihood(params)
-
-            # TODO: Standardize solve result objects between GST solver methods 
-            solver_result = opt.minimize(fun = lambda params: objective_function(params),  x0 = theta_init, method=method, bounds = bounds)
-            self.solver_result = solver_result
-            self.gst_parameters = solver_result.x
-
-            # Record solver parameter estimation results at each circuit depth group  
-            solver_results[L] = solver_result.x 
-
-            if self.verbose: 
-                ll = self.log_likelihood(self.gst_parameters)
-                print()
-                print(f"    Stage {stage + 1} (L <= {L}): ")
-                print(f"    {len(cumulative_circuits)} circuits ")
-                print(f"    LL = {ll:.3f} ") 
-                print(f"    Converged = {solver_result.success} ") 
-                        
-            # restore circuit information
-            self.parsed_circuits = original_circuits
+            self.parsed_circuits = cumulative_circuits
+            try:
+                solver_result = self._minimize_stage(stage, L, parameters_guess, cumulative_circuits, method, bounds, minimize_kwargs)
+            finally:
+                # restore circuit information
+                self.parsed_circuits = original_circuits
+            solver_results[L] = solver_result.x
 
         # return final result, having used all circuits:
         return solver_result, solver_results
+
+    def _minimize_stage(self, stage: int, L: int, parameters_guess: Vector, cumulative_circuits: list, method: str, bounds, minimize_kwargs: dict):
+        """ One stage of staged MLE on the cumulative circuits (self.parsed_circuits is set to them by the caller) """
+ #        if stage < (num_stages - 1):
+ #            objective_function = self.chi_squared
+ #        else:
+ #            objective_function = lambda params: -1. * self.log_likelihood(params)
+
+        if stage == 0:
+            theta_init = parameters_guess
+        else:
+            theta_init = self.gst_parameters.copy()
+
+        # I found that using log likelihood for all stages gave faster and likely better results
+        objective_function = lambda params: -1. * self.log_likelihood(params)
+
+        # TODO: Standardize solve result objects between GST solver methods
+        solver_result = opt.minimize(fun = lambda params: objective_function(params),  x0 = theta_init, method=method, bounds = bounds, **minimize_kwargs)
+        self.solver_result = solver_result
+        self.gst_parameters = solver_result.x
+
+
+        if self.verbose:
+            ll = self.log_likelihood(self.gst_parameters)
+            print()
+            print(f"    Stage {stage + 1} (L <= {L}): ")
+            print(f"    {len(cumulative_circuits)} circuits ")
+            print(f"    LL = {ll:.3f} ")
+            print(f"    Converged = {solver_result.success} ")
+        return solver_result
 
 
     ### Functions for gate set error metrics ### 
@@ -1160,8 +1186,18 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             This enables computing gate set parameters and errors averaged over realizations of the true gate set
 
             - theta_true: true parameter vector, or a dictionary of parameter names to values (see build_theta_from_dict)
-            - parameters_guess: initial guess for each fit (see solve_for_gate_parameters); 'lgst' re-seeds from linear GST on each sample
+            - solver: 'MLE' (mle_solve_for_gate_parameters), 'staged MLE' (staged_mle_solve_for_gate_parameters), or 'linear'
+                (linear_solve_for_gate_parameters).
+            - parameters_guess: initial guess for each fit; 'lgst' re-seeds MLE solvers from linear GST on each sample
+            - kwargs: passed to the solver (e.g. options = {...} for the MLE solvers)
         """
+        solvers = {'mle': self.mle_solve_for_gate_parameters, 'staged mle': self.staged_mle_solve_for_gate_parameters,
+                   'staged_mle': self.staged_mle_solve_for_gate_parameters, 'linear': self.linear_solve_for_gate_parameters}
+        if not isinstance(solver, str) or solver.lower() not in solvers:
+            raise ValueError(f"Unknown solver {solver!r}; use 'MLE', 'staged MLE', or 'linear'.")
+        solve = solvers[solver.lower()]
+        is_linear = solver.lower() == 'linear'
+
         if isinstance(theta_true, dict):
             theta_true = self.build_theta_from_dict(theta_true)
 
@@ -1197,13 +1233,13 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             self._index_fiducials() # Reindex and organize fiducial information for linear GST if needed
 
             # For each repetition, perform the fit (the initial guess is re-resolved, e.g. a new LGST seed for each sample)
-            results = self.solve_for_gate_parameters(solver, parameters_guess = parameters_guess, **kwargs)
-            if solver == 'linear':
+            results = solve(parameters_guess = parameters_guess, **kwargs)
+            if is_linear:
                 best_theta_samples[n, :] = results
             else:
-                best_theta_samples[n, :] = results.x 
-            # Then compute the gate set errors: 
-            if solver == 'linear':
+                best_theta_samples[n, :] = results.x
+            # Then compute the gate set errors:
+            if is_linear:
                 gate_set_errors.append(self._gate_set_error_by_element(results, self.ideal_gate_set, 'frobenius norm'))
             else:
                 gate_set_errors.append(self._gate_set_error_by_element(results.x, self.ideal_gate_set, 'frobenius norm'))

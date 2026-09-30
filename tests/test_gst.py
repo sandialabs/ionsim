@@ -173,13 +173,26 @@ class TestGST(unittest.TestCase):
 
     def test_mle_gst_analysis(self):
         """ Test GST via maximum likelihood estimation (MLE)""" 
-        solver_results = self.GST_analyzer.solve_for_gate_parameters('MLE') 
+        solver_results = self.GST_analyzer.mle_solve_for_gate_parameters() 
         gate_set_error = self.GST_analyzer.compute_gate_set_error_by_element(solver_results.x, self.true_gate_set)
         X_pi8_error = gate_set_error['Gxpi8:0']
         SPAM_error = gate_set_error["prep"]
         SPAM_error += gate_set_error["POVM"]
         self.assertAlmostEqual(X_pi8_error, 0.00027408522081525397, places=5)
         self.assertAlmostEqual(SPAM_error, 0.00011231981002808708, places=5)
+
+    def test_staged_mle_gst_analysis(self):
+        """ Test staged MLE: agrees with MLE, forwards scipy options to every stage, and restores the circuit list """
+        circuits_before = self.GST_analyzer.parsed_circuits
+        mle_result = self.GST_analyzer.mle_solve_for_gate_parameters()
+        staged_result = self.GST_analyzer.staged_mle_solve_for_gate_parameters(options = {'maxiter': 500})
+
+        np.testing.assert_allclose(staged_result.x, mle_result.x, rtol=1e-3)
+        np.testing.assert_array_equal(self.GST_analyzer.gst_parameters, staged_result.x)
+        self.assertIs(self.GST_analyzer.parsed_circuits, circuits_before)
+        # One estimate per stage (germ power), the last equal to the final result
+        self.assertEqual(sorted(self.GST_analyzer.results_by_stage), [1, 2, 4, 8, 16, 32, 64, 128])
+        np.testing.assert_array_equal(self.GST_analyzer.results_by_stage[128], staged_result.x)
 
     def test_fisher_info(self):
         """ Test calculation of Fisher information, including the SPAM models and the shared SPAM parameter """
