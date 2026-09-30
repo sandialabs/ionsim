@@ -88,7 +88,7 @@ class LSFineLevel(AtomicInternalEnergyLevel):
     s: float
     mj: float
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
-    lifetime: float | str='null'
+    lifetime: float | None=None 
     branching_ratios: dict[str, float] | None=None 
     hyperfine_B: float | None=None
 
@@ -118,7 +118,7 @@ class LSHyperfineLevel(AtomicInternalEnergyLevel):
     f: float
     mf: float
     external_energy_shift: float = 0.
-    lifetime: float | str='null'
+    lifetime: float | None=None 
     branching_ratios: dict[str, float] | None=None 
     hyperfine_B: float | None=None
 
@@ -145,7 +145,7 @@ class LSBackGoudsmitLevel(AtomicInternalEnergyLevel):
     mj: float
     mi: float
     external_energy_shift: float = 0.
-    lifetime: float | str='null'
+    lifetime: float | None=None 
     branching_ratios: dict[str, float] | None=None 
     hyperfine_B: float | None=None
 
@@ -178,7 +178,7 @@ class LSPaschenBackLevel(AtomicInternalEnergyLevel):
     ml: float
     ms: float
     external_energy_shift: float = 0.
-    lifetime: float | str='null'
+    lifetime: float | None=None 
     branching_ratios: dict[str, float] | None=None 
     hyperfine_B: float | None=None
 
@@ -217,7 +217,7 @@ class J1L2FineLevel(AtomicInternalEnergyLevel):
     s2: float
     mj: float
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
-    lifetime: float | str='null'
+    lifetime: float | None=None 
     branching_ratios: dict[str, float] | None=None 
     hyperfine_B: float | None=None
 
@@ -251,7 +251,7 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
     mf: float
     gj: float
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
-    lifetime: float | str = 'null'
+    lifetime: float | None=None 
     branching_ratios: dict[str, float] | None = None 
     hyperfine_B: float | None=None
 
@@ -281,7 +281,7 @@ class J1L2BackGoudsmitLevel(AtomicInternalEnergyLevel):
     mj: float
     gj: float
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
-    lifetime: float | str = 'null'
+    lifetime: float | None=None 
     branching_ratios: dict[str, float] | None = None 
     hyperfine_B: float | None=None
 
