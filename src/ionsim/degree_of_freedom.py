@@ -28,12 +28,6 @@ from ionsim.zeeman_solver import ZeemanHyperfineSolver
 from ionsim.ionsim_error import IonSimError
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, STRUCTURAL_KEYS, PROJECTION_KEYS, ALLOWED_QUANTUM_NUMBER_KEYS
 
-# Level classes for each coupling scheme: (|J, mJ> fine, |F, mF> hyperfine, |mJ, mI> uncoupled).
- #LEVEL_CLASSES = {
- #    'ls': (LSFineLevel, LSHyperfineLevel, LSBackGoudsmitLevel),
- #    'j1l2': (J1L2FineLevel, J1L2HyperfineLevel, J1L2BackGoudsmitLevel),
- #}
-
 @dataclass(frozen=True, eq=False)
 class DegreeOfFreedom(ABC):
     """A degree of freedom in a basis of states."""
@@ -138,7 +132,7 @@ class AtomicStructure(DegreeOfFreedom):
             levels_data = [data for data in levels_data if data['term_symbol'] in manifolds]
 
         # Manifolds of electronic levels may differ in character and thus quantum numbers; therefore we use a manifold builder 
-        #  that can accomodate differences in character for each term symbols' levels. This depends on the angular momentum couplings and any magnetic fields. 
+        #  that can accommodate differences in character for each term symbols' levels. This depends on the angular momentum couplings and any magnetic fields. 
         builders = [_ManifoldBuilder(cls.get_fine_data(level_data), level_data['coupling_scheme'], config_data,
                                      magnetic_field, cls.get_level_factory, kwargs) for level_data in levels_data]
 
