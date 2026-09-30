@@ -169,7 +169,7 @@ def canonical_gate_label(gate: str) -> str:
 
 @dataclass
 class GstCircuit:
-    """ Parsed circuit from GST file, optionally with measurement outcomes 
+    """ GST circuit (read from a GST file or planned), optionally with measurement outcomes 
 
         - follows convention of Prep gates --> {(Germ_gates)^germ_power} --> measure gates  
         - Stores the file string contents
@@ -363,14 +363,14 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> GstCircuit:
         # Create a dictionary with measurement outcomes and corresponding counts for this line  
         measurement_counts = dict(zip(outcome_labels, count_values)) 
 
-        parsed_measurement_data = CircuitData.from_counts(measurement_counts)
+        measurement_data = CircuitData.from_counts(measurement_counts)
     else:
-        parsed_measurement_data = None 
+        measurement_data = None 
     
     # Parse circuit sequence, starting with empty (do nothing -- prep then measure) string 
     if circuit_sequence == "{}":
         return GstCircuit(unparsed_data = line, fiducial_prep_gates=[], germ_gates = [], fiducial_measurement_gates = [],
-                            germ_power = 1, line_labels = line_labels, measurement_data = parsed_measurement_data) 
+                            germ_power = 1, line_labels = line_labels, measurement_data = measurement_data) 
 
     # Find the germ block if it exists  
     germ_match = re.search(r"\(([^)]*)\)(?:\^(\d+))?", circuit_sequence)
@@ -392,7 +392,7 @@ def parse_circuit_line(line: str, outcome_labels: list[str]) -> GstCircuit:
         measure_gates = []
         germ_power = 1
         
-    return GstCircuit(line, prep_gates, germ_gates, measure_gates, germ_power, line_labels, parsed_measurement_data) 
+    return GstCircuit(line, prep_gates, germ_gates, measure_gates, germ_power, line_labels, measurement_data) 
 
 
 def parse_gst_circuit_file(filepath: str | Path) -> list[GstCircuit]:

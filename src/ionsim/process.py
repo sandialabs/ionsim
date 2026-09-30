@@ -845,7 +845,7 @@ class Circuit_Process_Matrix_Function_Helper():
 
 
 
-# Possible idea: Build a IonSim circuit object from a ParsedCircuit object, requires gate models + basis  
+# Possible idea: Build a IonSim circuit object from a GstCircuit object, requires gate models + basis  
 #@dataclass(frozen=True,eq=False)
 #class GST_Circuit():
 #    """ Class containing IonSim GST Circuit Objects, containing lists of gates"""
