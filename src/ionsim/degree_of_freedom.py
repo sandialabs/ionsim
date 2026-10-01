@@ -139,26 +139,27 @@ class AtomicStructure(DegreeOfFreedom):
                                      magnetic_field, cls.get_level_factory, kwargs) for level_data in levels_data]
 
         # Build structure from a list of quantum numbers from each level or from specified level names 
-        if quantum_numbers is not None:
+        if quantum_numbers:
             levels = cls._levels_from_quantum_numbers(quantum_numbers, builders, config_data['nuclear_spin'], level_aliases)
-            return cls(levels + [SinkLevel()] if include_sink else levels, name)
+        else:
+            # Extract levels that are requested by the user OR include all levels if only manifold/term symbol is specified.  
+            levels = [level for builder in builders for level in builder.all_levels()
+                      if level_names is None or level.name in level_names]
 
-        # Check for duplicate level names:
+        # Check for duplicate or levels not found in requested manifolds  
         if level_names:
+            # Check for duplicate level names:
             duplicates = (len(level_names) != len(set(level_names))) 
             if duplicates:
                 raise IonSimError(f"Level names should be unique but contains duplicates. Found {len(set(level_names))} unique level names.") 
 
-        # Extract levels that are requested by the user OR include all levels if only manifold/term symbol is specified.  
-        levels = [level for builder in builders for level in builder.all_levels()
-                  if level_names is None or level.name in level_names]
-
-        if level_names is not None:
+            # Check for level names that are not found in the requested manifolds:
             missing = set(level_names) - {level.name for level in levels}
             if missing:
                 raise IonSimError(f"Level names {sorted(missing)} were not found in the selected manifolds.")
             if level_aliases:
                 levels = [replace(level, alias=level_aliases[level_names.index(level.name)]) for level in levels]
+
         return cls(levels + [SinkLevel()] if include_sink else levels, name)
 
     @classmethod
