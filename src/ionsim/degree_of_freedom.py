@@ -28,6 +28,9 @@ from ionsim.zeeman_solver import ZeemanHyperfineSolver
 from ionsim.ionsim_error import IonSimError
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, STRUCTURAL_KEYS, PROJECTION_KEYS, ALLOWED_QUANTUM_NUMBER_KEYS
 
+UNCOUPLED_OVERLAP_WARNING_THRESHOLD = 0.9
+
+
 @dataclass(frozen=True, eq=False)
 class DegreeOfFreedom(ABC):
     """A degree of freedom in a basis of states."""
@@ -72,7 +75,6 @@ class MotionalMode(DegreeOfFreedom):
         else:
             levels = [CollectiveMotionalEnergyLevel(frequency, fock_number) for fock_number in range(fock_dimension)]
         return cls(levels, name)
-
 
 @dataclass(frozen=True, eq=False)
 class AtomicStructure(DegreeOfFreedom):
@@ -423,7 +425,6 @@ class _ManifoldBuilder:
         # the same eigenstate, normalization forces at least one overlap <= 0.5, so this warning also catches that case.
         # Minimum |<mJ, mI|psi>|^2 between a requested |mJ, mI> label and its assigned energy eigenstate before a warning is issued.
         # Below this, mJ and mI are not good quantum numbers at the chosen field and the label is only nominal.
-        UNCOUPLED_OVERLAP_WARNING_THRESHOLD = 0.9
         overlaps = np.abs(eigenvecs[solver.basis_states.index((mj, mi)), :])**2
         max_overlap = float(np.max(overlaps))
         if max_overlap < UNCOUPLED_OVERLAP_WARNING_THRESHOLD:
