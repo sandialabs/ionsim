@@ -322,7 +322,7 @@ class _ManifoldBuilder:
     """ Builds the energy levels of one manifold (one entry of the species config file) at a given magnetic field.
 
         Every level's external energy shift comes from `_energy_shift`, the single place to extend when other static-field
-        terms (e.g. a DC Stark shift) are added. The Zeeman solution is computed on first use and cached, so manifolds
+        terms (e.g. a DC light shift) are added. The Zeeman solution is computed on first use and cached, so manifolds
         that contribute no levels are never diagonalized.
     """
 
