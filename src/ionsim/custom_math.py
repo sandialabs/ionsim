@@ -452,8 +452,11 @@ def finite_difference_derivatives(function: Callable, x0: Vector, order: int = 1
         minus_allowed = lower is None or x0[i] - h >= lower
         plus_allowed = upper is None or x0[i] + h <= upper
         if minus_allowed and plus_allowed:
-            minus_finite = np.all(np.isfinite(f_at({i: -h})))
-            plus_finite = np.all(np.isfinite(f_at({i: h})))
+            # Probe both sides; a side where f is undefined (e.g. sqrt of a negative rate) is expected and handled by falling back
+            # to a one-sided stencil, so numpy's invalid-value / divide warnings are silenced for these two evaluations only
+            with np.errstate(invalid='ignore', divide='ignore'):
+                minus_finite = np.all(np.isfinite(f_at({i: -h})))
+                plus_finite = np.all(np.isfinite(f_at({i: h})))
             if minus_finite and plus_finite:
                 return 'central'
             minus_allowed, plus_allowed = minus_finite, plus_finite

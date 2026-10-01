@@ -8,6 +8,7 @@
 #***************************************************************************************************
 
 import unittest
+import warnings
 import numpy as np
 from ionsim.custom_math import finite_difference_derivatives, slow_trapz_for_matrix, trapz_for_matrix
 from ionsim.testing import assert_array_close
@@ -63,7 +64,8 @@ class TestCustomMath(unittest.TestCase):
 
     def test_finite_difference_derivatives_at_boundary(self):
         """ One-sided differences at a bound and where the function is undefined on one side """
-        # A rate parameter at zero: sqrt(rate) is NaN for rate < 0, but the function is smooth for rate >= 0
+        # A rate parameter at zero: sqrt(rate) is NaN for rate < 0, but the function is smooth for rate >= 0.
+        # The engine probes the invalid side, detects the NaN, and uses a one-sided stencil without emitting warnings.
         f = lambda x: np.sqrt(x[0])**2 * np.exp(-x[0]) + x[1]
         _, jacobian, hessian = finite_difference_derivatives(f, np.array([0., 1.]), order=2)
         self.assertAlmostEqual(jacobian[0], 1., places=8)
