@@ -1,3 +1,20 @@
+import numpy as np
+from dataclasses import dataclass, field, replace
+
+import scipy.optimize as opt
+from scipy import stats
+from typing import Callable
+import warnings
+
+from ionsim.process import Gate
+from ionsim.basis import StandardBasis
+from ionsim.gst_circuit_parser import GstGate, GstCircuit, CircuitData, gate_from_label
+from ionsim.gate_set_model import GateSetModel
+from ionsim.ionsim_error import IonSimError
+from ionsim.custom_types import Vector, Matrix
+from ionsim.io import write_results_to_file
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
+
 """ Gate set tomography (GST) analysis.
 
     The analysis is a set of functions. Each takes the GST circuits (with measurement data), a GateSetModel (the models of
@@ -16,23 +33,6 @@
     references, initial guesses) are given as a vector in the order of gate_set_model.parameter_names, or as a dictionary of
     parameter names to values in which unlisted parameters take their specified initial guesses.
 """
-import numpy as np
-from dataclasses import dataclass, field, replace
-
-import scipy.optimize as opt
-from scipy import stats
-from typing import Callable
-import warnings
-
-from ionsim.process import Gate
-from ionsim.basis import StandardBasis
-from ionsim.gst_circuit_parser import GstGate, GstCircuit, CircuitData, gate_from_label
-from ionsim.gate_set_model import GateSetModel
-from ionsim.ionsim_error import IonSimError
-from ionsim.custom_types import Vector, Matrix
-from ionsim.io import write_results_to_file
-from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
-
 
 __all__ = ['GstResult', 'linear_solve_for_gate_parameters', 'mle_solve_for_gate_parameters', 'staged_mle_solve_for_gate_parameters',
            'log_likelihood', 'chi_squared', 'simulate_gst_data', 'evaluate_gate_set', 'gate_set_errors', 'average_gate_set_error',
