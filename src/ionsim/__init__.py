@@ -30,8 +30,8 @@ from .noise import Noise
 from .zeeman_solver import ZeemanHyperfineSolver
 from .composite_operator import CompositeOperator
 from .lindbladian import Dissipator, DissipatorSpontaneousEmission, Lindbladian 
-from .gate_interpolant import GateInterpolant 
-from .io import * 
+from .gate_interpolator import GateInterpolator 
+from .io import write_results_to_file, read_results_from_file, write_matrix, read_matrix 
 from .gst_circuit_parser import *
 from .gate_set_tomography import *
 from .gate_set_model import GateSetModel
