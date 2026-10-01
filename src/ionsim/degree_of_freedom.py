@@ -314,6 +314,16 @@ class AtomicStructure(DegreeOfFreedom):
             config_data = yaml.safe_load(file)
         return config_data
 
+    @classmethod
+    def get_manifold_config(cls, species: str, term_symbol: str) -> dict:
+        """The config-file entry for one manifold of a species, with values exactly as in the file (e.g. energies in Hz)."""
+        levels_data = cls.get_config_data(species)['levels']
+        entry = next((data for data in levels_data if data['term_symbol'] == term_symbol), None)
+        if entry is None:
+            raise IonSimError(f"No manifold '{term_symbol}' in the {species} config data. "
+                              f"Available: {[data['term_symbol'] for data in levels_data]}.")
+        return entry
+
 def levels_in_manifold(structure: AtomicStructure, term_symbol: str):
     return [level for level in structure.energy_levels if level.term_symbol == term_symbol]
 

@@ -24,11 +24,7 @@ from ionsim.lindbladian import DissipatorSpontaneousEmission, Lindbladian
 from ionsim.ionsim_error import IonSimError
 
 # Reference data, read from the species config files (src/ionsim/atomic_config_data), which cite the sources.
-def manifold_config(species: str, term_symbol: str) -> dict:
-    """The config-file entry for one manifold of a species."""
-    levels = AtomicStructure.get_config_data(species)['levels']
-    return next(level for level in levels if level['term_symbol'] == term_symbol)
-
+manifold_config = AtomicStructure.get_manifold_config
 
 CA40_P12 = manifold_config('40Ca+', 'P1/2')
 CA40_P12_LIFETIME = CA40_P12['lifetime']                       # s, 40Ca+ 4P1/2 lifetime

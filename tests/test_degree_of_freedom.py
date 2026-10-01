@@ -14,6 +14,7 @@ import numpy as np
 from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.atomic_internal_energy_level import LSHyperfineLevel, J1L2HyperfineLevel
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel
+from ionsim.ionsim_error import IonSimError
 
 class TestDegreeOfFreedom(unittest.TestCase):
 
@@ -93,6 +94,23 @@ class TestDegreeOfFreedom(unittest.TestCase):
         first_level = self.mode_0.energy_levels[0]
         self.assertIsInstance(first_level, CollectiveMotionalEnergyLevel)
         self.assertAlmostEqual(first_level.mode_frequency, 18849555.92153876, places=5)
+
+
+class TestGetManifoldConfig(unittest.TestCase):
+    """AtomicStructure.get_manifold_config returns one config-file entry, unconverted."""
+
+    def test_returns_raw_entry(self):
+        entry = AtomicStructure.get_manifold_config('87Rb', '53 S1/2')
+        self.assertEqual(entry['term_symbol'], '53 S1/2')
+        self.assertEqual(entry['n'], 53)
+        # Values are as written in 87Rb.yaml (Hz), not converted to rad/s as on built levels.
+        level = AtomicStructure.from_species(species='87Rb', manifolds=['53 S1/2']).energy_levels[0]
+        self.assertAlmostEqual(level.hyperfine_A, 2 * np.pi * entry['hyperfine_A'])
+
+    def test_missing_manifold_lists_available(self):
+        with self.assertRaises(IonSimError) as context:
+            AtomicStructure.get_manifold_config('87Rb', 'P5/2')
+        self.assertIn("'53 S1/2'", str(context.exception))
 
 if __name__ == '__main__':
     unittest.main()
