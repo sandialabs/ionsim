@@ -21,6 +21,8 @@ import numpy as np
 from ionsim.custom_types import Vector
 from ionsim.gst_circuit_parser import GstGate, gate_from_label, canonical_gate_label, IDLE_ALIASES
 from ionsim.ionsim_error import IonSimError
+from ionsim.gate_interpolator import GateInterpolator
+from ionsim.process import Gate
 
 
 class GateSetModel:
@@ -44,6 +46,11 @@ class GateSetModel:
 
         The same object is given to the GST solvers and to GSTCircuitPlanner so that the analysis and the circuit design /
         Fisher information use identical parameters.
+
+        Interpolated gate models (optional): for gate models that are expensive to evaluate, interpolate_gate_model() builds a
+        cubic-spline interpolation of the model's process matrix on a grid of its parameters (GateInterpolator). The GST solvers
+        and the circuit planner then evaluate the interpolation (evaluation_gate_models), while gate_models keeps the exact models,
+        which are used for one-off evaluations of a gate set (e.g. simulated data, gate set errors, gauge targets).
     """
 
     def __init__(self, prep_state_model: Callable, POVM_effect_models: Callable, gate_models: dict[str, Callable]):
@@ -77,6 +84,11 @@ class GateSetModel:
         self._layout = None
         # Incremented whenever the specification changes; users of this object compare it to detect re-organization
         self.version = 0
+
+        # Optional interpolated gate models (see interpolate_gate_model), keyed by GstGate
+        self._gate_interpolators = {}
+        self._interpolated_gate_models = {}
+        self._warned_outside_grid = set()
 
 
     ### Models ###
@@ -433,6 +445,140 @@ class GateSetModel:
         return effects
 
     def gate_process_matrix(self, gate: str | GstGate, theta: Vector):
-        """ Process matrix of a gate (label or GstGate) at theta """
+        """ Process matrix of a gate (label or GstGate) at theta, from the exact gate model """
         gate = gate if isinstance(gate, GstGate) else gate_from_label(gate)
         return self.gate_models[gate](*self.model_parameters(theta, gate))
+
+
+    ### Interpolated gate models (optional) ###
+    @property
+    def evaluation_gate_models(self) -> dict:
+        """ Gate models used for the repeated evaluations of the GST solvers and the circuit planner, keyed by GstGate: the
+            interpolated model for gates with interpolation (see interpolate_gate_model), otherwise the exact model. """
+        return {gate: self._interpolated_gate_models.get(gate, model) for gate, model in self.gate_models.items()}
+
+    @property
+    def gate_interpolators(self) -> dict[str, GateInterpolator]:
+        """ GateInterpolator of each interpolated gate model, keyed by gate label (e.g. to write it to a file) """
+        return {gate.label: interpolator for gate, interpolator in self._gate_interpolators.items()}
+
+    def _gate_key(self, gate: str) -> GstGate:
+        if isinstance(gate, GstGate):
+            raise TypeError(f"Specify gates by string label (e.g. {gate.label!r}) rather than GstGate objects.")
+        key = gate_from_label(gate)
+        if key not in self.gate_models:
+            raise ValueError(f"No model for gate {gate!r}. Gate models: {[g.label for g in self.gate_models]}.")
+        return key
+
+    def interpolate_gate_model(self, gate: str, grid_axes: dict | None=None, interpolator: GateInterpolator | None=None,
+                               basis=None) -> GateInterpolator:
+        """ Use a cubic-spline interpolation of a gate model's process matrix in the GST solvers and the circuit planner.
+
+            Worthwhile when the gate model is expensive to evaluate (e.g. Hamiltonian / Lindbladian simulations): the model is
+            evaluated once per grid point, and each later evaluation interpolates. Choose the grid to cover the relevant
+            parameter values (e.g. around reference values used for circuit planning) and set the parameters' bounds
+            (specify_parameter) within the grid, so that the solvers stay on it. Outside the grid, the exact model is used
+            (with a warning). Check the accuracy with gate_interpolation_error().
+
+            - gate: gate label, e.g. 'MS:0:1'.
+            - grid_axes: {argument name: 1D increasing array of grid values} for every argument of the gate model, e.g.
+                {'excess_rabi_rate': np.linspace(0, 1, 9), 'phi_error': np.linspace(0, 0.2, 9)}. At least 2 points per axis
+                (at least 4 for cubic accuracy). The model is evaluated at every point of the grid (the product of the axes).
+            - interpolator: alternatively, an existing GateInterpolator for this gate model (e.g. read with
+                GateInterpolator.from_file_and_basis), whose grid axes are named after the model's arguments.
+            - basis: optional basis of the gate (stored with the GateInterpolator's gates).
+
+            Returns the GateInterpolator (e.g. to save it with its write_to_file method).
+        """
+        key = self._gate_key(gate)
+        argument_names = self._model_parameter_names[key.label]
+        exact_model = self.gate_models[key]
+        if (grid_axes is None) == (interpolator is None):
+            raise ValueError("Specify either grid_axes (to build the interpolation) or interpolator (an existing GateInterpolator), not both or neither.")
+
+        if grid_axes is not None:
+            if set(grid_axes) != set(argument_names):
+                raise ValueError(f"grid_axes must have one axis for each argument of the {key.label!r} model, {argument_names}; "
+                                 f"received {list(grid_axes)}.")
+            ordered_axes = {}
+            for name in argument_names:
+                axis = np.asarray(grid_axes[name], dtype=float)
+                if axis.ndim != 1 or len(axis) < 2:
+                    raise ValueError(f"The grid axis for {name!r} must be a 1D array of at least 2 values.")
+                if not np.all(np.isfinite(axis)) or np.any(np.diff(axis) <= 0):
+                    raise ValueError(f"The grid axis for {name!r} must be finite and strictly increasing.")
+                ordered_axes[name] = axis
+            grid = GateInterpolator.build_grid(ordered_axes)
+            # One model evaluation per grid point
+            gates = [Gate(basis=basis, process_matrix=np.asarray(exact_model(*point))) for point in grid]
+            interpolator = GateInterpolator(ordered_axes, key.label, grid, basis, gates)
+        else:
+            if not isinstance(interpolator, GateInterpolator):
+                raise TypeError(f"interpolator must be a GateInterpolator; received {type(interpolator).__name__}.")
+            if set(interpolator.parameter_list) != set(argument_names):
+                raise ValueError(f"The interpolator's grid axes {interpolator.parameter_list} must be the arguments of the "
+                                 f"{key.label!r} model, {argument_names}.")
+            # Check that the interpolator's data corresponds to this model, at one grid point
+            point = dict(zip(interpolator.parameter_list, interpolator.grid[0]))
+            exact = np.asarray(exact_model(*[point[name] for name in argument_names]))
+            stored = interpolator.computed_gates[0].process_matrix
+            if exact.shape != stored.shape:
+                raise ValueError(f"The interpolator's process matrices have shape {stored.shape}, but the {key.label!r} model returns {exact.shape}.")
+            if np.max(np.abs(exact - stored)) > 1e-8 * max(1., np.max(np.abs(exact))):
+                warnings.warn(f"The interpolator's process matrix differs from the {key.label!r} model at the grid point {point} "
+                              f"(max difference {np.max(np.abs(exact - stored)):.2e}); check that it was built from this model.")
+
+        process_matrix_interpolator = interpolator.process_matrix_interpolator
+        grid_names = interpolator.parameter_list
+        lows = np.array([np.min(interpolator.grid_axes[name]) for name in grid_names])
+        highs = np.array([np.max(interpolator.grid_axes[name]) for name in grid_names])
+        tolerance = 1e-12 * np.maximum(1., highs - lows)
+        signature = inspect.signature(exact_model)
+        position = {name: argument_names.index(name) for name in grid_names}
+
+        def interpolated_gate_model(*args, **kwargs):
+            if kwargs or len(args) != len(argument_names):
+                bound = signature.bind(*args, **kwargs)
+                bound.apply_defaults()
+                args = tuple(bound.arguments[name] for name in argument_names)
+            values = np.array([float(args[position[name]]) for name in grid_names])
+            if np.any(values < lows - tolerance) or np.any(values > highs + tolerance):
+                if key not in self._warned_outside_grid:
+                    self._warned_outside_grid.add(key)
+                    warnings.warn(f"Gate {key.label!r} was evaluated outside its interpolation grid "
+                                  f"({dict(zip(grid_names, values))}); using the exact model there. Set the parameters' bounds "
+                                  f"within the grid {dict(zip(grid_names, zip(lows, highs)))} to keep the solvers on it.")
+                return exact_model(*args)
+            return process_matrix_interpolator(*values)
+
+        interpolated_gate_model.__signature__ = signature
+        interpolated_gate_model.__name__ = getattr(exact_model, '__name__', key.label)
+        interpolated_gate_model.__doc__ = f"Cubic-spline interpolation of the {key.label!r} gate model's process matrix."
+
+        self._gate_interpolators[key] = interpolator
+        self._interpolated_gate_models[key] = interpolated_gate_model
+        self._warned_outside_grid.discard(key)
+        return interpolator
+
+    def remove_gate_interpolation(self, gate: str):
+        """ Use the exact model for a gate again """
+        key = self._gate_key(gate)
+        self._gate_interpolators.pop(key, None)
+        self._interpolated_gate_models.pop(key, None)
+
+    def gate_interpolation_error(self, gate: str, n_samples: int=50, rng: np.random.Generator | int | None=None) -> float:
+        """ Largest absolute difference between the interpolated and exact process matrix elements, at n_samples random
+            points of the interpolation grid's domain (each point costs one exact model evaluation). """
+        key = self._gate_key(gate)
+        if key not in self._gate_interpolators:
+            raise ValueError(f"Gate {gate!r} has no interpolated model; see interpolate_gate_model().")
+        rng = np.random.default_rng(rng)
+        interpolator = self._gate_interpolators[key]
+        argument_names = self._model_parameter_names[key.label]
+        exact_model, interpolated_model = self.gate_models[key], self._interpolated_gate_models[key]
+        largest = 0.
+        for _ in range(n_samples):
+            point = {name: rng.uniform(np.min(axis), np.max(axis)) for name, axis in interpolator.grid_axes.items()}
+            args = [point[name] for name in argument_names]
+            largest = max(largest, float(np.max(np.abs(np.asarray(interpolated_model(*args)) - np.asarray(exact_model(*args))))))
+        return largest

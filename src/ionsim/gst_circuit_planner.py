@@ -374,12 +374,13 @@ class GSTCircuitPlanner:
         # Map each gate argument, namespaced by gate label, to its global parameter name (shared arguments map to one name)
         parameter_names = {}
         for gate in dict.fromkeys(gates):
-            argument_names = inspect.signature(gate_set_model.gate_models[gate]).parameters.keys()
+            argument_names = inspect.signature(gate_set_model.evaluation_gate_models[gate]).parameters.keys()
             for argument, global_name in zip(argument_names, gate_set_model.argument_names(gate)):
                 parameter_names[f"{gate.label}.{argument}"] = global_name
 
         # The helper composes its gate sequence left to right as matrices, i.e. last-applied gate first
-        return Circuit_Process_Matrix_Function_Helper([gate_set_model.gate_models[g] for g in gates[::-1]], separator='.',
+        evaluation_models = gate_set_model.evaluation_gate_models   # interpolated where requested
+        return Circuit_Process_Matrix_Function_Helper([evaluation_models[g] for g in gates[::-1]], separator='.',
                     gate_labels=[g.label for g in gates[::-1]], parameter_names=parameter_names,
                     gate_cache=self.gate_cache, evaluator_tolerance=self.evaluator_tolerance)
 

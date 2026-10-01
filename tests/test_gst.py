@@ -239,5 +239,13 @@ class TestGST(unittest.TestCase):
         _, FI_with_hessian = self.gst_circuit_planner.compute_circuit_fisher_information(last_circuit, parameter_values, include_hessian=True)
         np.testing.assert_allclose(FI_with_hessian, FI_last_circuit, rtol=1e-5)
 
+    def test_fisher_info_with_interpolated_gate_model(self):
+        """ The circuit planner's Fisher information with an interpolated gate model agrees with the exact model """
+        _, exact_matrices = self.gst_circuit_planner.compute_design_fisher_information(self.gst_circuits, self.true_values)
+        self.gate_set_model.interpolate_gate_model('Gxpi8:0', grid_axes = {'amplitude_noise_strength': np.linspace(0., 0.5, 11)})
+        _, interpolated_matrices = self.gst_circuit_planner.compute_design_fisher_information(self.gst_circuits, self.true_values)
+        exact, interpolated = sum(exact_matrices.values()), sum(interpolated_matrices.values())
+        np.testing.assert_allclose(interpolated, exact, rtol=1e-4)
+
 if __name__ == '__main__':
     unittest.main()

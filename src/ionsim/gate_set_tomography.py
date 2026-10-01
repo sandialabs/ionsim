@@ -15,6 +15,9 @@
     A gate set is evaluated from a gate set model and its parameter values, theta. Parameter values (theta, targets,
     references, initial guesses) are given as a vector in the order of gate_set_model.parameter_names, or as a dictionary of
     parameter names to values in which unlisted parameters take their specified initial guesses.
+
+    Expensive gate models can be replaced in the solvers (and the circuit planner) by interpolations on a parameter grid; see
+    GateSetModel.interpolate_gate_model.
 """
 import numpy as np
 from dataclasses import dataclass, field, replace
@@ -159,7 +162,7 @@ class _GstProblem:
     """ The circuits and models of one GST calculation, with quantities derived from them. Created by each public function;
         holds no results between calls. """
 
-    def __init__(self, gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, verbose: bool=False):
+    def __init__(self, gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, verbose: bool=False, exact_models: bool=False):
         if not isinstance(gate_set_model, GateSetModel):
             raise TypeError(f"gate_set_model must be a GateSetModel object; received {type(gate_set_model).__name__}.")
         if isinstance(gst_circuits, GstCircuit) or not all(isinstance(c, GstCircuit) for c in gst_circuits):
@@ -168,7 +171,8 @@ class _GstProblem:
             raise ValueError("gst_circuits is empty.")
         self.gst_circuits = list(gst_circuits)
         self.gate_set_model = gate_set_model
-        self.gate_models = gate_set_model.gate_models
+        # Repeated evaluations use the evaluation models (interpolated where requested); exact_models forces the exact models
+        self.gate_models = gate_set_model.gate_models if exact_models else gate_set_model.evaluation_gate_models
         self.verbose = verbose
 
         # Gates appearing in the circuits must have models
@@ -611,11 +615,12 @@ def simulate_gst_data(gst_circuits: list[GstCircuit], gate_set_model: GateSetMod
                       rng: np.random.Generator | int | None=None) -> list[GstCircuit]:
     """ Sample measurement outcomes for each circuit from the models at parameter values theta.
 
-        Returns new circuits (copies with the sampled counts); the given circuits are not modified.
+        Returns new circuits (copies with the sampled counts); the given circuits are not modified. The exact gate models are
+        used, also for gates with interpolated models.
         - rng: a numpy Generator or seed, for reproducibility (default: a new Generator).
     """
     rng = np.random.default_rng(rng)
-    problem = _GstProblem(gst_circuits, gate_set_model)
+    problem = _GstProblem(gst_circuits, gate_set_model, exact_models=True)   # simulate from the exact models
     data = problem.tabulate(problem.gst_circuits, require_data=False)
     probabilities = problem.predict_sequence_probabilities(gate_set_model.parse_theta(theta), data.sequences)
     simulated = []

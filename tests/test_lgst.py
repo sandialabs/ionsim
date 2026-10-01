@@ -360,5 +360,60 @@ class TestGST(unittest.TestCase):
         with self.assertRaises(TypeError):
             mle_solve_for_gate_parameters(self.gate_set_model, self.gst_circuits)
 
+    def test_interpolated_gate_models(self):
+        """ Interpolated gate models: the solvers use the interpolations, one-off gate set evaluations use the exact models """
+        def model(interpolate):
+            gate_set_model = GateSetModel(self.prep_state_model, self.POVM_models, self.gate_models)
+            gate_set_model.specify_parameter("SPAM_error_probability", model = "shared", guess = 1e-4, bounds = (0., 1.))
+            gate_set_model.specify_parameter("amplitude_noise_strength", model = "shared", guess = 0.5, bounds = (0.0001, 1.0))
+            if interpolate:
+                for gate in ['Gxpi2:0', 'Gypi2:0']:
+                    gate_set_model.interpolate_gate_model(gate, grid_axes = {'amplitude_noise_strength': np.linspace(0., 1., 9)})
+            return gate_set_model
+        exact, interpolated = model(False), model(True)
+
+        self.assertEqual(sorted(interpolated.gate_interpolators), ['Gxpi2:0', 'Gypi2:0'])
+        self.assertLess(interpolated.gate_interpolation_error('Gxpi2:0', rng = 0), 2e-4)
+        # gate_models keeps the exact models; the solvers evaluate the interpolations
+        gate = [g for g in interpolated.gate_models if g.label == 'Gxpi2:0'][0]
+        self.assertIs(interpolated.gate_models[gate], self.gate_models['Gxpi2:0'])
+        self.assertIsNot(interpolated.evaluation_gate_models[gate], self.gate_models['Gxpi2:0'])
+
+        # The solvers agree with the exact models to within the interpolation accuracy
+        mle_exact = mle_solve_for_gate_parameters(self.gst_circuits, exact)
+        mle_interpolated = mle_solve_for_gate_parameters(self.gst_circuits, interpolated)
+        np.testing.assert_allclose(mle_interpolated.theta, mle_exact.theta, atol=1e-4)
+        lin_exact = linear_solve_for_gate_parameters(self.gst_circuits, exact, self.gst_circuit_planner, target = self.ideal_values)
+        lin_interpolated = linear_solve_for_gate_parameters(self.gst_circuits, interpolated, self.gst_circuit_planner, target = self.ideal_values)
+        np.testing.assert_allclose(lin_interpolated.theta, lin_exact.theta, atol=1e-4)
+
+        # Simulated data and gate set errors use the exact models
+        sim_exact = simulate_gst_data(self.gst_circuits, exact, self.true_values, 1000, rng = 2)
+        sim_interpolated = simulate_gst_data(self.gst_circuits, interpolated, self.true_values, 1000, rng = 2)
+        self.assertTrue(all(a.measurement_data.counts == b.measurement_data.counts for a, b in zip(sim_exact, sim_interpolated)))
+        self.assertEqual(gate_set_errors(interpolated, mle_exact.theta, reference = self.true_values),
+                         gate_set_errors(exact, mle_exact.theta, reference = self.true_values))
+
+        # Outside the grid: the exact model, with one warning
+        interpolated_model = interpolated.evaluation_gate_models[gate]
+        with self.assertWarnsRegex(UserWarning, "outside its interpolation grid"):
+            np.testing.assert_array_equal(interpolated_model(1.5), self.gate_models['Gxpi2:0'](1.5))
+
+        # Removing the interpolation restores the exact model
+        interpolated.remove_gate_interpolation('Gxpi2:0')
+        self.assertIs(interpolated.evaluation_gate_models[gate], self.gate_models['Gxpi2:0'])
+
+    def test_interpolated_gate_model_validation(self):
+        """ Helpful errors for incomplete or invalid interpolation grids """
+        gate_set_model = GateSetModel(self.prep_state_model, self.POVM_models, self.gate_models)
+        with self.assertRaisesRegex(ValueError, "one axis for each argument"):
+            gate_set_model.interpolate_gate_model('Gxpi2:0', grid_axes = {'phase': np.linspace(0, 1, 5)})
+        with self.assertRaisesRegex(ValueError, "strictly increasing"):
+            gate_set_model.interpolate_gate_model('Gxpi2:0', grid_axes = {'amplitude_noise_strength': [0., 0.5, 0.2]})
+        with self.assertRaisesRegex(ValueError, "either grid_axes"):
+            gate_set_model.interpolate_gate_model('Gxpi2:0')
+        with self.assertRaisesRegex(ValueError, "No model for gate"):
+            gate_set_model.interpolate_gate_model('Gzpi2:0', grid_axes = {'amplitude_noise_strength': np.linspace(0, 1, 5)})
+
 if __name__ == '__main__':
     unittest.main()
