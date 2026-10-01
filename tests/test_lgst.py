@@ -21,8 +21,9 @@ from ionsim.hamiltonian import Hamiltonian
 from ionsim.lindbladian import Dissipator, Lindbladian
 from ionsim.gst_circuit_planner import GSTCircuitPlanner
 from ionsim.gst_circuit_parser import CircuitData 
-from ionsim.gate_set_tomography import GateSetTomography
-from ionsim.gst_parameters import GstModelParameters
+from ionsim.gate_set_tomography import (linear_solve_for_gate_parameters, mle_solve_for_gate_parameters, gate_set_errors,
+                                        log_likelihood, chi_squared, simulate_gst_data, evaluate_gate_set)
+from ionsim.gate_set_model import GateSetModel
 
 
 def E0_1Q(prob_false_bright:float, prob_false_dark: float):
@@ -147,24 +148,17 @@ class TestGST(unittest.TestCase):
         # Run method to generate and populate circuit outcomes and test circuit planning 
         self.test_circuit_simulations_and_outcomes()
     
-        self.true_POVM_effects = {} 
-        self.true_POVM_effects['0'] = EnergyShiftOperator.from_matrix(self.basis, self.POVM_models(SPAM_error_prob)['0'].reshape(2,2))
-        self.true_POVM_effects['1'] = EnergyShiftOperator.from_matrix(self.basis, self.POVM_models(SPAM_error_prob)['1'].reshape(2,2))
-
-        self.true_gate_set = {}
-        self.true_gate_set['prep'] = self.rho_0 
-        self.true_gate_set['POVM'] = self.true_POVM_effects 
-        self.true_gate_set['Gxpi2:0'] =  X_pi_2_co_prop_simple(amplitude_noise_strength)
-        self.true_gate_set['Gypi2:0'] =  Y_pi_2_co_prop_simple(amplitude_noise_strength)
-
-        self.GST_analyzer = GateSetTomography(self.basis, self.prep_state_model, self.POVM_models, self.gst_circuits, self.gate_models, 
-                                    circuit_design = self.gst_circuit_planner, ideal_gate_set = self.true_gate_set, verbose = False)
-
-        ## Parameter information: initial guesses, bounds, and sharing among models.
+        ## Models and parameter information: initial guesses, bounds, and sharing among models.
         # model = "shared" ties together every model with an argument of that name:
         #   SPAM_error_probability -> prep & POVM models;  amplitude_noise_strength -> Gxpi2:0 & Gypi2:0 models
-        self.GST_analyzer.specify_parameter("SPAM_error_probability", model = "shared", guess = 1e-4, bounds = (0., 1.))
-        self.GST_analyzer.specify_parameter("amplitude_noise_strength", model = "shared", guess = 0.5, bounds = (0.0001, 10.0))
+        self.gate_set_model = GateSetModel(self.prep_state_model, self.POVM_models, self.gate_models)
+        self.gate_set_model.specify_parameter("SPAM_error_probability", model = "shared", guess = 1e-4, bounds = (0., 1.))
+        self.gate_set_model.specify_parameter("amplitude_noise_strength", model = "shared", guess = 0.5, bounds = (0.0001, 10.0))
+
+        # True parameter values used to simulate the data (the reference for gate set errors), and ideal values (the gauge
+        # target for linear GST: noise-free gates, perfect state preparation and measurement)
+        self.true_values = {'shared:SPAM_error_probability': SPAM_error_prob, 'shared:amplitude_noise_strength': amplitude_noise_strength}
+        self.ideal_values = {'shared:SPAM_error_probability': 0., 'shared:amplitude_noise_strength': 0.}
 
 
     def test_circuit_simulations_and_outcomes(self):
@@ -194,21 +188,41 @@ class TestGST(unittest.TestCase):
         self.gst_circuits = self.gst_circuits
 
     def test_linear_gst_analysis(self):
-        """ Test linear GST (LGST) """ 
-        solver_results = self.GST_analyzer.linear_solve_for_gate_parameters() 
-        gate_set_error = self.GST_analyzer.compute_gate_set_error_by_element(solver_results, self.true_gate_set)
+        """ Test linear GST (LGST), in the gauge of the ideal gate set """
+        result = linear_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model, self.gst_circuit_planner, target = self.ideal_values)
+        gate_set_error = gate_set_errors(self.gate_set_model, result.theta, reference = self.true_values)
         X_pi2_error = gate_set_error['Gxpi2:0']
         Y_pi2_error = gate_set_error['Gypi2:0']
         SPAM_error = gate_set_error["prep"]
         SPAM_error += gate_set_error["POVM"]
-        self.assertAlmostEqual(X_pi2_error, 0.0004924175661171493, places=5)
-        self.assertAlmostEqual(Y_pi2_error, 0.0004924175661169726, places=5)
-        self.assertAlmostEqual(SPAM_error, 2.1712445132231874e-05, places=5)
+        self.assertAlmostEqual(X_pi2_error, 0.0024164216539786557, places=5)
+        self.assertAlmostEqual(Y_pi2_error, 0.0024164216539785967, places=5)
+        self.assertAlmostEqual(SPAM_error, 1.6755539915651837e-08, places=5)
+        self.assertEqual(result.method, 'linear')
+        self.assertEqual(sorted(result.lgst_estimates['gate_estimates']), ['Gxpi2:0', 'Gypi2:0'])
+
+        # The gauge target can also be given explicitly, e.g. an ideal prep |0><0|, ideal measurement projectors, and ideal rotations
+        ideal_gate_set = {'prep': State.from_density_matrix(self.basis, Pauli.projector_0),
+                          'POVM': {'0': EnergyShiftOperator.from_matrix(self.basis, Pauli.projector_0),
+                                   '1': EnergyShiftOperator.from_matrix(self.basis, Pauli.projector_1)},
+                          'Gxpi2:0': self.gate_models['Gxpi2:0'](0.), 'Gypi2:0': self.gate_models['Gypi2:0'](0.)}
+        explicit = linear_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model, self.gst_circuit_planner, target_gate_set = ideal_gate_set)
+        np.testing.assert_array_equal(explicit.theta, result.theta)
+
+    def test_mle_seeded_by_linear_gst(self):
+        """ MLE started from the linear GST estimate converges to the same estimate as from the specified guesses """
+        seed = linear_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model, self.gst_circuit_planner, target = self.ideal_values)
+        seeded = mle_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model, initial_guess = seed.theta)
+        plain = mle_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model)
+        np.testing.assert_array_equal(seeded.initial_guess, seed.theta)
+        # Same optimum within the optimizer's tolerance
+        np.testing.assert_allclose(seeded.theta, plain.theta, atol=5e-5)
+        self.assertAlmostEqual(seeded.log_likelihood, plain.log_likelihood, delta=1e-9*abs(plain.log_likelihood))
 
     def test_mle_gst_analysis(self):
         """ Test GST via maximum likelihood estimation (MLE)""" 
-        solver_results = self.GST_analyzer.mle_solve_for_gate_parameters() 
-        gate_set_error = self.GST_analyzer.compute_gate_set_error_by_element(solver_results.x, self.true_gate_set)
+        result = mle_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model)
+        gate_set_error = gate_set_errors(self.gate_set_model, result.theta, reference = self.true_values)
 
         X_pi2_error = gate_set_error['Gxpi2:0']
         Y_pi2_error = gate_set_error['Gypi2:0']
@@ -218,18 +232,24 @@ class TestGST(unittest.TestCase):
         self.assertAlmostEqual(Y_pi2_error, 0.0006672864884889269, places=5)
         self.assertAlmostEqual(SPAM_error, 0.0010575712223980156, places=5)
 
+        # Errors against the true values equal errors against the explicit true gate set
+        true_gate_set = evaluate_gate_set(self.gate_set_model, self.true_values)
+        errors_explicit = gate_set_errors(self.gate_set_model, result.theta, reference_gate_set = true_gate_set)
+        for key in gate_set_error:
+            self.assertAlmostEqual(errors_explicit[key], gate_set_error[key], places=14)
+
     def test_shared_parameter_sensitivity(self):
         """ Sensitivity to a parameter shared by two gates equals the sum of the sensitivities to independent copies """
         circuit = [c for c in self.gst_circuits if {'Gxpi2:0', 'Gypi2:0'} <= set(c.expanded_gate_labels)][-1]
 
-        shared = GstModelParameters(self.prep_state_model, self.POVM_models, self.gate_models)
+        shared = GateSetModel(self.prep_state_model, self.POVM_models, self.gate_models)
         shared.specify_parameter("amplitude_noise_strength", model = "shared")
-        independent = GstModelParameters(self.prep_state_model, self.POVM_models, self.gate_models)
+        independent = GateSetModel(self.prep_state_model, self.POVM_models, self.gate_models)
 
-        self.gst_circuit_planner.parameters = shared
+        self.gst_circuit_planner.gate_set_model = shared
         S = self.gst_circuit_planner.compute_circuit_sensitivity(circuit, {'shared:amplitude_noise_strength': 0.125,
                             'prep.SPAM_error_probability': 0.0025, 'POVM.SPAM_error_probability': 0.0025})
-        self.gst_circuit_planner.parameters = independent
+        self.gst_circuit_planner.gate_set_model = independent
         I = self.gst_circuit_planner.compute_circuit_sensitivity(circuit, {'Gxpi2:0.amplitude_noise_strength': 0.125,
                             'Gypi2:0.amplitude_noise_strength': 0.125, 'prep.SPAM_error_probability': 0.0025, 'POVM.SPAM_error_probability': 0.0025})
 
@@ -241,36 +261,65 @@ class TestGST(unittest.TestCase):
 
     def test_analysis_reads_current_data(self):
         """ Every analysis reads the circuits' current data: no caches to clear after replacing or editing data """
-        theta = self.GST_analyzer.build_theta_from_dict({'shared:SPAM_error_probability': 0.0025, 'shared:amplitude_noise_strength': 0.125})
-        LL = self.GST_analyzer.log_likelihood(theta)
-        self.GST_analyzer.linear_solve_for_gate_parameters()
+        LL = log_likelihood(self.gst_circuits, self.gate_set_model, self.true_values)
 
         # Order of outcomes in the count data does not matter
         for circ in self.gst_circuits:
             counts = circ.measurement_data.counts
             circ.measurement_data = CircuitData.from_counts({'1': counts['1'], '0': counts['0']})
-        self.assertAlmostEqual(self.GST_analyzer.log_likelihood(theta), LL, places=6)
+        self.assertAlmostEqual(log_likelihood(self.gst_circuits, self.gate_set_model, self.true_values), LL, places=6)
 
         # Counts edited in place are picked up (the log-likelihood is linear in the counts)
         for circ in self.gst_circuits:
             for outcome in circ.measurement_data.counts:
                 circ.measurement_data.counts[outcome] *= 2
-        self.assertAlmostEqual(self.GST_analyzer.log_likelihood(theta) / LL, 2., places=12)
+        self.assertAlmostEqual(log_likelihood(self.gst_circuits, self.gate_set_model, self.true_values) / LL, 2., places=12)
 
         # Replaced data is used by linear GST: the Gram matrix entry for the empty circuit is its new observed frequency
         empty_circuit = [c for c in self.gst_circuits if c.depth == 0][0]
         empty_circuit.measurement_data = CircuitData.from_counts({'0': 9900, '1': 100})
-        self.GST_analyzer.linear_solve_for_gate_parameters()
-        self.assertAlmostEqual(self.GST_analyzer.lgst_results['gram_matrix'][0, 0], 0.99, places=12)
+        result = linear_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model, self.gst_circuit_planner, target = self.ideal_values)
+        self.assertAlmostEqual(result.lgst_estimates['gram_matrix'][0, 0], 0.99, places=12)
 
     def test_likelihood_of_circuit_subsets(self):
         """ log_likelihood and chi_squared take the circuit list explicitly; both are sums over circuits """
-        theta = self.GST_analyzer.build_theta_from_dict({'shared:SPAM_error_probability': 0.0025, 'shared:amplitude_noise_strength': 0.125})
         first, second = self.gst_circuits[::2], self.gst_circuits[1::2]
-        for objective in (self.GST_analyzer.log_likelihood, self.GST_analyzer.chi_squared):
-            total = objective(theta)
-            self.assertAlmostEqual(objective(theta, self.gst_circuits), total, places=9)
-            self.assertAlmostEqual(objective(theta, first) + objective(theta, second), total, delta=1e-12*abs(total))
+        for objective in (log_likelihood, chi_squared):
+            total = objective(self.gst_circuits, self.gate_set_model, self.true_values)
+            parts = objective(first, self.gate_set_model, self.true_values) + objective(second, self.gate_set_model, self.true_values)
+            self.assertAlmostEqual(parts, total, delta=1e-12*abs(total))
+
+    def test_simulate_gst_data(self):
+        """ Simulated data: new circuits with sampled counts, reproducible by seed; the original circuits are unchanged """
+        data_before = [circ.measurement_data for circ in self.gst_circuits]
+        simulated = simulate_gst_data(self.gst_circuits, self.gate_set_model, self.true_values, 1000, rng = 11)
+        again = simulate_gst_data(self.gst_circuits, self.gate_set_model, self.true_values, 1000, rng = 11)
+
+        self.assertEqual(len(simulated), len(self.gst_circuits))
+        self.assertTrue(all(circ.measurement_data is data for circ, data in zip(self.gst_circuits, data_before)))
+        for sim, rep, orig in zip(simulated, again, self.gst_circuits):
+            self.assertIsNot(sim, orig)
+            self.assertEqual(sim.expanded_gates, orig.expanded_gates)
+            self.assertEqual(sum(sim.measurement_data.counts.values()), 1000)
+            self.assertEqual(sim.measurement_data.counts, rep.measurement_data.counts)
+
+        # Planned circuits (no data) can be simulated too, and the simulated data are analyzable
+        planned = self.gst_circuit_planner.generate_gst_circuits()
+        simulated = simulate_gst_data(planned, self.gate_set_model, self.true_values, 20000, rng = np.random.default_rng(3))
+        result = mle_solve_for_gate_parameters(simulated, self.gate_set_model)
+        np.testing.assert_allclose(result.theta, [0.0025, 0.125], rtol=0.1)
+
+    def test_input_validation(self):
+        """ Helpful errors for inputs that are no longer supported or are ambiguous """
+        with self.assertRaisesRegex(ValueError, "linear_solve_for_gate_parameters"):
+            mle_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model, initial_guess = 'lgst')
+        with self.assertRaisesRegex(ValueError, "either parameter values"):
+            linear_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model, self.gst_circuit_planner)
+        with self.assertRaisesRegex(ValueError, "either parameter values"):
+            gate_set_errors(self.gate_set_model, self.true_values, reference = self.true_values,
+                            reference_gate_set = evaluate_gate_set(self.gate_set_model, self.true_values))
+        with self.assertRaises(TypeError):
+            mle_solve_for_gate_parameters(self.gate_set_model, self.gst_circuits)
 
 if __name__ == '__main__':
     unittest.main()

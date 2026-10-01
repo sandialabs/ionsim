@@ -1,29 +1,43 @@
+""" Gate set tomography (GST) analysis.
+
+    The analysis is a set of functions. Each takes the GST circuits (with measurement data), a GateSetModel (the models of
+    the prep, POVM, and gates, and their parameters), and any options explicitly, and returns its results:
+
+        lin  = linear_solve_for_gate_parameters(gst_circuits, gate_set_model, circuit_design, target=ideal_values)
+        fit  = mle_solve_for_gate_parameters(gst_circuits, gate_set_model, initial_guess=lin.theta)
+        errs = gate_set_errors(gate_set_model, fit.theta, reference=true_values)
+
+    Studies (e.g. of the number of shots or of circuit depth) loop over these with simulate_gst_data():
+
+        data = simulate_gst_data(gst_circuits, gate_set_model, true_values, N_shots, rng)
+        fit  = mle_solve_for_gate_parameters(data, gate_set_model)
+
+    A gate set is evaluated from a gate set model and its parameter values, theta. Parameter values (theta, targets,
+    references, initial guesses) are given as a vector in the order of gate_set_model.parameter_names, or as a dictionary of
+    parameter names to values in which unlisted parameters take their specified initial guesses.
+"""
 import numpy as np
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, field, replace
 
-import scipy.stats as stats 
-import scipy.optimize as opt 
-from typing import Callable
-import inspect
-import sys
-import math 
-import warnings
+import scipy.optimize as opt
 from scipy import stats
+from typing import Callable
+import warnings
 
-from ionsim.process import Gate, Circuit
+from ionsim.process import Gate
 from ionsim.basis import StandardBasis
-from ionsim.named_operators import Pauli, Unitary
-from ionsim.gst_circuit_parser import *
-from ionsim.gst_circuit_parser import GstGate, GstCircuit, CircuitData, gate_from_label, canonical_gate_label, IDLE_ALIASES
-from ionsim.custom_math import matrix_AYB_multiply_to_superoperator 
+from ionsim.gst_circuit_parser import GstGate, GstCircuit, CircuitData, gate_from_label
+from ionsim.gate_set_model import GateSetModel
 from ionsim.ionsim_error import IonSimError
 from ionsim.custom_types import Vector, Matrix
-from ionsim.gst_circuit_planner import GSTCircuitPlanner
-from ionsim.gst_parameters import GstModelParameters
-from ionsim.state import State
-from ionsim.io import *
-from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD 
+from ionsim.io import write_results_to_file
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
+
+
+__all__ = ['GstResult', 'linear_solve_for_gate_parameters', 'mle_solve_for_gate_parameters', 'staged_mle_solve_for_gate_parameters',
+           'log_likelihood', 'chi_squared', 'simulate_gst_data', 'evaluate_gate_set', 'gate_set_errors', 'average_gate_set_error',
+           'average_gate_set_error_uncertainty', 'write_gate_set_results']
+
 
 def depth_bin(depth):
     """ Bins a circuit depth to the nearest power of 2 """
@@ -31,17 +45,56 @@ def depth_bin(depth):
         return 1
     return int(2**(np.ceil(np.log2(depth))))
 
+
+### Results ###
+@dataclass
+class GstResult:
+    """ Result of a GST solve.
+
+        - theta: estimated parameter vector, in the order of parameter_names
+        - method: 'linear', 'MLE', or 'staged MLE'
+        - log_likelihood: log-likelihood of theta for the circuits' data
+        - initial_guess: parameter vector the solver started from
+        - success / message: solver convergence (always True for linear GST)
+        - optimizer_result: scipy OptimizeResult (MLE solvers; final stage for staged MLE)
+        - stage_estimates: {depth: theta} after each stage (staged MLE)
+        - lgst_estimates: linear GST estimates, e.g. 'gate_estimates' (keyed by gate label), 'gram_matrix' (linear GST)
+        - negative_log_likelihood_history: objective value at each evaluation (MLE solvers)
+    """
+    theta: np.ndarray
+    parameter_names: list
+    method: str
+    log_likelihood: float
+    initial_guess: np.ndarray
+    success: bool = True
+    message: str = ''
+    optimizer_result: object = None
+    stage_estimates: dict | None = None
+    lgst_estimates: dict | None = None
+    negative_log_likelihood_history: list = field(default_factory=list)
+
+    @property
+    def parameter_values(self) -> dict:
+        """ {parameter name: estimated value} """
+        return dict(zip(self.parameter_names, self.theta))
+
+    def __repr__(self):
+        values = ", ".join(f"{name}={value:.6g}" for name, value in self.parameter_values.items())
+        return f"GstResult(method={self.method!r}, success={self.success}, log_likelihood={self.log_likelihood:.6g}, {values})"
+
+
+### Circuit data ###
 @dataclass
 class _CircuitData:
     """ Measurement data of a list of circuits, tabulated from the circuits' current data.
 
-        Built at the start of every public GST operation, so it always reflects the data as it is then (including data that
-        was replaced or edited in place); the solvers build it once and reuse it for every objective evaluation.
+        Built at the start of every GST operation, so it always reflects the data as it is then; the solvers build it once and
+        reuse it for every objective evaluation.
     """
     circuits: list                  # the circuits, in order
     sequences: list                 # unique expanded gate sequences (tuples of GstGate)
     sequence_index: np.ndarray      # (n_circuits,) index into sequences for each circuit
-    counts: np.ndarray              # (n_circuits, n_outcomes) counts aligned with the analyzer's outcome labels
+    counts: np.ndarray              # (n_circuits, n_outcomes) counts aligned with the outcome labels
     has_data: np.ndarray            # (n_circuits,) whether each circuit has measurement data
 
     def frequencies_by_sequence(self, outcome_labels) -> dict:
@@ -56,259 +109,86 @@ class _CircuitData:
         return frequencies
 
 
-class GateSetTomography(): # or GST() or GST_Base() if we plan to have child classes.
-    def __init__(self, basis: StandardBasis, prep_state_model: Callable, POVM_effect_models: Callable, gst_circuits: list[GstCircuit],
-                    gate_models: dict[str, Callable], circuit_design: GSTCircuitPlanner | None=None,
-                    ideal_gate_set: dict | None=None, verbose: bool=False, *, parameters: GstModelParameters | None=None):
-        """ Class for performing quantum gate set tomography (GST) with trapped ions or neutral atoms.
+### Gate sets (models evaluated at parameter values, or given explicitly) ###
+def evaluate_gate_set(gate_set_model: GateSetModel, theta: Vector | dict | None=None) -> dict:
+    """ Evaluates the gate set model at the specifeid parameter values (theta defaults to the specified initial guesses). """
+    theta = gate_set_model.parse_theta(theta)
+    gate_set = {'prep': gate_set_model.prep_state(theta), 'POVM': gate_set_model.measurement_effects(theta)}
+    for gate in gate_set_model.gate_models:
+        gate_set[gate.label] = gate_set_model.gate_process_matrix(gate, theta)
+    return gate_set
 
-            Arguments:
-                - basis: Basis where the quantum processes (gates), state, and measurement will live.
-                - prep_state_model: callable returning the prep state supervector rho_0(params).
-                - POVM_effect_models: callable returning a dictionary of measurement effects, {'0': E0, '1': E1} or {'00': E00, ...}.
-                - gst_circuits: list of GstCircuits (e.g. from parse_gst_circuit_file) with circuit and measurement information.
-                - gate_models: dictionary mapping gate labels to process-matrix functions, e.g. {'Gxpi2:0': model, 'MS:0:1': model, 'idle': model}.
-                    Gates are specified by string with their qubit argument(s); the idle gate may be written 'idle' or '[]'.
+def _as_supervector(element) -> np.ndarray:
+    """ Supervector of a prep state given as an ionsim State or an array """
+    return np.asarray(element.supervector if hasattr(element, 'supervector') else element)
 
-            Optional arguments:
-                - circuit_design: a circuit planner object. This is not required for doing MLE but is required for linear GST.
-                - ideal_gate_set: dictionary mapping gate labels, 'prep', and 'POVM' to ideal process matrices, prep State, and POVM effects.
+def _as_superbra(element) -> np.ndarray:
+    """ Superbra of a measurement effect given as an ionsim operator or an array """
+    return np.asarray(element.superbra if hasattr(element, 'superbra') else element)
 
-            Model parameters:
-                Every argument of the prep, POVM, and gate model functions is a GST parameter. By default, each parameter is independent,
-                unbounded, and has an initial guess of zero. Use specify_parameter() to set initial guesses, bounds, and to share
-                parameters among models, e.g.
-
-                    gst.specify_parameter("amplitude_noise_strength", model="shared", guess=0.01, bounds=(1e-4, 10.))
-                    gst.specify_parameter("phi_error", model="MS:0:1", guess=0., bounds=(0., np.pi/16))
-
-                The parameter vector is organized lazily (when first needed, e.g. by a solver), so parameters may
-                be specified in any order after construction.
-
-                Parameters are held in a GstModelParameters object (self.parameters). To share one specification with a circuit
-                planner (for Fisher information / sensitivity analysis), build it once and use GateSetTomography.from_model_parameters().
-        """
-
-        if verbose:
-            print(f"\n\n --- IonSim Gate Set Tomography Analysis --- ")
-
-        self.basis = basis
-        # Models and their parameter specification (shared with other GST components, e.g. a circuit planner)
-        if parameters is None:
-            parameters = GstModelParameters(prep_state_model, POVM_effect_models, gate_models)
-        elif not isinstance(parameters, GstModelParameters):
-            raise TypeError(f"parameters must be a GstModelParameters object; received {type(parameters).__name__}.")
-        elif any(model is not None for model in (prep_state_model, POVM_effect_models, gate_models)):
-            raise ValueError("Pass either the model functions or a GstModelParameters object, not both.")
-        self.parameters = parameters
-        # Unpack |rho>> and <<E| or <<M|
-        self.prep_state_model = parameters.prep_state_model
-        self.POVM_effect_models = parameters.POVM_effect_models
-
-        # GST circuits: circuit sequences and corresponding data (observations)
-        self.gst_circuits = gst_circuits
-
-        # Dimensionality of Hilbert and Hilbert-Schmidt spaces:
-        self.d = len(basis.states)
-        self.d2 = self.d * self.d
-
-        # 1. Get all unique gates in the gate set
-        self.gate_set = set()  # gate_set contains GstGate objects
-        for circ in self.gst_circuits:
-            for g in circ.expanded_gates:
-                self.gate_set.add(g)
-
-        # 2. Gate models, keyed internally by GstGate (users key them by string label)
-        self.gate_models = parameters.gate_models
-
-        missing = self.gate_set - set(self.gate_models.keys())
-        if missing:
-            missing_strs = sorted(g.label for g in missing)
-            raise ValueError(f"Gates found in circuit data but no model, missing models for {missing_strs}")
-
-        if verbose:
-            print(f"Gate set tomography on gate set: {sorted(g.label for g in self.gate_set)}")
-
-        # 3. Parameters: the layout (indices, bounds, initial guesses) is organized lazily by self.parameters. The current parameter
-        #    vector is reset whenever the specification changes (tracked with the parameter object's version).
-        self._model_parameter_names = parameters._model_parameter_names
-        self._gst_parameters = None
-        self._parameters_version = None
-
-        # 4. Debugging / diagnostics
-        self.LL_eval = 0
-        self.nll_data = []
+def _internal_gate_set(gate_set_model: GateSetModel, values: Vector | dict | None, gate_set: dict | None, role: str) -> dict:
+    """ A gate set keyed internally by GstGate (plus 'prep', 'POVM'), from parameter values or an explicit gate-set dictionary.
+        Exactly one of values / gate_set must be given. """
+    if (values is None) == (gate_set is None):
+        raise ValueError(f"Specify the {role} as either parameter values ({role}=...) or an explicit gate set ({role}_gate_set=...), not both or neither.")
+    if gate_set is None:
+        gate_set = evaluate_gate_set(gate_set_model, values)
+    if not isinstance(gate_set, dict):
+        raise TypeError(f"The {role} gate set must be a dictionary of gate labels, 'prep', and 'POVM'; received {type(gate_set).__name__}.")
+    internal = {}
+    for key, value in gate_set.items():
+        if key == 'prep':
+            internal['prep'] = _as_supervector(value)
+        elif key == 'POVM':
+            internal['POVM'] = {outcome: _as_superbra(effect) for outcome, effect in value.items()}
+        else:
+            gate = gate_from_label(key)
+            if gate in internal:
+                raise ValueError(f"Gate {key!r} appears more than once in the {role} gate set.")
+            internal[gate] = np.asarray(value)
+    for required in ('prep', 'POVM'):
+        if required not in internal:
+            raise ValueError(f"The {role} gate set has no {required!r} entry.")
+    return internal
 
 
-        # Keep a stable outcome ordering so all vectorized probability operations
-        # use consistent indices across circuits and evaluations.
-        # TODO: Need to generalize this for time-dep. GST
-        self.outcome_labels = tuple(gst_circuits[0].measurement_data.counts.keys())
-        self.outcome_to_index = {label: i for i, label in enumerate(self.outcome_labels)}
+### Internal: one GST problem (circuits + models) ###
+class _GstProblem:
+    """ The circuits and models of one GST calculation, with quantities derived from them. Created by each public function;
+        holds no results between calls. """
 
-        self.ideal_gate_set = None
-        if ideal_gate_set is not None:
-            self.ideal_gate_set = self._normalize_ideal_gate_set(ideal_gate_set)
-
-        # Verbose logging in objective functions is expensive in iterative solvers.
+    def __init__(self, gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, verbose: bool=False):
+        if not isinstance(gate_set_model, GateSetModel):
+            raise TypeError(f"gate_set_model must be a GateSetModel object; received {type(gate_set_model).__name__}.")
+        if isinstance(gst_circuits, GstCircuit) or not all(isinstance(c, GstCircuit) for c in gst_circuits):
+            raise TypeError("gst_circuits must be a list of GstCircuit objects (e.g. from parse_gst_circuit_file).")
+        if len(gst_circuits) == 0:
+            raise ValueError("gst_circuits is empty.")
+        self.gst_circuits = list(gst_circuits)
+        self.gate_set_model = gate_set_model
+        self.gate_models = gate_set_model.gate_models
         self.verbose = verbose
 
-        # initialize GST results to None
-        if circuit_design :
-            # Use a list of tuples instead of list of gates for compatibility with dictionaries
-            self.prep_fiducials = [tuple(prep_fid) for prep_fid in circuit_design.prep_fiducials]
-            self.measure_fiducials = [tuple(meas_fid) for meas_fid in circuit_design.measure_fiducials]
+        # Gates appearing in the circuits must have models
+        self.gate_set = {g for circ in self.gst_circuits for g in circ.expanded_gates}
+        missing = self.gate_set - set(self.gate_models.keys())
+        if missing:
+            raise ValueError(f"Gates found in circuit data but no model, missing models for {sorted(g.label for g in missing)}")
+
+        # Outcome labels: from the first circuit with data (stable order for all vectorized probability operations)
+        with_counts = [c for c in self.gst_circuits if c.measurement_data is not None and c.measurement_data.counts is not None]
+        if with_counts:
+            self.outcome_labels = tuple(with_counts[0].measurement_data.counts.keys())
         else:
-            self.prep_fiducials = None
-            self.measure_fiducials = None
+            self.outcome_labels = tuple(gate_set_model.measurement_effects(gate_set_model.initial_guess).keys())
+        self.outcome_to_index = {label: i for i, label in enumerate(self.outcome_labels)}
 
-        self.lgst_results = None
-        self.solver_result = None
+        self.d2 = gate_set_model.prep_state(gate_set_model.initial_guess).size
+        self.nll_history = []
 
-        # Validate the measurement data (outcome labels, counts) up front; data is re-read from the circuits by every operation
-        self._tabulate_data(self.gst_circuits, require_data=False)
-        self.parameters_guess = None
-
-
-    ### Model / gate label helpers ###
-    @classmethod
-    def from_model_parameters(cls, basis: StandardBasis, gst_circuits: list[GstCircuit], parameters: GstModelParameters,
-                    circuit_design: GSTCircuitPlanner | None=None, ideal_gate_set: dict | None=None, verbose: bool=False):
-        """ Construct the analysis from a GstModelParameters object (models and parameter specification), e.g. one that is also
-            used by a GSTCircuitPlanner for Fisher information / sensitivity analysis. """
-        return cls(basis, None, None, gst_circuits, None, circuit_design=circuit_design, ideal_gate_set=ideal_gate_set,
-                   verbose=verbose, parameters=parameters)
-
-
-    ### Model / gate label helpers ###
-    def _model_label(self, model: str) -> str:
-        """ Returns the canonical model label for 'prep', 'POVM', or a gate label (e.g. '[]' -> 'idle'). """
-        return self.parameters.model_label(model)
-
-    @property
-    def model_labels(self) -> list[str]:
-        """ Labels of every model with parameters: 'prep', 'POVM', and each gate label. """
-        return self.parameters.model_labels
-
-    @property
-    def model_parameter_names(self) -> dict[str, list[str]]:
-        """ Argument names of each model, keyed by model label """
-        return self.parameters.model_parameter_names
-
-    def _normalize_ideal_gate_set(self, ideal_gate_set: dict) -> dict:
-        """ Converts a user ideal gate set keyed by gate label strings (plus 'prep' and 'POVM') to internal GstGate keys. """
-        if not isinstance(ideal_gate_set, dict):
-            raise TypeError(f"Ideal gate set should be specified as a dictionary mapping gates, preps, and POVMs to ideal process matrices, supervectors, and superbra gate set elements. Received type: {type(ideal_gate_set)} ")
-        internal = {}
-        for key, value in ideal_gate_set.items():
-            if key in ('prep', 'POVM'):
-                internal[key] = value
-            else:
-                gate = gate_from_label(key)
-                if gate in internal:
-                    raise ValueError(f"Gate {key!r} appears more than once in the ideal gate set.")
-                internal[gate] = value
-        return internal
-
-
-    ### Parameter specification (delegated to self.parameters, a GstModelParameters object) ###
-    def specify_parameter(self, name: str, model: str | list[str], guess: float | None=None, bounds: tuple | None=None):
-        """ Specify the initial guess, bounds, and/or sharing of a model parameter; see GstModelParameters.specify_parameter().
-
-            Examples:
-                gst.specify_parameter("SPAM_error_probability", model="shared", guess=1e-4, bounds=(0., 1.))
-                gst.specify_parameter("phi_error", model="MS:0:1", guess=0., bounds=(0., np.pi/16))
-        """
-        self.parameters.specify_parameter(name, model, guess=guess, bounds=bounds)
-
-    def _ensure_parameter_layout(self) -> dict:
-        """ Returns the parameter layout, resetting the current parameter vector and caches if the specification changed. """
-        layout = self.parameters.layout
-        if self._parameters_version != self.parameters.version:
-            self._parameters_version = self.parameters.version
-            self._gst_parameters = layout['initial_guess'].copy()
-        return layout
-
-    @property
-    def gst_parameter_indices(self) -> dict[str, list[int]]:
-        """ Indices into the parameter vector for each model, keyed by model label ('prep', 'POVM', 'Gxpi2:0', ...). """
-        return self._ensure_parameter_layout()['indices_by_model']
-
-    @property
-    def shared_indices(self) -> dict[str, int]:
-        """ Index into the parameter vector for each shared parameter, keyed by shared parameter name. """
-        return self._ensure_parameter_layout()['shared_indices']
-
-    @property
-    def num_gst_parameters(self) -> int:
-        return len(self._ensure_parameter_layout()['names'])
-
-    @property
-    def num_parameters(self) -> int:
-        return self.num_gst_parameters
-
-    @property
-    def parameter_names(self) -> list[str]:
-        """ Returns parameter names in the order of the internal parameter vector theta, e.g. 'shared:SPAM_error_probability', 'MS:0:1.phi_error'. """
-        self._ensure_parameter_layout()
-        return self.parameters.parameter_names
-
-    @property
-    def parameter_bounds(self) -> list[tuple[float | None, float | None]] | None:
-        """ (lower, upper) bounds for each parameter in theta order, or None if every parameter is unbounded. """
-        self._ensure_parameter_layout()
-        return self.parameters.parameter_bounds
-
-    @property
-    def parameter_initial_guess(self) -> Vector:
-        """ Initial guess for the parameter vector, built from specify_parameter() guesses (0 by default). """
-        self._ensure_parameter_layout()
-        return self.parameters.initial_guess
-
-    @property
-    def gst_parameters(self) -> Vector:
-        """ Current parameter vector (the initial guess until a solver has run). """
-        self._ensure_parameter_layout()
-        return self._gst_parameters
-
-    @gst_parameters.setter
-    def gst_parameters(self, theta: Vector):
-        self._ensure_parameter_layout()
-        theta = np.asarray(theta)
-        if theta.shape != (self.num_gst_parameters,):
-            raise ValueError(f"Parameter vector must have shape ({self.num_gst_parameters},); received {theta.shape}.")
-        self._gst_parameters = theta
-
-    def print_parameter_layout(self):
-        """ Prints each entry of the parameter vector with its initial guess and bounds. """
-        self.parameters.print_layout()
-
-    def _normalize_parameter_name(self, key: str) -> str:
-        return self.parameters.normalize_parameter_name(key)
-
-    def build_theta_from_dict(self, param_values: dict, default_value: float = 0., base: Vector | None=None) -> Vector:
-        """ Builds a theta vector from a dictionary of parameter names to values; see GstModelParameters.build_theta_from_dict(). """
-        self._ensure_parameter_layout()
-        return self.parameters.build_theta_from_dict(param_values, default_value=default_value, base=base)
-
-    def get_parameters(self, theta: Vector, key: str | GstGate):
-        """ Retrieve parameters for any model by key ('prep', 'POVM', or a gate label) from theta vector """
-        return theta[self.gst_parameter_indices[key.label if isinstance(key, GstGate) else self._model_label(key)]]
-
-    def get_parameter_index(self, name: str, model: str) -> int:
-        """ Index in the parameter vector of parameter `name` of `model` ('shared', 'prep', 'POVM', or a gate label). """
-        self._ensure_parameter_layout()
-        return self.parameters.get_parameter_index(name, model)
-
-    def get_parameter_value(self, name: str, model: str, theta: Vector | None=None) -> float:
-        """ Value of parameter `name` of `model` in theta (defaults to the current gst_parameters). """
-        if theta is None:
-            theta = self.gst_parameters
-        return theta[self.get_parameter_index(name, model)]
-
-    def _tabulate_data(self, circuits: list[GstCircuit], require_data: bool=True) -> _CircuitData:
-        """ Tabulate the current measurement data of `circuits` (see _CircuitData). Counts are aligned with self.outcome_labels
-            by label, so the order of outcomes in each circuit's data does not matter. """
+    ### Data ###
+    def tabulate(self, circuits: list[GstCircuit], require_data: bool=True) -> _CircuitData:
+        """ Tabulate the current measurement data of `circuits`. Counts are aligned with the outcome labels by label. """
         sequences = {}
         sequence_index = np.zeros(len(circuits), dtype=np.int64)
         counts = np.zeros((len(circuits), len(self.outcome_labels)))
@@ -331,367 +211,115 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
             has_data[i] = True
         return _CircuitData(list(circuits), list(sequences.keys()), sequence_index, counts, has_data)
 
-    def get_prep_state(self, theta) -> Vector:
-        """ Returns prep state supervector (d^2 x 1) given the parameter values theta.
-            - Enforces the constraint Tr[rho] = 1.
-        """
-        return self.parameters.prep_state(theta)
+    ### Model predictions ###
+    def get_parameters(self, theta: Vector, key):
+        return self.gate_set_model.model_parameters(theta, key)
 
-    def get_measurement_effects(self, theta) -> dict[str, Vector]:
-        """ Returns measurement effects given the parameter values theta.
-
-            - Effects are stored in a dictionary {'outcome' : Effect_vector with superoperator d^2 x d^2 shape}
-            - e.g. E_0 vector is d^2 x 1 corresponding to |0><0| (for d = 2)
-            - There is a completeness constraint to enforce: sum_m E_m = identity
-        """
-        return self.parameters.measurement_effects(theta)
-
-    def _refresh_prep_and_measure_elements(self, theta: Vector) -> tuple[np.ndarray, np.ndarray]:
-        """ Build theta-dependent prep/effect matrices once per objective evaluation. """
-        # Prep state and measurement effects do not depend on circuit identity,
-        # so compute them once and reuse for all circuits in this theta evaluation.
-        rho_supervector = self.get_prep_state(theta)
-        measurement_effects = self.get_measurement_effects(theta)
+    def prep_and_effects(self, theta: Vector) -> tuple[np.ndarray, np.ndarray]:
+        """ Prep supervector and effect matrix (rows in outcome-label order) at theta """
+        rho_supervector = self.gate_set_model.prep_state(theta)
+        measurement_effects = self.gate_set_model.measurement_effects(theta)
         effect_matrix = np.vstack([np.asarray(measurement_effects[label]) for label in self.outcome_labels])
         return rho_supervector, effect_matrix
 
-    def _compose_quantum_map(self, gates: tuple[GstGate, ...], gate_matrices: dict, circuit_map_cache: dict) -> np.ndarray:
+    def gate_process_matrices(self, theta: Vector) -> dict:
+        """ Evaluate each gate's process matrix function once at theta """
+        return {gate: gate_model(*self.get_parameters(theta, gate)) for gate, gate_model in self.gate_models.items()}
+
+    def compose_quantum_map(self, gates: tuple, gate_matrices: dict, circuit_map_cache: dict) -> np.ndarray:
         """ Compose the circuit map once for each unique gate sequence in an evaluation. """
         quantum_map = circuit_map_cache.get(gates)
         if quantum_map is not None:
             return quantum_map
-
         quantum_map = np.eye(self.d2, dtype=complex)
         for gate in gates:
             quantum_map = gate_matrices[gate] @ quantum_map
-
         circuit_map_cache[gates] = quantum_map
         return quantum_map
 
-    def _predict_probability_vector(self, gates: tuple[GstGate, ...], gate_matrices: dict, rho_supervector: Vector, effect_matrix: Matrix,
-                                        circuit_map_cache: dict) -> np.ndarray:
-        """ Predict clipped outcome probabilities as a dense vector in outcome-label order. """
-        quantum_map = self._compose_quantum_map(gates, gate_matrices, circuit_map_cache)
-        mapped_state = quantum_map @ rho_supervector
-        probability_values = np.real(effect_matrix @ mapped_state)
-        return np.clip(probability_values, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. -  NUMERICAL_EQUIVALENCE_THRESHOLD)
-
-    def _predict_sequence_probabilities(self, theta: Vector, sequences: list) -> np.ndarray:
-        """ Outcome probabilities (n_sequences x n_outcomes, outcome-label order) for gate sequences at theta; the gate process
-            matrices, prep state, and effects are evaluated once for all sequences. """
-        gate_matrices = self._gate_process_matrices(theta)
-        rho_supervector, effect_matrix = self._refresh_prep_and_measure_elements(theta)
+    def predict_sequence_probabilities(self, theta: Vector, sequences: list) -> np.ndarray:
+        """ Clipped outcome probabilities (n_sequences x n_outcomes, outcome-label order) for gate sequences at theta """
+        gate_matrices = self.gate_process_matrices(theta)
+        rho_supervector, effect_matrix = self.prep_and_effects(theta)
         circuit_map_cache = {}
-        return np.array([self._predict_probability_vector(gates, gate_matrices, rho_supervector, effect_matrix, circuit_map_cache)
-                         for gates in sequences])
+        probabilities = []
+        for gates in sequences:
+            mapped_state = self.compose_quantum_map(gates, gate_matrices, circuit_map_cache) @ rho_supervector
+            probability_values = np.real(effect_matrix @ mapped_state)
+            probabilities.append(np.clip(probability_values, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. - NUMERICAL_EQUIVALENCE_THRESHOLD))
+        return np.array(probabilities)
 
-    def _predict_probabilities(self, circ: GstCircuit, theta: Vector) -> dict:
-        """ Predicts outcome probabilities for a GST circuit with gates parametrized by theta """
-        probability_values = self._predict_sequence_probabilities(theta, [tuple(circ.expanded_gates)])[0]
-        return dict(zip(self.outcome_labels, probability_values))
-
-    def _gate_process_matrices(self, theta: Vector) -> dict:
-        """ Evaluate each gate's process matrix function once at theta """
-        return {gate: gate_model(*self.get_parameters(theta, gate)) for gate, gate_model in self.gate_models.items()}
-
-    def log_likelihood(self, theta: Vector | None=None, gst_circuits: list[GstCircuit] | None=None, theta_function=None) -> float:
-        """ Computes total log-likelihood of the parameters given the measurement data of a list of GST circuits.
-
-            theta:          parameter vector (default: the current estimate, self.gst_parameters)
-            gst_circuits:   circuits whose current measurement data is used (default: the analyzer's circuits, self.gst_circuits)
-            theta_func:     optional callable(t) -> parameter_vector for time-dependent data.
-                            If None, theta is assumed to be t-independent.
-
-            Log likelihood of parameters for each experiment:
-                l_{exp} = sum_{outcomes} N_{outcome} log( p_{outcome} (theta) )
-             - p_outcome (theta)  is the probability of the outcome using gates modeled by theta.
-             - "outcome" <==> measurement effect. e.g. "0" or "1" for 1Q measurement.
-
-        """
-        theta = self.gst_parameters if theta is None else theta
-        gst_circuits = self.gst_circuits if gst_circuits is None else gst_circuits
-        return self._log_likelihood(theta, self._tabulate_data(gst_circuits))
-
-    def _log_likelihood(self, theta: Vector, data: _CircuitData) -> float:
-        """ Log-likelihood of theta for data already tabulated from a list of circuits (see _tabulate_data).
-
-            The solvers tabulate the circuits' data once and evaluate this many times; log_likelihood() tabulates on every call.
-        """
-        if self.verbose:
-            print(f"\nEvaluating log likelihood")
-        self.LL_eval += 1
-        if self.verbose:
-            print(f"Evaluation number {self.LL_eval}")
-            print(f"\nParameter values: {theta}")
-
-        # Probabilities for each unique gate sequence (gate process matrices evaluated once)
-        log_probabilities = np.log(self._predict_sequence_probabilities(theta, data.sequences))
-
-        # Accumulate over all GST circuits
+    ### Objectives ###
+    def log_likelihood(self, theta: Vector, data: _CircuitData) -> float:
+        """ Log-likelihood of theta for tabulated data: sum over circuits and outcomes of N_outcome log p_outcome(theta) """
+        log_probabilities = np.log(self.predict_sequence_probabilities(theta, data.sequences))
         l_likelihood = 0.
         for counts, k in zip(data.counts, data.sequence_index):
             l_likelihood += np.dot(counts, log_probabilities[k])
-
+        self.nll_history.append(-l_likelihood)
         if self.verbose:
-            print(f"Negative log likelihood: {-l_likelihood}")
-        self.nll_data.append(-l_likelihood)
+            print(f"Evaluation {len(self.nll_history)}: negative log likelihood {-l_likelihood} at {theta}")
         return l_likelihood
 
-    def chi_squared(self, theta: Vector | None=None, gst_circuits: list[GstCircuit] | None=None, theta_function=None) -> float:
-        """ chi^2 estimate for least-squares error between observed frequencies and circuit probabilities.
-
-            theta:          parameter vector (default: the current estimate, self.gst_parameters)
-            gst_circuits:   circuits whose current measurement data is used (default: the analyzer's circuits, self.gst_circuits)
-        """
-        theta = self.gst_parameters if theta is None else theta
-        gst_circuits = self.gst_circuits if gst_circuits is None else gst_circuits
-        return self._chi_squared(theta, self._tabulate_data(gst_circuits))
-
-    def _chi_squared(self, theta: Vector, data: _CircuitData) -> float:
-        """ chi^2 of theta for data already tabulated from a list of circuits (see _tabulate_data) """
-        probabilities = self._predict_sequence_probabilities(theta, data.sequences)
+    def chi_squared(self, theta: Vector, data: _CircuitData) -> float:
+        """ chi^2 between observed frequencies and model probabilities, scaled by the shots of each circuit """
+        probabilities = self.predict_sequence_probabilities(theta, data.sequences)
         chi_squared = 0.
         for counts, k in zip(data.counts, data.sequence_index):
             total_counts = counts.sum()
             if total_counts > 0:
-                # Chi-squared between observed frequencies and model probs, scaled by total shots for that circuit.
                 chi_squared += total_counts * np.sum(((probabilities[k] - counts / total_counts)**2) / probabilities[k])
-
-        if self.verbose:
-            print(f"Chi squared: {chi_squared}")
         return chi_squared
 
+    def parse_initial_guess(self, initial_guess) -> Vector:
+        """ Initial parameter vector from None (specified guesses), a dictionary, or a vector """
+        if isinstance(initial_guess, str):
+            raise ValueError(f"String initial guesses (e.g. {initial_guess!r}) are not supported. To start from linear GST, run "
+                             f"linear_solve_for_gate_parameters() and pass its result's theta as initial_guess.")
+        if initial_guess is not None and not isinstance(initial_guess, (dict, list, tuple, np.ndarray)):
+            raise TypeError(f"initial_guess should be None, a dictionary, or a list/array. Received: {type(initial_guess)}")
+        return self.gate_set_model.parse_theta(initial_guess)
 
-    def _group_circuits_by_base_depth(self):
-        """ Groups the GST circuit by depth, required for staged MLE """ 
-        groups = {} # dictionary to store list of circuits at each depth L 
-        for circ in self.gst_circuits:
-            germ_length = len(circ.germ_gates)
-            base_depth = germ_length*(circ.germ_power)
-            if germ_length == 0: 
-                L = 1
-            else:        
-                L = depth_bin(float(base_depth))
-            if L not in groups:
-                groups[L] = [] 
-            groups[L].append(circ)
-        return groups
-
-    def _group_circuits_by_depth(self):
-        """ Groups the GST circuit by depth, required for staged MLE """ 
-        groups = {} # dictionary to store list of circuits at each depth L 
-        for circ in self.gst_circuits:
-            L = depth_bin(circ.depth)
-            if L not in groups:
-                groups[L] = [] 
-            groups[L].append(circ)
-        return groups
-
-    def _group_circuits_by_germ_power(self):
-        """ Groups the GST circuit by germ power, required for staged MLE """ 
-        groups = {} 
-        for circ in self.gst_circuits:
-            p = circ.germ_power 
-            if p not in groups:
-                groups[p] = [] 
-            groups[p].append(circ)
-        return groups
-
-    def save_nll_data(self):
-        print(f"LL evals: {self.LL_eval}")
-        print(f"len(nll_data): {len(self.nll_data)})")
-        if self.nll_data : 
-            np.savetxt('negative_log_likelihood.dat', np.column_stack([np.array(range(0, self.LL_eval)), np.array(self.nll_data)]), header = 'Iteration Neg_Log_Likelihood')
-        else:
-            raise ValueError(f"No log likelihood data is stored.")
-
-    def get_parameter_value_by_name(self, gate: str, parameter_name: str) -> float:
-        """ Return the parameter value for a requested parameter in a gate model (gate specified by label, e.g. 'Gxpi2:0') """
-        return self.get_parameter_value(parameter_name, gate)
-
-    def get_parameter_values_by_name(self, gate: str, parameter_names: list[str]) -> dict:
-        """ Return the parameter values for requested parameters in a gate model (gate specified by label, e.g. 'Gxpi2:0') """
-        return {name: self.get_parameter_value(name, gate) for name in parameter_names}
-
-    def print_parameters(self):
-        # Prep, measure, then gate parameters:
-        print("\n --- Printing parameter values --- ")
-        prep_params = self.get_parameters(self.gst_parameters, "prep")
-        print(f"Prep state parameters: {dict(zip(self._model_parameter_names['prep'], prep_params))}")
-
-        measure_params = self.get_parameters(self.gst_parameters, "POVM")
-        print(f"\nMeasurement model parameters: {dict(zip(self._model_parameter_names['POVM'], measure_params))}")
-
-        for gate in sorted(self.gate_set, key=lambda g: g.label):
-            parameter_values = self.get_parameters(self.gst_parameters, gate)
-            # Package parameter names, values
-            gate_results = dict(zip(self._model_parameter_names[gate.label], parameter_values))
-            print(f"\n Gate {gate} parameters: {gate_results}")
-
-        return self.gst_parameters
-
-    def print_state_and_POVMs(self):
-        """ Output state supervector and measurement effects """ 
-        rho = self.get_prep_state(self.gst_parameters) 
-        M_effects = self.get_measurement_effects(self.gst_parameters)
-
-        print(f"\nPrep state supervector: {rho}")
-        for label, effect in M_effects.items():
-            print(f"\nMeasurement effect {label} vectors: {effect}")
-
-
-    def _resolve_initial_guess(self, parameters_guess: Vector | dict | str | None) -> Vector:
-        """ Interface to parse the initial guess into a vector of initial values for the solvers.
-
-            Used by linear_solve_for_gate_parameters(), mle_solve_for_gate_parameters(), and staged_mle_solve_for_gate_parameters().
-
-            - None: use the guesses given with specify_parameter() (0 for unspecified parameters).
-            - 'lgst': fit the gate set models to linear GST estimates and use those parameters (requires a circuit design).
-            - dict: parameter names to values (see build_theta_from_dict); unlisted parameters use their specified guesses.
-            - list / array: the full parameter vector, in the order of parameter_names.
-        """
-        if parameters_guess is None:
-            theta_0 = self.parameter_initial_guess
-        elif isinstance(parameters_guess, str):
-            if parameters_guess.lower() not in ('lgst', 'linear'):
-                raise ValueError(f"Unknown initial guess option {parameters_guess!r}; use None, 'lgst', a dictionary, or a parameter vector.")
-            self.run_linear_gst(self.ideal_gate_set)
-            theta_0 = self.parameters_from_lgst_results().copy()
-        elif isinstance(parameters_guess, dict):
-            theta_0 = self.build_theta_from_dict(parameters_guess, base=self.parameter_initial_guess)
-        elif isinstance(parameters_guess, (list, tuple, np.ndarray)):
-            theta_0 = np.array(parameters_guess, dtype=float, copy=True)
-            if theta_0.shape != (self.num_gst_parameters,):
-                raise ValueError(f"Initial parameter vector must have length {self.num_gst_parameters} (see parameter_names); received shape {theta_0.shape}.")
-        else:
-            raise TypeError(f"Parameter initial guess should be None, 'lgst', a dictionary, or a list/array. Received: {type(parameters_guess)}")
-
-        self.parameters_guess = theta_0
-        return theta_0
-
-    def _initial_parameters(self, parameters_guess: Vector | dict | str | None, solver_name: str) -> Vector:
-        """ Resolve the initial guess for a solver, reset the per-solve diagnostics, and report the guess when verbose """
-        self.LL_eval = 0
-        self.nll_data = []
-        theta_0 = self._resolve_initial_guess(parameters_guess)
-        if self.verbose:
-            print(f"\n -- Solving for gate parameters in GST using {solver_name} --- ")
-            print(f"Initial parameters: {dict(zip(self.parameter_names, theta_0))}")
-        return theta_0
-
-    def linear_solve_for_gate_parameters(self, parameters_guess: Vector | dict | None=None) -> Vector:
-        """ Linear GST (LGST): estimates the gate set from the fiducial circuits by linear inversion (requires a circuit design
-            with informationally complete fiducials), then fits the model parameters to those estimates.
-
-            - parameters_guess: starting point for the fit to the LGST estimates when parameters are shared among models
-                (vector or dictionary; default: the guesses from specify_parameter()). With no shared parameters, each model is
-                fit independently and the guess is not used.
-
-            Returns the parameter vector (also stored in self.gst_parameters); the LGST estimates are in self.lgst_results.
-        """
-        if isinstance(parameters_guess, str):
-            raise ValueError("linear_solve_for_gate_parameters does not accept a string guess; pass None, a dictionary, or a parameter vector.")
-        theta_0 = self._initial_parameters(parameters_guess, 'linear GST')
-        self.solver_result = self.run_linear_gst(self.ideal_gate_set)
-        self.parameters_from_lgst_results(theta_0)
-        return self.gst_parameters
-
-    def mle_solve_for_gate_parameters(self, parameters_guess: Vector | dict | str | None=None, **minimize_kwargs):
-        """ Maximum likelihood estimation (MLE): finds the parameters that maximize the likelihood of the data over all circuits,
-
-                max[ Likelihood( {G} | data) ] over parameter set theta,
-
-            using scipy.optimize.minimize with method L-BFGS-B and the parameter bounds from specify_parameter().
-
-            - parameters_guess: initial guess. None (default) uses the guesses from specify_parameter(); 'lgst' seeds the solver
-                from a linear GST fit; a dictionary or vector gives the values directly.
-            - minimize_kwargs: passed to scipy.optimize.minimize, e.g. options = {'maxiter': 500}.
-
-            Returns the scipy OptimizeResult (parameters in result.x, also stored in self.gst_parameters).
-        """
-        theta_0 = self._initial_parameters(parameters_guess, 'MLE')
-        # Tabulate the circuits' current data once; every objective evaluation reuses it
-        data = self._tabulate_data(self.gst_circuits)
-        solver_result = opt.minimize(fun = lambda params: -self._log_likelihood(params, data), x0 = theta_0, method = 'L-BFGS-B',
-                                     bounds = self.parameter_bounds, **minimize_kwargs)
-        self.solver_result = solver_result
-        self.gst_parameters = solver_result.x
-        return solver_result
-
-    def staged_mle_solve_for_gate_parameters(self, parameters_guess: Vector | dict | str | None=None, organize_circuits_by_germ_power: bool=True,
-                                             **minimize_kwargs):
-        """ Staged MLE: maximum likelihood estimation on cumulative batches of circuits of increasing depth, each stage starting
-            from the previous stage's estimate. This can help avoid local optima for long circuits.
-
-            - parameters_guess: initial guess for the first stage (as for mle_solve_for_gate_parameters, including 'lgst').
-            - organize_circuits_by_germ_power: stage by germ power p (default) or by base circuit depth L.
-            - minimize_kwargs: passed to scipy.optimize.minimize at every stage, e.g. options = {'maxiter': 500}.
-
-            Returns the final stage's scipy OptimizeResult (parameters in result.x, also stored in self.gst_parameters). The
-            estimates from every stage are in self.results_by_stage, keyed by depth.
-        """
-        theta_0 = self._initial_parameters(parameters_guess, 'staged MLE')
-        self.solver_result, self.results_by_stage = self.staged_objective_minimization(theta_0, method = 'L-BFGS-B', bounds = self.parameter_bounds,
-                                organize_circuits_by_germ_power = organize_circuits_by_germ_power, **minimize_kwargs)
-        self.gst_parameters = self.solver_result.x
-        return self.solver_result
-
-    def _build_probability_matrix(self, frequencies: dict, target_gate: GstGate | None=None, outcome: str | None=None):
-        """ Builds the d^2 x d^2 matrix of observed probabilities 
-            for a gate or empty gate (corresponding to the Gram Matrix).
+    ### Linear GST ###
+    def build_probability_matrix(self, frequencies: dict, prep_fiducials, measure_fiducials, target_gate=None, outcome=None):
+        """ Builds the matrix of observed probabilities for a gate or empty gate (corresponding to the Gram Matrix).
 
             M[i,j] = p(outcome | measure_fid_i x gate x prep_fid_j )
-
-            frequencies: observed outcome frequencies by gate sequence (from the current data)
         """
-        outcomes = list(self.outcome_labels)
         if outcome is None:
-            outcome = outcomes[0]
-
-        N_prep_circuits = len(self.prep_fiducials)
-        N_measure_circuits = len(self.measure_fiducials)
-
-        # Construct matrix using lookup table of circuit outcomes for LGST 
-        M = np.zeros((N_measure_circuits, N_prep_circuits))
-
+            outcome = self.outcome_labels[0]
+        M = np.zeros((len(measure_fiducials), len(prep_fiducials)))
         target_list = [target_gate] if target_gate else []
-        for j, prep_fid in enumerate(self.prep_fiducials):
-            for i, measure_fid in enumerate(self.measure_fiducials):
-                #key = (prep_fid, gate, 1, measure_fid)
-                key = tuple(list(prep_fid) + target_list + list(measure_fid)) 
+        for j, prep_fid in enumerate(prep_fiducials):
+            for i, measure_fid in enumerate(measure_fiducials):
+                key = tuple(list(prep_fid) + target_list + list(measure_fid))
                 if key in frequencies:
                     M[i,j] = frequencies[key][outcome]
                 else:
-                    print(f"Attempted key: {key}")
-                    raise ValueError(f"Missing LGST circuit: prep = {prep_fid}" + 
-                        f", gate = {target_list}, measure = {measure_fid}")
+                    raise ValueError(f"Missing LGST circuit: prep = {prep_fid}, gate = {target_list}, measure = {measure_fid}")
         return M
-        
-        
-    def run_linear_gst(self, ideal_gate_set: dict | None=None):
-        """ Function to estimate gate set parameters using linear matrix inversion """
-        # Method follows approach from Neilsen et al. "Gate Set Tomography", Quantum 2021. 
-        # 1. Build the Gram matrix: <<F_i|F_j>>
+
+    def run_linear_gst(self, prep_fiducials, measure_fiducials, target_gate_set: dict) -> dict:
+        """ Estimate the gate set by linear inversion (Nielsen et al., "Gate Set Tomography", Quantum 2021), in the gauge of the
+            target gate set. Returns the LGST estimates. """
         if self.verbose:
             print(f"\n --- Running linear GST ---")
-        # Observed frequencies from the circuits' current data
-        frequencies = self._tabulate_data(self.gst_circuits).frequencies_by_sequence(self.outcome_labels)
-        gram_matrix = self._build_probability_matrix(frequencies, target_gate = None)
-
+        # 1. Build the Gram matrix: <<F_i|F_j>> from the circuits' current data
+        frequencies = self.tabulate(self.gst_circuits).frequencies_by_sequence(self.outcome_labels)
+        gram_matrix = self.build_probability_matrix(frequencies, prep_fiducials, measure_fiducials)
         gram_matrix_det = np.linalg.det(gram_matrix)
         if np.abs(gram_matrix_det) < 1E-12:
-            raise ValueError(f"Gram matrix is not invertible, determinant = {gram_matrix_det}") 
-        
-        # 2. Compute SVD to get projector to linear-independent subspace  
-        U, S, Vh = np.linalg.svd(gram_matrix)
+            raise ValueError(f"Gram matrix is not invertible, determinant = {gram_matrix_det}")
 
+        # 2. Compute SVD to get projector to linear-independent subspace
+        U, S, Vh = np.linalg.svd(gram_matrix)
         if len(S) < self.d2:
             raise ValueError(f"Gram matrix is not informationally complete. It has rank {len(S)} instead of {self.d2}.")
 
-        # Projector onto k = d^2 top right singular vectors  
+        # Projector onto k = d^2 top right singular vectors
         Pi = Vh[:self.d2, :]
 
-        # Check that the fiducials are informationally complete by checking singular values: 
+        # Check that the fiducials are informationally complete by checking singular values:
         TOL = 1E-10
         N_significant_vals = np.sum(S > TOL)
         if N_significant_vals < self.d2:
@@ -704,572 +332,352 @@ class GateSetTomography(): # or GST() or GST_Base() if we plan to have child cla
                 print(f"WARNING: There is weak separation between signal and noise subspace. Ratio = {ratio}")
 
         # Check condition number of d^2 subspace:
-        cond = S[0] / S[self.d2 - 1] 
+        cond = S[0] / S[self.d2 - 1]
         if cond > 100:
             print(f"WARNING: Poorly conditioned linear GST. LGST estimates may be noisy. Condition number = {cond}")
 
-        # Decomposition of Gram matrix = AB, where A is measurement matrix and B is prep matrix 
-        #   See Section 3. of "Gate Set Tomography" published in Quantum, 2021. 
-        #   Gram = AB (fiducial measure @ fiducial prep); decompose B = B_0 Pi, B_0 ideal gauge  
-        # TODO: Standardize way for user to specify target/ideal prep state 
-        target_state = ideal_gate_set.get('prep') if ideal_gate_set is not None else None
-        if target_state is not None:
-            N_prep = len(self.prep_fiducials)
-            # B_ideal contains all fiducial prep states as its columns 
-            B_ideal = np.zeros((self.d2, N_prep), dtype=complex)
-            
-            for j, prep_fid in enumerate(self.prep_fiducials):
-                state = target_state.supervector.copy()
-                for gate in prep_fid:
-                    state = ideal_gate_set[gate] @ state
-                B_ideal[:, j] = state
+        # Decomposition of Gram matrix = AB, where A is measurement matrix and B is prep matrix
+        #   See Section 3. of "Gate Set Tomography" published in Quantum, 2021.
+        #   Gram = AB (fiducial measure @ fiducial prep); decompose B = B_0 Pi, B_0 in the gauge of the target gate set
+        B_target = np.zeros((self.d2, len(prep_fiducials)), dtype=complex)
+        for j, prep_fid in enumerate(prep_fiducials):
+            state = target_gate_set['prep'].copy()
+            for gate in prep_fid:
+                state = target_gate_set[gate] @ state
+            B_target[:, j] = state
+        # Project onto Pi subspace, Pi Pi^T is identity since rows of Pi are orthonormal
+        B0 = B_target @ Pi.conj().T
 
-            # Project onto Pi subspace, Pi Pi^T is identity since rows of Pi are orthonormal 
-            B0 = B_ideal @ Pi.conj().T
-        else:
-            warnings.warn(f"No ideal gate set is specified in the GST analyzer. Linear GST results may not correspond with a desired gauge.")            
-            B0 = np.eye(self.d2, dtype=complex)
-
-        # Compute gate process matrix estimates via the following formula (Neilsen, 2021):
+        # Compute gate process matrix estimates via the following formula (Nielsen, 2021):
         # G_k = B0 (Pi Gram^T Gram Pi^T)^{-1} (Pi Gram^T P_k Pi^T) B0^{-1}
-        # Key: "G" = gram matrix, "T" = transpose, "P" = Pi matrix
         PGT = Pi @ gram_matrix.T
         inv_PGTGPT = np.linalg.inv(PGT @ gram_matrix @ Pi.T)
         B0_inv = np.linalg.inv(B0)
-        matrix_prefactor = B0 @ inv_PGTGPT @ PGT 
+        matrix_prefactor = B0 @ inv_PGTGPT @ PGT
         matrix_postfactor = Pi.T @ B0_inv
 
         gate_estimates = {}
         # Sorted for a reproducible ordering (set order depends on string hashing, which varies between runs)
         for gate in sorted(self.gate_set, key=lambda g: g.label):
-            # Compute gate process matrix by inversion: probabilities P = A G_gate B 
-            P_gate = self._build_probability_matrix(frequencies, target_gate = gate)
-            gate_estimates[gate] = matrix_prefactor @ P_gate @ matrix_postfactor 
+            P_gate = self.build_probability_matrix(frequencies, prep_fiducials, measure_fiducials, target_gate = gate)
+            gate_estimates[gate] = matrix_prefactor @ P_gate @ matrix_postfactor
 
-        # Find which fiducial index is the empty circuit, corresponding to native prep and measure 
+        # Find which fiducial index is the empty circuit, corresponding to native prep and measure
         empty_fid = tuple()
-        prep_idx = self.prep_fiducials.index(empty_fid)
-        measure_idx = self.measure_fiducials.index(empty_fid)
+        prep_idx = prep_fiducials.index(empty_fid)
+        measure_idx = measure_fiducials.index(empty_fid)
 
-        # Prep state matrix B = B0 Pi 
-        prep_states = B0 @ Pi 
-        # Extract native prep rho_0:
+        # Prep state matrix B = B0 Pi; native prep rho_0:
+        prep_states = B0 @ Pi
         estimated_rho = prep_states[:, prep_idx]
 
-        # Extract effects:
         # Measurement effect matrix A = Gram B+ (right pseudoinverse of B)
         measurement_effects = gram_matrix @ np.linalg.pinv(prep_states)
         estimated_effects = {}
         for outcome in self.outcome_labels:
-            gram_k = self._build_probability_matrix(frequencies, outcome = outcome) 
+            gram_k = self.build_probability_matrix(frequencies, prep_fiducials, measure_fiducials, outcome = outcome)
             A_k = gram_k @ Pi.conj().T @ B0_inv
             estimated_effects[outcome] = A_k[measure_idx, :]
 
-        self.lgst_results = {'gate_estimates' : gate_estimates, 'gram_matrix' : gram_matrix, 
-                        'native_prep_state' : estimated_rho, 'estimated_effects' : estimated_effects, 
-                        'prep_states' : prep_states, 'measurement_effects' : measurement_effects}
-        return self.lgst_results 
+        return {'gate_estimates' : gate_estimates, 'gram_matrix' : gram_matrix,
+                'native_prep_state' : estimated_rho, 'estimated_effects' : estimated_effects,
+                'prep_states' : prep_states, 'measurement_effects' : measurement_effects}
 
+    def parameters_from_lgst(self, lgst: dict, theta_0: Vector) -> Vector:
+        """ Fit the models to LGST estimates: jointly (starting from theta_0) if parameters are shared, else independently """
+        if self.gate_set_model.shared_indices:
+            return self._joint_fit_to_lgst(lgst, theta_0)
+        return self._independent_fit_to_lgst(lgst, theta_0)
 
-    def parameters_from_lgst_results(self, theta_0: Vector | None=None):
-        """ Extracts the parameters vector from linear GST results.
-
-            If shared parameters exist, fits all models jointly starting from theta_0 (default: the specified initial guess).
-            If not, gate set models are fit independently.
-
-        """
-        if not hasattr(self, 'lgst_results') or self.lgst_results is None:
-            self.run_linear_gst(self.ideal_gate_set)
-
-        if self.shared_indices:
-            theta = self._joint_fit_to_lgst(theta_0)
-        else:
-            theta = self._independent_fit_to_lgst()
-
-        # Set internal gst parameters attribute to extracted parameters
-        self.gst_parameters = theta
-        return theta
-
-    def _independent_fit_to_lgst(self):
+    def _independent_fit_to_lgst(self, lgst: dict, theta_0: Vector) -> Vector:
         """ Fits independent gate set models to LGST-estimated elements (no shared model parameters). """
-        # Initialize theta
-        theta = np.array(self.gst_parameters, dtype=float, copy=True)
-
-        # Extract gate parameters
-        for gate, lgst_gate_matrix in self.lgst_results['gate_estimates'].items():
-            # Compute the fit parameters for each gate model
-            fit_parameters = self._fit_gate_model_to_lgst_estimate(gate, lgst_gate_matrix)
-            theta[self.gst_parameter_indices[gate.label]] = fit_parameters.real
-
-        # Extract SPAM parameters:
-        # Native prep state         
-        prep_fit_parameters = self._fit_prep_model_to_lgst_estimate(self.lgst_results['native_prep_state'])
-        theta[self.gst_parameter_indices['prep']] = np.real(prep_fit_parameters)
-
-        # Native measurement effects  
-        outcome_parameters = self._fit_measurement_effect_model_to_lgst_estimate(self.lgst_results['estimated_effects'])
-        theta[self.gst_parameter_indices["POVM"]] = outcome_parameters.real
-
+        indices = self.gate_set_model.indices_by_model
+        theta = np.array(theta_0, dtype=float, copy=True)
+        for gate, lgst_gate_matrix in lgst['gate_estimates'].items():
+            theta[indices[gate.label]] = self._fit_gate_model_to_lgst_estimate(gate, lgst_gate_matrix).real
+        theta[indices['prep']] = np.real(self._fit_prep_model_to_lgst_estimate(lgst['native_prep_state']))
+        theta[indices['POVM']] = self._fit_measurement_effect_model_to_lgst_estimate(lgst['estimated_effects']).real
         return theta
 
-    def _joint_fit_to_lgst(self, theta_0: Vector | None=None):
-        """ Fits all gate set models jointly (if there are shared parameters) """ 
-        lgst_gates = self.lgst_results["gate_estimates"]
-        lgst_prep = self.lgst_results["native_prep_state"]
-        lgst_effects = self.lgst_results["estimated_effects"]
+    def _joint_fit_to_lgst(self, lgst: dict, theta_0: Vector) -> Vector:
+        """ Fits all gate set models jointly (if there are shared parameters) """
+        lgst_gates = lgst["gate_estimates"]
+        lgst_prep = lgst["native_prep_state"]
+        lgst_effects = lgst["estimated_effects"]
 
         def cost(theta):
-            # Cost function of the gate set to fit gate set parameters from LGST estimates  
+            # Cost function of the gate set to fit gate set parameters from LGST estimates
             total_cost = 0.
-            # Gates
             for gate, lgst_matrix in lgst_gates.items():
-                gate_params = self.get_parameters(theta, gate)
-                M = self.gate_models[gate](*gate_params)
+                M = self.gate_models[gate](*self.get_parameters(theta, gate))
                 total_cost += np.linalg.norm(M - lgst_matrix, 'fro')**2
-            
-            # Prep 
-            prep_params = self.get_parameters(theta, "prep")
-            rho = self.prep_state_model(*prep_params)
+            rho = self.gate_set_model.prep_state_model(*self.get_parameters(theta, "prep"))
             total_cost += np.linalg.norm(rho - lgst_prep)**2
-                
-            # POVM 
-            POVM_params = self.get_parameters(theta, "POVM")
-            modeled_effects = self.POVM_effect_models(*POVM_params)
+            modeled_effects = self.gate_set_model.POVM_effect_models(*self.get_parameters(theta, "POVM"))
             for outcome, effect in lgst_effects.items():
                 assert outcome in modeled_effects
                 total_cost += np.linalg.norm(modeled_effects[outcome] - effect)**2
             return total_cost.real
-            
-        if theta_0 is None:
-            theta_0 = self.parameter_initial_guess
 
         ## Note: L-BFGS-B performs significantly better here than Nelder-Mead; Nelder-Mead should not be used in this method.
-        result = opt.minimize(cost, theta_0, method='L-BFGS-B', bounds=self.parameter_bounds)#'Nelder-Mead', bounds = self.parameter_bounds)
-        return result.x 
-
-        
-    ## TODO: Consolidate / factor into a single "fit model to lgst" function if possible  
-    def _fit_prep_model_to_lgst_estimate(self, lgst_native_prep: Vector) -> Vector:
-        """ Fits a prep state model's parameters given the lgst results for the prep state. """
-        prep_indices = self.gst_parameter_indices['prep']
-        def cost(theta: Vector) -> float:
-            # Frobenius norm of the process matrix difference bt. model and LGST-predicted
-            prep_state = self.prep_state_model(*theta)
-            return np.linalg.norm(prep_state - lgst_native_prep)**2
-
-        N_parameters = len(prep_indices)
-        #N_parameters = len(self.gst_parameters[prep_indices]) 
-        p0 = np.zeros(N_parameters) 
-        if self.parameter_bounds is not None:
-            model_bounds = [self.parameter_bounds[idx] for idx in prep_indices] 
-            #model_bounds = self.parameter_bounds[prep_indices]
-        else:
-            model_bounds = None
-
-        result = opt.minimize(cost, p0, method='Nelder-Mead', bounds = model_bounds) 
+        result = opt.minimize(cost, theta_0, method='L-BFGS-B', bounds=self.gate_set_model.parameter_bounds)
         return result.x
 
-    def _fit_measurement_effect_model_to_lgst_estimate(self, lgst_native_measurements: dict[str, Vector]) -> Vector:
-        """ Fits a measurement effect's model's parameters given the lgst results for the prep state. """
+    ## TODO: Consolidate / factor into a single "fit model to lgst" function if possible
+    def _fit_prep_model_to_lgst_estimate(self, lgst_native_prep: Vector) -> Vector:
+        """ Fits a prep state model's parameters given the lgst results for the prep state. """
+        prep_indices = self.gate_set_model.indices_by_model['prep']
         def cost(theta: Vector) -> float:
-            # Fit measurement effects for an outcome 
-            # Cost is Frobenius norm of the process matrix difference bt. model and LGST-predicted
-            modeled_effect_matrix = np.vstack([np.asarray(self.get_measurement_effects(theta)[label]) for label in self.outcome_labels])
+            prep_state = self.gate_set_model.prep_state_model(*theta)
+            return np.linalg.norm(prep_state - lgst_native_prep)**2
+        bounds = self.gate_set_model.parameter_bounds
+        model_bounds = None if bounds is None else [bounds[idx] for idx in prep_indices]
+        result = opt.minimize(cost, np.zeros(len(prep_indices)), method='Nelder-Mead', bounds = model_bounds)
+        return result.x
+
+    def _fit_measurement_effect_model_to_lgst_estimate(self, lgst_native_measurements: dict) -> Vector:
+        """ Fits a measurement effect's model's parameters given the lgst results for the measurement effects. """
+        def cost(theta: Vector) -> float:
+            effects = self.gate_set_model.measurement_effects(theta)
+            modeled_effect_matrix = np.vstack([np.asarray(effects[label]) for label in self.outcome_labels])
             lgst_native_measurements_matrix = np.vstack([np.asarray(lgst_native_measurements[outcome]) for outcome in self.outcome_labels])
             return np.linalg.norm(modeled_effect_matrix - lgst_native_measurements_matrix)**2
 
-        measurement_indices = self.gst_parameter_indices["POVM"] 
-        N_parameters = len(self.gst_parameters[measurement_indices]) 
-        # TODO: Fix the optimization to only vary parameters for this measurement outcome 
-        p0 = np.zeros(self.num_gst_parameters, dtype=complex) 
-
-        if self.parameter_bounds is not None:
-            model_bounds = self.parameter_bounds
-            #model_bounds = self.parameter_bounds[measurement_indices]
-        else:
-            model_bounds = None
-
-        result = opt.minimize(cost, p0, method='Nelder-Mead', bounds = model_bounds) 
+        measurement_indices = self.gate_set_model.indices_by_model["POVM"]
+        # TODO: Fix the optimization to only vary parameters for this measurement outcome
+        p0 = np.zeros(self.gate_set_model.num_parameters, dtype=complex)
+        result = opt.minimize(cost, p0, method='Nelder-Mead', bounds = self.gate_set_model.parameter_bounds)
         return result.x[measurement_indices]
 
-
     def _fit_gate_model_to_lgst_estimate(self, gate: GstGate, target_gate_matrix: Matrix) -> Vector:
-        """ Fits a gate model's parameters given process matrix data (target_gate_matrix).
-
-            - gate_model is as Callable that returns a process matrix  
-            - uses the Frobenius norm of the process matrix difference as the cost function
-
-        """
+        """ Fits a gate model's parameters to a process matrix (Frobenius norm of the difference as the cost) """
         gate_model = self.gate_models[gate]
-        gate_indices = self.gst_parameter_indices[gate.label]
+        gate_indices = self.gate_set_model.indices_by_model[gate.label]
         def cost(theta: Vector) -> float:
-            # Frobenius norm of the process matrix difference bt. model and LGST-predicted
             M = gate_model(*theta)
             return np.linalg.norm(M - target_gate_matrix, 'fro')**2
-
-        N_parameters = len(gate_indices)
-        p0 = np.zeros(N_parameters, dtype=complex) # zero often corresponds to ideal gate conditions 
-        if self.parameter_bounds is not None:
-            model_bounds = [self.parameter_bounds[idx] for idx in gate_indices]
-        else:
-            model_bounds = None
-
-        result = opt.minimize(cost, p0, method='Nelder-Mead', bounds = model_bounds) 
+        p0 = np.zeros(len(gate_indices), dtype=complex) # zero often corresponds to ideal gate conditions
+        bounds = self.gate_set_model.parameter_bounds
+        model_bounds = None if bounds is None else [bounds[idx] for idx in gate_indices]
+        result = opt.minimize(cost, p0, method='Nelder-Mead', bounds = model_bounds)
         return result.x
 
-
-    def write_results_to_file(self):
-        """ Writes results of GST analysis to disk. Convention is to write HDF5 file per gate. """
-
-        # Write results of each gate set to an hdf5 file
-        for gate in self.gate_set:
-            # Retrieve gate parameter names and values at optimimum; evaluate process matrix
-            gate_model = self.gate_models[gate]
-            parameter_names = self._model_parameter_names[gate.label]
-            parameter_values = self.get_parameters(self.gst_parameters, gate) # names and values share same sorted order
-
-            process_matrix = gate_model(*parameter_values)
-            # Write parameter names, values, and process matrix evaluated at those parameter values.
-            results_to_write = dict(zip(parameter_names, parameter_values))
-            results_to_write[gate.label + '_process_matrix'] = process_matrix
-            write_results_to_file('gst_optimal_' + gate.label + '.hdf5', results_to_write)
-
-    def staged_objective_minimization(self, parameters_guess: Vector, method: str='L-BFGS-B', bounds: list | None=None, organize_circuits_by_germ_power: bool=True,
-                                        **minimize_kwargs):
-        """ Iterative MLE through batches of data taken at increasing circuit depths """ 
-        if self.verbose:
-            print(f" --- Running Maximum likelihood estimation analysis --- ")
-        if organize_circuits_by_germ_power: 
-            circuit_groups = self._group_circuits_by_germ_power()
-        else:
-            circuit_groups = self._group_circuits_by_base_depth()
-            #circuit_groups = self._group_circuits_by_depth()
-
-        sorted_depths = sorted(circuit_groups.keys()) # keys are circuit depths 
-        solver_results = {} # stores results of parameter estimation at each stage 
-        if self.verbose: 
-            if organize_circuits_by_germ_power: 
-                print(f"--- Staged MLE with bins by germ powers (p): {sorted_depths} ") 
-                for p in sorted_depths:
-                    print(f"    p={p}: {len(circuit_groups[p])} circuits ")
+    ### Staged MLE ###
+    def group_circuits(self, organize_circuits_by_germ_power: bool) -> dict:
+        """ Circuits grouped by germ power p, or by base depth L (germ length x germ power, binned to powers of 2) """
+        groups = {}
+        for circ in self.gst_circuits:
+            if organize_circuits_by_germ_power:
+                key = circ.germ_power
             else:
-                print(f"--- Staged MLE with bins by circuit depth (L): {sorted_depths} ") 
-                for L in sorted_depths:
-                    print(f"    L={L}: {len(circuit_groups[L])} circuits ")
+                germ_length = len(circ.germ_gates)
+                key = 1 if germ_length == 0 else depth_bin(float(germ_length*circ.germ_power))
+            groups.setdefault(key, []).append(circ)
+        return groups
 
-        cumulative_circuits = []
-        num_stages = len(sorted_depths)
-        for stage, L in enumerate(sorted_depths):
-            cumulative_circuits.extend(circuit_groups[L])
 
-            solver_result = self._minimize_stage(stage, L, parameters_guess, self._tabulate_data(cumulative_circuits), method, bounds, minimize_kwargs)
-            solver_results[L] = solver_result.x
+def _gst_result(problem: _GstProblem, theta: Vector, method: str, theta_0: Vector, data: _CircuitData, **fields) -> GstResult:
+    """ Package a GstResult (log-likelihood of theta on the data, history of objective values) """
+    history = list(problem.nll_history)
+    log_likelihood = problem.log_likelihood(theta, data)
+    return GstResult(theta=np.array(theta, dtype=float), parameter_names=problem.gate_set_model.parameter_names, method=method,
+                     log_likelihood=log_likelihood, initial_guess=np.array(theta_0, dtype=float),
+                     negative_log_likelihood_history=history, **fields)
 
-        # return final result, having used all circuits:
-        return solver_result, solver_results
 
-    def _minimize_stage(self, stage: int, L: int, parameters_guess: Vector, data: _CircuitData, method: str, bounds, minimize_kwargs: dict):
-        """ One stage of staged MLE on the tabulated data of the cumulative circuits """
- #        if stage < (num_stages - 1):
- #            objective_function = self.chi_squared
- #        else:
- #            objective_function = lambda params: -1. * self.log_likelihood(params)
+### Solvers ###
+def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, circuit_design,
+                                     target: Vector | dict | None=None, target_gate_set: dict | None=None,
+                                     initial_guess: Vector | dict | None=None, verbose: bool=False) -> GstResult:
+    """ Linear GST (LGST): estimates the gate set from the fiducial circuits by linear inversion, then fits the model parameters
+        to those estimates.
 
-        if stage == 0:
-            theta_init = parameters_guess
-        else:
-            theta_init = self.gst_parameters.copy()
+        - gst_circuits: circuits with measurement data, including the fiducial (LGST) circuits of the design.
+        - gate_set_model: GateSetModel (the models of the gate set elements and their parameters).
+        - circuit_design: the circuit design (e.g. a GSTCircuitPlanner) whose prep_fiducials and measure_fiducials were used.
+        - target / target_gate_set: the gauge reference, a gate set close to ideal (e.g. prep |0> and ideal rotations). Give
+            either parameter values at which the models are ideal (target=...), or an explicit gate set (target_gate_set=
+            {'prep': ..., 'POVM': {...}, gate label: process matrix}, entries as arrays or ionsim State/operator objects).
+        - initial_guess: starting point for the fit to the LGST estimates when parameters are shared among models (default:
+            the specified guesses). With no shared parameters, each model is fit independently.
+        - verbose: print progress.
 
+        Returns a GstResult; the LGST estimates are in result.lgst_estimates (gate estimates keyed by gate label).
+    """
+    problem = _GstProblem(gst_circuits, gate_set_model, verbose)
+    prep_fiducials = [tuple(fid) for fid in circuit_design.prep_fiducials]
+    measure_fiducials = [tuple(fid) for fid in circuit_design.measure_fiducials]
+    gauge_target = _internal_gate_set(gate_set_model, target, target_gate_set, 'target')
+    missing = sorted({g.label for fid in prep_fiducials for g in fid} - {k.label for k in gauge_target if isinstance(k, GstGate)})
+    if missing:
+        raise ValueError(f"The target gate set has no process matrices for the prep fiducial gates {missing}.")
+
+    theta_0 = problem.parse_initial_guess(initial_guess)
+    lgst = problem.run_linear_gst(prep_fiducials, measure_fiducials, gauge_target)
+    theta = problem.parameters_from_lgst(lgst, theta_0)
+    lgst = dict(lgst, gate_estimates={gate.label: matrix for gate, matrix in lgst['gate_estimates'].items()})
+    return _gst_result(problem, theta, 'linear', theta_0, problem.tabulate(problem.gst_circuits), lgst_estimates=lgst)
+
+
+def mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel,
+                                  initial_guess: Vector | dict | None=None, verbose: bool=False, **minimize_kwargs) -> GstResult:
+    """ Maximum likelihood estimation (MLE): finds the parameters that maximize the likelihood of the data over all circuits,
+
+            max[ Likelihood( {G} | data) ] over parameter set theta,
+
+        using scipy.optimize.minimize with method L-BFGS-B and the parameter bounds from the parameter specification.
+
+        - gst_circuits: circuits with measurement data.
+        - gate_set_model: GateSetModel (the models of the gate set elements and their parameters).
+        - initial_guess: None (the specified guesses), a dictionary of parameter values, or a vector, e.g. the theta of a
+            linear GST result.
+        - verbose: print each objective evaluation.
+        - minimize_kwargs: passed to scipy.optimize.minimize, e.g. options = {'maxiter': 500}.
+
+        Returns a GstResult (the scipy result is in result.optimizer_result).
+    """
+    problem = _GstProblem(gst_circuits, gate_set_model, verbose)
+    theta_0 = problem.parse_initial_guess(initial_guess)
+    # Tabulate the circuits' current data once; every objective evaluation reuses it
+    data = problem.tabulate(problem.gst_circuits)
+    solver_result = opt.minimize(fun = lambda params: -problem.log_likelihood(params, data), x0 = theta_0, method = 'L-BFGS-B',
+                                 bounds = gate_set_model.parameter_bounds, **minimize_kwargs)
+    return _gst_result(problem, solver_result.x, 'MLE', theta_0, data, success=bool(solver_result.success),
+                       message=str(solver_result.message), optimizer_result=solver_result)
+
+
+def staged_mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel,
+                                         initial_guess: Vector | dict | None=None, organize_circuits_by_germ_power: bool=True,
+                                         verbose: bool=False, **minimize_kwargs) -> GstResult:
+    """ Staged MLE: maximum likelihood estimation on cumulative batches of circuits of increasing depth, each stage starting
+        from the previous stage's estimate. This can help avoid local optima for long circuits.
+
+        - initial_guess: initial guess for the first stage (as for mle_solve_for_gate_parameters).
+        - organize_circuits_by_germ_power: stage by germ power p (default) or by base circuit depth L.
+        - minimize_kwargs: passed to scipy.optimize.minimize at every stage, e.g. options = {'maxiter': 500}.
+
+        Returns a GstResult from the final stage; result.stage_estimates holds the estimate after each stage, keyed by depth.
+    """
+    problem = _GstProblem(gst_circuits, gate_set_model, verbose)
+    theta_0 = problem.parse_initial_guess(initial_guess)
+    circuit_groups = problem.group_circuits(organize_circuits_by_germ_power)
+    sorted_depths = sorted(circuit_groups.keys())
+    if verbose:
+        print(f"--- Staged MLE with bins by {'germ powers (p)' if organize_circuits_by_germ_power else 'circuit depth (L)'}: {sorted_depths}")
+
+    stage_estimates = {}
+    cumulative_circuits = []
+    theta = theta_0
+    for stage, L in enumerate(sorted_depths):
+        cumulative_circuits.extend(circuit_groups[L])
+        data = problem.tabulate(cumulative_circuits)
         # I found that using log likelihood for all stages gave faster and likely better results
-        objective_function = lambda params: -1. * self._log_likelihood(params, data)
+        solver_result = opt.minimize(fun = lambda params: -problem.log_likelihood(params, data), x0 = theta, method = 'L-BFGS-B',
+                                     bounds = gate_set_model.parameter_bounds, **minimize_kwargs)
+        theta = solver_result.x
+        stage_estimates[L] = solver_result.x
+        if verbose:
+            print(f"    Stage {stage + 1} (L <= {L}): {len(cumulative_circuits)} circuits, "
+                  f"LL = {-solver_result.fun:.3f}, converged = {solver_result.success}")
 
-        # TODO: Standardize solve result objects between GST solver methods
-        solver_result = opt.minimize(fun = lambda params: objective_function(params),  x0 = theta_init, method=method, bounds = bounds, **minimize_kwargs)
-        self.solver_result = solver_result
-        self.gst_parameters = solver_result.x
-
-
-        if self.verbose:
-            ll = self._log_likelihood(self.gst_parameters, data)
-            print()
-            print(f"    Stage {stage + 1} (L <= {L}): ")
-            print(f"    {len(data.circuits)} circuits ")
-            print(f"    LL = {ll:.3f} ")
-            print(f"    Converged = {solver_result.success} ")
-        return solver_result
+    return _gst_result(problem, theta, 'staged MLE', theta_0, data, success=bool(solver_result.success),
+                       message=str(solver_result.message), optimizer_result=solver_result, stage_estimates=stage_estimates)
 
 
-    ### Functions for gate set error metrics ### 
-    def compute_gate_set_error_by_element(self, theta: Vector, ideal_gate_set: dict | None=None, error_metric: str='frobenius norm') -> dict:
-        """ Computes an error for each element of the gate set by comparison to the ideal gate set elements.
-
-            - ideal_gate_set: dictionary keyed by gate labels (e.g. 'Gxpi2:0'), 'prep', and 'POVM'.
-                Defaults to the ideal gate set given to the constructor.
-            - Returns a dictionary keyed by gate label, 'prep', and 'POVM'.
-
-            Current options for gate set error metrics:
-                1. Frobenius norm: compares best-fit process matrix vs. reference process matrix
-                2. Process infidelity: between best-fit process matrix and reference matrix
-
-        """
-        return self._gate_set_error_by_element(theta, self._resolve_ideal_gate_set(ideal_gate_set), error_metric)
-
-    def _resolve_ideal_gate_set(self, ideal_gate_set: dict | None) -> dict:
-        """ Returns the internal (GstGate-keyed) ideal gate set from a user dictionary, or the constructor's ideal gate set if None. """
-        if ideal_gate_set is None:
-            if self.ideal_gate_set is None:
-                raise ValueError("No ideal gate set is available; pass one here or to the GateSetTomography constructor.")
-            return self.ideal_gate_set
-        return self._normalize_ideal_gate_set(ideal_gate_set)
-
-    def _gate_set_error_by_element(self, theta: Vector, internal_ideal_gate_set: dict, error_metric: str='frobenius norm') -> dict:
-        """ Gate set errors from an internal (GstGate-keyed) ideal gate set. Results are keyed by gate label. """
-        gst_errors = {}
-        for gate in self.gate_set:
-            if gate not in internal_ideal_gate_set:
-                raise ValueError(f"The ideal gate set has no entry for gate {gate.label!r}.")
-            ideal_gate = internal_ideal_gate_set[gate] # as a process matrix
-
-            # Get process matrix from gate model at optimum
-            gate_process_matrix_function = self.gate_models[gate]
-            parameter_values = self.get_parameters(theta, gate)
-
-            process_matrix = gate_process_matrix_function(*parameter_values)
-            if error_metric == 'frobenius norm':
-                gate_error = np.linalg.norm(process_matrix - ideal_gate, 'fro')
-            else: # process infidelity
-                gate_model = Gate(self.basis, process_matrix)
-                gate_error = 1. - gate_model.compute_process_fidelity(ideal_gate)
-
-            gst_errors[gate.label] = gate_error
-
-        # prep state:
-        ideal_prep_state = internal_ideal_gate_set['prep'].supervector
-        modeled_prep_state = self.get_prep_state(theta)
-        # Trace distance: sqrt(sum([rho_ideal[i] - rho_actual[i]]^2))
-        prep_error = np.sqrt(np.sum((modeled_prep_state - ideal_prep_state)**2))
-        gst_errors['prep'] = prep_error.real
-
-        # POVMs
-        ideal_POVMs = internal_ideal_gate_set['POVM']
-        POVMs = self.get_measurement_effects(theta)
-        POVM_errors = {}
-        for outcome, POVM in ideal_POVMs.items():
-            ideal_POVM = POVM.superbra
-            modeled_POVM = POVMs[outcome]
-            POVM_errors[outcome] = np.sqrt(np.sum((ideal_POVM - modeled_POVM)**2))
-
-        gst_errors['POVM'] = sum(POVM_errors.values())
-        if self.verbose:
-            print(f"\n GST error by gate set element: {gst_errors}")
-        return gst_errors
-
-    def compute_gate_set_error(self, theta: Vector, ideal_gate_set: dict | None=None, include_SPAM_error: bool=False) -> float:
-        """ Computes overall error of the gate set tomography parameter estimation by comparing ideal vs. best-fit gate models.
-
-            - takes in an input dictionary "ideal_gate_set" that contains process matrices for each gate in the gate set, keyed by gate label.
-            - additionally, the ideal_gate_set input contains the ideal prep state and ideal POVM
-            - defaults to the ideal gate set given to the constructor
-
-        """
-        gate_set_errors = self._gate_set_error_by_element(theta, self._resolve_ideal_gate_set(ideal_gate_set))
-
-        # Estimate process fidelity for each gate
-        return self.average_model_errors(gate_set_errors, include_SPAM_error)
-
-    def compute_average_gate_set_properties(self, N_repetitions: int, theta_true: Vector | dict, N_shots: int, solver: str='MLE', parameters_guess: Vector | dict | str | None=None, **kwargs):
-        """ Performs Monte Carlo sampling of the true gate set and then fits each gate set sample with MLE.
-            This enables computing gate set parameters and errors averaged over realizations of the true gate set
-
-            - theta_true: true parameter vector, or a dictionary of parameter names to values (see build_theta_from_dict)
-            - solver: 'MLE' (mle_solve_for_gate_parameters), 'staged MLE' (staged_mle_solve_for_gate_parameters), or 'linear'
-                (linear_solve_for_gate_parameters).
-            - parameters_guess: initial guess for each fit; 'lgst' re-seeds MLE solvers from linear GST on each sample
-            - kwargs: passed to the solver (e.g. options = {...} for the MLE solvers)
-        """
-        solvers = {'mle': self.mle_solve_for_gate_parameters, 'staged mle': self.staged_mle_solve_for_gate_parameters,
-                   'staged_mle': self.staged_mle_solve_for_gate_parameters, 'linear': self.linear_solve_for_gate_parameters}
-        if not isinstance(solver, str) or solver.lower() not in solvers:
-            raise ValueError(f"Unknown solver {solver!r}; use 'MLE', 'staged MLE', or 'linear'.")
-        solve = solvers[solver.lower()]
-        is_linear = solver.lower() == 'linear'
-
-        if isinstance(theta_true, dict):
-            theta_true = self.build_theta_from_dict(theta_true)
-
-        # Confirm that this is the true theta:
-        test_error = self._gate_set_error_by_element(theta_true, self._resolve_ideal_gate_set(None), error_metric = 'frobenius norm')
-        test_error = np.abs(sum(test_error.values()))
-        if test_error > NUMERICAL_EQUIVALENCE_THRESHOLD:
-            raise IonSimError(f"Specified parameter vector is not the true theta. Gate set error received: {test_error}") 
-
-        circuit_probabilities = []
-        # Copy the original circuits 
-        original_data = [circ.measurement_data for circ in self.gst_circuits]
-
-        best_theta_samples = np.zeros((N_repetitions, len(self.gst_parameters)))
-        # True outcome probabilities of every circuit (fixed across repetitions)
-        true_data = self._tabulate_data(self.gst_circuits, require_data=False)
-        true_probabilities = self._predict_sequence_probabilities(theta_true, true_data.sequences)[true_data.sequence_index]
-        gate_set_errors = []
-        for n in range(N_repetitions):
-            # Sample outcomes for each circuit from the true probabilities
-            for circ, p_vals in zip(self.gst_circuits, true_probabilities):
-                outcome_counts = np.random.multinomial(N_shots, p_vals)
-                circ.measurement_data = CircuitData.from_counts(dict(zip(self.outcome_labels, outcome_counts)))
-
-            self.lgst_results = None   
-            self.solver_result = None 
-
-            # For each repetition, perform the fit (the initial guess is re-resolved, e.g. a new LGST seed for each sample)
-            results = solve(parameters_guess = parameters_guess, **kwargs)
-            if is_linear:
-                best_theta_samples[n, :] = results
-            else:
-                best_theta_samples[n, :] = results.x
-            # Then compute the gate set errors:
-            if is_linear:
-                gate_set_errors.append(self._gate_set_error_by_element(results, self.ideal_gate_set, 'frobenius norm'))
-            else:
-                gate_set_errors.append(self._gate_set_error_by_element(results.x, self.ideal_gate_set, 'frobenius norm'))
-
-            print(f"Finished repetition {n} with parameters: {best_theta_samples[n, :]}.")
-
-        # Restore the original circuit data 
-        for circ, data in zip(self.gst_circuits, original_data):
-            circ.measurement_data = data
-
-        theta_avg = np.mean(best_theta_samples, axis=0)
-        theta_std_err = stats.sem(best_theta_samples, axis=0)
-
-        # Compute average gate set error 
-        avg_gate_set_error = {}
-        gate_set_error_standard_error = {}
-
-        for model in gate_set_errors[0].keys():
-            errors = np.zeros(N_repetitions)    
-            #std_devs = np.zeros(N_repetitions)    
-            for i, err_dict in enumerate(gate_set_errors):
-                errors[i] = err_dict[model] 
-            avg_gate_set_error[model] = np.mean(errors)
-            #avg_gate_set_error[model] = np.median(errors)
-            # Standard error = standard deviation / sqrt(N)
-            #gate_set_error_standard_error[model] = np.std(errors, axis=0)/np.sqrt(N_repetitions) 
-            gate_set_error_standard_error[model] = stats.sem(errors, axis=0)
-
-        return theta_avg, theta_std_err, avg_gate_set_error, gate_set_error_standard_error 
+### Objectives ###
+def log_likelihood(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, theta: Vector | dict) -> float:
+    """ Total log-likelihood of parameter values theta given the circuits' current measurement data:
+            sum over circuits and outcomes of N_outcome log( p_outcome(theta) ) """
+    problem = _GstProblem(gst_circuits, gate_set_model)
+    return problem.log_likelihood(gate_set_model.parse_theta(theta), problem.tabulate(problem.gst_circuits))
 
 
-    def average_model_errors(self, gate_set_error: dict, include_SPAM_error: bool=True) -> float: 
-        """ Average over gate model errors and include SPAM model errors """  
-        gst_error = 0.
-        gst_error = sum([gate_set_error[gate.label] for gate in self.gate_set]) / len(self.gate_set)
+def chi_squared(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, theta: Vector | dict) -> float:
+    """ chi^2 between the circuits' observed outcome frequencies and the model probabilities at theta """
+    problem = _GstProblem(gst_circuits, gate_set_model)
+    return problem.chi_squared(gate_set_model.parse_theta(theta), problem.tabulate(problem.gst_circuits))
 
-        if include_SPAM_error:
-            #POVM_errors = np.array(list(gate_set_errors['POVM'].values())).real
-            #SPAM_error = gate_set_errors['prep'] + sum(POVM_errors)
-            SPAM_error = gate_set_error['prep'] + gate_set_error["POVM"]
-            return gst_error + SPAM_error 
+
+### Simulation ###
+def simulate_gst_data(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, theta: Vector | dict, N_shots: int,
+                      rng: np.random.Generator | int | None=None) -> list[GstCircuit]:
+    """ Sample measurement outcomes for each circuit from the models at parameter values theta.
+
+        Returns new circuits (copies with the sampled counts); the given circuits are not modified.
+        - rng: a numpy Generator or seed, for reproducibility (default: a new Generator).
+    """
+    rng = np.random.default_rng(rng)
+    problem = _GstProblem(gst_circuits, gate_set_model)
+    data = problem.tabulate(problem.gst_circuits, require_data=False)
+    probabilities = problem.predict_sequence_probabilities(gate_set_model.parse_theta(theta), data.sequences)
+    simulated = []
+    for circ, k in zip(problem.gst_circuits, data.sequence_index):
+        p = probabilities[k] / probabilities[k].sum()
+        counts = rng.multinomial(N_shots, p)
+        simulated.append(replace(circ, measurement_data = CircuitData.from_counts(dict(zip(problem.outcome_labels, counts)))))
+    return simulated
+
+
+### Gate set error metrics ###
+def gate_set_errors(gate_set_model: GateSetModel, theta: Vector | dict, reference: Vector | dict | None=None,
+                    reference_gate_set: dict | None=None, error_metric: str='frobenius norm',
+                    basis: StandardBasis | None=None) -> dict:
+    """ Error of each gate set element at theta, compared to a reference gate set.
+
+        - reference: parameter values of the reference (e.g. the true values in a simulation study), or
+        - reference_gate_set: an explicit gate set {'prep': ..., 'POVM': {...}, gate label: process matrix}.
+        - error_metric: 'frobenius norm' (process matrix difference) or 'process infidelity' (requires basis).
+
+        Returns {gate label: error, 'prep': error, 'POVM': error} for every gate model. Prep and POVM errors are Euclidean norms
+        of the supervector / summed superbra differences.
+    """
+    if error_metric not in ('frobenius norm', 'process infidelity'):
+        raise ValueError(f"Unknown error metric {error_metric!r}; use 'frobenius norm' or 'process infidelity'.")
+    if error_metric == 'process infidelity' and basis is None:
+        raise ValueError("The 'process infidelity' metric requires the basis.")
+    reference_set = _internal_gate_set(gate_set_model, reference, reference_gate_set, 'reference')
+    theta = gate_set_model.parse_theta(theta)
+
+    errors = {}
+    for gate in gate_set_model.gate_models:
+        if gate not in reference_set:
+            raise ValueError(f"The reference gate set has no entry for gate {gate.label!r}.")
+        process_matrix = gate_set_model.gate_process_matrix(gate, theta)
+        if error_metric == 'frobenius norm':
+            errors[gate.label] = np.linalg.norm(process_matrix - reference_set[gate], 'fro')
         else:
-            return gst_error 
+            errors[gate.label] = 1. - Gate(basis, process_matrix).compute_process_fidelity(reference_set[gate])
 
-    def propagate_errors(self, gate_set_std_errs: dict, include_SPAM_error: bool=True) -> float: 
-        """ Propagate errors to get an overall gate set standard derviation for the gate set error """   
-        gst_error = 0.
-        gst_error = sum([gate_set_std_errs[gate.label]**2 for gate in self.gate_set]) / (len(self.gate_set)**2)
-        if include_SPAM_error:
-            SPAM_error = gate_set_std_errs['prep'] + gate_set_std_errs["POVM"]
-            gst_error += SPAM_error**2 
-        return np.sqrt(gst_error)
+    errors['prep'] = np.linalg.norm(gate_set_model.prep_state(theta) - reference_set['prep'])
+    modeled_effects = gate_set_model.measurement_effects(theta)
+    errors['POVM'] = sum(np.linalg.norm(np.asarray(modeled_effects[outcome]) - effect) for outcome, effect in reference_set['POVM'].items())
+    return errors
 
 
-    #def estimate_parameter_uncertainties(self, theta: Vector | None=None, method: str='bootstrap') -> Vector:
-    ## TODO: Consider deleting this; we probably don't need bootstrapping 
- #    def bootstrapping_analysis(self, theta: Vector | None=None,  N_bootstrap: int=50):
- #        """ Computes uncertainties of each parameter from the Hessian of the log-likelihood at the MLE solution."""
- #        if self.solver_result is None and theta is None:
- #            self.solve_for_gate_parameters()
- #
- #        if theta is None:
- #            theta = self.gst_parameters 
- #        else:
- #            self.gst_parameters = theta
- #
- #        uncertainties = np.zeros_like(self.gst_parameters)
- #        uncertainties, means, bootstrapped_thetas = self.bootstrap_parameters(N_bootstrap)
- #
- #        # Return a dictionary containing a dictionary for each model (prep, gate 1, gate 2, etc. , measure) 
- #        mean_results = {}
- #        uncertainty_results = {}
- #        # For gates: 
- #        for gate in self.gate_set:
- #            gate_model = self.gate_models[gate]
- #            gate_model_sig = inspect.signature(gate_model)
- #            parameter_names = list(gate_model_sig.parameters.keys())  
- #            parameter_means = means[self.gst_parameter_indices[gate]]
- #            parameter_uncertainties = uncertainties[self.gst_parameter_indices[gate]]
- #            # Package up parameter names and uncertainty values: 
- #            mean_results[gate] = dict(zip(parameter_names, parameter_means))
- #            uncertainty_results[gate] = dict(zip(parameter_names, parameter_uncertainties)) 
- #
- #        # For SPAM: 
- #        prep_model = self.prep_state_model
- #        prep_model_sig = inspect.signature(prep_model)
- #        parameter_names = list(prep_model_sig.parameters.keys())
- #        prep_param_means = means[self.gst_parameter_indices['prep']]
- #        prep_param_unc = uncertainties[self.gst_parameter_indices['prep']]
- #        mean_results["prep"] = dict(zip(parameter_names, prep_param_means))
- #        uncertainty_results['prep'] = dict(zip(parameter_names, prep_param_unc)) 
- #
- #        # Currently only the independent measurement parameters are returned; TODO: generalize as much as possible  
- #        measure_model = self.POVM_effect_models
- #        measure_model_sig = inspect.signature(measure_model) 
- #        parameter_names = list(measure_model_sig.parameters.keys())
- #        parameter_means = means[self.gst_parameter_indices["POVM"]]
- #        parameter_uncertainties = uncertainties[self.gst_parameter_indices["POVM"]]
- #        mean_results["POVM"] = dict(zip(parameter_names, prep_param_means))
- #        uncertainty_results["POVM"] = dict(zip(parameter_names, parameter_uncertainties))
- #
- #        # Compute gate set errors for each bootstrapped sample  
- #        gate_set_errors = []
- #        N_bootstrap = bootstrapped_thetas.shape[0]
- #        for i in range(N_bootstrap):
- #            sampled_theta = bootstrapped_thetas[i,:] 
- #            gate_set_errors.append(self.compute_gate_set_error_by_element(sampled_theta, self.ideal_gate_set, 'frobenius norm')) 
- #        
- #        return mean_results, uncertainty_results, gate_set_errors, bootstrapped_thetas 
- #
- #    def bootstrap_parameters(self, N_bootstrap: int=50):
- #        """ Bootstrapping for parameter uncertainties: Sample data from the fitted model and re-fit, computing 
- #                parameter spread. N_bootstrap is the number of resamplings. """
- #        if self.verbose:
- #            print(f"Bootstrapping the uncertainties")
- #        theta_best = self.gst_parameters.copy()
- #        bootstrap_thetas = np.zeros((N_bootstrap, len(theta_best)))
- #
- #        circuit_probabilities = []
- #        for circ in self.gst_circuits:
- #            probs = self._predict_probabilities(circ, theta_best)
- #            counts = circ.measurement_data.total_counts     # TODO: generalize to t-dependent data 
- #            circuit_probabilities.append((probs, counts))
- #        
- #        for b in range(N_bootstrap):
- #            for circ, (probs, total_counts) in zip(self.gst_circuits, circuit_probabilities):
- #                outcomes = list(probs.keys()) 
- #                outcome_probs = [probs[outcome] for outcome in outcomes]
- #                outcome_counts = np.random.multinomial(total_counts, outcome_probs) 
- #                circ.measurement_data = CircuitData.from_counts(dict(zip(outcomes, outcome_counts)))
- #                
- #            # Re-run the MLE analysis to find best fit:
- #            #self.gst_parameters = theta_best.copy()
- #            #self.solve_for_gate_parameters(parameters_guess = theta_best.copy(), solver = 'MLE')   # sets self.gst_parameters to optimal  
- #            self.solve_for_gate_parameters(parameters_guess = self.parameters_guess, solver = 'MLE') 
- #            bootstrap_thetas[b] = self.gst_parameters
- #
- #        # Restore original data/fit
- #        self.gst_parameters = theta_best
- #            
- #        # Compute uncertainties as standard deviation of the best fits
- #        means = np.mean(bootstrap_thetas, axis=0)
- #        uncertainties = np.std(bootstrap_thetas, axis=0) 
- #        return uncertainties, means, bootstrap_thetas
+def average_gate_set_error(errors: dict, include_SPAM_error: bool=True) -> float:
+    """ Average of the gate errors in a gate_set_errors() dictionary, plus the prep and POVM errors if include_SPAM_error """
+    gate_errors = [value for key, value in errors.items() if key not in ('prep', 'POVM')]
+    gst_error = sum(gate_errors) / len(gate_errors)
+    if include_SPAM_error:
+        return gst_error + errors['prep'] + errors['POVM']
+    return gst_error
+
+
+def average_gate_set_error_uncertainty(error_uncertainties: dict, include_SPAM_error: bool=True) -> float:
+    """ Uncertainty of average_gate_set_error() from the uncertainties (e.g. standard errors) of each element's error """
+    gate_uncertainties = [value for key, value in error_uncertainties.items() if key not in ('prep', 'POVM')]
+    gst_variance = sum(u**2 for u in gate_uncertainties) / len(gate_uncertainties)**2
+    if include_SPAM_error:
+        gst_variance += (error_uncertainties['prep'] + error_uncertainties['POVM'])**2
+    return np.sqrt(gst_variance)
+
+
+### Output ###
+def write_gate_set_results(gate_set_model: GateSetModel, theta: Vector | dict, prefix: str='gst_optimal_'):
+    """ Writes each gate's parameter values and process matrix at theta to an HDF5 file, '<prefix><gate label>.hdf5' """
+    theta = gate_set_model.parse_theta(theta)
+    for gate, gate_model in gate_set_model.gate_models.items():
+        parameter_values = gate_set_model.model_parameters(theta, gate)
+        results_to_write = dict(zip(gate_set_model.model_parameter_names[gate.label], parameter_values))
+        results_to_write[gate.label + '_process_matrix'] = gate_model(*parameter_values)
+        write_results_to_file(prefix + gate.label + '.hdf5', results_to_write)

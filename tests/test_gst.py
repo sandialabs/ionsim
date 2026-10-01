@@ -21,8 +21,9 @@ from ionsim.hamiltonian import Hamiltonian
 from ionsim.lindbladian import Dissipator, Lindbladian
 from ionsim.gst_circuit_planner import GSTCircuitPlanner
 from ionsim.gst_circuit_parser import CircuitData 
-from ionsim.gate_set_tomography import GateSetTomography
-from ionsim.gst_parameters import GstModelParameters
+from ionsim.gate_set_tomography import (mle_solve_for_gate_parameters, staged_mle_solve_for_gate_parameters, gate_set_errors,
+                                        log_likelihood)
+from ionsim.gate_set_model import GateSetModel
 
 
 def E0_1Q(prob_false_bright:float, prob_false_dark: float):
@@ -109,16 +110,16 @@ class TestGST(unittest.TestCase):
         ## Models and parameter information (initial guesses, bounds, and sharing among models), specified once and used by
         # both the circuit planner (Fisher information) and the GST analysis.
         # SPAM_error_probability is an argument of both the prep and POVM models, so model = "shared" ties them together.
-        self.model_parameters = GstModelParameters(self.prep_state_model, self.POVM_models, self.gate_models)
-        self.model_parameters.specify_parameter("SPAM_error_probability", model = "shared", guess = 1e-4, bounds = (0., 1.))
-        self.model_parameters.specify_parameter("amplitude_noise_strength", model = "Gxpi8:0", guess = 0.5, bounds = (0.0001, 10.0))
+        self.gate_set_model = GateSetModel(self.prep_state_model, self.POVM_models, self.gate_models)
+        self.gate_set_model.specify_parameter("SPAM_error_probability", model = "shared", guess = 1e-4, bounds = (0., 1.))
+        self.gate_set_model.specify_parameter("amplitude_noise_strength", model = "Gxpi8:0", guess = 0.5, bounds = (0.0001, 10.0))
 
         num_qubits = len(qubit_indices)
         powers = [1, 2, 4, 8, 16, 32, 64, 128]
         fiducials = [[]]
         germs = [['Gxpi8:0']] 
         self.gst_circuit_planner = GSTCircuitPlanner(gate_names, qubit_indices, prep_fiducials = fiducials, measure_fiducials = fiducials, germ_powers = powers, 
-                                                        germs = germs, parameters = self.model_parameters) 
+                                                        germs = germs, gate_set_model = self.gate_set_model) 
 
         self.gst_circuits = self.gst_circuit_planner.generate_gst_circuits()
 
@@ -132,17 +133,8 @@ class TestGST(unittest.TestCase):
         # Run method to generate and populate circuit outcomes and test circuit planning 
         self.test_circuit_simulations_and_outcomes()
     
-        self.true_POVM_effects = {} 
-        self.true_POVM_effects['0'] = EnergyShiftOperator.from_matrix(self.basis, self.POVM_models(SPAM_error_prob)['0'].reshape(2,2))
-        self.true_POVM_effects['1'] = EnergyShiftOperator.from_matrix(self.basis, self.POVM_models(SPAM_error_prob)['1'].reshape(2,2))
-
-        self.true_gate_set = {}
-        self.true_gate_set['prep'] = self.rho_0 
-        self.true_gate_set['POVM'] = self.true_POVM_effects 
-        self.true_gate_set['Gxpi8:0'] =  X_pi_8_co_prop_simple(self.amplitude_noise_strength)
-
-        self.GST_analyzer = GateSetTomography.from_model_parameters(self.basis, self.gst_circuits, self.model_parameters, 
-                                    circuit_design = self.gst_circuit_planner, ideal_gate_set = self.true_gate_set, verbose = False)
+        # True parameter values used to simulate the data (the reference for gate set errors)
+        self.true_values = {'shared:SPAM_error_probability' : SPAM_error_prob, 'Gxpi8:0.amplitude_noise_strength' : self.amplitude_noise_strength}
 
 
     def test_circuit_simulations_and_outcomes(self):
@@ -173,26 +165,35 @@ class TestGST(unittest.TestCase):
 
     def test_mle_gst_analysis(self):
         """ Test GST via maximum likelihood estimation (MLE)""" 
-        solver_results = self.GST_analyzer.mle_solve_for_gate_parameters() 
-        gate_set_error = self.GST_analyzer.compute_gate_set_error_by_element(solver_results.x, self.true_gate_set)
+        result = mle_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model)
+        gate_set_error = gate_set_errors(self.gate_set_model, result.theta, reference = self.true_values)
         X_pi8_error = gate_set_error['Gxpi8:0']
         SPAM_error = gate_set_error["prep"]
         SPAM_error += gate_set_error["POVM"]
         self.assertAlmostEqual(X_pi8_error, 0.00027408522081525397, places=5)
         self.assertAlmostEqual(SPAM_error, 0.00011231981002808708, places=5)
 
-    def test_staged_mle_gst_analysis(self):
-        """ Test staged MLE: agrees with MLE, forwards scipy options to every stage, and restores the circuit list """
-        circuits_before = self.GST_analyzer.gst_circuits
-        mle_result = self.GST_analyzer.mle_solve_for_gate_parameters()
-        staged_result = self.GST_analyzer.staged_mle_solve_for_gate_parameters(options = {'maxiter': 500})
+        # The result records the solve
+        self.assertTrue(result.success)
+        self.assertEqual(result.method, 'MLE')
+        self.assertEqual(result.parameter_names, self.gate_set_model.parameter_names)
+        self.assertEqual(list(result.parameter_values), result.parameter_names)
+        np.testing.assert_array_equal(result.initial_guess, self.gate_set_model.initial_guess)
+        self.assertAlmostEqual(result.log_likelihood, log_likelihood(self.gst_circuits, self.gate_set_model, result.theta), places=6)
+        self.assertEqual(len(result.negative_log_likelihood_history), result.optimizer_result.nfev)
 
-        np.testing.assert_allclose(staged_result.x, mle_result.x, rtol=1e-3)
-        np.testing.assert_array_equal(self.GST_analyzer.gst_parameters, staged_result.x)
-        self.assertIs(self.GST_analyzer.gst_circuits, circuits_before)
+    def test_staged_mle_gst_analysis(self):
+        """ Test staged MLE: agrees with MLE, forwards scipy options to every stage, and leaves the circuits unchanged """
+        data_before = [circ.measurement_data for circ in self.gst_circuits]
+        mle_result = mle_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model)
+        staged_result = staged_mle_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model, options = {'maxiter': 500})
+
+        np.testing.assert_allclose(staged_result.theta, mle_result.theta, rtol=1e-3)
+        self.assertEqual(staged_result.method, 'staged MLE')
+        self.assertTrue(all(circ.measurement_data is data for circ, data in zip(self.gst_circuits, data_before)))
         # One estimate per stage (germ power), the last equal to the final result
-        self.assertEqual(sorted(self.GST_analyzer.results_by_stage), [1, 2, 4, 8, 16, 32, 64, 128])
-        np.testing.assert_array_equal(self.GST_analyzer.results_by_stage[128], staged_result.x)
+        self.assertEqual(sorted(staged_result.stage_estimates), [1, 2, 4, 8, 16, 32, 64, 128])
+        np.testing.assert_array_equal(staged_result.stage_estimates[128], staged_result.theta)
 
     def test_fisher_info(self):
         """ Test calculation of Fisher information, including the SPAM models and the shared SPAM parameter """
@@ -201,8 +202,8 @@ class TestGST(unittest.TestCase):
         # Returns (Fisher information dictionaries, Fisher information matrices), each keyed by the circuit's expanded gate sequence
         FI_dicts, FI_matrices = self.gst_circuit_planner.compute_design_fisher_information(self.gst_circuits, parameter_values)
 
-        # Matrices use the same parameter order as the GST analysis
-        self.assertEqual(self.GST_analyzer.parameter_names, self.model_parameters.parameter_names)
+        # Matrices use the parameter order of the model parameters, as the GST solvers do
+        self.assertEqual(self.gate_set_model.parameter_names, ['shared:SPAM_error_probability', 'Gxpi8:0.amplitude_noise_strength'])
 
         # Independent reference for the deepest circuit: I = N sum_k (dp_k)(dp_k)^T / p_k with derivatives from Richardson-extrapolated
         # central differences of directly computed probabilities (prep and POVM models share the SPAM parameter)

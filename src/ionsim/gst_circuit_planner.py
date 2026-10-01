@@ -13,14 +13,14 @@ from ionsim.process import Circuit, Gate, Circuit_Process_Matrix_Function_Helper
 from ionsim.custom_types import Matrix, Vector
 from ionsim.custom_math import finite_difference_derivatives
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
-from ionsim.gst_parameters import GstModelParameters
+from ionsim.gate_set_model import GateSetModel
 from ionsim.gst_circuit_parser import GstCircuit, GstGate, gate_from_label
 
 """ Circuit planner has 2 modes: 1) Gate model agnostic, 2) optimized planner based on gate models and germ sensitivies. """ 
 class GSTCircuitPlanner:
     def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials: list[list[str]] | None=None,
                     measure_fiducials: list[list[str]] | None=None, germs: list[list[str]] | None=None, germ_powers: list[int]=[1,2,4,8,16],
-                    parameters: GstModelParameters | None=None, long_sequence_GST: bool=True, evaluator_tolerance: float | None=None,
+                    gate_set_model: GateSetModel | None=None, long_sequence_GST: bool=True, evaluator_tolerance: float | None=None,
                     gate_models=None):
         """ Constructor for GST Circuit Planner class. The user passes in the gate names and qubit labels at a minimum.
 
@@ -31,9 +31,9 @@ class GSTCircuitPlanner:
               Defaults are used for any that are not supplied.
             - Sets up list of prep gates, measure gates, and germ gates. The class organizes GST circuits based on those gates requested germ powers.
             - Can write the GST circuit sequences to a file.
-            - parameters: optional GstModelParameters (prep, POVM, and gate models with their parameter specification, including
+            - gate_set_model: optional GateSetModel (the models of the prep, POVM, and gates and their parameters, including
               shared parameters), required for sensitivity and Fisher information analysis. The same object can be given to
-              GateSetTomography.from_model_parameters() so the analysis uses identical parameters.
+              the GST solvers (gate_set_tomography.py) so the analysis uses identical parameters.
             - evaluator_tolerance: relative accuracy of the model functions, used to size finite-difference steps (default:
               machine precision, appropriate for matrix exponentials; use the ODE solver tolerance for solver-based models).
             - long GST: 'True' will use germs to do long-gst circuits, 'false' will use only linear gst circuits
@@ -71,11 +71,11 @@ class GSTCircuitPlanner:
 
         # Models and parameters (optional, used for sensitivity / Fisher information analysis)
         if gate_models is not None:
-            raise TypeError("gate_models was replaced by parameters = GstModelParameters(prep_state_model, POVM_effect_models, gate_models), "
+            raise TypeError("gate_models was replaced by gate_set_model = GateSetModel(prep_state_model, POVM_effect_models, gate_models), "
                             "which includes the SPAM models and shared-parameter specification.")
-        if parameters is not None and not isinstance(parameters, GstModelParameters):
-            raise TypeError(f"parameters must be a GstModelParameters object; received {type(parameters).__name__}.")
-        self.parameters = parameters
+        if gate_set_model is not None and not isinstance(gate_set_model, GateSetModel):
+            raise TypeError(f"gate_set_model must be a GateSetModel object; received {type(gate_set_model).__name__}.")
+        self.gate_set_model = gate_set_model
         self.evaluator_tolerance = evaluator_tolerance
         # Gate process matrices are cached across every circuit of the design
         self.gate_cache = GateProcessMatrixCache()
@@ -183,7 +183,7 @@ class GSTCircuitPlanner:
                        
     @staticmethod
     def standard_1Q_fiducials(qubit: int=0) -> tuple[list[list[str]], list[list[str]]]:
-        """ For 1Q gates, the fiducial circuits are standardized for {X_pi/2, Y_pi/2} gates.
+        """ For 1Q gates, the fiducial circuits are the standard choices for {X_pi/2, Y_pi/2} gates.
 
             - returns the prep and measure fiducials as lists of gate-label sequences
 
@@ -334,14 +334,14 @@ class GSTCircuitPlanner:
 
 
     ### Circuit sensitivity and Fisher information (requires model parameters) ###
-    def _require_parameters(self) -> GstModelParameters:
-        if self.parameters is None:
+    def _require_gate_set_model(self) -> GateSetModel:
+        if self.gate_set_model is None:
             raise ValueError("Sensitivity and Fisher information analysis requires the gate-set models: construct the planner with "
-                             "parameters = GstModelParameters(prep_state_model, POVM_effect_models, gate_models), or set planner.parameters.")
-        return self.parameters
+                             "gate_set_model = GateSetModel(prep_state_model, POVM_effect_models, gate_models), or set planner.gate_set_model.")
+        return self.gate_set_model
 
     def _compute_germ_process_matrix(self, germ, theta):
-        """Compute the process matrix for a germ at the parameter vector theta (see self.parameters.parameter_names).
+        """Compute the process matrix for a germ at the parameter vector theta (see self.gate_set_model.parameter_names).
 
         Args:
             germ: List of GstGate objects representing the germ
@@ -350,37 +350,37 @@ class GSTCircuitPlanner:
         Returns:
             Process matrix for the germ sequence
         """
-        parameters = self._require_parameters()
-        theta = parameters.resolve_theta(theta)
-        d2 = parameters.prep_state(theta).size
+        gate_set_model = self._require_gate_set_model()
+        theta = gate_set_model.parse_theta(theta)
+        d2 = gate_set_model.prep_state(theta).size
         germ_process_matrix = np.eye(d2, dtype=complex)
         for gate in germ:
-            germ_process_matrix = parameters.gate_process_matrix(gate, theta) @ germ_process_matrix
+            germ_process_matrix = gate_set_model.gate_process_matrix(gate, theta) @ germ_process_matrix
         return germ_process_matrix
 
     def build_circuit_process_matrix_function(self, circuit: GstCircuit) -> Circuit_Process_Matrix_Function_Helper | None:
         """ Circuit process matrix function (Circuit_Process_Matrix_Function_Helper) whose keyword arguments are the global
-            parameter names of self.parameters, e.g. 'shared:amplitude_noise_strength' or 'MS:0:1.phi_error', so shared
+            parameter names of self.gate_set_model, e.g. 'shared:amplitude_noise_strength' or 'MS:0:1.phi_error', so shared
             parameters are a single argument. Gate process matrices are cached across all circuits of the planner.
             Returns None for an empty circuit.
         """
-        parameters = self._require_parameters()
+        gate_set_model = self._require_gate_set_model()
         gates = list(circuit.expanded_gates)
         if not gates:
             return None
-        missing = sorted({gate.label for gate in gates if gate not in parameters.gate_models})
+        missing = sorted({gate.label for gate in gates if gate not in gate_set_model.gate_models})
         if missing:
-            raise ValueError(f"No gate models for {missing} in the planner's parameters (models exist for {[g.label for g in parameters.gate_models]}).")
+            raise ValueError(f"No gate models for {missing} in the planner's gate set model (models exist for {[g.label for g in gate_set_model.gate_models]}).")
 
         # Map each gate argument, namespaced by gate label, to its global parameter name (shared arguments map to one name)
         parameter_names = {}
         for gate in dict.fromkeys(gates):
-            argument_names = inspect.signature(parameters.gate_models[gate]).parameters.keys()
-            for argument, global_name in zip(argument_names, parameters.argument_names(gate)):
+            argument_names = inspect.signature(gate_set_model.gate_models[gate]).parameters.keys()
+            for argument, global_name in zip(argument_names, gate_set_model.argument_names(gate)):
                 parameter_names[f"{gate.label}.{argument}"] = global_name
 
         # The helper composes its gate sequence left to right as matrices, i.e. last-applied gate first
-        return Circuit_Process_Matrix_Function_Helper([parameters.gate_models[g] for g in gates[::-1]], separator='.',
+        return Circuit_Process_Matrix_Function_Helper([gate_set_model.gate_models[g] for g in gates[::-1]], separator='.',
                     gate_labels=[g.label for g in gates[::-1]], parameter_names=parameter_names,
                     gate_cache=self.gate_cache, evaluator_tolerance=self.evaluator_tolerance)
 
@@ -390,27 +390,27 @@ class GSTCircuitPlanner:
 
             Returns (outcome labels, parameter indices, probabilities, jacobian [param, outcome], hessian [param, param, outcome] or None)
         """
-        parameters = self._require_parameters()
-        theta_0 = parameters.resolve_theta(parameter_values)
-        names = parameters.parameter_names
+        gate_set_model = self._require_gate_set_model()
+        theta_0 = gate_set_model.parse_theta(parameter_values)
+        names = gate_set_model.parameter_names
         circuit_function = self.build_circuit_process_matrix_function(circuit)
 
         # Parameters the probabilities depend on: prep, POVM, and the circuit's gates
-        wrt = parameters.parameter_indices_of_models(['prep', 'POVM'] + list(dict.fromkeys(circuit.expanded_gates)))
-        outcome_labels = list(parameters.measurement_effects(theta_0).keys())
+        wrt = gate_set_model.parameter_indices_of_models(['prep', 'POVM'] + list(dict.fromkeys(circuit.expanded_gates)))
+        outcome_labels = list(gate_set_model.measurement_effects(theta_0).keys())
         circuit_arguments = [] if circuit_function is None else [(name, names.index(name)) for name in circuit_function.parameter_names]
 
         def probabilities(x):
             theta = theta_0.copy()
             theta[wrt] = x
-            rho = parameters.prep_state(theta)
-            effects = parameters.measurement_effects(theta)
+            rho = gate_set_model.prep_state(theta)
+            effects = gate_set_model.measurement_effects(theta)
             effect_matrix = np.vstack([np.asarray(effects[label]) for label in outcome_labels])
             if circuit_function is not None:
                 rho = circuit_function(**{name: theta[i] for name, i in circuit_arguments}) @ rho
             return np.real(effect_matrix @ rho)
 
-        bounds = [parameters.layout['bounds'][i] for i in wrt]
+        bounds = [gate_set_model.layout['bounds'][i] for i in wrt]
         probs, jacobian, hessian = finite_difference_derivatives(probabilities, theta_0[wrt], order=order,
                                         evaluator_tolerance=self.evaluator_tolerance, bounds=bounds)
         return outcome_labels, wrt, probs, jacobian, hessian
@@ -419,12 +419,12 @@ class GSTCircuitPlanner:
         """ Derivatives of a circuit's outcome probabilities with respect to the gate-set parameters it depends on
             (prep, POVM, and the circuit's gates).
 
-            - parameter_values: point of evaluation, as a parameter vector (order of self.parameters.parameter_names) or a
+            - parameter_values: point of evaluation, as a parameter vector (order of self.gate_set_model.parameter_names) or a
                 dictionary of parameter names to values; unlisted parameters use their specified initial guesses.
 
             Returns {parameter name: {outcome label: dp_outcome/dparameter}}
         """
-        names = self._require_parameters().parameter_names
+        names = self._require_gate_set_model().parameter_names
         outcome_labels, wrt, _, jacobian, _ = self._circuit_probability_derivatives(circuit, parameter_values, order=1)
         return {names[i]: dict(zip(outcome_labels, jacobian[a])) for a, i in enumerate(wrt)}
 
@@ -451,10 +451,10 @@ class GSTCircuitPlanner:
             - N_shots: number of shots; defaults to the circuit's measurement data counts.
 
             Returns (dictionary {(name_i, name_j): I_ij} over the parameters the circuit depends on, full matrix in the order of
-            self.parameters.parameter_names)
+            self.gate_set_model.parameter_names)
         """
-        parameters = self._require_parameters()
-        names = parameters.parameter_names
+        gate_set_model = self._require_gate_set_model()
+        names = gate_set_model.parameter_names
         N = self._circuit_shots(circuit, N_shots)
         _, wrt, probs, jacobian, hessian = self._circuit_probability_derivatives(circuit, parameter_values, order=2 if include_hessian else 1)
         p = np.clip(probs, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. - NUMERICAL_EQUIVALENCE_THRESHOLD)

@@ -7,9 +7,9 @@
 # http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
 #***************************************************************************************************
 
-""" Parameter specification for GST gate-set models, shared by the GST analysis (gate_set_tomography.py) and circuit design
-    / sensitivity analysis (gst_circuit_planner.py) so that parameters, their sharing among models, bounds, and initial guesses
-    are specified once and named consistently everywhere.
+""" Gate set model for GST: the models of each gate set element (prep, POVM, gates) and their parameters, shared by the GST
+    analysis (gate_set_tomography.py) and circuit design / sensitivity analysis (gst_circuit_planner.py), so that parameters,
+    their sharing among models, bounds, and initial guesses are specified once and named consistently everywhere.
 """
 
 import inspect
@@ -23,8 +23,9 @@ from ionsim.gst_circuit_parser import GstGate, gate_from_label, canonical_gate_l
 from ionsim.ionsim_error import IonSimError
 
 
-class GstModelParameters:
-    """ The models of a GST gate set and the organization of their parameters into a single parameter vector theta.
+class GateSetModel:
+    """ Gate set model: the models of each gate set element (prep, POVM, gates) and the organization of their parameters into a
+        single parameter vector theta. A gate set is evaluated from a gate set model and parameter values theta.
 
         Models:
             - 'prep': prep state model, a callable returning the prep state supervector rho_0(params).
@@ -34,14 +35,14 @@ class GstModelParameters:
         Every argument of every model function is a parameter. By default each parameter is independent, unbounded, and has an
         initial guess of zero. specify_parameter() sets initial guesses and bounds and shares parameters among models:
 
-            parameters = GstModelParameters(prep_state_function, POVM_models, {'Gxpi2:0': X_pi2_q0, 'MS:0:1': MS_pm})
-            parameters.specify_parameter("SPAM_error_probability", model="shared", guess=1e-4, bounds=(0., 1.))
-            parameters.specify_parameter("phi_error", model="MS:0:1", guess=0., bounds=(0., np.pi/16))
+            gate_set_model = GateSetModel(prep_state_function, POVM_models, {'Gxpi2:0': X_pi2_q0, 'MS:0:1': MS_pm})
+            gate_set_model.specify_parameter("SPAM_error_probability", model="shared", guess=1e-4, bounds=(0., 1.))
+            gate_set_model.specify_parameter("phi_error", model="MS:0:1", guess=0., bounds=(0., np.pi/16))
 
         Parameter names (e.g. 'shared:SPAM_error_probability', 'MS:0:1.phi_error', 'prep.p') and the layout of theta are
         organized lazily when first needed, so parameters may be specified in any order.
 
-        The same object can be given to GateSetTomography and GSTCircuitPlanner so that the analysis and the circuit design /
+        The same object is given to the GST solvers and to GSTCircuitPlanner so that the analysis and the circuit design /
         Fisher information use identical parameters.
     """
 
@@ -147,9 +148,9 @@ class GstModelParameters:
             Calling this again for the same parameter updates it; arguments left as None keep their previous values.
 
             Examples:
-                parameters.specify_parameter("SPAM_error_probability", model="shared", guess=1e-4, bounds=(0., 1.))
-                parameters.specify_parameter("amplitude_noise_strength", model="shared", guess=0.01, bounds=(1e-4, 10.))
-                parameters.specify_parameter("phi_error", model="MS:0:1", guess=0., bounds=(0., np.pi/16))
+                gate_set_model.specify_parameter("SPAM_error_probability", model="shared", guess=1e-4, bounds=(0., 1.))
+                gate_set_model.specify_parameter("amplitude_noise_strength", model="shared", guess=0.01, bounds=(1e-4, 10.))
+                gate_set_model.specify_parameter("phi_error", model="MS:0:1", guess=0., bounds=(0., np.pi/16))
         """
         if not isinstance(name, str):
             raise TypeError(f"Parameter name must be a string; received {type(name).__name__}.")
@@ -312,7 +313,7 @@ class GstModelParameters:
 
 
     ### Parameter names, vectors, and values ###
-    def normalize_parameter_name(self, key: str) -> str:
+    def canonical_parameter_name(self, key: str) -> str:
         """ Canonicalizes a user parameter name, e.g. '[].theta' -> 'idle.theta', 'shared:x' unchanged. """
         if key.startswith('shared:'):
             return key
@@ -349,9 +350,9 @@ class GstModelParameters:
                     if key == 'shared':
                         flat_values[f"shared:{param_name}"] = param_val
                     else:
-                        flat_values[self.normalize_parameter_name(f"{key}.{param_name}")] = param_val
+                        flat_values[self.canonical_parameter_name(f"{key}.{param_name}")] = param_val
             else:
-                flat_values[self.normalize_parameter_name(key)] = val
+                flat_values[self.canonical_parameter_name(key)] = val
 
         # Assign values by matching names
         unmatched = set(flat_values.keys())
@@ -366,7 +367,7 @@ class GstModelParameters:
 
         return theta
 
-    def resolve_theta(self, parameter_values: Vector | dict | None) -> Vector:
+    def parse_theta(self, parameter_values: Vector | dict | None) -> Vector:
         """ A full parameter vector from a vector, a dictionary of parameter names to values (unlisted parameters take their
             initial guesses), or None (the initial guess). """
         if parameter_values is None:
