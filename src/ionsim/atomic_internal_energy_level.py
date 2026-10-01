@@ -9,6 +9,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum
 from fractions import Fraction
 from sympy.physics.wigner import wigner_3j, clebsch_gordan
 import sympy 
@@ -27,6 +28,13 @@ def check_n_from_term_symbol(term_symbol: str, n_expected: int):
         raise IonSimError(f"Term symbols consist of an optional principal quantum number separated from the electronic manifold part of the term symbol by a space, got {term_symbol}.")
     if m.groups()[0] is not None and int(m.groups()[0]) != n_expected:
         raise IonSimError(f"Term symbol is inconsistent with principal quantum number specification. Term symbol gave {m.groups()[0]}, expected {n_expected}.")
+
+class EigenBasis(Enum):
+    """Angular-momentum labels used to specify an atomic level (not the Hilbert-space basis of StandardBasis)."""
+    FINE = '|J, mJ>'         # nuclear spin zero
+    HYPERFINE = '|F, mF>'    # low field
+    UNCOUPLED = '|mJ, mI>'   # high field (Back-Goudsmit)
+
 
 @dataclass(frozen=True, eq=False)
 class AtomicInternalEnergyLevel(EnergyLevel):

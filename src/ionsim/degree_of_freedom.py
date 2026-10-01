@@ -21,7 +21,7 @@ import numpy as np
 import yaml
 
 from ionsim.energy_level import EnergyLevel
-from ionsim.atomic_internal_energy_level import (AtomicInternalEnergyLevel, SinkLevel, LSFineLevel, LSHyperfineLevel, LSBackGoudsmitLevel,
+from ionsim.atomic_internal_energy_level import (AtomicInternalEnergyLevel, SinkLevel, EigenBasis, LSFineLevel, LSHyperfineLevel, LSBackGoudsmitLevel,
                                                 J1L2FineLevel, J1L2HyperfineLevel, J1L2BackGoudsmitLevel)
 from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel
 from ionsim.zeeman_solver import ZeemanHyperfineSolver
@@ -172,19 +172,21 @@ class AtomicStructure(DegreeOfFreedom):
             builder = cls._match_manifold(qn, builders)
             basis = cls._identify_basis(qn, nuclear_spin)
 
-            if basis == 'fine':
+            if basis is EigenBasis.FINE:
                 _check_projection(qn['mj'], builder.j, 'mj', 'j', raw_qn)
                 level = builder.fine_level(qn['mj'])
-            elif basis == 'hyperfine':
+            elif basis is EigenBasis.HYPERFINE:
                 if not any(_is_equal(qn['f'], f) for f in builder.f_values):
                     raise IonSimError(f"f={qn['f']} is not allowed for manifold {builder.describe()} with I={nuclear_spin}; "
                                       f"allowed values are {[float(f) for f in builder.f_values]}. Got {raw_qn}.")
                 _check_projection(qn['mf'], qn['f'], 'mf', 'f', raw_qn)
                 level = builder.hyperfine_level(qn['f'], qn['mf'])
-            else:  # 'uncoupled'
+            elif basis is EigenBasis.UNCOUPLED:
                 _check_projection(qn['mj'], builder.j, 'mj', 'j', raw_qn)
                 _check_projection(qn['mi'], nuclear_spin, 'mi', 'i', raw_qn)
                 level = builder.uncoupled_level(qn['mj'], qn['mi'])
+            else:
+                raise IonSimError(f"Unsupported level basis {basis}.")
 
             if level.name in seen_names:
                 raise IonSimError(f"Quantum numbers {raw_qn} specify the level '{level.name}', which was already requested.")
@@ -210,17 +212,17 @@ class AtomicStructure(DegreeOfFreedom):
         return qn
 
     @staticmethod
-    def _identify_basis(qn: dict, nuclear_spin: float) -> str:
+    def _identify_basis(qn: dict, nuclear_spin: float) -> EigenBasis:
         """Decide which basis a quantum-number dict refers to from its projection quantum numbers."""
         projections = frozenset(k for k in qn if k in PROJECTION_KEYS)
         if nuclear_spin == 0:
             if projections == {'mj'}:
-                return 'fine'
+                return EigenBasis.FINE
             raise IonSimError(f"This species has zero nuclear spin, so levels are specified by 'mj' only. Got {qn}.")
         if projections == {'f', 'mf'}:
-            return 'hyperfine'
+            return EigenBasis.HYPERFINE
         if projections == {'mj', 'mi'}:
-            return 'uncoupled'
+            return EigenBasis.UNCOUPLED
         if projections == {'ml', 'ms', 'mi'}:
             raise IonSimError(f"Fully decoupled |mL, mS, mI> (Paschen-Back) levels are not yet supported. Got {qn}.")
         raise IonSimError(f"Could not identify the basis from quantum numbers {qn}. Specify either "
