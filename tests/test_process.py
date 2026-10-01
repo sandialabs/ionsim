@@ -18,6 +18,9 @@ from ionsim.named_operators import Unitary, Pauli
 from ionsim.noise import Noise
 from ionsim.operator import EnergyShiftOperator
 from ionsim.state import State 
+from ionsim.hamiltonian import Hamiltonian
+from ionsim.lindbladian import Dissipator, Lindbladian
+from ionsim.operator import CouplingOperator
 
 class TestProcess(unittest.TestCase):
 
@@ -216,6 +219,87 @@ class TestProcess(unittest.TestCase):
         second(rotation__theta=0.2)
         self.assertEqual(len(calls), 1)
         self.assertEqual(cache.hits, 1)
+
+    def test_circuit_noise_sensitivity(self):
+        """ Sensitivities to the parameters of a circuit-level noise distribution, compared to analytic results """
+        # R(theta) on spin a with Gaussian circuit-level noise on theta: P(1) = (1 - cos(theta) exp(-sigma^2/2)) / 2
+        theta, sigma = 1.1, np.pi/10
+        noise = Noise.from_named_pdf('theta', 'gaussian', {'standard_deviation': sigma}, np.linspace(-8, 8, 161),
+                                     domain_scale_parameter='standard_deviation')
+        circuit = Circuit.from_gates([Gate.from_unitary_function(self.basis, Unitary.R, {'phi': 0., 'theta': theta}, [self.spin_a])], noise)
+        function = circuit.process_matrix_function
+        name = 'theta_noise_standard_deviation'
+        self.assertEqual(function.parameter_names, ['R__phi', 'R__theta', name])
+
+        outcome_operator = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_1, Pauli.projector_0))
+        initial_state = State.from_coefficients(self.basis, [1., 0., 0., 0.])
+        probability = circuit.build_outcome_probability_function(initial_state, outcome_operator)
+        P, jacobian, hessian = function.derivatives(probability, wrt=['R__theta', name], **{'R__phi': 0., 'R__theta': theta, name: sigma})
+
+        decay = np.exp(-sigma**2/2)
+        self.assertAlmostEqual(P, (1 - np.cos(theta)*decay)/2, places=12)
+        self.assertAlmostEqual(jacobian[name], sigma*np.cos(theta)*decay/2, places=9)
+        self.assertAlmostEqual(jacobian['R__theta'], np.sin(theta)*decay/2, places=9)
+        self.assertAlmostEqual(hessian[name][name], np.cos(theta)*decay*(1 - sigma**2)/2, places=6)
+        self.assertAlmostEqual(hessian['R__theta'][name], -sigma*np.sin(theta)*decay/2, places=6)
+
+        # Defaults reproduce the circuit's process matrix; the noise parameter can be renamed (e.g. GST-style names)
+        np.testing.assert_allclose(function(R__phi=0., R__theta=theta), circuit.process_matrix, atol=1e-14)
+        renamed = Circuit.from_gates([Gate.from_unitary_function(self.basis, Unitary.R, {'phi': 0., 'theta': theta}, [self.spin_a])], noise,
+                                     parameter_names={name: 'shared:theta_noise_strength'})
+        self.assertIn('shared:theta_noise_strength', renamed.process_matrix_function.parameter_names)
+
+    def test_ramsey_circuit_process_matrix_function(self):
+        """ A circuit with a fixed gate, gate-level phi noise, and circuit-level theta noise has a process matrix function whose
+            noise sensitivity agrees with rebuilding the circuit at a different noise strength """
+        xs = np.linspace(-np.pi, np.pi, 21)
+        def ramsey(theta_noise):
+            return Circuit.from_gates([Gate.from_unitary(self.basis, Unitary.sqrtX, [self.spin_a]),
+                                       Gate.from_unitary_function(self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.phi_noise)],
+                                      theta_noise)
+        circuit = ramsey(self.theta_noise)
+        function = circuit.process_matrix_function
+        name = 'theta_noise_standard_deviation'
+        self.assertEqual(function.parameter_names, ['R__phi', 'R__theta', name])   # the fixed sqrtX gate has no parameters
+        np.testing.assert_allclose(function(R__phi=0., R__theta=np.pi/2), circuit.process_matrix, atol=1e-14)
+
+        outcome_operator = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_1, Pauli.projector_0))
+        initial_state = State.from_coefficients(self.basis, [1., 0., 0., 0.])
+        probability = circuit.build_outcome_probability_function(initial_state, outcome_operator)
+        _, gradient = function.gradient(probability, wrt=[name], R__phi=0., R__theta=np.pi/2, **{name: np.pi/10})
+
+        h = 1e-5
+        def rebuilt(sigma):
+            noise = Noise.from_named_pdf('theta', 'gaussian', {'standard_deviation': sigma}, xs)
+            return ramsey(noise).predict_outcome_probabilities(initial_state, [outcome_operator])[0]
+        self.assertAlmostEqual(gradient[name], (rebuilt(np.pi/10 + h) - rebuilt(np.pi/10 - h)) / (2*h), places=8)
+
+    def test_gates_from_hamiltonian_and_lindbladian_functions(self):
+        """ Gates built from Hamiltonian / Lindbladian functions, without and with gate-level noise """
+        spin = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        basis = StandardBasis([spin])
+        omega = spin.energy_levels[1].energy - spin.energy_levels[0].energy
+        def hamiltonian(rabi_rate: float):
+            return Hamiltonian(basis, [CouplingOperator.from_matrix(basis, rabi_rate/2*Pauli.plus, omega, None)], [-state.energy for state in basis.states])
+        def lindbladian(rabi_rate: float):
+            return Lindbladian(hamiltonian(rabi_rate), Dissipator(basis, [CouplingOperator.from_matrix(basis, 0.*Pauli.X, 0)], [0, 0]))
+        duration, rabi_rate = 1e-6, 2*np.pi*1e5
+        noise = Noise.from_named_pdf('rabi_rate', 'gaussian', {'standard_deviation': 2*np.pi*1e3}, np.linspace(-4, 4, 41),
+                                     domain_scale_parameter='standard_deviation')
+
+        gate = Gate.from_lindbladian_function(basis, lindbladian, duration, {'rabi_rate': rabi_rate}, lindbladian_time_independent=True)
+        reference = Gate.from_lindbladian(basis, lindbladian(rabi_rate), duration, lindbladian_time_independent=True)
+        np.testing.assert_allclose(gate.process_matrix, reference.process_matrix, atol=1e-12)
+
+        noisy = Gate.from_lindbladian_function(basis, lindbladian, duration, {'rabi_rate': rabi_rate}, noise=noise, lindbladian_time_independent=True)
+        averaged = noise.average(lambda x: Gate.from_lindbladian(basis, lindbladian(rabi_rate + x), duration, lindbladian_time_independent=True).process_matrix)
+        np.testing.assert_allclose(noisy.process_matrix, averaged, atol=1e-12)
+        self.assertGreater(np.linalg.norm(noisy.process_matrix - gate.process_matrix), 1e-4)
+
+        h_gate = Gate.from_hamiltonian_function(basis, hamiltonian, duration, {'rabi_rate': rabi_rate}, [spin])
+        h_reference = Gate.from_hamiltonian(basis, hamiltonian(rabi_rate), duration)
+        np.testing.assert_allclose(h_gate.process_matrix, h_reference.process_matrix, atol=1e-10)
+        np.testing.assert_allclose(h_gate.process_matrix, gate.process_matrix, atol=1e-6)   # same unitary dynamics
 
 if __name__ == '__main__':
     unittest.main()

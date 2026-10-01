@@ -11,7 +11,7 @@ from ionsim.custom_math import trapz_for_matrix
 from ionsim.custom_types import Vector
 
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import wraps
 from typing import Callable
 
@@ -46,28 +46,101 @@ _PROBABILITY_DENSITY_FUNCTIONS = {
 
 @dataclass(frozen=True, eq=False)
 class Noise:
-    """A quasi-static fluctuation of a function parameter with a particular probability density function."""
+    """A quasi-static fluctuation of a function parameter with a particular probability density function.
+
+        - parameter_name: the fluctuating function parameter.
+        - probability_density_function: pdf(x) of the displacement x of the parameter.
+        - domain_arguments: quadrature grid of displacements (in units of the pdf parameter `domain_scale_parameter`, if set).
+        - pdf_parameters: named parameters of the distribution, e.g. {'standard_deviation': 0.1}, when the pdf is built from a
+            parameterized pdf (from_named_pdf or from_pdf). These can then be varied, e.g. as arguments of a circuit process
+            matrix function (named '<parameter_name>_noise_<pdf parameter>'), to compute sensitivities to the noise distribution.
+        - parameterized_pdf: pdf(x, **pdf_parameters).
+        - domain_scale_parameter: if set (e.g. 'standard_deviation'), domain_arguments are in units of this pdf parameter, so the
+            grid scales with the distribution's width as it is varied. Otherwise domain_arguments are absolute displacements.
+
+        noise.average(f) is the noise average of a function f of the displacement: integral of pdf(x) f(x) dx on the grid.
+    """
     parameter_name: str
     probability_density_function: Callable
     domain_arguments: Vector
+    pdf_parameters: dict = field(default_factory=dict)
+    parameterized_pdf: Callable | None = None
+    domain_scale_parameter: str | None = None
+
+    def __post_init__(self):
+        object.__setattr__(self, 'pdf_parameters', dict(self.pdf_parameters))
+        if self.domain_scale_parameter is not None and self.domain_scale_parameter not in self.pdf_parameters:
+            raise ValueError(f"domain_scale_parameter {self.domain_scale_parameter!r} must be one of the pdf parameters "
+                             f"{list(self.pdf_parameters)}.")
 
     @classmethod
     def from_named_pdf(cls, parameter_name: str, pdf_name: str, pdf_parameters: dict[str, float],
-            domain_arguments: Vector):
-        """Build noise for a function parameter from the name of its probability density function."""
+            domain_arguments: Vector, domain_scale_parameter: str | None = None):
+        """Build noise for a function parameter from the name of its probability density function ('gaussian',
+            'exponential', 'box'), e.g. pdf_parameters = {'standard_deviation': 0.1}."""
+        if pdf_name not in _PROBABILITY_DENSITY_FUNCTIONS:
+            raise ValueError(f"Unknown pdf {pdf_name!r}; available: {list(_PROBABILITY_DENSITY_FUNCTIONS)}.")
+        return cls.from_pdf(parameter_name, _PROBABILITY_DENSITY_FUNCTIONS[pdf_name], pdf_parameters, domain_arguments,
+                            domain_scale_parameter)
+
+    @classmethod
+    def from_pdf(cls, parameter_name: str, pdf: Callable, pdf_parameters: dict[str, float], domain_arguments: Vector,
+            domain_scale_parameter: str | None = None):
+        """Build noise from a parameterized probability density function pdf(x, **pdf_parameters)."""
+        pdf_parameters = dict(pdf_parameters)
+        parameterized_pdf = pdf
         def pdf(x):
-            return _PROBABILITY_DENSITY_FUNCTIONS[pdf_name](x, **pdf_parameters)
-        return cls(parameter_name, pdf, domain_arguments)
+            return parameterized_pdf(x, **pdf_parameters)
+        return cls(parameter_name, pdf, domain_arguments, pdf_parameters, parameterized_pdf, domain_scale_parameter)
+
+    def argument_name(self, pdf_parameter: str) -> str:
+        """Name of a pdf parameter as an argument of a function that varies it, e.g. 'theta_noise_standard_deviation'."""
+        return f"{self.parameter_name}_noise_{pdf_parameter}"
+
+    @property
+    def variable_parameters(self) -> dict[str, float]:
+        """{argument name: value} of the pdf parameters that can be varied (empty if the pdf is not parameterized)."""
+        if self.parameterized_pdf is None:
+            return {}
+        return {self.argument_name(name): value for name, value in self.pdf_parameters.items()}
+
+    def _resolved_pdf_parameters(self, pdf_parameters: dict) -> dict:
+        if pdf_parameters and self.parameterized_pdf is None:
+            raise ValueError("This Noise has no parameterized pdf, so its pdf parameters cannot be varied; build it with "
+                             "Noise.from_named_pdf or Noise.from_pdf.")
+        unknown = set(pdf_parameters) - set(self.pdf_parameters)
+        if unknown:
+            raise ValueError(f"Unknown pdf parameter(s) {sorted(unknown)}; the pdf parameters are {list(self.pdf_parameters)}.")
+        return {**self.pdf_parameters, **pdf_parameters}
+
+    def displacements(self, **pdf_parameters) -> np.ndarray:
+        """Quadrature grid of parameter displacements (scaled by the domain scale parameter, if set)."""
+        parameters = self._resolved_pdf_parameters(pdf_parameters)
+        if self.domain_scale_parameter is None:
+            return self.domain_arguments
+        return parameters[self.domain_scale_parameter] * np.asarray(self.domain_arguments)
+
+    def density(self, x: float, **pdf_parameters) -> float:
+        """Probability density of displacement x, optionally with different pdf parameter values."""
+        if not pdf_parameters:
+            return self.probability_density_function(x)
+        return self.parameterized_pdf(x, **self._resolved_pdf_parameters(pdf_parameters))
+
+    def average(self, function_of_displacement: Callable, **pdf_parameters):
+        """Noise average of function_of_displacement(x): the integral of pdf(x) f(x) dx by the trapezoid rule on the grid,
+            optionally with different pdf parameter values (e.g. standard_deviation = 0.2)."""
+        xs = self.displacements(**pdf_parameters)
+        ys = np.array([self.density(x, **pdf_parameters) * function_of_displacement(x) for x in xs])
+        return trapz_for_matrix(ys, xs)
 
     def add_noise_to_matrix_function(self, matrix_function: Callable, parameter_index: int | None):
         """Replace a function with one averaged over the noisy parameter."""
         if parameter_index is None:
             return matrix_function
 
-        # ECM Fix 07/2026 to handle the case where a user passes in kwargs only 
+        # ECM Fix 07/2026 to handle the case where a user passes in kwargs only
         @wraps(matrix_function)
         def wrapper(*args, **kwargs):
-            args = list(args)
             param_in_kwargs = self.parameter_name in kwargs
             if param_in_kwargs:
                 base_value = float(kwargs[self.parameter_name])
@@ -76,30 +149,12 @@ class Noise:
                     raise TypeError(f"Noisy parameter at position {parameter_index} was not provided positionally nor specified as a keyword argument.")
                 base_value = float(args[parameter_index])
 
-            #function_arguments = np.array([[float(arg) for arg in args]]*len(self.domain_arguments)) # TODO: is float right here? Then, arguments will accept ints but they must be real
-            #function_arguments[:, parameter_index] += self.domain_arguments
-            function_values = []
-            for darg in self.domain_arguments:
+            def displaced(darg):
                 noisy_value = base_value + darg
                 if param_in_kwargs:
-                    call_kwargs = dict(kwargs)
-                    call_kwargs[self.parameter_name] = noisy_value
-                    function_values.append(matrix_function(*args, **call_kwargs))
-                else:
-                    call_args = list(args)
-                    call_args[parameter_index] = noisy_value
-                    function_values.append(matrix_function(*call_args, **kwargs))
-            #function_values = [matrix_function(*arguments) for arguments in function_arguments]
-            probs = [self.probability_density_function(darg) for darg in self.domain_arguments]
-            ys = np.array([p*fv for p, fv in zip(probs, function_values)])
-            return trapz_for_matrix(ys, self.domain_arguments)
+                    return matrix_function(*args, **dict(kwargs, **{self.parameter_name: noisy_value}))
+                call_args = list(args)
+                call_args[parameter_index] = noisy_value
+                return matrix_function(*call_args, **kwargs)
+            return self.average(displaced)
         return wrapper
- #        @wraps(matrix_function)
- #        def wrapper(*args, **kwargs):
- #            function_arguments = np.array([[float(arg) for arg in args]]*len(self.domain_arguments)) # TODO: is float right here? Then, arguments will accept ints but they must be real
- #            function_arguments[:, parameter_index] += self.domain_arguments
- #            function_values = [matrix_function(*arguments) for arguments in function_arguments]
- #            probs = [self.probability_density_function(darg) for darg in self.domain_arguments]
- #            ys = np.array([p*fv for p, fv in zip(probs, function_values)])
- #            return trapz_for_matrix(ys, self.domain_arguments)
- #        return wrapper

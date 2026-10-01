@@ -43,5 +43,40 @@ class TestNoise(unittest.TestCase):
         for z in zs:
             assert_array_close(noisy_f(z), f(z))
 
+    def test_pdf_parameters(self):
+        """ The distribution's parameters are stored and can be varied """
+        self.assertEqual(self.noise.pdf_parameters, {'standard_deviation': 1, 'mean': 0})
+        self.assertEqual(self.noise.variable_parameters, {'z_noise_standard_deviation': 1, 'z_noise_mean': 0})
+        # density with a different standard deviation
+        sigma = 2.
+        expected = np.exp(-0.5**2/(2*sigma**2)) / np.sqrt(2*np.pi*sigma**2)
+        self.assertAlmostEqual(self.noise.density(0.5, standard_deviation=sigma), expected, places=14)
+        self.assertEqual(self.noise.density(0.5), self.noise.probability_density_function(0.5))
+        with self.assertRaises(ValueError):
+            self.noise.density(0.5, width=2.)
+
+    def test_average(self):
+        """ Noise average by the trapezoid rule on the (optionally scaled) grid """
+        # <x^2> of a Gaussian is the variance
+        self.assertAlmostEqual(self.noise.average(lambda x: np.array([[x**2]]))[0, 0], 1., places=6)
+        self.assertAlmostEqual(self.noise.average(lambda x: np.array([[x**2]]), standard_deviation=1.5)[0, 0], 1.5**2, places=4)
+
+        # A grid in units of the standard deviation follows the distribution's width
+        scaled = Noise.from_named_pdf('z', 'gaussian', {'standard_deviation': 0.01}, np.linspace(-8, 8, 161),
+                                      domain_scale_parameter='standard_deviation')
+        np.testing.assert_allclose(scaled.displacements(), 0.01*np.linspace(-8, 8, 161))
+        for sigma in [0.01, 1e-4, 3.]:
+            self.assertAlmostEqual(scaled.average(lambda x: np.array([[1.]]), standard_deviation=sigma)[0, 0], 1., places=10)
+            self.assertAlmostEqual(scaled.average(lambda x: np.array([[x**2]]), standard_deviation=sigma)[0, 0] / sigma**2, 1., places=10)
+        with self.assertRaises(ValueError):
+            Noise.from_named_pdf('z', 'gaussian', {'standard_deviation': 1.}, self.dzs, domain_scale_parameter='width')
+
+    def test_unparameterized_pdf(self):
+        """ Noise built from a plain pdf(x) has no variable distribution parameters """
+        noise = Noise('z', lambda x: np.exp(-x**2/2)/np.sqrt(2*np.pi), self.dzs)
+        self.assertEqual(noise.variable_parameters, {})
+        with self.assertRaises(ValueError):
+            noise.density(0., standard_deviation=2.)
+
 if __name__ == '__main__':
     unittest.main()

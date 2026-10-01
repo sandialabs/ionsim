@@ -104,10 +104,10 @@ class Gate(Process):
 
         @wraps(hamiltonian_function)
         def process_matrix_function(*args, **kwargs):
-            gate = cls.from_hamiltonian(basis, hamiltonian_function(*args, **kwargs))
+            gate = cls.from_hamiltonian(basis, hamiltonian_function(*args, **kwargs), duration)
             return gate.process_matrix
 
-        if noise is None or noise.parameter_name not in parameter_names:
+        if noise is not None and noise.parameter_name in parameter_names:
             noisy_parameter_index = parameter_names.index(noise.parameter_name)
             process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
 
@@ -267,13 +267,14 @@ class Gate(Process):
 
         @wraps(lindbladian_function)
         def process_matrix_function(*args, **kwargs):
-            gate = cls.from_lindbladian(basis, lindbladian_function(*args, **kwargs), duration)
+            gate = cls.from_lindbladian(basis, lindbladian_function(*args, **kwargs), duration,
+                                        lindbladian_time_independent = lindbladian_time_independent,
+                                        lindbladian_commutes_at_later_times = lindbladian_commutes_at_later_times)
             return gate.process_matrix
 
-        if noise is None or noise.parameter_name not in parameter_names:
+        if noise is not None and noise.parameter_name in parameter_names:
             noisy_parameter_index = parameter_names.index(noise.parameter_name)
-            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index, 
-                lindbladian_time_independent = lindbladian_time_independent, lindbladian_commutes_at_later_times = lindbladian_commutes_at_later_times)
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
 
         return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
 
@@ -309,6 +310,14 @@ class Gate(Process):
 #         return cls.from_unitary_function(basis, unitary_function, *args, **kwargs)
 
 
+def _constant_process_matrix_function(process_matrix: Matrix, index: int) -> Callable:
+    """ A function with no arguments returning a fixed gate's process matrix (for circuit process matrix functions) """
+    def constant_process_matrix():
+        return process_matrix
+    constant_process_matrix.__name__ = f"fixed_gate_{index}"
+    return constant_process_matrix
+
+
 @dataclass(frozen=True, eq=False)
 class Circuit(Process):
     """A quantum circuit (i.e., a series of gates) in a basis of states."""
@@ -330,6 +339,12 @@ class Circuit(Process):
 
             gate_labels / parameter_names: optional namespacing labels (one per gate) and shared parameter names for the
             circuit's process matrix function; see Circuit_Process_Matrix_Function_Helper.
+
+            noise: optional circuit-level quasistatic noise. The same displacement of noise.parameter_name is applied to every
+            gate with a parameter of that name, and the circuit is averaged over the noise distribution. The circuit's process
+            matrix function takes the distribution's parameters as arguments (e.g. 'theta_noise_standard_deviation').
+            TODO: Gates are matched by parameter name, so a parameter name with different meanings in different gates would
+            all be displaced; targeting specific gates (e.g. by gate label) would remove this ambiguity.
         """
         if any(gate.basis is not gates[0].basis for gate in gates):
             raise IonSimError('All gates in a circuit must be in the same basis.')
@@ -337,42 +352,41 @@ class Circuit(Process):
         if len(gates) == 0:
             raise IonSimError(f"List of gates must not be empty, received: {gates}.")
 
-        circuit_process_matrix_function = None # default 
         deterministic = (noise is None) or all([noise.parameter_name not in gate.parameters for gate in gates])
-        #if deterministic and all(gate.process_matrix_function is not None for gate in gates):
-        if all(gate.process_matrix_function is not None for gate in gates):
-            # Compile gate function list (in circuit order) and then reverse by circuit convention  
-            gate_functions = []
-            for gate in gates:
+
+        # Circuit process matrix function: gates with a process matrix function contribute their parameters; fixed gates
+        # (no function, e.g. Gate.from_unitary) enter as constants. Circuit-level noise is averaged inside the function.
+        gate_functions = []
+        constant_functions = {}
+        for k, gate in enumerate(gates):
+            if gate.process_matrix_function is not None:
                 gate_functions.append(gate.process_matrix_function)
+            else:
+                gate_functions.append(constant_functions.setdefault(id(gate), _constant_process_matrix_function(gate.process_matrix, k)))
 
-            # Reverse gate function order by convention (last gate in original list is first gate to apply)  
-            gate_functions = gate_functions[::-1]
-            labels = None if gate_labels is None else list(gate_labels)[::-1]
-            circuit_process_matrix_function = Circuit_Process_Matrix_Function_Helper(gate_functions, noise = None if deterministic else noise,
-                                                    gate_labels = labels, parameter_names = parameter_names)
+        # Reverse gate function order by convention (last gate in original list is first gate to apply)
+        gate_functions = gate_functions[::-1]
+        labels = None if gate_labels is None else list(gate_labels)[::-1]
+        circuit_process_matrix_function = Circuit_Process_Matrix_Function_Helper(gate_functions, noise = None if deterministic else noise,
+                                                gate_labels = labels, parameter_names = parameter_names)
 
-        #if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
-        if deterministic: 
+        if deterministic:
             process_matrix = _combine_process_matrices([gate.process_matrix for gate in gates])
             return cls(gates[0].basis, process_matrix, gates, circuit_process_matrix_function)
-        pmats_list = []
 
-        # TODO: Handle noise correctly when building circuit process matrix function  
-        # TODO: Wouldn't there be name conflict ambiguity issues? e.g. where noise is specified for a parameter, but that parameter may be included in multiple gates with different meanings?  
-        for gate in gates:
-            if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
-                arguments = np.array(list(gate.parameters.values()))
-                vec = np.array([1 if noise.parameter_name == name else 0 for name in gate.parameters])
-                pmats = [gate.process_matrix_function(*list(arguments + darg * vec)) for darg in noise.domain_arguments]
-            else:
-                pmats = [gate.process_matrix for darg in noise.domain_arguments]
-            pmats_list.append(pmats)
-        new_pmats_list = [[pmats[i] for pmats in pmats_list] for i in range(len(pmats_list[0]))]
-        process_mats = [_combine_process_matrices(ps) for ps in new_pmats_list]
-        probs = [noise.probability_density_function(darg) for darg in noise.domain_arguments]
-        ys = np.array([p * chi for p, chi in zip(probs, process_mats)])
-        process_matrix = trapz_for_matrix(ys, noise.domain_arguments) 
+        # Circuit-level noise: the same displacement of the noisy parameter in every gate that takes it (each gate at its own
+        # parameter values), averaged over the noise distribution.
+        def displaced_circuit(darg):
+            matrices = []
+            for gate in gates:
+                if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
+                    arguments = np.array(list(gate.parameters.values()))
+                    vec = np.array([1 if noise.parameter_name == name else 0 for name in gate.parameters])
+                    matrices.append(gate.process_matrix_function(*list(arguments + darg * vec)))
+                else:
+                    matrices.append(gate.process_matrix)
+            return _combine_process_matrices(matrices)
+        process_matrix = noise.average(displaced_circuit)
         return cls(gates[0].basis, process_matrix, gates, circuit_process_matrix_function)
 
     def predict_outcome_probability(self, initial_state: State, outcome_operator: Operator) -> float:
@@ -531,6 +545,9 @@ class Circuit_Process_Matrix_Function_Helper():
         - Circuit-level (quasistatic) noise: when a Noise object is given, the process matrix is averaged over the noisy
             parameter, with the same displacement applied to every gate that takes that parameter (i.e. the noise is
             constant within the circuit and varies circuit-to-circuit). Gate-level noise is handled by the gate functions.
+            The noise distribution's parameters are also arguments of the circuit function, named
+            '<noisy parameter>_noise_<pdf parameter>' (e.g. 'theta_noise_standard_deviation') with defaults equal to the
+            Noise's values, so derivatives with respect to them give sensitivities to the noise distribution.
 
         - Derivatives of functions of the circuit process matrix (e.g. outcome probabilities) with respect to gate
             parameters are computed by finite differences; see gradient(), jacobian(), hessian(), derivatives().
@@ -590,6 +607,8 @@ class Circuit_Process_Matrix_Function_Helper():
 
         self._param_map: dict[str, tuple] = {} # namespaced name -> (gate label, original name)
         self._type_hints: dict[str, type] = {}
+        # Circuit parameters for the noise distribution: circuit parameter name -> pdf parameter name
+        self._noise_parameters: dict[str, str] = {}
         self._build_signature(parameter_names)
 
         # Namespaced arguments displaced by circuit-level noise
@@ -645,6 +664,20 @@ class Circuit_Process_Matrix_Function_Helper():
                 self._parameters.setdefault(circuit_name, []).append(namespace)
                 if param.default is not inspect.Parameter.empty and circuit_name not in self._defaults:
                     self._defaults[circuit_name] = param.default
+
+        # Noise distribution parameters (circuit-level noise acting on at least one gate argument)
+        noise_acts = self.noise is not None and any(orig == self.noise.parameter_name for _, orig in self._param_map.values())
+        if noise_acts:
+            for pdf_parameter, value in self.noise.pdf_parameters.items():
+                if self.noise.parameterized_pdf is None:
+                    break
+                default_name = self.noise.argument_name(pdf_parameter)
+                circuit_name = parameter_names.pop(default_name, default_name)
+                if circuit_name in self._parameters:
+                    raise ValueError(f"Noise parameter name {circuit_name!r} collides with a gate parameter; rename it with parameter_names.")
+                self._parameters[circuit_name] = []
+                self._defaults[circuit_name] = value
+                self._noise_parameters[circuit_name] = pdf_parameter
 
         if parameter_names:
             raise ValueError(f"parameter_names refers to unknown argument(s) {sorted(parameter_names)}. Arguments are: {sorted(self._param_map)}.")
@@ -752,14 +785,15 @@ class Circuit_Process_Matrix_Function_Helper():
         if not self._noisy_arguments:
             return self._compose(arguments)
 
-        # Circuit-level quasistatic noise: same displacement for every gate argument named after the noisy parameter, then average
-        weighted_matrices = []
-        for darg in self.noise.domain_arguments:
+        # Circuit-level quasistatic noise: same displacement for every gate argument named after the noisy parameter, averaged
+        # over the noise distribution (with its parameters as given, defaulting to the Noise's values)
+        pdf_parameters = {pdf_parameter: kwargs[name] for name, pdf_parameter in self._noise_parameters.items() if name in kwargs}
+        def displaced_circuit(darg):
             displaced = dict(arguments)
             for namespace in self._noisy_arguments:
                 displaced[namespace] = arguments[namespace] + darg
-            weighted_matrices.append(self.noise.probability_density_function(darg) * self._compose(displaced))
-        return trapz_for_matrix(np.array(weighted_matrices), self.noise.domain_arguments)
+            return self._compose(displaced)
+        return self.noise.average(displaced_circuit, **pdf_parameters)
 
     def derivatives(self, function: Callable, wrt: list[str], order: int = 2, bounds: dict[str, tuple] | None = None,
                         evaluator_tolerance: float | None = None, relative_step: float | None = None,
