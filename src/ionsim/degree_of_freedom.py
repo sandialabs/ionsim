@@ -143,6 +143,12 @@ class AtomicStructure(DegreeOfFreedom):
             levels = cls._levels_from_quantum_numbers(quantum_numbers, builders, config_data['nuclear_spin'], level_aliases)
             return cls(levels + [SinkLevel()] if include_sink else levels, name)
 
+        # Check for duplicate level names:
+        if level_names:
+            duplicates = (len(level_names) != len(set(level_names))) 
+            if duplicates:
+                raise IonSimError(f"Level names should be unique but contains duplicates. Found {len(set(level_names))} unique level names.") 
+
         # Extract levels that are requested by the user OR include all levels if only manifold/term symbol is specified.  
         levels = [level for builder in builders for level in builder.all_levels()
                   if level_names is None or level.name in level_names]
