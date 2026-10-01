@@ -16,7 +16,6 @@ from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 from ionsim.gate_set_model import GateSetModel
 from ionsim.gst_circuit_parser import GstCircuit, GstGate, gate_from_label
 
-""" Circuit planner has 2 modes: 1) Gate model agnostic, 2) optimized planner based on gate models and germ sensitivies. """ 
 class GSTCircuitPlanner:
     def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials: list[list[str]] | None=None,
                     measure_fiducials: list[list[str]] | None=None, germs: list[list[str]] | None=None, germ_powers: list[int]=[1,2,4,8,16],
