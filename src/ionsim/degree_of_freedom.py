@@ -148,12 +148,10 @@ class AtomicStructure(DegreeOfFreedom):
 
         # Check for duplicate or levels not found in requested manifolds  
         if level_names:
-            # Check for duplicate level names:
             duplicates = (len(level_names) != len(set(level_names))) 
             if duplicates:
                 raise IonSimError(f"Level names should be unique but contains duplicates. Found {len(set(level_names))} unique level names.") 
 
-            # Check for level names that are not found in the requested manifolds:
             missing = set(level_names) - {level.name for level in levels}
             if missing:
                 raise IonSimError(f"Level names {sorted(missing)} were not found in the selected manifolds.")

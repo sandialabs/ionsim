@@ -23,15 +23,22 @@ from ionsim.degree_of_freedom import AtomicStructure, levels_in_manifold
 from ionsim.lindbladian import DissipatorSpontaneousEmission, Lindbladian
 from ionsim.ionsim_error import IonSimError
 
-# Reference data. These mirror the species config files (src/ionsim/atomic_config_data), which cite the sources;
-# the tests check that the dissipator reproduces them, so update both together.
-CA40_P12_LIFETIME = 6.904e-9  # s, 40Ca+ 4P1/2 lifetime; 40Ca+.yaml ref [3], PRL 115, 143003 (2015)
-CA40_P12_TO_S12 = 0.93565     # 40Ca+ 4P1/2 -> 4S1/2 branching ratio; 40Ca+.yaml ref [2], PRL 111, 023004 (2013)
-CA40_P12_TO_D32 = 0.06435     # 40Ca+ 4P1/2 -> 3D3/2 branching ratio; same reference (the two sum to 1)
-RB87_P32_LIFETIME = 26.24e-9  # s, 87Rb 5P3/2 (D2) lifetime; 87Rb.yaml, Steck, "Rubidium 87 D Line Data" (ref 1)
-RB87_53S_LIFETIME = 72.0e-6   # s, 87Rb 53S1/2 Rydberg lifetime; 87Rb.yaml (ref 3)
-YB171_3D1_LIFETIME =  332.e-9 # s, 171Yb 3D1 lifetime as given in 171Yb.yaml
-YB171_3D1_BRANCHING = {'P0': 0.638, 'P1': 0.352, 'P2': 0.01}  # 171Yb 3D1 -> 3P0, 3P1, 3P2; 171Yb.yaml
+# Reference data, read from the species config files (src/ionsim/atomic_config_data), which cite the sources.
+def manifold_config(species: str, term_symbol: str) -> dict:
+    """The config-file entry for one manifold of a species."""
+    levels = AtomicStructure.get_config_data(species)['levels']
+    return next(level for level in levels if level['term_symbol'] == term_symbol)
+
+
+CA40_P12 = manifold_config('40Ca+', 'P1/2')
+CA40_P12_LIFETIME = CA40_P12['lifetime']                       # s, 40Ca+ 4P1/2 lifetime
+CA40_P12_TO_S12 = CA40_P12['branching_ratios']['S1/2']         # 40Ca+ 4P1/2 -> 4S1/2 branching ratio
+CA40_P12_TO_D32 = CA40_P12['branching_ratios']['D3/2']         # 40Ca+ 4P1/2 -> 3D3/2 branching ratio
+RB87_P32_LIFETIME = manifold_config('87Rb', 'P3/2')['lifetime']     # s, 87Rb 5P3/2 (D2) lifetime
+RB87_53S_LIFETIME = manifold_config('87Rb', '53 S1/2')['lifetime']  # s, 87Rb 53S1/2 Rydberg lifetime
+YB171_3D1 = manifold_config('171Yb', 'D1')
+YB171_3D1_LIFETIME = YB171_3D1['lifetime']                     # s, 171Yb 3D1 lifetime
+YB171_3D1_BRANCHING = YB171_3D1['branching_ratios']            # 171Yb 3D1 -> 3P0, 3P1, 3P2 branching ratios
 
 # Test settings.
 PLACES = 10  # rates are compared as rate * lifetime ~ O(1); 1e-10 is far above floating-point error
