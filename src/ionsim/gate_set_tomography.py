@@ -1,20 +1,3 @@
-import numpy as np
-from dataclasses import dataclass, field, replace
-
-import scipy.optimize as opt
-from scipy import stats
-from typing import Callable
-import warnings
-
-from ionsim.process import Gate
-from ionsim.basis import StandardBasis
-from ionsim.gst_circuit_parser import GstGate, GstCircuit, CircuitData, gate_from_label
-from ionsim.gate_set_model import GateSetModel
-from ionsim.ionsim_error import IonSimError
-from ionsim.custom_types import Vector, Matrix
-from ionsim.io import write_results_to_file
-from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
-
 """ Gate set tomography (GST) analysis.
 
     The analysis is a set of functions. Each takes the GST circuits (with measurement data), a GateSetModel (the models of
@@ -33,6 +16,23 @@ from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
     references, initial guesses) are given as a vector in the order of gate_set_model.parameter_names, or as a dictionary of
     parameter names to values in which unlisted parameters take their specified initial guesses.
 """
+import numpy as np
+from dataclasses import dataclass, field, replace
+
+import scipy.optimize as opt
+from scipy import stats
+from typing import Callable
+import warnings
+
+from ionsim.process import Gate
+from ionsim.basis import StandardBasis
+from ionsim.gst_circuit_parser import GstGate, GstCircuit, CircuitData, gate_from_label
+from ionsim.gate_set_model import GateSetModel
+from ionsim.ionsim_error import IonSimError
+from ionsim.custom_types import Vector, Matrix
+from ionsim.io import write_results_to_file
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
+
 
 __all__ = ['GstResult', 'linear_solve_for_gate_parameters', 'mle_solve_for_gate_parameters', 'staged_mle_solve_for_gate_parameters',
            'log_likelihood', 'chi_squared', 'simulate_gst_data', 'evaluate_gate_set', 'gate_set_errors', 'average_gate_set_error',
@@ -59,6 +59,7 @@ class GstResult:
         - optimizer_result: scipy OptimizeResult (MLE solvers; final stage for staged MLE)
         - stage_estimates: {depth: theta} after each stage (staged MLE)
         - lgst_estimates: linear GST estimates, e.g. 'gate_estimates' (keyed by gate label), 'gram_matrix' (linear GST)
+        - gauge_iterations: number of re-gauging passes after the first linear GST fit (linear GST)
         - negative_log_likelihood_history: objective value at each evaluation (MLE solvers)
     """
     theta: np.ndarray
@@ -71,6 +72,7 @@ class GstResult:
     optimizer_result: object = None
     stage_estimates: dict | None = None
     lgst_estimates: dict | None = None
+    gauge_iterations: int | None = None
     negative_log_likelihood_history: list = field(default_factory=list)
 
     @property
@@ -111,7 +113,7 @@ class _CircuitData:
 
 ### Gate sets (models evaluated at parameter values, or given explicitly) ###
 def evaluate_gate_set(gate_set_model: GateSetModel, theta: Vector | dict | None=None) -> dict:
-    """ Evaluates the gate set model at the specifeid parameter values (theta defaults to the specified initial guesses). """
+    """ Evaluates the gate set model at the specified parameter values (theta defaults to the specified initial guesses). """
     theta = gate_set_model.parse_theta(theta)
     gate_set = {'prep': gate_set_model.prep_state(theta), 'POVM': gate_set_model.measurement_effects(theta)}
     for gate in gate_set_model.gate_models:
@@ -383,86 +385,53 @@ class _GstProblem:
                 'native_prep_state' : estimated_rho, 'estimated_effects' : estimated_effects,
                 'prep_states' : prep_states, 'measurement_effects' : measurement_effects}
 
-    def parameters_from_lgst(self, lgst: dict, theta_0: Vector) -> Vector:
-        """ Fit the models to LGST estimates: jointly (starting from theta_0) if parameters are shared, else independently """
-        if self.gate_set_model.shared_indices:
-            return self._joint_fit_to_lgst(lgst, theta_0)
-        return self._independent_fit_to_lgst(lgst, theta_0)
+    def parameters_from_lgst(self, lgst: dict, theta_0: Vector, minimize_kwargs: dict | None=None) -> Vector:
+        """ Fit the models' parameters to LGST estimates, starting from theta_0.
 
-    def _independent_fit_to_lgst(self, lgst: dict, theta_0: Vector) -> Vector:
-        """ Fits independent gate set models to LGST-estimated elements (no shared model parameters). """
-        indices = self.gate_set_model.indices_by_model
+            Minimizes the summed squared differences between the modeled and LGST-estimated gate set elements (Frobenius norm
+            for process matrices, Euclidean norm for the prep supervector and effects) with L-BFGS-B within the parameter
+            bounds. With shared parameters, all models are fit together; otherwise each model is fit on its own parameters.
+        """
+        minimize_kwargs = minimize_kwargs or {}
         theta = np.array(theta_0, dtype=float, copy=True)
-        for gate, lgst_gate_matrix in lgst['gate_estimates'].items():
-            theta[indices[gate.label]] = self._fit_gate_model_to_lgst_estimate(gate, lgst_gate_matrix).real
-        theta[indices['prep']] = np.real(self._fit_prep_model_to_lgst_estimate(lgst['native_prep_state']))
-        theta[indices['POVM']] = self._fit_measurement_effect_model_to_lgst_estimate(lgst['estimated_effects']).real
+        model_labels = ['prep', 'POVM'] + [gate.label for gate in lgst['gate_estimates']]
+        if self.gate_set_model.shared_indices:
+            return self._fit_models_to_lgst(lgst, theta, model_labels, minimize_kwargs)
+        for label in model_labels:
+            theta = self._fit_models_to_lgst(lgst, theta, [label], minimize_kwargs)
         return theta
 
-    def _joint_fit_to_lgst(self, lgst: dict, theta_0: Vector) -> Vector:
-        """ Fits all gate set models jointly (if there are shared parameters) """
-        lgst_gates = lgst["gate_estimates"]
-        lgst_prep = lgst["native_prep_state"]
-        lgst_effects = lgst["estimated_effects"]
+    def _lgst_cost_terms(self, lgst: dict, label: str, theta: Vector) -> float:
+        """ Squared difference between a model ('prep', 'POVM', or a gate label) at theta and its LGST estimate """
+        if label == 'prep':
+            rho = self.gate_set_model.prep_state_model(*self.get_parameters(theta, 'prep'))
+            return np.linalg.norm(rho - lgst['native_prep_state'])**2
+        if label == 'POVM':
+            modeled_effects = self.gate_set_model.POVM_effect_models(*self.get_parameters(theta, 'POVM'))
+            return sum(np.linalg.norm(np.asarray(modeled_effects[outcome]) - effect)**2 for outcome, effect in lgst['estimated_effects'].items())
+        gate = gate_from_label(label)
+        M = self.gate_models[gate](*self.get_parameters(theta, gate))
+        return np.linalg.norm(M - lgst['gate_estimates'][gate], 'fro')**2
 
-        def cost(theta):
-            # Cost function of the gate set to fit gate set parameters from LGST estimates
-            total_cost = 0.
-            for gate, lgst_matrix in lgst_gates.items():
-                M = self.gate_models[gate](*self.get_parameters(theta, gate))
-                total_cost += np.linalg.norm(M - lgst_matrix, 'fro')**2
-            rho = self.gate_set_model.prep_state_model(*self.get_parameters(theta, "prep"))
-            total_cost += np.linalg.norm(rho - lgst_prep)**2
-            modeled_effects = self.gate_set_model.POVM_effect_models(*self.get_parameters(theta, "POVM"))
-            for outcome, effect in lgst_effects.items():
-                assert outcome in modeled_effects
-                total_cost += np.linalg.norm(modeled_effects[outcome] - effect)**2
-            return total_cost.real
+    def _fit_models_to_lgst(self, lgst: dict, theta: Vector, model_labels: list[str], minimize_kwargs: dict) -> Vector:
+        """ Fit the parameters of the given models to their LGST estimates; other parameters stay at their values in theta """
+        indices = self.gate_set_model.parameter_indices_of_models(model_labels)
+        if not indices:
+            return theta
 
-        ## Note: L-BFGS-B performs significantly better here than Nelder-Mead; Nelder-Mead should not be used in this method.
-        result = opt.minimize(cost, theta_0, method='L-BFGS-B', bounds=self.gate_set_model.parameter_bounds)
-        return result.x
+        def cost(x):
+            trial = theta.copy()
+            trial[indices] = x
+            return float(np.real(sum(self._lgst_cost_terms(lgst, label, trial) for label in model_labels)))
 
-    ## TODO: Consolidate / factor into a single "fit model to lgst" function if possible
-    def _fit_prep_model_to_lgst_estimate(self, lgst_native_prep: Vector) -> Vector:
-        """ Fits a prep state model's parameters given the lgst results for the prep state. """
-        prep_indices = self.gate_set_model.indices_by_model['prep']
-        def cost(theta: Vector) -> float:
-            prep_state = self.gate_set_model.prep_state_model(*theta)
-            return np.linalg.norm(prep_state - lgst_native_prep)**2
         bounds = self.gate_set_model.parameter_bounds
-        model_bounds = None if bounds is None else [bounds[idx] for idx in prep_indices]
-        result = opt.minimize(cost, np.zeros(len(prep_indices)), method='Nelder-Mead', bounds = model_bounds)
-        return result.x
+        model_bounds = None if bounds is None else [bounds[i] for i in indices]
+        ## Note: L-BFGS-B performs significantly better here than Nelder-Mead
+        result = opt.minimize(cost, theta[indices], method='L-BFGS-B', bounds=model_bounds, **minimize_kwargs)
+        fitted = theta.copy()
+        fitted[indices] = result.x
+        return fitted
 
-    def _fit_measurement_effect_model_to_lgst_estimate(self, lgst_native_measurements: dict) -> Vector:
-        """ Fits a measurement effect's model's parameters given the lgst results for the measurement effects. """
-        def cost(theta: Vector) -> float:
-            effects = self.gate_set_model.measurement_effects(theta)
-            modeled_effect_matrix = np.vstack([np.asarray(effects[label]) for label in self.outcome_labels])
-            lgst_native_measurements_matrix = np.vstack([np.asarray(lgst_native_measurements[outcome]) for outcome in self.outcome_labels])
-            return np.linalg.norm(modeled_effect_matrix - lgst_native_measurements_matrix)**2
-
-        measurement_indices = self.gate_set_model.indices_by_model["POVM"]
-        # TODO: Fix the optimization to only vary parameters for this measurement outcome
-        p0 = np.zeros(self.gate_set_model.num_parameters, dtype=complex)
-        result = opt.minimize(cost, p0, method='Nelder-Mead', bounds = self.gate_set_model.parameter_bounds)
-        return result.x[measurement_indices]
-
-    def _fit_gate_model_to_lgst_estimate(self, gate: GstGate, target_gate_matrix: Matrix) -> Vector:
-        """ Fits a gate model's parameters to a process matrix (Frobenius norm of the difference as the cost) """
-        gate_model = self.gate_models[gate]
-        gate_indices = self.gate_set_model.indices_by_model[gate.label]
-        def cost(theta: Vector) -> float:
-            M = gate_model(*theta)
-            return np.linalg.norm(M - target_gate_matrix, 'fro')**2
-        p0 = np.zeros(len(gate_indices), dtype=complex) # zero often corresponds to ideal gate conditions
-        bounds = self.gate_set_model.parameter_bounds
-        model_bounds = None if bounds is None else [bounds[idx] for idx in gate_indices]
-        result = opt.minimize(cost, p0, method='Nelder-Mead', bounds = model_bounds)
-        return result.x
-
-    ### Staged MLE ###
     def group_circuits(self, organize_circuits_by_germ_power: bool) -> dict:
         """ Circuits grouped by germ power p, or by base depth L (germ length x germ power, binned to powers of 2) """
         groups = {}
@@ -488,21 +457,31 @@ def _gst_result(problem: _GstProblem, theta: Vector, method: str, theta_0: Vecto
 ### Solvers ###
 def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, circuit_design,
                                      target: Vector | dict | None=None, target_gate_set: dict | None=None,
-                                     initial_guess: Vector | dict | None=None, verbose: bool=False) -> GstResult:
+                                     initial_guess: Vector | dict | None=None, max_gauge_iterations: int=100,
+                                     gauge_tolerance: float=1e-6, verbose: bool=False, **minimize_kwargs) -> GstResult:
     """ Linear GST (LGST): estimates the gate set from the fiducial circuits by linear inversion, then fits the model parameters
-        to those estimates.
+        to those estimates. Uses only the measurement data and the models, so it applies to experimental data.
+
+        LGST estimates are determined up to a gauge, which is fixed by a reference gate set (the target). The model fit is only
+        unbiased when that reference is in the gauge of the true gate set, which is unknown in an experiment. So the fit is
+        re-gauged: LGST is repeated in the gauge of the fitted model, and the model refit, until the parameters converge. The
+        true gate set is a fixed point of this iteration; starting from an ideal target, it removes the gauge bias.
 
         - gst_circuits: circuits with measurement data, including the fiducial (LGST) circuits of the design.
         - gate_set_model: GateSetModel (the models of the gate set elements and their parameters).
         - circuit_design: the circuit design (e.g. a GSTCircuitPlanner) whose prep_fiducials and measure_fiducials were used.
-        - target / target_gate_set: the gauge reference, a gate set close to ideal (e.g. prep |0> and ideal rotations). Give
-            either parameter values at which the models are ideal (target=...), or an explicit gate set (target_gate_set=
+        - target / target_gate_set: the initial gauge reference, a gate set close to ideal (e.g. prep |0> and ideal rotations).
+            Give either parameter values at which the models are ideal (target=...), or an explicit gate set (target_gate_set=
             {'prep': ..., 'POVM': {...}, gate label: process matrix}, entries as arrays or ionsim State/operator objects).
-        - initial_guess: starting point for the fit to the LGST estimates when parameters are shared among models (default:
-            the specified guesses). With no shared parameters, each model is fit independently.
+        - initial_guess: starting point for the first fit to the LGST estimates (default: the specified guesses).
+        - max_gauge_iterations: maximum number of re-gauging passes after the first fit (0 disables re-gauging).
+        - gauge_tolerance: re-gauging stops when no parameter changes by more than gauge_tolerance * max(1, |parameter|).
         - verbose: print progress.
+        - minimize_kwargs: passed to scipy.optimize.minimize (L-BFGS-B) for the model fits. The default options are tight
+            (ftol = 1e-15, gtol = 1e-12) so that the fits are precise enough for re-gauging to converge.
 
-        Returns a GstResult; the LGST estimates are in result.lgst_estimates (gate estimates keyed by gate label).
+        Returns a GstResult; result.lgst_estimates holds the final pass's LGST estimates (gate estimates keyed by gate label),
+        result.gauge_iterations the number of re-gauging passes, and result.success whether re-gauging converged.
     """
     problem = _GstProblem(gst_circuits, gate_set_model, verbose)
     prep_fiducials = [tuple(fid) for fid in circuit_design.prep_fiducials]
@@ -511,12 +490,41 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
     missing = sorted({g.label for fid in prep_fiducials for g in fid} - {k.label for k in gauge_target if isinstance(k, GstGate)})
     if missing:
         raise ValueError(f"The target gate set has no process matrices for the prep fiducial gates {missing}.")
+    if max_gauge_iterations < 0:
+        raise ValueError(f"max_gauge_iterations must be non-negative; received {max_gauge_iterations}.")
+
+    # Model fits must be more precise than the re-gauging tolerance, so the default L-BFGS-B options are tight
+    minimize_kwargs = dict(minimize_kwargs)
+    minimize_kwargs.setdefault('options', {'ftol': 1e-15, 'gtol': 1e-12, 'maxiter': 20000})
 
     theta_0 = problem.parse_initial_guess(initial_guess)
     lgst = problem.run_linear_gst(prep_fiducials, measure_fiducials, gauge_target)
-    theta = problem.parameters_from_lgst(lgst, theta_0)
+    theta = problem.parameters_from_lgst(lgst, theta_0, minimize_kwargs)
+
+    # Re-gauge: repeat LGST in the gauge of the fitted model and refit, until the parameters converge
+    converged = max_gauge_iterations == 0
+    iterations = 0
+    while iterations < max_gauge_iterations:
+        regauge_target = _internal_gate_set(gate_set_model, theta, None, 'target')
+        lgst = problem.run_linear_gst(prep_fiducials, measure_fiducials, regauge_target)
+        new_theta = problem.parameters_from_lgst(lgst, theta, minimize_kwargs)
+        iterations += 1
+        change = np.max(np.abs(new_theta - theta) / np.maximum(1., np.abs(theta)))
+        theta = new_theta
+        if verbose:
+            print(f"Re-gauging pass {iterations}: largest relative parameter change {change:.3e}")
+        if change <= gauge_tolerance:
+            converged = True
+            break
+
+    message = "re-gauging disabled" if max_gauge_iterations == 0 else (
+        f"re-gauging converged in {iterations} passes" if converged else
+        f"re-gauging did not converge in {max_gauge_iterations} passes (last relative change {change:.3e})")
+    if not converged:
+        warnings.warn(f"Linear GST: {message}. Increase max_gauge_iterations or gauge_tolerance.")
     lgst = dict(lgst, gate_estimates={gate.label: matrix for gate, matrix in lgst['gate_estimates'].items()})
-    return _gst_result(problem, theta, 'linear', theta_0, problem.tabulate(problem.gst_circuits), lgst_estimates=lgst)
+    return _gst_result(problem, theta, 'linear', theta_0, problem.tabulate(problem.gst_circuits), lgst_estimates=lgst,
+                       gauge_iterations=iterations, success=converged, message=message)
 
 
 def mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel,

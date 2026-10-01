@@ -188,17 +188,19 @@ class TestGST(unittest.TestCase):
         self.gst_circuits = self.gst_circuits
 
     def test_linear_gst_analysis(self):
-        """ Test linear GST (LGST), in the gauge of the ideal gate set """
+        """ Test linear GST (LGST) starting from the ideal gate set as the gauge reference, with re-gauging """
         result = linear_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model, self.gst_circuit_planner, target = self.ideal_values)
         gate_set_error = gate_set_errors(self.gate_set_model, result.theta, reference = self.true_values)
         X_pi2_error = gate_set_error['Gxpi2:0']
         Y_pi2_error = gate_set_error['Gypi2:0']
         SPAM_error = gate_set_error["prep"]
         SPAM_error += gate_set_error["POVM"]
-        self.assertAlmostEqual(X_pi2_error, 0.0024164216539786557, places=5)
-        self.assertAlmostEqual(Y_pi2_error, 0.0024164216539785967, places=5)
-        self.assertAlmostEqual(SPAM_error, 1.6755539915651837e-08, places=5)
+        self.assertAlmostEqual(X_pi2_error, 0.0004938334895727403, places=5)
+        self.assertAlmostEqual(Y_pi2_error, 0.0004938334895728776, places=5)
+        self.assertAlmostEqual(SPAM_error, 2.039563696979629e-05, places=5)
         self.assertEqual(result.method, 'linear')
+        self.assertTrue(result.success)
+        self.assertGreater(result.gauge_iterations, 0)
         self.assertEqual(sorted(result.lgst_estimates['gate_estimates']), ['Gxpi2:0', 'Gypi2:0'])
 
         # The gauge target can also be given explicitly, e.g. an ideal prep |0><0|, ideal measurement projectors, and ideal rotations
@@ -208,6 +210,43 @@ class TestGST(unittest.TestCase):
                           'Gxpi2:0': self.gate_models['Gxpi2:0'](0.), 'Gypi2:0': self.gate_models['Gypi2:0'](0.)}
         explicit = linear_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model, self.gst_circuit_planner, target_gate_set = ideal_gate_set)
         np.testing.assert_array_equal(explicit.theta, result.theta)
+
+    def test_linear_gst_regauging(self):
+        """ Re-gauging removes the bias of fitting models to LGST estimates in the gauge of an ideal (not the true) gate set """
+        # Noise-free data: outcome frequencies equal to the true probabilities
+        exact_data = simulate_gst_data(self.gst_circuits, self.gate_set_model, self.true_values, 10**15, rng = 0)
+        true_theta = self.gate_set_model.parse_theta(self.true_values)
+
+        regauged = linear_solve_for_gate_parameters(exact_data, self.gate_set_model, self.gst_circuit_planner, target = self.ideal_values)
+        np.testing.assert_allclose(regauged.theta, true_theta, rtol=1e-5)
+        self.assertTrue(regauged.success)
+
+        # Without re-gauging, the ideal gauge reference biases the fit, whatever the number of shots
+        ideal_gauge_only = linear_solve_for_gate_parameters(exact_data, self.gate_set_model, self.gst_circuit_planner,
+                                                            target = self.ideal_values, max_gauge_iterations = 0)
+        self.assertGreater(abs(ideal_gauge_only.theta[1] / true_theta[1] - 1.), 0.01)
+        self.assertEqual(ideal_gauge_only.gauge_iterations, 0)
+
+        # Too few passes: reported as not converged, with a warning
+        with self.assertWarnsRegex(UserWarning, "did not converge"):
+            unconverged = linear_solve_for_gate_parameters(exact_data, self.gate_set_model, self.gst_circuit_planner,
+                                                           target = self.ideal_values, max_gauge_iterations = 1, gauge_tolerance = 1e-14)
+        self.assertFalse(unconverged.success)
+
+        # Independent models (no shared parameters): each model is fit on its own parameters, also re-gauged
+        independent = GateSetModel(self.prep_state_model, self.POVM_models, self.gate_models)
+        ideal_independent = {'Gxpi2:0.amplitude_noise_strength': 0., 'Gypi2:0.amplitude_noise_strength': 0.,
+                             'prep.SPAM_error_probability': 0., 'POVM.SPAM_error_probability': 0.}
+        result = linear_solve_for_gate_parameters(exact_data, independent, self.gst_circuit_planner, target = ideal_independent)
+        values = result.parameter_values
+        self.assertAlmostEqual(values['Gxpi2:0.amplitude_noise_strength'], 0.125, places=5)
+        self.assertAlmostEqual(values['Gypi2:0.amplitude_noise_strength'], 0.125, places=5)
+        # Independent prep and measurement errors are gauge-equivalent here: the data determine the SPAM outcome probabilities
+        # (no gates applied), not how the error is split between preparation and measurement
+        def spam_probabilities(gate_set_model, theta):
+            gate_set = evaluate_gate_set(gate_set_model, theta)
+            return np.real([np.asarray(gate_set['POVM'][outcome]) @ gate_set['prep'] for outcome in ['0', '1']])
+        np.testing.assert_allclose(spam_probabilities(independent, result.theta), spam_probabilities(self.gate_set_model, true_theta), atol=1e-7)
 
     def test_mle_seeded_by_linear_gst(self):
         """ MLE started from the linear GST estimate converges to the same estimate as from the specified guesses """
