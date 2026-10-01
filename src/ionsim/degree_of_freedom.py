@@ -170,23 +170,23 @@ class AtomicStructure(DegreeOfFreedom):
         for index, raw_qn in enumerate(quantum_numbers):
             qn = cls._parse_quantum_numbers(raw_qn, nuclear_spin)
             builder = cls._match_manifold(qn, builders)
-            basis = cls._identify_basis(qn, nuclear_spin)
+            eigenbasis = cls._identify_basis(qn, nuclear_spin)
 
-            if basis is EigenBasis.FINE:
+            if eigenbasis is EigenBasis.FINE:
                 _check_projection(qn['mj'], builder.j, 'mj', 'j', raw_qn)
                 level = builder.fine_level(qn['mj'])
-            elif basis is EigenBasis.HYPERFINE:
+            elif eigenbasis is EigenBasis.HYPERFINE:
                 if not any(_is_equal(qn['f'], f) for f in builder.f_values):
                     raise IonSimError(f"f={qn['f']} is not allowed for manifold {builder.describe()} with I={nuclear_spin}; "
                                       f"allowed values are {[float(f) for f in builder.f_values]}. Got {raw_qn}.")
                 _check_projection(qn['mf'], qn['f'], 'mf', 'f', raw_qn)
                 level = builder.hyperfine_level(qn['f'], qn['mf'])
-            elif basis is EigenBasis.UNCOUPLED:
+            elif eigenbasis is EigenBasis.UNCOUPLED:
                 _check_projection(qn['mj'], builder.j, 'mj', 'j', raw_qn)
                 _check_projection(qn['mi'], nuclear_spin, 'mi', 'i', raw_qn)
                 level = builder.uncoupled_level(qn['mj'], qn['mi'])
             else:
-                raise IonSimError(f"Unsupported level basis {basis}.")
+                raise IonSimError(f"Unsupported level eigenbasis {eigenbasis}.")
 
             if level.name in seen_names:
                 raise IonSimError(f"Quantum numbers {raw_qn} specify the level '{level.name}', which was already requested.")
