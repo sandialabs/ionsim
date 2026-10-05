@@ -348,7 +348,6 @@ class _ManifoldBuilder:
     def __init__(self, fine_data: dict, coupling_scheme: str, species_data: dict, magnetic_field: float, get_level_factory, solver_kwargs: dict):
         self.fine_data = fine_data
         self.coupling_scheme = coupling_scheme
-        #self.FineLevel, self.HyperfineLevel, self.UncoupledLevel = LEVEL_CLASSES[coupling_scheme]
         _, self.FineLevel, self.HyperfineLevel, self.UncoupledLevel = get_level_factory(self.coupling_scheme)
         self.nuclear_spin = species_data['nuclear_spin']
         self.species_data = species_data
