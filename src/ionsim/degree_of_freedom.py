@@ -82,14 +82,14 @@ class AtomicStructure(DegreeOfFreedom):
     energy_levels: list[AtomicInternalEnergyLevel | SinkLevel]
 
     @classmethod
-    def from_species(cls, species: str, manifolds: list[str] | None = None, level_names: list[str] | None = None,
+    def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None,
             quantum_numbers: list[dict] | None = None, level_aliases: list[str] | None = None, name: str | None = None,
-            magnetic_field: float = 0., term_symbols: list[str] | None = None, include_sink: bool = False, **kwargs):
+            magnetic_field: float = 0., include_sink: bool = False, **kwargs):
         """Build the atomic structure degree of freedom for a particular species of atom.
 
         Args:
             species: Name of the species config file, e.g. '171Yb+'.
-            manifolds: Term symbols of the config-file manifolds to include. ``term_symbols`` is accepted as an alias.
+            term_symbols: Term symbols of the config-file manifolds to include, e.g. ['S1/2', 'P1/2']; all manifolds if omitted.
             level_names: Names of individual levels to keep, e.g. 'S1/2,1,0'. Mutually exclusive with ``quantum_numbers``.
             quantum_numbers: One dict per level. Structural keys (n, l, s, j for LS coupling; n, k, j, ... for j1l2)
                 select the manifold; they only need to be specific enough to identify one manifold. Projection keys
@@ -105,7 +105,7 @@ class AtomicStructure(DegreeOfFreedom):
                 states outside the simulated levels (see DissipatorSpontaneousEmission, decay_to_sink=True).
             **kwargs: Options passed to ZeemanHyperfineSolver, e.g. ``approximation``.
 
-            Without ``level_names`` or ``quantum_numbers``, every sublevel of the selected manifolds is included, in the
+            Without ``level_names`` or ``quantum_numbers``, every sublevel of the manifolds in ``term_symbols`` is included, in the
             |F, mF> basis (or |J, mJ> when the nuclear spin is zero).
         """
         # Import configuration data and levels for the species 
@@ -114,10 +114,6 @@ class AtomicStructure(DegreeOfFreedom):
 
         if level_names and quantum_numbers:
             raise IonSimError("Specify either level names or quantum numbers, not both.")
-        if manifolds is not None and term_symbols is not None:
-            raise IonSimError("Specify either manifolds or term_symbols (they are aliases), not both.")
-        if manifolds is None:
-            manifolds = term_symbols
 
         requested = level_names if level_names is not None else quantum_numbers
         if level_aliases:
@@ -126,12 +122,12 @@ class AtomicStructure(DegreeOfFreedom):
             if len(level_aliases) != len(requested):
                 raise IonSimError(f"Specify one level alias per requested level: expected {len(requested)}, got {len(level_aliases)}.")
 
-        if manifolds is not None:
+        if term_symbols is not None:
             available = [data['term_symbol'] for data in levels_data]
-            missing = [ts for ts in manifolds if ts not in available]
+            missing = [ts for ts in term_symbols if ts not in available]
             if missing:
                 raise IonSimError(f"Term symbols {missing} not found in the {species} config data. Available: {available}.")
-            levels_data = [data for data in levels_data if data['term_symbol'] in manifolds]
+            levels_data = [data for data in levels_data if data['term_symbol'] in term_symbols]
 
         # Manifolds of electronic levels may differ in character and thus quantum numbers; therefore we use a manifold builder 
         #  that can accommodate differences in character for each term symbols' levels. This depends on the angular momentum couplings and any magnetic fields. 
@@ -146,7 +142,7 @@ class AtomicStructure(DegreeOfFreedom):
             levels = [level for builder in builders for level in builder.all_levels()
                       if level_names is None or level.name in level_names]
 
-        # Check for duplicate or levels not found in requested manifolds  
+        # Check for duplicate or levels not found in requested electronic manifolds  
         if level_names:
             duplicates = (len(level_names) != len(set(level_names))) 
             if duplicates:
@@ -154,7 +150,7 @@ class AtomicStructure(DegreeOfFreedom):
 
             missing = set(level_names) - {level.name for level in levels}
             if missing:
-                raise IonSimError(f"Level names {sorted(missing)} were not found in the selected manifolds.")
+                raise IonSimError(f"Level names {sorted(missing)} were not found in the selected electronic manifolds.")
             if level_aliases:
                 levels = [replace(level, alias=level_aliases[level_names.index(level.name)]) for level in levels]
 
@@ -229,7 +225,7 @@ class AtomicStructure(DegreeOfFreedom):
 
     @staticmethod
     def _match_manifold(qn: dict, builders: list[_ManifoldBuilder]) -> _ManifoldBuilder:
-        """Find the unique manifold consistent with the structural quantum numbers in qn."""
+        """Find the unique electronic manifold consistent with the structural quantum numbers in qn."""
         structural = {k: v for k, v in qn.items() if k in STRUCTURAL_KEYS}
         matches = [b for b in builders
                    if all(b.fine_data.get(k) is not None and _is_equal(float(b.fine_data[k]), v)
@@ -238,10 +234,10 @@ class AtomicStructure(DegreeOfFreedom):
             return matches[0]
         available = '; '.join(b.describe() for b in builders) or 'none'
         if not matches:
-            raise IonSimError(f"No manifold matches quantum numbers {qn}. Available manifolds: {available}.")
+            raise IonSimError(f"No manifold matches quantum numbers {qn}. Available electronic manifolds: {available}.")
         candidates = ', '.join(b.describe() for b in matches)
         raise IonSimError(f"Quantum numbers {qn} match more than one manifold: {candidates}. "
-                          f"Add structural quantum numbers (e.g. 'n', 'l', 'j') or restrict `manifolds`.")
+                          f"Add structural quantum numbers (e.g. 'n', 'l', 'j') or restrict `term_symbols`.")
 
     @classmethod
     def get_fine_data(cls, level_data: dict) -> dict:
@@ -341,7 +337,7 @@ class _ManifoldBuilder:
     """ Builds the energy levels of one manifold (one entry of the species config file) at a given magnetic field.
 
         Every level's external energy shift comes from `_energy_shift`, the single place to extend when other static-field
-        terms (e.g. a DC light shift) are added. The Zeeman solution is computed on first use and cached, so manifolds
+        terms (e.g. a DC light shift) are added. The Zeeman solution is computed on first use and cached, so electronic manifolds
         that contribute no levels are never diagonalized.
     """
 

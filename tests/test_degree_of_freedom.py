@@ -33,7 +33,7 @@ class TestDegreeOfFreedom(unittest.TestCase):
         rydberg_level_dict = {'n' : 53, 'l' : 0, 's' : 0.5, 'j' : 1/2, 'mj' : -1/2, 'mi' : 1/2}
         rydberg_level2_dict = {'n' : 53, 'l' : 0, 's' : 0.5, 'j' : 1/2, 'mj' : +1/2, 'mi' : 1/2}
         quantum_numbers = [ground_level_dict, ground_level_dict2, excited_level_dict, rydberg_level_dict, rydberg_level2_dict]
-        self.atom_b = AtomicStructure.from_species(species='87Rb', manifolds=['S1/2', '6 P3/2', '53 S1/2'], quantum_numbers=quantum_numbers, magnetic_field = 13.6) 
+        self.atom_b = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'], quantum_numbers=quantum_numbers, magnetic_field = 13.6) 
 
         # Test motional mode 
         self.mode_0 = MotionalMode.from_frequency(frequency=3e6 * 2 * np.pi, fock_dimension=3)
@@ -104,7 +104,7 @@ class TestGetManifoldConfig(unittest.TestCase):
         self.assertEqual(entry['term_symbol'], '53 S1/2')
         self.assertEqual(entry['n'], 53)
         # Values are as written in 87Rb.yaml (Hz), not converted to rad/s as on built levels.
-        level = AtomicStructure.from_species(species='87Rb', manifolds=['53 S1/2']).energy_levels[0]
+        level = AtomicStructure.from_species(species='87Rb', term_symbols=['53 S1/2']).energy_levels[0]
         self.assertAlmostEqual(level.hyperfine_A, 2 * np.pi * entry['hyperfine_A'])
 
     def test_missing_manifold_lists_available(self):

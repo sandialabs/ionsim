@@ -43,7 +43,7 @@ class TestQuantumNumberSpecification(unittest.TestCase):
             {'n': 53, 'l': 0, 's': 0.5, 'j': 1/2, 'mj': -1/2, 'mi': 1/2},
         ]
         self.B = 13.6 # Gauss 
-        self.atom = AtomicStructure.from_species(species='87Rb', manifolds=['S1/2', '6 P3/2', '53 S1/2'],
+        self.atom = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'],
                                                  quantum_numbers=self.qns, magnetic_field=self.B)
 
     def test_level_types_and_order(self):
@@ -81,10 +81,10 @@ class TestQuantumNumberSpecification(unittest.TestCase):
             dict(quantum_numbers=[{'n': 53, 'ml': 0, 'ms': 0.5, 'mi': 0.5}], magnetic_field=1.), # Paschen-Back
             dict(quantum_numbers=[{'n': 53, 'mj': 0.5, 'mi': 0.5}], magnetic_field=1.,
                  approximation='weak field'),                                                     # |mJ, mI> needs exact solver
-            dict(manifolds=['S1/2'], level_names=['S1/2,1,0'], quantum_numbers=[{'f': 1, 'mf': 0}]),
-            dict(manifolds=['S1/2'], level_names=['S1/2,3,0']),                                  # unknown level name
-            dict(manifolds=['S9/2']),                                                            # unknown manifold
-            dict(manifolds=['S1/2'], level_aliases=['a']),                                       # aliases need a level list
+            dict(term_symbols=['S1/2'], level_names=['S1/2,1,0'], quantum_numbers=[{'f': 1, 'mf': 0}]),
+            dict(term_symbols=['S1/2'], level_names=['S1/2,3,0']),                                  # unknown level name
+            dict(term_symbols=['S9/2']),                                                            # unknown manifold
+            dict(term_symbols=['S1/2'], level_aliases=['a']),                                       # aliases need a level list
         ]
         for kwargs in bad_calls:
             with self.subTest(kwargs=kwargs):
@@ -108,7 +108,7 @@ class TestQuantumNumberSpecification(unittest.TestCase):
 
     def test_whole_manifolds(self):
         """No level filter: every sublevel of the selected manifolds (8 for 5S, 16 for 6P3/2)."""
-        atom = AtomicStructure.from_species(species='87Rb', manifolds=['S1/2', '6 P3/2'], magnetic_field=1.)
+        atom = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', '6 P3/2'], magnetic_field=1.)
         self.assertEqual(len(atom.energy_levels), 24)
 
     def test_zero_nuclear_spin_at_nonzero_field(self):
@@ -125,7 +125,7 @@ class TestQuantumNumberSpecification(unittest.TestCase):
 
     def test_j1l2_gj_independent_of_field(self):
         """171Yb+ [3/2]1/2 gets the same computed gJ at zero and nonzero field."""
-        levels = [AtomicStructure.from_species(species='171Yb+', manifolds=['[3/2]1/2'], magnetic_field=b).energy_levels[0]
+        levels = [AtomicStructure.from_species(species='171Yb+', term_symbols=['[3/2]1/2'], magnetic_field=b).energy_levels[0]
                   for b in (0., 1.)]
         self.assertIsNotNone(levels[0].gj)
         self.assertAlmostEqual(levels[0].gj, levels[1].gj, places=12)
