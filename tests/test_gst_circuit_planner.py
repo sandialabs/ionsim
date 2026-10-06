@@ -80,7 +80,7 @@ class TestGermPowers(unittest.TestCase):
             self.ramsey_rabi(germ_powers={X: []})
         with self.assertRaisesRegex(TypeError, "tuple of gate labels"):
             self.ramsey_rabi(germ_powers={(): [1]})
-        with self.assertRaisesRegex(ValueError, "not in the planner's gate set"):
+        with self.assertRaisesRegex(ValueError, "not in the planner's default gate set"):
             self.ramsey_rabi(germ_powers={'Gzpi2:0': [1]})
 
 if __name__ == '__main__':
