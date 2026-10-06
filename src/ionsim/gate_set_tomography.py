@@ -20,6 +20,7 @@
     GateSetModel.interpolate_gate_model.
 """
 import numpy as np
+from itertools import groupby
 from dataclasses import dataclass, field, replace
 
 import scipy.optimize as opt
@@ -233,13 +234,19 @@ class _GstProblem:
         return {gate: gate_model(*self.get_parameters(theta, gate)) for gate, gate_model in self.gate_models.items()}
 
     def compose_quantum_map(self, gates: tuple, gate_matrices: dict, circuit_map_cache: dict) -> np.ndarray:
-        """ Compose the circuit map once for each unique gate sequence in an evaluation. """
+        """ Compose the circuit map once for each unique gate sequence in an evaluation.
+
+            A run of n identical consecutive gates (e.g. a single-gate germ raised to a power) is composed as the matrix power
+            G^n by repeated squaring, which takes ~log2(n) matrix products instead of n.
+        """
         quantum_map = circuit_map_cache.get(gates)
         if quantum_map is not None:
             return quantum_map
         quantum_map = np.eye(self.d2, dtype=complex)
-        for gate in gates:
-            quantum_map = gate_matrices[gate] @ quantum_map
+        for gate, run in groupby(gates):
+            count = sum(1 for _ in run)
+            matrix = gate_matrices[gate]
+            quantum_map = (matrix if count == 1 else np.linalg.matrix_power(matrix, count)) @ quantum_map
         circuit_map_cache[gates] = quantum_map
         return quantum_map
 

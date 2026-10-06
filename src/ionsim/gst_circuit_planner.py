@@ -382,7 +382,7 @@ class GSTCircuitPlanner:
         gate = gate_from_label(label)
         if gate.is_idle or gate.label in self.gate_lookup:
             return self.gate_lookup.get(gate.label, gate)
-        raise ValueError(f"Gate {label!r} is not in the planner's gate set {self.gate_names}.")
+        raise ValueError(f"Gate {label!r} is not in the planner's default gate set {self.gate_names}.")
 
     def to_gst_sequence(self, seq: list[str], role: str='gate sequence') -> list[GstGate]:
         """ Converts a list of gate labels (e.g. ['Gxpi2:0', 'Gypi2:0']) to a list of GstGates. """
