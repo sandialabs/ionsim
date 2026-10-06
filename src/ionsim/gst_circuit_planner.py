@@ -18,7 +18,7 @@ from ionsim.gst_circuit_parser import GstCircuit, GstGate, gate_from_label
 
 class GSTCircuitPlanner:
     def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials: list[list[str]] | None=None,
-                    measure_fiducials: list[list[str]] | None=None, germs: list[list[str]] | None=None, germ_powers: list[int]=[1,2,4,8,16],
+                    measure_fiducials: list[list[str]] | None=None, germs: list[list[str]] | None=None, germ_powers: list[int] | dict=[1,2,4,8,16],
                     gate_set_model: GateSetModel | None=None, long_sequence_GST: bool=True, evaluator_tolerance: float | None=None,
                     gate_models=None):
         """ Constructor for GST Circuit Planner class. The user passes in the gate names and qubit labels at a minimum.
@@ -28,6 +28,12 @@ class GSTCircuitPlanner:
             - gate_names: the gate set, e.g. ['Gxpi2:0', 'Gypi2:0', 'idle'].
             - prep_fiducials / measure_fiducials / germs: lists of gate-label sequences, e.g. [[], ['Gxpi2:0'], ['Gxpi2:0', 'Gxpi2:0']].
               Defaults are used for any that are not supplied.
+            - germ_powers: the powers of each germ in the long-sequence circuits, either
+                * a list of positive integers, applied to every germ, e.g. [1, 2, 4, 8, 16], or
+                * a dictionary of powers per germ, keyed by germ: a gate label for a single-gate germ, or a tuple of gate labels
+                  for a multi-gate germ, e.g. {'idle': list(range(1, 65)), 'Gxpi2:0': [1, 2, 4, 8, 16],
+                  ('Gxpi2:1', 'MS:0:1', 'Gxpi2:0'): [1, 2, 4]}. If germs is not given, the dictionary's keys are the germs;
+                  otherwise the keys must be exactly the germs.
             - Sets up list of prep gates, measure gates, and germ gates. The class organizes GST circuits based on those gates requested germ powers.
             - Can write the GST circuit sequences to a file.
             - gate_set_model: optional GateSetModel (the models of the prep, POVM, and gates and their parameters, including
@@ -39,10 +45,6 @@ class GSTCircuitPlanner:
 
         """
         self.qubit_labels = list(qubit_labels)
-        if long_sequence_GST:
-            self.germ_powers = germ_powers
-        else:
-            self.germ_powers = [1]
 
         # Build GstGate objects from gate names and store them in a dictionary keyed by canonical label
         self._construct_gate_name_to_object_mapping(gate_names)
@@ -57,6 +59,9 @@ class GSTCircuitPlanner:
         elif prep_fiducials is None or measure_fiducials is None:
             raise ValueError("Specify both prep_fiducials and measure_fiducials, or neither (to use the defaults).")
 
+        if germs is None and isinstance(germ_powers, dict):
+            # The germs are the keys of the per-germ powers
+            germs = [self._germ_key_labels(key) for key in germ_powers]
         if germs is None:
             if len(self.qubit_labels) == 1:
                 germs = self.standard_1Q_germs(self.gate_names, self.qubit_labels[0])
@@ -85,10 +90,65 @@ class GSTCircuitPlanner:
         self.prep_fiducials = [self.to_gst_sequence(fid, 'prep fiducial') for fid in prep_fiducials]
         self.measure_fiducials = [self.to_gst_sequence(fid, 'measure fiducial') for fid in measure_fiducials]
         self.germs = [self.to_gst_sequence(germ, 'germ') for germ in germs]
+        # Powers of each germ: self.germ_powers as given (a list for every germ, or a dictionary per germ with canonical keys),
+        # and self.germ_powers_by_germ, the list of powers of each germ in self.germs
+        self.germ_powers, self.germ_powers_by_germ = self._organize_germ_powers(germ_powers)
 
         if self.mode == 'optimized':
             raise NotImplementedError("Optimized germ selection is not currently available.")
 
+
+    @staticmethod
+    def _germ_key_labels(key) -> list[str]:
+        """ Gate labels of a germ given as a germ_powers dictionary key: a gate label or a tuple of gate labels """
+        if isinstance(key, str):
+            return [key]
+        if isinstance(key, tuple) and len(key) > 0 and all(isinstance(label, str) for label in key):
+            return list(key)
+        raise TypeError(f"germ_powers keys must be a gate label (single-gate germ) or a tuple of gate labels (multi-gate germ), "
+                        f"e.g. 'Gxpi2:0' or ('Gxpi2:1', 'MS:0:1'); received {key!r}.")
+
+    @staticmethod
+    def _germ_key(germ: list[GstGate]):
+        """ Canonical germ_powers dictionary key of a germ: its gate label, or a tuple of labels for a multi-gate germ """
+        labels = tuple(gate.label for gate in germ)
+        return labels[0] if len(labels) == 1 else labels
+
+    @staticmethod
+    def _validate_powers(powers, context: str) -> list[int]:
+        """ A list of distinct positive integer germ powers """
+        if isinstance(powers, (str, bytes)) or not hasattr(powers, '__iter__'):
+            raise TypeError(f"Germ powers for {context} must be a list of positive integers; received {powers!r}.")
+        powers = list(powers)
+        if len(powers) == 0:
+            raise ValueError(f"Germ powers for {context} are empty.")
+        for power in powers:
+            if isinstance(power, bool) or not isinstance(power, (int, np.integer)) or power < 1:
+                raise ValueError(f"Germ powers must be positive integers; received {power!r} for {context}.")
+        if len(set(powers)) != len(powers):
+            raise ValueError(f"Repeated germ power in {powers} for {context}.")
+        return [int(power) for power in powers]
+
+    def _organize_germ_powers(self, germ_powers) -> tuple:
+        """ Validate germ_powers (a list for every germ, or a dictionary per germ) and match them to self.germs """
+        if not isinstance(germ_powers, dict):
+            powers = self._validate_powers(germ_powers, 'every germ')
+            return powers, [list(powers) for _ in self.germs]
+
+        powers_by_key = {}
+        for key, powers in germ_powers.items():
+            germ = tuple(self.to_gst_sequence(self._germ_key_labels(key), 'germ'))
+            if germ in powers_by_key:
+                raise ValueError(f"Germ {key!r} appears more than once in germ_powers.")
+            powers_by_key[germ] = self._validate_powers(powers, f"germ {key!r}")
+        germ_keys = [tuple(germ) for germ in self.germs]
+        missing = [self._germ_key(germ) for germ in self.germs if tuple(germ) not in powers_by_key]
+        unknown = [self._germ_key(list(germ)) for germ in powers_by_key if germ not in germ_keys]
+        if missing or unknown:
+            raise ValueError(f"germ_powers must have one entry per germ. Germs without powers: {missing}; powers for germs not in "
+                             f"germs: {unknown}. Germs: {[self._germ_key(germ) for germ in self.germs]}.")
+        by_germ = [list(powers_by_key[germ]) for germ in germ_keys]
+        return {self._germ_key(germ): powers for germ, powers in zip(self.germs, by_germ)}, by_germ
 
     def _construct_gate_name_to_object_mapping(self, gate_names: list[str]):
         """ Set up the canonical gate label -> GstGate look up dictionary """
@@ -157,8 +217,8 @@ class GSTCircuitPlanner:
         """ Long-form GST circuits: fiducial_prep + prep^{germ} + fiducial_measure """ 
         assert self.long_GST
         circuits = []
-        for germ in self.germs:
-            for power in self.germ_powers:
+        for germ, powers in zip(self.germs, self.germ_powers_by_germ):
+            for power in powers:
                 for prep_fiducial in self.prep_fiducials:
                     for measure_fiducial in self.measure_fiducials:
                         circuits.append( GstCircuit._from_gates(prep_fiducial, germ, power, measure_fiducial, self.qubit_labels)) 
@@ -526,7 +586,9 @@ class GSTCircuitPlanner:
             'prep_fiducials' : fiducials_to_dict(self.prep_fiducials), 
             'measure_fiducials' : fiducials_to_dict(self.measure_fiducials),
             'germs': fiducials_to_dict(self.germs),
-            'germ_powers' : self.germ_powers 
+            # one list of powers for every germ, or a list of powers per germ (parallel to 'germs')
+            'germ_powers' : self.germ_powers if isinstance(self.germ_powers, list) else self.germ_powers_by_germ,
+            'long_sequence_GST' : self.long_GST,
         }
 
         with open(filepath, 'w') as f:
@@ -551,10 +613,19 @@ class GSTCircuitPlanner:
         with open(filepath, 'r') as f:
             design = yaml.safe_load(f)
 
+        germs = dict_to_fiducials(design['germs'])
+        germ_powers = design['germ_powers']
+        if isinstance(germ_powers, list) and germ_powers and all(isinstance(powers, list) for powers in germ_powers):
+            # powers per germ, parallel to the germs
+            if len(germ_powers) != len(germs):
+                raise ValueError(f"The design has {len(germs)} germs but {len(germ_powers)} lists of germ powers.")
+            germ_powers = {tuple(germ): powers for germ, powers in zip(germs, germ_powers)}
+
+        # Design files written before long_sequence_GST was recorded are read as long-sequence designs (as before)
         planner = cls(gate_names = design['gate_names'], qubit_labels = design['qubit_labels'],
-                    prep_fiducials = dict_to_fiducials(design['prep_fiducials']), 
-                    measure_fiducials = dict_to_fiducials(design['measure_fiducials']), 
-                    germs = dict_to_fiducials(design['germs']), germ_powers = design['germ_powers'] )
+                    prep_fiducials = dict_to_fiducials(design['prep_fiducials']),
+                    measure_fiducials = dict_to_fiducials(design['measure_fiducials']),
+                    germs = germs, germ_powers = germ_powers, long_sequence_GST = design.get('long_sequence_GST', True))
 
         return planner 
 
