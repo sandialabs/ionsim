@@ -83,5 +83,28 @@ class TestGermPowers(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not in the planner's default gate set"):
             self.ramsey_rabi(germ_powers={'Gzpi2:0': [1]})
 
+class TestDuplicateCircuits(unittest.TestCase):
+
+    def test_no_duplicate_gate_sequences(self):
+        """ Circuits applying the same gate sequence are generated once; linear-GST circuits are kept with their structure """
+        planner = GSTCircuitPlanner([X, Y, IDLE], [0])
+        circuits = planner.generate_gst_circuits()
+        sequences = [tuple(c.expanded_gates) for c in circuits]
+        self.assertEqual(len(sequences), len(set(sequences)))
+        self.assertEqual(len(circuits), 331)
+
+        # Every linear-GST gate sequence is present, as the first (linear-GST) circuit generated with that sequence
+        first_linear = {}
+        for circuit in planner._linear_gst_circuits():
+            first_linear.setdefault(tuple(circuit.expanded_gates), circuit)
+        kept = {tuple(c.expanded_gates): c for c in circuits}
+        for sequence, circuit in first_linear.items():
+            self.assertIn(sequence, kept)
+            self.assertEqual(kept[sequence].build_circuit_string(), circuit.build_circuit_string())
+
+        # e.g. X(pi/2) X(pi/2) arises as fiducial pairs, fiducial + gate, and germ X(pi/2)^2, but is generated once
+        self.assertEqual(sequences.count(tuple(planner.to_gst_sequence([X, X]))), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

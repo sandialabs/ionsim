@@ -195,9 +195,9 @@ class TestGST(unittest.TestCase):
         Y_pi2_error = gate_set_error['Gypi2:0']
         SPAM_error = gate_set_error["prep"]
         SPAM_error += gate_set_error["POVM"]
-        self.assertAlmostEqual(X_pi2_error, 0.0004938334895727403, places=5)
-        self.assertAlmostEqual(Y_pi2_error, 0.0004938334895728776, places=5)
-        self.assertAlmostEqual(SPAM_error, 2.039563696979629e-05, places=5)
+        self.assertAlmostEqual(X_pi2_error, 0.007655879321463311, places=5)
+        self.assertAlmostEqual(Y_pi2_error, 0.007655879321462996, places=5)
+        self.assertAlmostEqual(SPAM_error, 2.7801015481129593e-05, places=5)
         self.assertEqual(result.method, 'linear')
         self.assertTrue(result.success)
         self.assertGreater(result.gauge_iterations, 0)
@@ -267,9 +267,9 @@ class TestGST(unittest.TestCase):
         Y_pi2_error = gate_set_error['Gypi2:0']
         SPAM_error = gate_set_error["prep"]
         SPAM_error += gate_set_error["POVM"]
-        self.assertAlmostEqual(X_pi2_error, 0.0006672864884890055, places=5)
-        self.assertAlmostEqual(Y_pi2_error, 0.0006672864884889269, places=5)
-        self.assertAlmostEqual(SPAM_error, 0.0010575712223980156, places=5)
+        self.assertAlmostEqual(X_pi2_error, 0.00031118300778026545, places=5)
+        self.assertAlmostEqual(Y_pi2_error, 0.00031118300778012803, places=5)
+        self.assertAlmostEqual(SPAM_error, 0.0003452514250604332, places=5)
 
         # Errors against the true values equal errors against the explicit true gate set
         true_gate_set = evaluate_gate_set(self.gate_set_model, self.true_values)

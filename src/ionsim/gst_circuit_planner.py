@@ -167,7 +167,13 @@ class GSTCircuitPlanner:
         self.gate_names = list(self.gate_lookup.keys())
 
     def generate_gst_circuits(self) -> list:
-        """Generate GST circuits. Convert string gates to GstGate and avoid duplicates."""
+        """ Generate the GST circuits: the linear-GST circuits, then (for long-sequence GST) the germ circuits.
+
+            Circuits that apply the same gate sequence are the same experiment, however they are structured (e.g. fiducial
+            X(pi/2) then gate X(pi/2), or germ X(pi/2) with power 2), so only the first occurrence of each gate sequence is
+            kept. The linear-GST circuits come first, so they are kept with their linear-GST structure, and every gate sequence
+            linear GST needs remains (linear GST looks up circuits by gate sequence).
+        """
 
         gst_circuits = []
         unique = set()
@@ -175,10 +181,10 @@ class GSTCircuitPlanner:
         if self.long_GST:
             circuits = self._linear_gst_circuits() + self._long_gst_circuits()
         else:
-            circuits = self._linear_gst_circuits() 
+            circuits = self._linear_gst_circuits()
 
-        for circ in circuits: 
-            key = circ.build_circuit_string()
+        for circ in circuits:
+            key = tuple(circ.expanded_gates)
 
             if key not in unique:
                 unique.add(key)
