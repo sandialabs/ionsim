@@ -166,7 +166,7 @@ def main():
         basis_xx = ism.XPauliAndFockBasis([*spins, *modes], spins)
         psis_xx = [ism.State.from_state(basis_xx, psi) for psi in psis]
 
-        alphas = np.array([psi.compute_coherent_displacements(spins, modes[0]) for psi in psis_xx])
+        alphas = np.array([psi.compute_coherent_displacements(modes[0]) for psi in psis_xx])
         spin_basis_xx = ism.XPauliBasis(spins)
 
         for i,vector in enumerate(spin_basis_xx.vectors):
