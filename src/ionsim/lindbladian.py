@@ -21,14 +21,9 @@ from ionsim.custom_math import matrix_AYB_multiply_to_superoperator, solve_time_
 from ionsim.ionsim_error import IonSimError
 from ionsim.composite_operator import CompositeOperator
 from ionsim.hamiltonian import Hamiltonian
-<<<<<<< HEAD
-from ionsim.atomic_internal_energy_level import compute_dipole_amplitude, compute_multipole_amplitude
-from ionsim.config import SMALLEST_ENERGY_SCALE
-=======
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, SinkLevel
-from ionsim.atomic_internal_energy_level import compute_dipole_amplitude
+from ionsim.atomic_internal_energy_level import compute_multipole_amplitude
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
->>>>>>> main
 
 
 @dataclass(frozen=True, eq=False)
@@ -138,26 +133,20 @@ class DissipatorSpontaneousEmission(Dissipator):
     """Subclass for including spontaneous emission dynamics for a known atomic structure."""
 
     @classmethod
-<<<<<<< HEAD
-    def from_atomic_structure_data(cls, basis: StandardBasis, ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], multipole_orders: list[int] = [1], frame_energies: list[float] | None=None, sparse: bool=False, all_atoms_are_same: bool = True, select_DOFs: list[AtomicStructure] | None = None):
-        """ Builds dissipator for spontaneous emission from a user-specified list of excited and ground levels. """ 
-            
-=======
     def from_atomic_structure_data(cls, basis: StandardBasis, ground_levels: list[AtomicInternalEnergyLevel],
                                    excited_levels: list[AtomicInternalEnergyLevel], frame_energies: list[float] | None = None,
                                    sparse: bool = False, select_DOFs: list[AtomicStructure] | None = None,
-                                   decay_to_sink: bool = False):
+                                   decay_to_sink: bool = False, multipole_orders: dict[tuple[str, str], int] | None = None):
         """Build the spontaneous-emission dissipator for decay from excited_levels to ground_levels. """
->>>>>>> main
 
         """ One Lindblad operator sqrt(Gamma_{e->g,q}) |g><e| is created per decay path (excited level e, ground level g,
         polarization q), in every selected AtomicStructure DOF. The rate of each path is exact:
 
-            Gamma_{e->g,q} = (branching ratio of g's manifold) / (lifetime of e) * |<g| r_q |e>|^2 (2 J_e + 1) / (2 J_g + 1)
+            Gamma_{e->g,q} = (branching ratio of g's manifold) / (lifetime of e) * |<g| T^(k)_q |e>|^2 (2 J_e + 1) / (2 J_g + 1)
 
-        where <g| r_q |e> is compute_dipole_amplitude in units of <J_g||r||J_e>. Summed over every sublevel of a
-        ground manifold and over q, the factor after the branching ratio is exactly 1, so the rates do not depend on
-        which levels are included.
+        where <g| T^(k)_q |e> is compute_multipole_amplitude of rank k in units of <J_g||T^(k)||J_e>, and q runs over
+        -k..k. Summed over every sublevel of a ground manifold and over q, the factor after the branching ratio is
+        exactly 1 for any k, so the rates do not depend on which levels are included.
 
         The lifetime is the level's total lifetime (all decay channels, as measured), and branching ratios are fractions
         of that total decay. Decay to states that are not included (omitted sublevels, manifolds outside the basis) 
@@ -173,9 +162,11 @@ class DissipatorSpontaneousEmission(Dissipator):
         branching_ratios is assumed to decay entirely to a single ground manifold, and an error is raised if the
         ground levels span more than one manifold it could decay to.
 
-        Only electric-dipole (rank-1) angular factors are used. A decay listed in branching_ratios that has no dipole-allowed
-        paths (e.g. an E2 decay with Delta J = 2) raises an error. An E2 decay with |Delta J| <= 1 (e.g. D3/2 -> S1/2) gets
-        the correct total rate but a dipole-like distribution over sublevels, since parity is not known here.
+        Each decay channel (excited manifold -> ground manifold) is electric dipole (E1, k = 1) or quadrupole (E2, k = 2).
+        By default the order follows parity, taken as (-1)^L: E1 if the parity changes (e.g. P -> S), E2 if it does not
+        (e.g. D5/2 -> S1/2 in Ca+ or Yb+). Levels without L (j1l2 coupling) are assumed to decay by E1. Set the order
+        of any channel explicitly with multipole_orders. A decay listed in branching_ratios with no paths of its order
+        (e.g. an E3 decay) raises an error.
 
         Separate operators per path is the secular approximation: coherences between decay paths that emit the
         same polarization are dropped. This is accurate when those transition frequencies differ by much more than
@@ -191,6 +182,8 @@ class DissipatorSpontaneousEmission(Dissipator):
                 DOF must contain all of the given levels.
             decay_to_sink: Send decay that does not reach the given ground levels to each DOF's SinkLevel. With this set,
                 ground_levels may be empty (all decay goes to the sink).
+            multipole_orders: Optional {(excited term symbol, ground term symbol): 1 or 2} overriding the parity-based
+                multipole order of a decay channel, e.g. {('[3/2]1/2', 'D3/2'): 1}.
         """
         if frame_energies is None:
             frame_energies = [0.] * len(basis.states)
@@ -221,77 +214,13 @@ class DissipatorSpontaneousEmission(Dissipator):
                     raise IonSimError(f"decay_to_sink requires exactly one SinkLevel in each selected DOF, found {len(sinks)}. "
                                       f"Build the structure with AtomicStructure.from_species(..., include_sink=True).")
 
-<<<<<<< HEAD
-        # Loop over each Atomic Structure DOF and create a lindblad operator in that DOF's Hilbert space.
-            # Then, enlarge that lindblad operator to the system basis which contains the whole Hilbert space.  
-        for DOF in DOF_list: 
-            if isinstance(DOF, AtomicStructure):
-                # For each excited level, loop through ground levels it can decay to  
-                for k in multipole_orders:
-                    q = np.arange(-k, k+1)
-                    for e_level in excited_levels:
-                        # Extract lifetime and branching ratio for this excited level
-                        e_lifetime = e_level.lifetime # dict with ground-manifold as key 
-                        e_branching_ratios = e_level.branching_ratios
-        
-                        g_amplitudes = {} 
-                        for g_level in ground_levels:
-                            if e_level.energy <= g_level.energy:
-                                raise IonSimError('Error: Excited level should be higher in energy than the lower level. Excited energy: {e_level.energy}, Ground energy: {g_level.energy}')
-                                
-                            for _q in q:#[-1,0,1]: #q:
-                                # Compute multipole amplitude between |e> and |g>, append if non-zero 
-                                amplitude = compute_multipole_amplitude(g_level, e_level, k, _q)
-                                #amplitude = compute_dipole_amplitude(g_level, e_level, _q) #(g_level, e_level, k, _q)
-                                if np.abs(amplitude) >  SMALLEST_ENERGY_SCALE:
-                                    g_amplitudes[(g_level, _q)] = np.abs(amplitude**2) 
-
-                        # Get normalization by summing over amplitudes, necessary if we don't consider every decay path way  
-                        amplitude_sum = sum(g_amplitudes.values())
-                        assert amplitude_sum > 0., 'Error: No decay pathways for excited state {e_level.name} '
-                        e_level_index = DOF.energy_levels.index(e_level)
-    
-                        for (g_level, q), weight in g_amplitudes.items():
-                            if e_branching_ratios is None:
-                                e_g_branching_ratio = 1.
-                            else:
-                                e_g_branching_ratio = e_branching_ratios[g_level.term_symbol]
-    
-                            # Spontaneous emission decay rate: 
-                            decay_rate = (1./e_lifetime) * e_g_branching_ratio * g_amplitudes[(g_level, q)] / amplitude_sum    
-    
-                            # Create lowering operator  
-                            g_level_index = DOF.energy_levels.index(g_level)
-                            lowering_matrix = np.zeros((len(DOF.energy_levels), len(DOF.energy_levels)))
-                            lowering_matrix[g_level_index, e_level_index] = 1.*np.sqrt(decay_rate) 
-    
-                            # Enlarge lowering opearator to live in entire basis 
-                            if not all_atoms_are_same:
-                                enlarged_lowering_matrix = basis.enlarge_matrix(lowering_matrix, [DOF]) 
-                                decay_operator = np.sqrt(decay_rate) * enlarged_lowering_matrix
-                                lindblad_operators.append(CouplingOperator.from_matrix(basis, decay_operator, 0.))
-                            else:
-                                enlarged_lowering_matrices = [basis.enlarge_matrix(lowering_matrix, [spin]) for spin in basis.atomic_structure_DOFs]
-                                decay_operators = [large_matrix for large_matrix in enlarged_lowering_matrices] 
-                                for decay_operator in decay_operators:
-                                    lindblad_operators.append(CouplingOperator.from_matrix(basis, decay_operator, 0.))
-
-            # Break from the loop if all the AtomicStructure DOFs are the same 
-            if all_atoms_are_same:
-                break 
-
-        if not lindblad_operators:
-            raise IonSimError("Error: No branching ratios or lifetime data found. No lindblad operators were created.") 
-
-        return cls(basis, lindblad_operators, frame_energies, sparse) 
-=======
             def add_decay(to_index: int, from_index: int, rate: float):
                 lowering_matrix = np.zeros((dimension, dimension))
                 lowering_matrix[to_index, from_index] = np.sqrt(rate)
                 lindblad_operators.append(CouplingOperator.from_matrix(basis, basis.enlarge_matrix(lowering_matrix, [DOF]), 0.))
 
             for e_level in excited:
-                rates = cls._decay_rates(e_level, ground, require_paths=not decay_to_sink)
+                rates = cls._decay_rates(e_level, ground, require_paths=not decay_to_sink, multipole_orders=multipole_orders)
                 for g_level, rate in rates:
                     add_decay(level_index[g_level.name], level_index[e_level.name], rate)
                 if decay_to_sink:
@@ -303,7 +232,7 @@ class DissipatorSpontaneousEmission(Dissipator):
 
     @staticmethod
     def _decay_rates(e_level: AtomicInternalEnergyLevel, ground_levels: list[AtomicInternalEnergyLevel],
-                     require_paths: bool = True) -> list[tuple]:
+                     require_paths: bool = True, multipole_orders: dict[tuple[str, str], int] | None = None) -> list[tuple]:
         """ Decay rates (1/s) from e_level to each ground level, one entry per (ground level, polarization q) path.
 
             Raises if there are no paths and require_paths is True.
@@ -312,24 +241,27 @@ class DissipatorSpontaneousEmission(Dissipator):
         if not isinstance(lifetime, (int, float)) or lifetime <= 0:
             raise IonSimError(f"Excited level {e_level.name} needs a positive lifetime (s) for spontaneous emission, got {lifetime!r}.")
 
-        # Dipole-allowed paths, grouped by ground manifold. The fraction of e's decay into a complete manifold sums to 1.
+        # Allowed paths, grouped by ground manifold. The fraction of e's decay into a complete manifold sums to 1 for any rank k.
         paths = {}  # term symbol -> list of (ground level, fraction)
+        orders = {}  # term symbol -> multipole order used for that channel
         for g_level in ground_levels:
-            for q in (-1, 0, 1):
-                amplitude = compute_dipole_amplitude(g_level, e_level, q)
+            k = _decay_multipole_order(e_level, g_level, multipole_orders)
+            orders[g_level.term_symbol] = k
+            for q in range(-k, k + 1):
+                amplitude = compute_multipole_amplitude(g_level, e_level, k, q)
                 if abs(amplitude) > NUMERICAL_EQUIVALENCE_THRESHOLD:
                     fraction = abs(amplitude)**2 * (2*e_level.j + 1) / (2*g_level.j + 1)
                     paths.setdefault(g_level.term_symbol, []).append((g_level, fraction))
 
         branching_ratios = e_level.branching_ratios
         if branching_ratios is not None:
-            # A listed channel with no dipole-allowed paths (e.g. an E2 decay with Delta J = 2) would silently vanish.
-            ground_manifolds = {g_level.term_symbol for g_level in ground_levels}
-            non_dipole = [term_symbol for term_symbol, ratio in branching_ratios.items()
-                          if ratio > 0 and term_symbol in ground_manifolds and term_symbol not in paths]
-            if non_dipole:
-                raise IonSimError(f"Excited level {e_level.name} decays to {non_dipole} (branching_ratios), but no electric-dipole "
-                                  f"paths connect them; higher-multipole decays (e.g. E2) are not supported.")
+            # A listed channel with no allowed paths at its multipole order (e.g. an E3 decay) would silently vanish.
+            unsupported = [f"{term_symbol} (E{orders[term_symbol]})" for term_symbol, ratio in branching_ratios.items()
+                           if ratio > 0 and term_symbol in orders and term_symbol not in paths]
+            if unsupported:
+                raise IonSimError(f"Excited level {e_level.name} decays to {unsupported} (branching_ratios), but no paths of that "
+                                  f"multipole order connect them. Only E1 and E2 decays are supported; if the order was "
+                                  f"inferred incorrectly, set it with multipole_orders.")
         if branching_ratios is None:
             if len(paths) > 1:
                 raise IonSimError(f"Excited level {e_level.name} has no branching ratios, but can decay to several ground "
@@ -348,11 +280,44 @@ class DissipatorSpontaneousEmission(Dissipator):
                 rates.append((g_level, branching_ratio / lifetime * fraction))
 
         if not rates and require_paths:
-            raise IonSimError(f"No decay paths from excited level {e_level.name} to the given ground levels. Dipole-allowed "
+            raise IonSimError(f"No decay paths from excited level {e_level.name} to the given ground levels. Allowed "
                               f"ground manifolds: {sorted(paths)}; branching_ratios keys: "
                               f"{sorted(e_level.branching_ratios) if e_level.branching_ratios else None}.")
         return rates
->>>>>>> main
+
+
+def _parity_of_ls_coupled_level(level: AtomicInternalEnergyLevel) -> int | None:
+    """ Parity (+1 or -1) of an LS-coupled level, taken as (-1)^L; None if the level has no L (e.g. j1l2 coupling).
+
+        (-1)^L equals the configuration parity (-1)^(sum of electron l) for one valence electron and for configurations
+        such as sp and sd, which covers the current species configs. It is not general (e.g. p^2 3P has L = 1 but even
+        parity); use multipole_orders for such levels.
+    """
+    l = getattr(level, 'l', None)
+    return None if l is None else (-1)**int(round(l))
+
+
+def _decay_multipole_order(e_level: AtomicInternalEnergyLevel, g_level: AtomicInternalEnergyLevel,
+                           multipole_orders: dict[tuple[str, str], int] | None) -> int:
+    """ Electric multipole order of the decay e_level -> g_level: 1 (E1) or 2 (E2).
+
+        An entry (excited term symbol, ground term symbol) in multipole_orders takes precedence. Otherwise the order follows
+        parity: E1 if it changes, E2 if not. If either parity is unknown, E1 is assumed.
+    """
+    if multipole_orders is not None:
+        if not isinstance(multipole_orders, dict):
+            raise IonSimError("multipole_orders must be a dict {(excited term symbol, ground term symbol): 1 or 2}, "
+                              f"got {type(multipole_orders).__name__}.")
+        k = multipole_orders.get((e_level.term_symbol, g_level.term_symbol))
+        if k is not None:
+            if k not in (1, 2):
+                raise IonSimError(f"multipole_orders values must be 1 (E1) or 2 (E2), got {k} for "
+                                  f"({e_level.term_symbol!r}, {g_level.term_symbol!r}).")
+            return k
+    e_parity, g_parity = _parity_of_ls_coupled_level(e_level), _parity_of_ls_coupled_level(g_level)
+    if e_parity is None or g_parity is None or e_parity != g_parity:
+        return 1
+    return 2
 
 
 @dataclass(frozen=True, eq=False)

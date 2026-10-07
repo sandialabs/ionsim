@@ -35,6 +35,16 @@ RB87_53S_LIFETIME = manifold_config('87Rb', '53 S1/2')['lifetime']  # s, 87Rb 53
 YB171_3D1 = manifold_config('171Yb', 'D1')
 YB171_3D1_LIFETIME = YB171_3D1['lifetime']                     # s, 171Yb 3D1 lifetime
 YB171_3D1_BRANCHING = YB171_3D1['branching_ratios']            # 171Yb 3D1 -> 3P0, 3P1, 3P2 branching ratios
+CA40_D52_LIFETIME = manifold_config('40Ca+', 'D5/2')['lifetime']        # s, 40Ca+ 3D5/2 lifetime (E2 decay to S1/2)
+YB171_ION_D52 = manifold_config('171Yb+', 'D5/2')
+YB171_ION_D52_LIFETIME = YB171_ION_D52['lifetime']                 # s, 171Yb+ 5D5/2 lifetime
+YB171_ION_D52_BRANCHING = YB171_ION_D52['branching_ratios']        # 171Yb+ 5D5/2 -> 6S1/2 (E2), 4F7/2 (E1)
+YB171_ION_D32_LIFETIME = manifold_config('171Yb+', 'D3/2')['lifetime']  # s, 171Yb+ 5D3/2 lifetime (E2 decay to S1/2)
+
+# 171Yb+ D3/2 -> S1/2 E2 hyperfine branching from |F'=2>: fraction into F is (2F + 1)(2J' + 1){J J' 2; F' F I}^2
+# with J = 1/2, J' = 3/2, I = 1/2.
+YB171_ION_D32_F2_TO_F0 = 2/5
+YB171_ION_D32_F2_TO_F1 = 3/5
 
 # Test settings.
 PLACES = 10  # rates are compared as rate * lifetime ~ O(1); 1e-10 is far above floating-point error
@@ -145,6 +155,54 @@ class TestSpontaneousEmissionRates(unittest.TestCase):
         np.testing.assert_allclose(decay_rate_matrix(sparse), decay_rate_matrix(dense), rtol=1e-12)
 
 
+class TestSpontaneousEmissionQuadrupole(unittest.TestCase):
+    """E2 decay channels, chosen automatically when the parity, (-1)^L, does not change."""
+
+    def test_e2_and_e1_channels(self):
+        """171Yb+ D5/2 -> S1/2 (E2) and -> F7/2 (E1): every sublevel decays at 1/tau, split by the config branching ratios."""
+        yb = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'F7/2', 'D5/2'])
+        dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(
+            StandardBasis([yb]), levels_in_manifold(yb, 'S1/2') + levels_in_manifold(yb, 'F7/2'), levels_in_manifold(yb, 'D5/2'))
+        for excited in levels_in_manifold(yb, 'D5/2'):
+            with self.subTest(excited=excited.name):
+                by_manifold = decay_by_manifold(yb, dissipator, excited)
+                for term_symbol, ratio in YB171_ION_D52_BRANCHING.items():
+                    self.assertAlmostEqual(by_manifold[term_symbol] * YB171_ION_D52_LIFETIME, ratio, places=PLACES)
+
+    def test_e2_stretched_state(self):
+        """40Ca+ |D5/2, mJ=5/2> can only reach |S1/2, mJ=1/2> (q = 2): all of its decay goes there.
+
+        An E1 treatment would find no paths at all, since |Delta J| = 2.
+        """
+        ca = AtomicStructure.from_species(species='40Ca+', term_symbols=['S1/2', 'D5/2'])
+        stretched = next(level for level in ca.energy_levels if level.name == 'D5/2,5/2')
+        dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(
+            StandardBasis([ca]), levels_in_manifold(ca, 'S1/2'), [stretched])
+        self.assertEqual(len(dissipator.operators), 1)  # the single path |5/2> -> |1/2>
+        rates = decay_rate_matrix(dissipator)[:, ca.energy_levels.index(stretched)]
+        target = next(i for i, level in enumerate(ca.energy_levels) if level.name == 'S1/2,1/2')
+        # 40Ca+ D5/2 has no branching ratios in the config, so all decay goes to S1/2: rate * lifetime = 1.
+        self.assertAlmostEqual(rates[target] * CA40_D52_LIFETIME, 1., places=PLACES)
+
+    def test_e2_with_hyperfine_structure(self):
+        """171Yb+ D3/2 -> S1/2 (E2, |Delta J| = 1) in the |F, mF> basis: every sublevel decays at 1/tau."""
+        yb = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'D3/2'])
+        dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(
+            StandardBasis([yb]), levels_in_manifold(yb, 'S1/2'), levels_in_manifold(yb, 'D3/2'))
+        rates = decay_rate_matrix(dissipator) * YB171_ION_D32_LIFETIME
+        for excited in levels_in_manifold(yb, 'D3/2'):
+            with self.subTest(excited=excited.name):
+                self.assertAlmostEqual(decay_by_manifold(yb, dissipator, excited)['S1/2'] * YB171_ION_D32_LIFETIME, 1.,
+                                       places=PLACES)
+                if excited.f == 2:
+                    # The split over ground F distinguishes E2 from E1: from F' = 2, an E1 decay could only reach F = 1.
+                    column = rates[:, yb.energy_levels.index(excited)]
+                    to_f = {f: sum(column[i] for i, level in enumerate(yb.energy_levels)
+                                   if level.term_symbol == 'S1/2' and level.f == f) for f in (0, 1)}
+                    self.assertAlmostEqual(to_f[0], YB171_ION_D32_F2_TO_F0, places=PLACES)
+                    self.assertAlmostEqual(to_f[1], YB171_ION_D32_F2_TO_F1, places=PLACES)
+
+
 class TestSpontaneousEmissionMultipleIons(unittest.TestCase):
 
     def setUp(self):
@@ -202,9 +260,23 @@ class TestSpontaneousEmissionErrors(unittest.TestCase):
         """40Ca+ S1/2 has lifetime null."""
         self.assert_raises_building('40Ca+', ['S1/2', 'D3/2'], ['D3/2'], ['S1/2'])
 
-    def test_non_dipole_channel(self):
-        """171Yb+ D5/2 -> S1/2 is an E2 decay with Delta J = 2: no dipole paths, so it must not vanish silently."""
-        self.assert_raises_building('171Yb+', ['S1/2', 'F7/2', 'D5/2'], ['S1/2', 'F7/2'], ['D5/2'])
+    def test_unsupported_multipole_channel(self):
+        """171Yb+ F7/2 -> S1/2 would be an E3 decay (odd -> even parity, Delta J = 3): it must not vanish silently.
+
+        F7/2 has no lifetime or branching ratios in the config, so they are added here as test inputs.
+        """
+        yb = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'F7/2'])
+        yb = AtomicStructure([replace(level, lifetime=1., branching_ratios={'S1/2': 1.}) if level.term_symbol == 'F7/2' else level
+                              for level in yb.energy_levels])
+        with self.assertRaises(IonSimError):
+            DissipatorSpontaneousEmission.from_atomic_structure_data(
+                StandardBasis([yb]), levels_in_manifold(yb, 'S1/2'), levels_in_manifold(yb, 'F7/2'))
+
+    def test_multipole_orders_override(self):
+        """Forcing E1 on 40Ca+ D5/2 -> S1/2 (Delta J = 2) leaves no paths; an order other than 1 or 2 is rejected."""
+        for orders in ({('D5/2', 'S1/2'): 1}, {('D5/2', 'S1/2'): 3}):
+            with self.subTest(multipole_orders=orders):
+                self.assert_raises_building('40Ca+', ['S1/2', 'D5/2'], ['S1/2'], ['D5/2'], multipole_orders=orders)
 
     def test_ground_level_above_excited_level(self):
         """87Rb 5P1/2 lies below 5P3/2, so it cannot decay to it."""
