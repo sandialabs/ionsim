@@ -6,21 +6,32 @@
 # in compliance with the License. You may obtain a copy of the License at
 # http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
 #***************************************************************************************************
+import numpy as np
+from dataclasses import dataclass, field
+from abc import ABC
+import scipy 
+from scipy.integrate import quad_vec
+import typing
+from typing import Callable, Dict, List, Sequence, get_type_hints, get_origin, get_args
+import inspect 
+import functools
+from functools import reduce, wraps 
+from icecream import ic
 
 from ionsim.custom_math import trapz_for_matrix
 from ionsim.custom_types import Vector, Matrix
+from ionsim.energy_level import EnergyLevel, EnergyEigenstate
 from ionsim.noise import Noise
-from ionsim.basis import DegreeOfFreedom, Basis, StandardBasis
+from ionsim.basis import DegreeOfFreedom, Basis, StandardBasis, PauliProductBasis
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
+from ionsim.lindbladian import Lindbladian 
 from ionsim.state import State
+from ionsim.operator import Operator
+from ionsim.ionsim_error import IonSimError
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
-import numpy as np
-from dataclasses import dataclass, field
-from typing import Callable
-from abc import ABC
 
-from icecream import ic
 
 @dataclass(frozen=True, eq=False)
 class Process(ABC): 
@@ -46,6 +57,14 @@ class Gate(Process):
 
     unitary: Matrix | None = None
 
+    def __post_init__(self):
+        # Check that process_matrix_function(*parameter_args) == process_matrix 
+        parameter_names, arguments = list(self.parameters.keys()), list(self.parameters.values())
+        if self.process_matrix_function:
+            if not (self.process_matrix_function(*arguments) == self.process_matrix).all:
+                raise IonSimError(f"Error, process matrix function and process matrix attributes do not correspond.")
+
+
     @classmethod #TODO: let default target_dofs be all degrees of freedom
     def from_unitary(cls, basis: Basis, unitary: Matrix, target_dofs: list[DegreeOfFreedom]):
         """Build a gate from a unitary-gate matrix."""
@@ -67,9 +86,8 @@ class Gate(Process):
 
     @classmethod
     def from_process_matrix_function(cls, basis: Basis, process_matrix_function: Callable,
-            parameters: dict[str, float], target_dofs: list[DegreeOfFreedom], noise: Noise | None = None):
+            parameters: dict[str, float], noise: Noise | None = None):
         """Build a gate from a process-matrix function and its arguments."""
-        # TODO: It looks like this function doesn't use the target_dofs input parameter. Should it?
         parameter_names, arguments = list(parameters.keys()), list(parameters.values())
         if noise is None or noise.parameter_name not in parameter_names:
             return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
@@ -78,46 +96,80 @@ class Gate(Process):
         return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
 
     @classmethod
+    def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, duration: float,  
+            parameters: dict[str, float], target_dofs: list[DegreeOfFreedom], noise: Noise | None = None):
+        """ Build a gate from a hamiltonian function and its arguments."""
+        parameter_names, arguments = list(parameters.keys()), list(parameters.values())
+
+        @wraps(hamiltonian_function)
+        def process_matrix_function(*args, **kwargs):
+            gate = cls.from_hamiltonian(basis, hamiltonian_function(*args, **kwargs))
+            return gate.process_matrix
+
+        if noise is None or noise.parameter_name not in parameter_names:
+            noisy_parameter_index = parameter_names.index(noise.parameter_name)
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
+
+        return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+
+    @classmethod
     def from_hamiltonian(cls, basis: StandardBasis, hamiltonian: Hamiltonian, duration: float,
             dofs_to_trace_out: list[DegreeOfFreedom] | None = None,
             initial_wavefunctions_for_dofs_to_trace_out: list[Vector] | None = None,
+            reduced_basis: StandardBasis | None=None, 
+            states_to_project: list[EnergyEigenstate] | None=None,
+            levels_to_project: list[EnergyLevel] | None=None,
             ode_solver: str = 'odeintz',
             **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
-        """Build a gate by solving the Schrodinger equation for a complete set of initial states.""" 
+        """ Build a gate by solving the Schrodinger equation for a complete set of initial states.
+
+            - optional argument to trace out DOF or project out states. 
+            - for projection info, specify a dictionary with keys 'basis' : StandardBasis & 'states to project' : list[EnergyEigenstate]
+            - The gate is built in the reduced or projected basis. 
+            - For a gate on a reduced Hilbert space, we use the convention that first DOFS (e.g. motional) are traced out and then 
+                a further projection may occur. Therefore, the projection information should be included on the reduced Hilbert space 
+                after tracing out DOFs.  
+        """ 
         if dofs_to_trace_out is not None:
             assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
             assert(len(dofs_to_trace_out) == len(initial_wavefunctions_for_dofs_to_trace_out))
             assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
             dof_to_trace_out = dofs_to_trace_out[0]
             initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
-            # TODO: consider if this function should just accept a reduced basis...?
 
-        if dofs_to_trace_out is None:
-            reduced_basis = basis
-        else:
-            reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
+        projection, reduced_basis, states_to_project, unwanted_state_indices, computational_indices = _determine_projection_components(reduced_basis, states_to_project, levels_to_project, basis, dofs_to_trace_out)
 
-        import time
         final_states = []
-        ic(len(reduced_basis.vectors))
-        ic(reduced_basis.vectors)
-        for vector in reduced_basis.vectors:
+        for i, vector in enumerate(basis.vectors):
+            if states_to_project and (i in unwanted_state_indices):
+                # Skip basis states that we will ultimately project out. 
+                continue
+
             if dofs_to_trace_out is None:
                 initial_state = State.from_wavefunction(basis, vector)
             else:
                 initial_state = State.from_wavefunction_with_new_component(
                     basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
                 )
-            ic(len(initial_state.wavefunction))
-            # start = time.perf_counter()
-            final_states.append(
-                initial_state.propagate_using_schrodinger_equation(
-                    hamiltonian, duration,
-                    ode_solver=ode_solver, **ode_solver_kwargs
+
+            if 'time_evals' not in ode_solver_kwargs:
+                final_states.append(
+                    initial_state.propagate_using_schrodinger_equation(
+                        hamiltonian, duration,
+                        ode_solver=ode_solver, **ode_solver_kwargs
+                    )
                 )
-            )
-            # end = time.perf_counter()
-            # ic(f'State propagation took {end-start} seconds.')
+            else:
+                states = initial_state.propagate_using_schrodinger_equation(
+                        hamiltonian, duration,
+                        ode_solver=ode_solver, **ode_solver_kwargs
+                    )
+                final_states.append(states[-1])
+            # At the end of each evolution, project out the unwanted states.  
+            # It is equivalent to do the projection at this stage (before building the process matrix) 
+            #  compared to projecting the full process matrix. 
+            if projection: 
+                final_states[-1] = final_states[-1].project_out_states(states_to_project, reduced_basis) 
 
         # TODO: how can we do multiprocessing outside of main?
         # from concurrent.futures import ProcessPoolExecutor
@@ -144,16 +196,141 @@ class Gate(Process):
         for final_state_p in final_states:
             for final_state in final_states: # iterate rows with inner loop for column-stacked supervectors
                 density_matrix = np.outer(final_state.wavefunction, final_state_p.wavefunction.conj().T)
-                if dofs_to_trace_out is None:
-                    reduced_state = State.from_density_matrix(basis, density_matrix)
+                if dofs_to_trace_out is None and (not projection):
+                    spin_state = State.from_density_matrix(basis, density_matrix)
                 else:
-                    reduced_state = State.from_density_matrix(
-                        basis, density_matrix
-                    ).trace_out_degree_of_freedom(dof_to_trace_out)
-                supervectors.append(reduced_state.supervector)
+                    if dofs_to_trace_out is None:
+                        # Set the reduced basis to the new basis specified by the projection 
+                        spin_state = State.from_density_matrix(reduced_basis, density_matrix)
+                    else:
+                        spin_state = State.from_density_matrix(
+                            basis, density_matrix
+                        ).trace_out_degree_of_freedom(dof_to_trace_out)
+                supervectors.append(spin_state.supervector)
         process_matrix = np.array(supervectors).T
 
         return cls(reduced_basis, process_matrix, unitary=unitary)
+
+    @classmethod
+    def from_lindbladian(cls, basis: StandardBasis, lindbladian: Lindbladian, duration: float, 
+            dofs_to_trace_out: list[DegreeOfFreedom] | None = None,
+            initial_density_matrices_for_dofs_to_trace_out: list[State] | None = None,
+            reduced_basis: StandardBasis | None=None, 
+            states_to_project: list[EnergyEigenstate] | None=None,
+            levels_to_project: list[EnergyLevel] | None=None,
+            lindbladian_time_independent: bool = False, 
+            lindbladian_commutes_at_later_times: bool = False, 
+            ode_solver: str = 'odeintz',
+            **ode_solver_kwargs): # TODO: add an option for initial density matrices for the traced out DoFs.
+        """ Build a gate using either the matrix-exponentiated Lindbladian or by solving the Lindblad master equation for a complete set of initial states.
+        
+            - optional argument to trace out DOF or project out states. 
+            - for projecting, specify a dictionary with keys 'basis' : StandardBasis & 'states to project' : list[EnergyEigenstate]
+            - The gate is built in the reduced or projected basis. 
+        """
+        if dofs_to_trace_out is not None:
+            raise NotImplementedError("Tracing out DOFs from a larger subspace not yet implemented.")
+
+        projection, reduced_basis, states_to_project, unwanted_state_indices, computational_indices = _determine_projection_components(reduced_basis, states_to_project, levels_to_project, basis, dofs_to_trace_out)
+
+        # Use general t-dependent, non-commutating Lindbladian method unless user specifies otherwise 
+        if lindbladian_time_independent:
+            # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
+            process_matrix = scipy.linalg.expm(lindbladian.matrix_function(0) * duration)
+            if projection:
+               process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
+
+        elif lindbladian_commutes_at_later_times:
+            # Lindbladian is time dependent but commutes with itself at later times: Integrate the lindbladian matrix forward in time from t = 0 to t = duration            
+            L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
+            process_matrix = scipy.linalg.expm(L_integral)
+            if projection:
+                process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
+        else:
+            # For general lindbladian, time-evolve each |i><j| and then reconstruct process matrix from all d^2 combinations.
+            # 1. Create initial density matrices |i><j| for all i,j in the d-dimensional Hilbert space. 
+            # 2. Forming |i><j| gives you 1 of the d^2 columns of the process matrix. 
+            if dofs_to_trace_out is not None:
+                raise NotImplementedError(f"Building a gate on a subspace from a Lindbladian on a larger Hilbert space is not yet implemented.")
+
+            process_matrix_columns = []
+            # When projecting, loop over all vectors in the total basis and then skip the ones that will be zero, i.e. set those cols = zero and skip evolution.   
+                # Projection does this redundantly by setting the appropriate parts to zero. But skipping t-evolution saves substantially on computation.
+            for i, vector in enumerate(basis.vectors):
+                for j, vector_p in enumerate(basis.vectors):
+                    if projection and ((i in unwanted_state_indices) or (j in unwanted_state_indices)):
+                        # Skip pure non-computational basis states, e.g. Rydberg or Raman states  
+                        continue
+
+                    # Necessary to do |vector_p > <vector| to get correct basis ordering after projection  
+                    initial_state = State.from_density_matrix(basis, np.outer(vector_p, vector))
+                    if 'time_evals' in ode_solver_kwargs:
+                        states = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
+                        final_state = states[-1]
+                    else:
+                        final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
+
+                    if projection: 
+                        final_state = final_state.project_out_states(states_to_project, reduced_basis) 
+                    # Supervector of final state gives you 1 column of the process matrix  
+                    process_matrix_columns.append(final_state.supervector) 
+    
+            process_matrix = np.array(process_matrix_columns).T # tranpose ensures column behavior  
+
+        return cls(reduced_basis, process_matrix, unitary=None)
+
+    @classmethod
+    def from_lindbladian_function(cls, basis: StandardBasis, lindbladian_function: Callable, duration: float,  
+            parameters: dict[str, float], noise: Noise | None = None, lindbladian_time_independent: bool=False, 
+            lindbladian_commutes_at_later_times: bool = False): 
+        """ Build a gate from a hamiltonian function and its arguments."""
+        parameter_names, arguments = list(parameters.keys()), list(parameters.values())
+
+        @wraps(lindbladian_function)
+        def process_matrix_function(*args, **kwargs):
+            gate = cls.from_lindbladian(basis, lindbladian_function(*args, **kwargs), duration)
+            return gate.process_matrix
+
+        if noise is None or noise.parameter_name not in parameter_names:
+            noisy_parameter_index = parameter_names.index(noise.parameter_name)
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index, 
+                lindbladian_time_independent = lindbladian_time_independent, lindbladian_commutes_at_later_times = lindbladian_commutes_at_later_times)
+
+        return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+
+    def compute_pauli_error_rates(self) -> dict[str, float]:
+        """ Computes Pauli channel error rates via the Pauli twirled approximation,
+            returned in a dictionary with entries (channel name, error rate) """ 
+        if self.basis.is_qubit_basis:
+            pauli_group_basis = PauliProductBasis(self.basis.degrees_of_freedom)
+            pauli_transfer_matrix = pauli_group_basis.superoperator_to_pauli_transfer_matrix(self.process_matrix, self.basis)
+        else:
+            raise IonSimError(f"Pauli channel error rates require a basis of qubits only.")
+
+        # Extract error channel rate from Pauli transfer matrix (PTM) for each pauli group operator. 
+        # Walsh-Hadamard transform relates eigenvalues of PTM to to error rates in Pauli channel representation. 
+        error_rates = pauli_group_basis.walsh_hadamard_transformation_matrix @ np.diag(pauli_transfer_matrix)
+        return dict(zip(pauli_group_basis.vector_labels, error_rates)) 
+ 
+    def convert_to_pauli_basis(self):
+        """ Converts a Gate object to the Pauli Product basis. Returns a Gate object """ 
+        if isinstance(self.basis, PauliProductBasis):
+            return self
+
+        if self.basis.is_qubit_basis:
+            qubits = self.basis.degrees_of_freedom 
+            pauli_basis = PauliProductBasis(qubits) 
+        else:
+            raise IonSimError(f"Creating a Gate in the Pauli basis requires a basis of qubits only.")
+
+        if self.process_matrix_function:
+            @wraps(self.process_matrix_function)
+            def ptm_function(*args, **kwargs):
+                return pauli_basis.superoperator_to_pauli_transfer_matrix(self.process_matrix_function(*args, **kwargs), self.basis)
+            return Gate.from_process_matrix_function(basis = pauli_basis, process_matrix_function = ptm_function, parameters = self.parameters) 
+        else:
+            pauli_transfer_matrix = pauli_basis.superoperator_to_pauli_transfer_matrix(self.process_matrix, self.basis)
+            return Gate(basis = pauli_basis, process_matrix = pauli_transfer_matrix) 
 
 # @dataclass(frozen=True, eq=False)
 # class PauliGate(Gate):
@@ -195,10 +372,16 @@ class Circuit(Process):
         """Build a circuit from a series of gates in the same basis."""
         if any(gate.basis is not gates[0].basis for gate in gates):
             raise IonSimError('All gates in a circuit must be in the same basis.')
-        if noise is None or all([noise.parameter_name not in gate.parameters for gate in gates]):
+
+        if len(gates) == 0:
+            raise IonSimError(f"List of gates must not be empty, received: {gates}.")
+
+        deterministic = (noise is None) or all([noise.parameter_name not in gate.parameters for gate in gates])
+        if deterministic: 
             process_matrix = _combine_process_matrices([gate.process_matrix for gate in gates])
             return cls(gates[0].basis, process_matrix, gates)
         pmats_list = []
+
         for gate in gates:
             if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
                 arguments = np.array(list(gate.parameters.values()))
@@ -214,9 +397,93 @@ class Circuit(Process):
         process_matrix = trapz_for_matrix(ys, noise.domain_arguments) 
         return cls(gates[0].basis, process_matrix, gates)
 
+    def predict_outcome_probability(self, initial_state: State, outcome_operator: Operator) -> float:
+        """ Computes a probability of observing an outcome when applying the circuit to a state. 
+            
+            Outcome is specified as a POVM projector operator, e.g. |0><0| 
+        
+        """ 
+        return predict_outcome_probability_from_process_matrix(initial_state, self.process_matrix, outcome_operator)
+
+    def predict_outcome_probabilities(self, initial_state: State, outcome_operators: list[Operator]) -> list[float]:
+        """ Computes a list of probabilities of observing outcomes when applying the circuit to a state. 
+            
+            Outcomes are specified as a list of projector operators, e.g. [|0><0|, |1><1|]. 
+        
+        """ 
+        outcome_probabilities = []
+        # It is more efficient to evaluate the circuit's action on the state ONCE and then loop over outcome operators. 
+
+        # Propagate the init state using the circuit 
+        propagated_state = initial_state.propagate_using_process_matrix(self.process_matrix) 
+
+        # Represent state and outcome operators in superket/superbra form 
+        for outcome_op in outcome_operators:
+            outcome_probabilities.append((outcome_op.superbra @ propagated_state.supervector).real) 
+
+        return np.array(outcome_probabilities)
+
 def _combine_process_matrices(process_matrices: list[Matrix]):
     """Combine a series of process matrices (in chronological order) into a single process matrix for the whole circuit."""
     if len(process_matrices) == 1:
         return process_matrices[0]
     else:
         return np.linalg.multi_dot(process_matrices[::-1])
+
+
+def predict_outcome_probability_from_process_matrix(initial_state: State, process_matrix: Matrix, outcome_operator: Operator) -> float:
+    """ Predicts the outcome of a process matrix on a state after measurement/projection <==> outcome operator """   
+    propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
+    return (outcome_operator.superbra @ propagated_state.supervector).real  
+
+def predict_outcome_probabilities_from_process_matrix(initial_state: State, process_matrix: Matrix, outcome_matrix: Matrix) -> Vector:
+    """ Predicts the probabilities of outcomes of a process matrix on a state after measurement/projection <==> outcome operator """   
+    propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
+    return (outcome_matrix @ propagated_state.supervector).real  
+
+def _parse_projection_input(reduced_basis: StandardBasis | None=None, states_to_project: list[EnergyEigenstate] | None=None, 
+                            levels_to_project: list[EnergyLevel] | None = None, full_basis: StandardBasis | None=None) -> tuple:
+    """ Function to parse user input for projection information. """
+    # Parse for states or levels to project 
+    if not states_to_project: 
+        if not levels_to_project: 
+            raise IonSimError("Projection dictionary must include levels or states to project out. Received keys: {projection_input.keys()}") 
+
+        # Extract states to project from levels 
+        states_to_project = []
+        if full_basis is None:
+            raise IonSimError(f"Specify full Hilbert space basis if providing levels instead of states to project out.")
+
+        for s in full_basis.states:
+            for l in levels_to_project:
+                if l in s.components:
+                    states_to_project.append(s)
+
+    # Build basis or retrieve 
+    if reduced_basis is None:
+        # Build reduced basis from full basis + projection states 
+        if full_basis is None:
+            raise IonSimError(f"Specify full Hilbert space basis if not providing reduced basis.")
+        reduced_basis = full_basis.build_subspace_basis_from_states_to_project(states_to_project)
+    return (reduced_basis, states_to_project)
+
+def _determine_projection_components(reduced_basis: StandardBasis | None=None, states_to_project: list[EnergyEigenstate] | None=None, 
+                                    levels_to_project: list[EnergyLevel] | None=None, basis: StandardBasis | None=None, dofs_to_trace_out: list[DegreeOfFreedom] | None = None):
+    """ Organizes the projection input arguments/components. Calls a parsing function to ensure all the necessary information is included."""
+    projection = reduced_basis or states_to_project or levels_to_project
+    if projection:
+        reduced_basis, states_to_project = _parse_projection_input(reduced_basis, states_to_project, levels_to_project, basis)
+        unwanted_state_indices = {basis.states.index(state) for state in states_to_project}
+        computational_indices = [i for i in range(len(basis.states)) if i not in unwanted_state_indices] 
+        if dofs_to_trace_out is not None:
+            raise NotImplementedError("Tracing out DOFs & projecting out states is not yet supported in this function.")
+    else:
+        unwanted_state_indices = set()
+        computational_indices = []
+        if dofs_to_trace_out is None:
+            reduced_basis = basis
+        else:
+            reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
+
+    return projection, reduced_basis, states_to_project, unwanted_state_indices, computational_indices
+
