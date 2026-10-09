@@ -48,16 +48,28 @@ def _unit_vector(vec: Vector) -> Vector:
 
 
 def _perpendicular_basis(n_hat: Vector, ref_axis: Vector | None=None) -> tuple[Vector, Vector]:
-    """ Finds orthonormal vectors to a vector "n hat". Option to include a reference axis """ 
+    """ Orthonormal transverse unit vectors (e1, e2) for a direction n_hat, with (e1, e2, n_hat) right-handed (e2 = n_hat x e1).
 
+        - ref_axis is None: the polar-coordinate unit vectors (theta_hat, phi_hat) of n_hat. For n_hat = z this is (x, y),
+          so the spherical basis of a z quantization axis is the standard e_{+1} = -(x + iy)/sqrt(2), e_{-1} = (x - iy)/sqrt(2).
+          At the poles (n_hat = +/-z), phi = 0 is used.
+        - ref_axis given: e1 is the component of ref_axis perpendicular to n_hat, normalized, so e1 points along ref_axis
+          as seen in the transverse plane.
+    """
     n_hat = _unit_vector(n_hat)
     if ref_axis is None:
-        # TODO: Decide whether this convention is best.
-        ref_axis = np.array([0., 0., 1.]) if np.abs(n_hat[2]) < (1. - 1E-5)  else np.array([1., 0., 0.]) 
-
-    e1 = np.cross(ref_axis, n_hat)
+        transverse = np.hypot(n_hat[0], n_hat[1])  # sin(theta)
+        # Snap to the pole within a tolerance: roundoff in n_hat would otherwise rotate (e1, e2) by an arbitrary angle phi.
+        phi = 0. if transverse < NUMERICAL_EQUIVALENCE_THRESHOLD else np.arctan2(n_hat[1], n_hat[0])
+        theta = np.arctan2(transverse, n_hat[2])
+        e1 = np.array([np.cos(theta) * np.cos(phi), np.cos(theta) * np.sin(phi), -np.sin(theta)])
+    else:
+        ref_axis = np.asarray(ref_axis, dtype=float)
+        e1 = ref_axis - np.dot(ref_axis, n_hat) * n_hat
+        if np.linalg.norm(e1) < NUMERICAL_ERROR_THRESHOLD * np.linalg.norm(ref_axis):
+            raise IonSimError(f"Reference axis {ref_axis} is (nearly) parallel to the direction {n_hat}; it does not define a transverse axis.")
     e1 = e1 / np.linalg.norm(e1)
-    e2 = np.cross(n_hat, e1) # by definition, n x e1 gives you e2. 
+    e2 = np.cross(n_hat, e1)
     return e1, e2
 
 
@@ -315,81 +327,65 @@ class Laser():
     # Method for IA laser  
     def build_individual_atom_laser_coupling_operators(self, basis: Basis, addressed_atom: AtomicStructure, ground_levels: list[AtomicInternalEnergyLevel], 
                                                         excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift: float=0.) -> list[CouplingOperator]: 
-        """ Builds a list of coupling operators corresponding to |g> <-> |e> couplings from laser light upon a particular atom. """
-        if addressed_atom not in basis.atomic_structure_DOFs:
-            raise ValueError(f"Addressed atom {addressed_atom} has not been included in the basis degrees of freedom.") 
+        """ Builds a list of coupling operators corresponding to |g> <-> |e> couplings from laser light upon a particular atom.
 
-        atomic_levels = addressed_atom.energy_levels 
+            Levels are matched to the atom's own levels by name, so levels taken from another (identical) atom also work.
+        """
+        if not any(addressed_atom is dof for dof in basis.atomic_structure_DOFs):
+            raise ValueError(f"Addressed atom {addressed_atom} has not been included in the basis degrees of freedom.") 
+        return self._atom_coupling_operators(basis, addressed_atom, ground_levels, excited_levels, multipole_order, frequency_shift)
+
+    def build_laser_coupling_operators_multiple_atoms(self, basis: Basis, atom_DOFs: list[AtomicStructure] | None, ground_levels: list[AtomicInternalEnergyLevel], 
+                                        excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift: float=0.) -> list[Operator]: 
+        """ Builds light-atom coupling operators for several atoms in the basis, for the requested ground and excited levels.
+
+            atom_DOFs: the AtomicStructure DOFs the laser addresses; all AtomicStructure DOFs of the basis if None.
+            ground_levels, excited_levels: matched to each atom's own levels by name, so they may come from any one of the
+                atoms. Each atom must contain all of them. Each atom's couplings are computed from its own levels.
+
+            The laser couples every addressed atom with the same field (its peak electric field and phase).
+        """ 
+        if atom_DOFs is None:
+            atom_DOFs = basis.atomic_structure_DOFs
+        if not atom_DOFs:
+            raise ValueError("No atoms to address: the basis has no AtomicStructure degrees of freedom.")
+        for atom in atom_DOFs:
+            if not any(atom is dof for dof in basis.atomic_structure_DOFs):
+                raise ValueError(f"Atom {atom.name or atom} has not been included in the basis degrees of freedom.")
+
+        coupling_operators = []
+        for atom in atom_DOFs:
+            coupling_operators.extend(self._atom_coupling_operators(basis, atom, ground_levels, excited_levels, multipole_order, frequency_shift))
+        return coupling_operators 
+
+    def _atom_coupling_operators(self, basis: Basis, atom: AtomicStructure, ground_levels: list[AtomicInternalEnergyLevel],
+                                 excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift: float) -> list[CouplingOperator]:
+        """ Coupling operators for every requested (|g>, |e>) pair of one atom, built from that atom's own level objects. """
+        atomic_levels = atom.energy_levels
+        level_index = {level.name: index for index, level in enumerate(atomic_levels)}
+        missing = [level.name for level in [*ground_levels, *excited_levels] if level.name not in level_index]
+        if missing:
+            raise ValueError(f"Levels {missing} not found in the atomic structure {atom.name or ''} with levels {list(level_index)}.")
+
         coupling_operators = []
         # Build coupling operator for each |g>, |e> pairing   
-        for ground_level in ground_levels:
-            if ground_level not in atomic_levels:
-                raise ValueError(f"Ground level {ground_level.name} not found in the atomic structure {atomic_levels}.")
+        for ground_name in [level.name for level in ground_levels]:
+            for excited_name in [level.name for level in excited_levels]:
+                if ground_name == excited_name:
+                    raise ValueError(f"Excited level {excited_name} matches the ground level {ground_name}.")
+                ground_index, excited_index = level_index[ground_name], level_index[excited_name]
+                ground_level, excited_level = atomic_levels[ground_index], atomic_levels[excited_index]
 
-            for excited_level in excited_levels: 
-                # Build coupling operator for this |g>, |e> pair and append 
-                if excited_level not in atomic_levels:
-                    raise ValueError(f"Excited level {excited_level.name} not found in the atomic structure {atomic_levels}.")
-
-                if ground_level.name == excited_level.name:
-                    raise ValueError(f"Excited level {excited_level.name} matches the ground level {ground_level.name}.")
-                
                 coupling_matrix = self.build_atom_laser_ge_coupling_matrix(ground_level, excited_level, atomic_levels, multipole_order) 
-
                 # Pass this loop iteration if there are no non-zero couplings for the requested transition  
                 if np.count_nonzero(coupling_matrix) == 0 or np.all(np.abs(coupling_matrix) < SMALLEST_ENERGY_SCALE):
                     continue 
 
-                enlarged_matrix = basis.enlarge_matrix(coupling_matrix, [addressed_atom]) 
-                ground_index, excited_index = atomic_levels.index(ground_level), atomic_levels.index(excited_level)
+                enlarged_matrix = basis.enlarge_matrix(coupling_matrix, [atom]) 
                 mod_function = self._pair_modulation_function(ground_index, excited_index)
                 rate = self._pair_oscillation_rate(ground_index, excited_index, frequency_shift)
                 coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, rate, modulation_function=mod_function))
-
-        return coupling_operators 
-
-    def build_laser_coupling_operators_multiple_atoms(self, basis: Basis, atom_DOFs: list[AtomicStructure], ground_levels: list[AtomicInternalEnergyLevel], 
-                                        excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift: float=0., all_atoms_are_same: bool = True) -> list[Operator]: 
-        """ Builds light-atom coupling operators for all atoms in the basis using AMO physics details for requested ground levels and excited levels via Atomic Structure details """ 
-        # TODO: Generalize for varied-species atom ensembles 
-        coupling_operators = []
-        for atom in atom_DOFs:        
-            # Build coupling operator for each |g>, |e> pairing   
-            atomic_levels = atom.energy_levels 
-
-            for ground_level in ground_levels:
-                if ground_level not in atomic_levels:
-                    raise ValueError(f"Ground level {ground_level.name} not found in the atomic structure {atomic_levels}.")
-
-                for excited_level in excited_levels: 
-                    # Build coupling operator for this |g>, |e> pair and append 
-                    if excited_level not in atomic_levels:
-                        raise ValueError(f"Excited level {excited_level.name} not found in the atomic structure {atomic_levels}.")
-
-                    if ground_level.name == excited_level.name:
-                        raise ValueError(f"Excited level {excited_level.name} matches the ground level {ground_level.name}.")
-                    
-                    coupling_matrix = self.build_atom_laser_ge_coupling_matrix(ground_level, excited_level, atomic_levels, multipole_order) 
-                    if np.count_nonzero(coupling_matrix) == 0 or np.all(np.abs(coupling_matrix) < SMALLEST_ENERGY_SCALE):
-                        continue 
-            
-                    ground_index, excited_index = atomic_levels.index(ground_level), atomic_levels.index(excited_level)
-                    mod_function = self._pair_modulation_function(ground_index, excited_index)
-                    rate = self._pair_oscillation_rate(ground_index, excited_index, frequency_shift)
-                    if not all_atoms_are_same:
-                        enlarged_matrix = basis.enlarge_matrix(coupling_matrix, [atom]) 
-                        coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, rate, modulation_function=mod_function))
-                    else:
-                        enlarged_coupling_matrices = [basis.enlarge_matrix(coupling_matrix, [atom]) for atom in basis.atomic_structure_DOFs]
-                        coupling_matrices = [large_matrix for large_matrix in enlarged_coupling_matrices] 
-                        for matrix in coupling_matrices:
-                            coupling_operators.append(CouplingOperator.from_matrix(basis, matrix, rate, modulation_function=mod_function))
-
-            # Break from the loop if all the Atomic Structure DOFs are the same 
-            if all_atoms_are_same:
-                break 
-
-        return coupling_operators 
+        return coupling_operators
 
     def build_atom_laser_ge_coupling_matrix(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, 
                                             atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int) -> Matrix: 

@@ -16,7 +16,7 @@ from scipy import constants as const
 from ionsim.process import Gate, Circuit
 from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis
-from ionsim.laser import Laser, Polarization, GaussianBeam
+from ionsim.laser import Laser, Polarization, GaussianBeam, _perpendicular_basis, _spherical_basis_vectors
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.atomic_internal_energy_level import LSFineLevel, compute_coupling_amplitude_between_atomic_levels
 from ionsim.ionsim_error import IonSimError
@@ -261,6 +261,106 @@ class TestLaserFrequencyAndModulation(unittest.TestCase):
                         modulated = self.coupling(modulated_laser, atom, basis, g, e, t)
                         # Lab-frame phases are ~1e7 rad at these times, so allow floating-point phase error.
                         self.assertLess(abs(modulated - static) / abs(static), 1e-7)
+
+
+class TestTransverseBasis(unittest.TestCase):
+    """Transverse unit vectors used for polarizations and for the spherical basis of a quantization axis."""
+
+    X, Y, Z = np.eye(3)
+
+    def test_z_gives_x_and_y(self):
+        e1, e2 = _perpendicular_basis(self.Z)
+        np.testing.assert_allclose(e1, self.X, atol=1e-15)
+        np.testing.assert_allclose(e2, self.Y, atol=1e-15)
+
+    def test_standard_spherical_basis_for_z(self):
+        """e_{+1} = -(x + iy)/sqrt(2), e_0 = z, e_{-1} = (x - iy)/sqrt(2) (Steck, eq. 7.188)."""
+        e = _spherical_basis_vectors(self.Z)
+        np.testing.assert_allclose(e[1], -(self.X + 1j * self.Y) / np.sqrt(2), atol=1e-15)
+        np.testing.assert_allclose(e[0], self.Z, atol=1e-15)
+        np.testing.assert_allclose(e[-1], (self.X - 1j * self.Y) / np.sqrt(2), atol=1e-15)
+
+    def test_polarizations_along_z(self):
+        np.testing.assert_allclose(Polarization.linear(self.Z, angle=0.).vector, self.X, atol=1e-15)
+        np.testing.assert_allclose(Polarization.linear(self.Z, angle=np.pi / 2).vector, self.Y, atol=1e-15)
+        # (x + iy)/sqrt(2) = -e_{+1}: pure sigma+ for a z quantization axis.
+        components = Polarization.circular(self.Z, '+').dipole_components()
+        self.assertAlmostEqual(abs(components[1]), 1., places=12)
+        self.assertAlmostEqual(abs(components[0]) + abs(components[-1]), 0., places=12)
+
+    def test_right_handed_and_orthonormal(self):
+        rng = np.random.default_rng(3)  # arbitrary seed
+        for n in [*rng.normal(size=(5, 3)), -self.Z, self.X]:
+            with self.subTest(n=n):
+                n_hat = n / np.linalg.norm(n)
+                e1, e2 = _perpendicular_basis(n_hat)
+                np.testing.assert_allclose(np.array([e1, e2, n_hat]) @ np.array([e1, e2, n_hat]).T, np.eye(3), atol=1e-12)
+                np.testing.assert_allclose(np.cross(e1, e2), n_hat, atol=1e-12)
+
+    def test_roundoff_near_pole(self):
+        """A direction that differs from z only by roundoff gives the same basis as z."""
+        e1, e2 = _perpendicular_basis(np.array([1e-17, -1e-17, 1.]))
+        np.testing.assert_allclose(e1, self.X, atol=1e-12)
+        np.testing.assert_allclose(e2, self.Y, atol=1e-12)
+
+    def test_reference_axis(self):
+        """With a reference axis, angle 0 polarizes along the axis's component perpendicular to propagation."""
+        polarization = Polarization.linear(self.Y, angle=0., ref_axis=np.array([1., 1., 0.]))
+        np.testing.assert_allclose(polarization.vector, self.X, atol=1e-15)
+        with self.assertRaises(IonSimError):
+            _perpendicular_basis(self.Y, ref_axis=self.Y)
+
+
+class TestLaserMultipleAtoms(unittest.TestCase):
+    """Coupling operators for several atoms, including separately built (distinct but identical) atoms."""
+
+    def setUp(self):
+        levels = ['S1/2,1,0', 'P1/2,1,-1', 'P1/2,1,0', 'P1/2,1,1']
+        self.atom_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'P1/2'], level_names=levels, name='a')
+        self.atom_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'P1/2'], level_names=levels, name='b')
+        self.basis = StandardBasis([self.atom_a, self.atom_b])
+        n_hat = np.array([0., 0., 1.])
+        self.laser = Laser.gaussian_from_wavelength(369.5e-9, 1e-3, 20e-6, n_hat, Polarization.circular(n_hat, '+'), 0.)
+        # Levels taken from atom a only; sigma+ light couples |S1/2,1,0> to |P1/2,1,1> only.
+        self.ground = self.atom_a.energy_levels[:1]
+        self.excited = self.atom_a.energy_levels[1:]
+
+    def addressed_atoms(self, operators):
+        """Index of the atom each operator acts on (the basis component that differs between its row and column states)."""
+        indices = []
+        for operator in operators:
+            coupling = operator.couplings[0]
+            changed = [k for k, (row, column) in enumerate(zip(coupling.row_state.components, coupling.column_state.components)) if row is not column]
+            self.assertEqual(len(changed), 1)
+            indices.append(changed[0])
+        return indices
+
+    def test_all_atoms_by_default(self):
+        operators = self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, None, self.ground, self.excited, 1)
+        self.assertEqual(sorted(self.addressed_atoms(operators)), [0, 1])
+
+    def test_selected_atom(self):
+        operators = self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, [self.atom_b], self.ground, self.excited, 1)
+        self.assertEqual(self.addressed_atoms(operators), [1])
+
+    def test_same_couplings_for_identical_atoms(self):
+        """Each atom's operator has the same strengths: 4 basis states of the other atom x (|g><e| and |e><g|)."""
+        operators = self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, None, self.ground, self.excited, 1)
+        strengths = [sorted(abs(coupling.strength) for coupling in operator.couplings) for operator in operators]
+        self.assertEqual(len(strengths[0]), 8)
+        np.testing.assert_allclose(strengths[0], strengths[1], rtol=1e-12)
+
+    def test_individual_atom_with_levels_from_another_atom(self):
+        operators = self.laser.build_individual_atom_laser_coupling_operators(self.basis, self.atom_b, self.ground, self.excited, 1)
+        self.assertEqual(self.addressed_atoms(operators), [1])
+
+    def test_errors(self):
+        other = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,1,0'])
+        with self.subTest('atom not in basis'), self.assertRaises(ValueError):
+            self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, [other], self.ground, self.excited, 1)
+        missing_level = AtomicStructure.from_species(species='171Yb+', term_symbols=['P3/2'], level_names=['P3/2,1,1']).energy_levels
+        with self.subTest('level missing from an atom'), self.assertRaises(ValueError):
+            self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, None, self.ground, missing_level, 1)
 
 
 if __name__ == '__main__':
