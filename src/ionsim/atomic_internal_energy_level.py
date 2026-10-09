@@ -462,37 +462,54 @@ def compute_hyperfine_clebsch_gordan_coefficient(ground_level: AtomicInternalEne
     return compute_multipole_amplitude(ground_level, excited_level, multipole_order, q, include_J_J_prime_matrix_element=False)
 
 
-def compute_rabi_frequency_between_atomic_levels(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, polarization_components: Vector, 
-                                            atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int, peak_E0_amplitude: float) -> complex | float:
-    """ Computes the Rabi frequency between a ground level |g> and an excited level |e>, given polarization components and selection rules. """  
-    return peak_E0_amplitude * compute_coupling_amplitude_between_atomic_levels(ground_level, excited_level, polarization_components, atomic_levels, multipole_order)
+def compute_rabi_frequency_between_atomic_levels(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel,
+                                                 polarization_components: dict[int, complex], atomic_levels: list[AtomicInternalEnergyLevel],
+                                                 multipole_order: int, peak_E0_amplitude: float, wavenumber: float | None = None) -> complex | float:
+    """ Computes the Rabi frequency between a ground level |g> and an excited level |e>, given polarization components and selection rules. 
+
+        See compute_coupling_amplitude_between_atomic_levels; wavenumber (rad/m) is required for multipole_order = 2.
+    """  
+    return peak_E0_amplitude * compute_coupling_amplitude_between_atomic_levels(ground_level, excited_level, polarization_components,
+                                                                                atomic_levels, multipole_order, wavenumber)
 
 
-def compute_coupling_amplitude_between_atomic_levels(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, polarization_components: Vector, 
-                                            atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int) -> complex | float:
+def compute_coupling_amplitude_between_atomic_levels(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel,
+                                                     polarization_components: dict[int, complex], atomic_levels: list[AtomicInternalEnergyLevel],
+                                                     multipole_order: int, wavenumber: float | None = None) -> complex | float:
     """ Computes a coupling amplitude (up to a electric field amplitude) between a ground level |g> and an excited level |e>, given polarization components and selection rules. 
 
         Returns Omega/E0, the Rabi frequency up to the E_0 electric field amplitude scaling, in units of the orbital
-        reduced matrix element <L||T^(k)||L'> (in atomic units).
+        reduced matrix element <L||T^(k)||L'> in atomic units: <L||r||L'> / a0 for E1, <L||r^2 C^(2)||L'> / a0^2 for E2.
+
+        polarization_components maps q to the polarization's rank-k spherical component: eps_q for E1
+        (Polarization.dipole_components), C_q for E2 (Polarization.quadrupole_components). The absorption matrix element is
+            <e| T^(k) . eps |g> = sum_q c_q <e| T^(k)_q |g> = sum_q c_q (-1)^q <g| T^(k)_{-q} |e>,
+        using T_q^dagger = (-1)^q T_{-q} and real angular amplitudes <g| T_q |e> (compute_multipole_amplitude).
+
+        E2 uses the field gradient of a plane wave, E0 eps exp(i k n.r): the coupling is i k E0 sum_ij eps_i n_j x_i x_j,
+        and sum_ij eps_i n_j x_i x_j = sqrt(2/3) r^2 sum_q C_q C^(2)_q, so E2 carries an extra factor i k a0 sqrt(2/3)
+        relative to E1. wavenumber (rad/m) is required for E2.
     """  
     if ground_level not in atomic_levels:
         raise ValueError(f"Ground level {ground_level.name} not found in the atomic structure {atomic_levels}.")
     if excited_level not in atomic_levels:
         raise ValueError(f"Excited level {excited_level.name} not found in the atomic structure {atomic_levels}.")
-    
-    q = list(np.arange(-multipole_order, multipole_order+1))
     if multipole_order != 1 and multipole_order != 2:
         raise ValueError(f"Multipole order be either 1 or 2, corresponding to E1 dipole or E2 quadrupole transitions. Received {multipole_order}.")
-    
-    # Estimate rabi frequency from laser polarization and multipole amplitude components  
-    # Compute dot product w.r.t q of spherical polarization components and multipole amplitude components 
-    coupling_amplitudes = {}
-    for _q in q: 
-        coupling_amplitudes[_q] = compute_multipole_amplitude(ground_level, excited_level, multipole_order, int(_q),
-                                                              include_J_J_prime_matrix_element=True)
-    
-    # Compute dot product with laser field polarization vector 
-    # TODO: should we use vdot? 
+    q_values = range(-multipole_order, multipole_order + 1)
+    if not isinstance(polarization_components, dict) or set(polarization_components) != set(q_values):
+        raise IonSimError(f"polarization_components must be a dict keyed by q = {list(q_values)} for multipole order "
+                          f"{multipole_order}, e.g. Polarization.dipole_components() or Polarization.quadrupole_components().")
+
+    # Absorption matrix element <e| T . eps |g>, from the amplitudes <g| T_q |e>, in units of <L||T^(k)||L'>.
+    matrix_element = sum(polarization_components[q] * (-1)**q
+                         * compute_multipole_amplitude(ground_level, excited_level, multipole_order, -q, include_J_J_prime_matrix_element=True)
+                         for q in q_values)
+
     scientific_consts = const.e * const.value('Bohr radius') / const.hbar # from dipole moment and definition of Rabi frequency from electric dipole operator 
-    coupling = 2.*np.dot(polarization_components, np.array(list(coupling_amplitudes.values()))) * scientific_consts 
-    return coupling 
+    coupling = 2. * matrix_element * scientific_consts
+    if multipole_order == 2:
+        if wavenumber is None:
+            raise IonSimError("E2 coupling amplitudes need the laser wavenumber (rad/m).")
+        coupling *= 1j * wavenumber * const.value('Bohr radius') * np.sqrt(2. / 3.)
+    return coupling

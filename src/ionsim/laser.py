@@ -7,8 +7,13 @@
 # http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
 #***************************************************************************************************
 
+from __future__ import annotations
+
+from typing import Callable
+
 import numpy as np
 from scipy import constants as const
+from scipy import integrate
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 #from scipy import integrate as _int
@@ -19,7 +24,7 @@ from dataclasses import dataclass, field
 #from scipy.special import comb 
 from numpy.typing import NDArray
 import sympy 
-from sympy.physics.wigner import wigner_3j, wigner_6j 
+from sympy.physics.wigner import clebsch_gordan
 
 from ionsim.basis import Basis 
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, compute_multipole_amplitude, compute_rabi_frequency_between_atomic_levels
@@ -134,9 +139,9 @@ class Laser():
         # Safety checks on propagation vector  
         if hasattr(self.propagation_vector, "__len__"):
             if len(self.propagation_vector) != 3: 
-                raise ValueError(f"Specify a 3-component vector for the beam pointing unit vector 'n hat'. Current input has {len(propagation_unit_vector)} components.")
+                raise ValueError(f"Specify a 3-component vector for the beam pointing unit vector 'n hat'. Current input has {len(self.propagation_vector)} components.")
         else:
-            raise TypeError(f"Propagation vector must be a vector (numpy array), received a {type(propagation_vector)}.") 
+            raise TypeError(f"Propagation vector must be a vector (numpy array), received a {type(self.propagation_vector)}.") 
         assert len(self.propagation_vector) == 3
         
         if np.abs(np.linalg.norm(self.propagation_unit_vector) - 1.) > NUMERICAL_ERROR_THRESHOLD:
@@ -147,8 +152,9 @@ class Laser():
 
         # Check frequency - wavelength relationship 
         # TODO: Check necessary precision for this check to be meaningful 
-        light_physics_deviation = np.abs(self.frequency - 2.*np.pi*const.c/self.wavelength)
-        if light_physics_deviation > NUMERICAL_ERROR_THRESHOLD: 
+        # Relative check: optical frequencies are ~1e15 rad/s, so an absolute tolerance would fail on floating-point roundoff.
+        light_physics_deviation = np.abs(self.frequency - 2.*np.pi*const.c/self.wavelength) / self.frequency
+        if light_physics_deviation > NUMERICAL_EQUIVALENCE_THRESHOLD: 
             raise ValueError(f"Laser frequency and wavelength must satisfy speed of light in vacuum. This is violated with a deviation: {light_physics_deviation}")
 
     @classmethod
@@ -177,7 +183,7 @@ class Laser():
     def gaussian_from_frequency(cls, frequency: float, power: float, waist: float, propagation_vector: Vector, polarization: Polarization, 
                     phase: float, focus: Vector=np.zeros(3), modulation_functions: dict | None=None): 
         wavelength = 2. * np.pi * const.c / frequency   # meters 
-        profile = Gaussian(waist, focus, wavelength)
+        profile = GaussianBeam(waist, wavelength, focus)
         return cls.from_frequency(frequency, propagation_vector, phase, polarization, profile, power, modulation_functions) 
 
     @property
@@ -189,7 +195,7 @@ class Laser():
     def peak_intensity(self) -> float:
         """ Peak intensity I_0 [W/m^2] """  
         # Impedence of free space is Z0 = 1/(epsilon0 x speed of light)
-        E0 = self.peak_electric_field_amplitude
+        E0 = self.peak_electric_field_magnitude
         return 0.5 * const.c * const.epsilon_0 * (E0**2)
 
     @property 
@@ -212,45 +218,99 @@ class Laser():
             raise IonSimError(f"Excited level is lower energy than ground level input. Transition frequency is negative or zero: {transition_frequency}")
         return self.detuning_from_transition_frequency(transition_frequency) 
     
+    MODULATION_KEYS = ('amplitude', 'phase', 'frequency')
+
+    def _modulation_parts(self) -> tuple[Callable | None, Callable | None]:
+        """ Validated (envelope, frequency_phase) callables from modulation_functions; either may be None.
+
+            envelope(t) = A(t) exp(i phi(t)) multiplies the |e><g| (absorption) element, like the static laser phase.
+            frequency_phase(t) = exp(-i integral_0^t delta(t') dt') multiplies the coupling the same way as the laser
+            frequency itself, i.e. as an offset delta(t) added to it.
+        """
+        if self.modulation_functions is None or all(func is None for func in self.modulation_functions.values()):
+            return None, None
+        unknown = set(self.modulation_functions) - set(self.MODULATION_KEYS)
+        if unknown:
+            raise IonSimError(f"Modulation functions must be keyed by {list(self.MODULATION_KEYS)}; got unknown keys {sorted(unknown)}.")
+        amplitude_mod = self.modulation_functions.get('amplitude')
+        phase_mod = self.modulation_functions.get('phase')
+        frequency_mod = self.modulation_functions.get('frequency')
+        for key, func in (('amplitude', amplitude_mod), ('phase', phase_mod), ('frequency', frequency_mod)):
+            if func is not None and not callable(func):
+                raise IonSimError(f"Modulation function '{key}' must be callable, got {type(func).__name__}.")
+
+        envelope = None
+        if amplitude_mod is not None or phase_mod is not None:
+            def envelope(t: float) -> complex:
+                value = 1. + 0j
+                if amplitude_mod is not None:
+                    value *= amplitude_mod(t)
+                if phase_mod is not None:
+                    value *= np.exp(1j * phase_mod(t))
+                return value
+
+        frequency_phase = None
+        if frequency_mod is not None:
+            def frequency_phase(t: float) -> complex:
+                accumulated_phase, _ = integrate.quad(frequency_mod, 0., t, limit=200)
+                return np.exp(-1j * accumulated_phase)
+
+        return envelope, frequency_phase
+
+    MODULATION_KEYS = ('amplitude', 'phase', 'frequency')
+
     @property
-    def modulation_function(self) -> Callable: 
-        """ Returns the laser's modulation function f(t) of the laser profile """ 
-        if self.modulation_functions is None: 
+    def modulation_function(self) -> Callable | None:
+        """ The complex modulation factor f(t) of the |e><g| (absorption) part of a coupling built with the ground level
+            first in the basis, or None if unmodulated. Coupling builders use _pair_modulation_function, which handles
+            either level order.
+
+            modulation_functions holds optional callables:
+                'amplitude': A(t), a real envelope of the Rabi frequency (dimensionless)
+                'phase': phi(t), added to the laser phase (rad)
+                'frequency': delta(t), added to the laser frequency (rad/s); its phase is integrated numerically
+            A constant 'phase' phi is equivalent to adding phi to the laser phase, and a constant 'frequency' delta to
+            frequency_shift=delta in the coupling builders.
+        """
+        return self._pair_modulation_function(ground_index=0, excited_index=1)
+
+    @staticmethod
+    def _carrier_sign(ground_index: int, excited_index: int) -> int:
+        """ Sign of the oscillation rate for the coupling operator of one (|g>, |e>) pair at these basis indices.
+
+            The Hamiltonian applies exp(-i rate t) to the upper-triangle element of a coupling matrix and its rotating-frame
+            shift as rate + E_row - E_column. A resonant laser is static in the frame E = level energies only if the
+            rate is +frequency when |g> comes first in the basis and -frequency when |e> comes first.
+        """
+        return 1 if ground_index < excited_index else -1
+
+    def _pair_oscillation_rate(self, ground_index: int, excited_index: int, frequency_shift: float = 0.) -> float:
+        """ Oscillation rate for the coupling operator of one (|g>, |e>) pair; see _carrier_sign. """
+        return self._carrier_sign(ground_index, excited_index) * (self.frequency + frequency_shift)
+
+    def _pair_modulation_function(self, ground_index: int, excited_index: int) -> Callable | None:
+        """ Modulation function for the coupling operator of one (|g>, |e>) pair at these basis indices.
+
+            The Hamiltonian multiplies the upper-triangle element of a coupling matrix by the modulation function and adds
+            the Hermitian conjugate. The laser phase sits on |e><g|, so the envelope A(t) exp(i phi(t)) is conjugated when
+            |g><e| is the upper-triangle element (ground_index < excited_index). The frequency part follows the sign of the
+            laser frequency on that element (_carrier_sign), so a constant delta matches frequency_shift=delta.
+        """
+        envelope, frequency_phase = self._modulation_parts()
+        if envelope is None and frequency_phase is None:
             return None
+        conjugate_envelope = ground_index < excited_index
+        conjugate_frequency = self._carrier_sign(ground_index, excited_index) < 0
 
-        if all(func is None for func in self.modulation_functions.values()):
-            return None 
-
-        # Safety checks 
-        allowed_keys = ['amplitude', 'phase', 'frequency']
-        if self.modulation_functions.keys() != allowed_keys:
-            raise ValueError("Modulation functions should be specified as callables for the allowed keys: {allowed_keys}. Received keys {self.modulation_functions.keys()} instead.")
-
-        # if self.mod_functions is not None and None not in self.mod_functions.values():
-        # Unpack modulation functions and check which exist 
-        amplitude_mod = self.modulation_functions['amplitude']
-        phase_mod = self.modulation_functions['phase']
-        frequency_mod = self.modulation_functions['phase']
-        # Handle all combinations of the modulation functions and combine usage  
-        # There are several combinations of None/not None to handle: 
-        mod_function = None
-        if phase_mod is None and frequency_mod is None and amplitude_mod is not None:
-            def mod_function(t: float):
-                return lambda t: amplitude_mod(t) 
-        elif phase_mod is None and amplitude_mod is None and frequency_mod is not None:
-            def mod_function(t: float):
-                return lambda t: np.exp(1j * frequency_mod(t) * t) 
-
-        elif phase_mod is None and amplitude_mod is None and frequency_mod is not None:
-            def mod_function(t: float):
-                return lambda t: np.exp(1j * frequency_mod(t) * t) 
-        else:
-            # IonSimError(f"Modulation function must be w.r.t to amplitude, phase, or frequency.")
-            # TODO: Decide, do we fail loudly in this case? 
-            mod_function = None
+        def mod_function(t: float) -> complex:
+            value = 1. + 0j
+            if envelope is not None:
+                value *= np.conj(envelope(t)) if conjugate_envelope else envelope(t)
+            if frequency_phase is not None:
+                value *= np.conj(frequency_phase(t)) if conjugate_frequency else frequency_phase(t)
+            return value
 
         return mod_function
-
 
     # Method for IA laser  
     def build_individual_atom_laser_coupling_operators(self, basis: Basis, addressed_atom: AtomicStructure, ground_levels: list[AtomicInternalEnergyLevel], 
@@ -281,7 +341,10 @@ class Laser():
                     continue 
 
                 enlarged_matrix = basis.enlarge_matrix(coupling_matrix, [addressed_atom]) 
-                coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, self.frequency + frequency_shift, modulation_function = self.modulation_function))
+                ground_index, excited_index = atomic_levels.index(ground_level), atomic_levels.index(excited_level)
+                mod_function = self._pair_modulation_function(ground_index, excited_index)
+                rate = self._pair_oscillation_rate(ground_index, excited_index, frequency_shift)
+                coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, rate, modulation_function=mod_function))
 
         return coupling_operators 
 
@@ -310,15 +373,17 @@ class Laser():
                     if np.count_nonzero(coupling_matrix) == 0 or np.all(np.abs(coupling_matrix) < SMALLEST_ENERGY_SCALE):
                         continue 
             
-                    mod_function = self.modulation_function 
+                    ground_index, excited_index = atomic_levels.index(ground_level), atomic_levels.index(excited_level)
+                    mod_function = self._pair_modulation_function(ground_index, excited_index)
+                    rate = self._pair_oscillation_rate(ground_index, excited_index, frequency_shift)
                     if not all_atoms_are_same:
                         enlarged_matrix = basis.enlarge_matrix(coupling_matrix, [atom]) 
-                        coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, self.frequency + frequency_shift, modulation_function=mod_function))
+                        coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, rate, modulation_function=mod_function))
                     else:
                         enlarged_coupling_matrices = [basis.enlarge_matrix(coupling_matrix, [atom]) for atom in basis.atomic_structure_DOFs]
                         coupling_matrices = [large_matrix for large_matrix in enlarged_coupling_matrices] 
                         for matrix in coupling_matrices:
-                            coupling_operators.append(CouplingOperator.from_matrix(basis, matrix, self.frequency + frequency_shift, modulation_function=mod_function))
+                            coupling_operators.append(CouplingOperator.from_matrix(basis, matrix, rate, modulation_function=mod_function))
 
             # Break from the loop if all the Atomic Structure DOFs are the same 
             if all_atoms_are_same:
@@ -331,11 +396,12 @@ class Laser():
         """ Builds a coupling matrix representing a laser light-atom coupling """ 
 
         if multipole_order == 1:
-            rabi_frequency = compute_rabi_frequency_between_atomic_levels(ground_level, excited_level, self.polarization.spherical_components(), 
+            rabi_frequency = compute_rabi_frequency_between_atomic_levels(ground_level, excited_level, self.polarization.dipole_components(), 
                                                                         atomic_levels, multipole_order, self.peak_electric_field_magnitude) 
         elif multipole_order == 2:
             rabi_frequency = compute_rabi_frequency_between_atomic_levels(ground_level, excited_level, self.polarization.quadrupole_components(), 
-                                                                        atomic_levels, multipole_order, self.peak_electric_field_magnitude) 
+                                                                        atomic_levels, multipole_order, self.peak_electric_field_magnitude,
+                                                                        wavenumber=np.linalg.norm(self.wavevector)) 
         else:
             raise IonSimError(f"Multipole order must be 1 or 2 for dipole or quadrupole transitions, respectively.")
 
@@ -825,7 +891,7 @@ class Polarization:
             object.__setattr__(self, "vector", normalized_vector)
 
     def __repr__(self):
-        return f"Polarization(vec = {self.vec}, propagation_direction={self.propagation_direction})" 
+        return f"Polarization(vector={self.vector}, EM_field_propagation_direction={self.EM_field_propagation_direction})" 
 
 
     @classmethod
@@ -889,6 +955,10 @@ class Polarization:
         eps_m1 = np.vdot(e_q[-1], self.vector)
         return np.array([eps_p1, eps_0, eps_m1])
 
+    def dipole_components(self, quantization_axis: Vector = np.array([0., 0., 1.])) -> dict[int, complex]:
+        """ Spherical components eps_q, keyed by q = +1, 0, -1, with polarization vector = sum_q eps_q e_q. """
+        return dict(zip((1, 0, -1), self.spherical_components(quantization_axis)))
+
 
  #    def quadrupole_components(self, quantization_axis):
  #        """ Computes quadrupole polarization components"""
@@ -914,31 +984,31 @@ class Polarization:
  #
  #            This represents the geometric factor governing E2 transitions. 
  #        """ 
-    # TODO: Do these actually get used? 
-    def rank2_spherical_basis(self, quantization_axis: Vector) -> dict: 
-        # TODO: Add docstring w. reference ideally 
-        eps = self.spherical_components(quantization_axis)
-        propagation_in_spherical = _project_spherical(self.propagation_direction, quantization_axis)
+    @staticmethod
+    def rank2_spherical_basis(quantization_axis: Vector = np.array([0., 0., 1.])) -> dict[int, Matrix]:
+        """ Orthonormal rank-2 spherical basis tensors E_q = sum_{m1, m2} <1 m1; 1 m2 | 2 q> e_m1 (x) e_m2, q = -2..2.
 
-        cq_ij = {}
-        spherical_basis_vectors = _spherical_basis_vectors(quantization_axis)
-        for q in (-2, -1, 0, 1, 2):
-            T = np.zeros((3,3),dtype=complex) 
+            Built from the rank-1 spherical basis vectors e_m (Steck, eq. 7.188); orthonormal in the sense
+            sum_ij conj(E_q)_ij (E_q')_ij = delta_qq'.
+        """
+        e = _spherical_basis_vectors(quantization_axis)
+        tensors = {}
+        for q in range(-2, 3):
+            T = np.zeros((3, 3), dtype=complex)
             for m1 in (-1, 0, 1):
-                for m2 in (-1, 0, 1):
-                    w = complex(sp.N(wigner_3j(1, 1, 2, m1, m2, -q)) )
-                    T += w * np.outer(spherical_basis_vectors[m1], spherical_basis_vectors[m2])
+                m2 = q - m1
+                if abs(m2) <= 1:
+                    T += float(clebsch_gordan(1, 1, 2, m1, m2, q)) * np.outer(e[m1], e[m2])
+            tensors[q] = T
+        return tensors
 
-                cq_ij[q] = np.sqrt(10/3) * ((-1)**q) * T
+    def quadrupole_components(self, quantization_axis: Vector = np.array([0., 0., 1.])) -> dict[int, complex]:
+        """ Rank-2 polarization components C_q, q = -2..2, of the E2 geometry tensor eps (x) n_hat.
 
-        return cq_ij
-
-    def quadrupole_components(self, quantization_axis: Vector) -> dict:
-        """ Computes quadrupole polarization components"""
-        cq_ij = self.rank2_spherical_basis(quantization_axis)
-        eps = self.vector
-        n_hat = self.EM_field_propagation_direction
-        return {q: np.einsum('ij,i,j->', cq_ij[q], eps, n_hat) for q in range(-2,3)}
-
- 
-     
+            C_q = sum_ij conj(E_q)_ij eps_i n_j = sum_{m1, m2} <1 m1; 1 m2 | 2 q> eps_m1 n_m2, where eps_m and n_m are
+            the spherical components of the polarization and propagation unit vectors. For an E2 coupling these play
+            the role eps_q plays for E1: sum_ij eps_i n_j Q_ij = sum_q C_q Q_q for a symmetric traceless tensor Q.
+        """
+        n_hat = _unit_vector(self.EM_field_propagation_direction)
+        tensors = self.rank2_spherical_basis(quantization_axis)
+        return {q: complex(np.einsum('ij,i,j->', np.conj(tensors[q]), self.vector, n_hat)) for q in range(-2, 3)}
