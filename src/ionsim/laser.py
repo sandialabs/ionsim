@@ -145,6 +145,8 @@ class Laser():
     beam_profile: BeamProfile 
     power: float
     modulation_functions: dict | None=None #e.g. {'phase': Callable, 'amplitude' : Callable, 'frequency' : Callable}
+    MODULATION_KEYS = ('amplitude', 'phase', 'frequency')
+
     # TODO: Can set propagation vector from polarization, or should we allow specification here and check compatibility with polarization?  
 
     def __post_init__(self):
@@ -230,8 +232,6 @@ class Laser():
             raise IonSimError(f"Excited level is lower energy than ground level input. Transition frequency is negative or zero: {transition_frequency}")
         return self.detuning_from_transition_frequency(transition_frequency) 
     
-    MODULATION_KEYS = ('amplitude', 'phase', 'frequency')
-
     def _modulation_parts(self) -> tuple[Callable | None, Callable | None]:
         """ Validated (envelope, frequency_phase) callables from modulation_functions; either may be None.
 
@@ -268,8 +268,6 @@ class Laser():
                 return np.exp(-1j * accumulated_phase)
 
         return envelope, frequency_phase
-
-    MODULATION_KEYS = ('amplitude', 'phase', 'frequency')
 
     @property
     def modulation_function(self) -> Callable | None:
