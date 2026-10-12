@@ -28,6 +28,7 @@ from .named_operators import Pauli, Fock, Unitary
 from .process import Gate, Circuit
 from .noise import Noise
 from .zeeman_solver import ZeemanHyperfineSolver
+from .laser import Laser, Polarization 
 from .composite_operator import CompositeOperator
 from .lindbladian import Dissipator, DissipatorSpontaneousEmission, Lindbladian 
 from .gate_interpolator import GateInterpolator 
