@@ -8,7 +8,7 @@
 #***************************************************************************************************
 
 import unittest
-
+import math
 import numpy as np
 
 from ionsim.state import State
@@ -29,11 +29,22 @@ class TestState(unittest.TestCase):
         self.state = State.from_density_matrix(self.basis_x, np.kron(self.eig_x, Pauli.I))
 
         # Set up atomic structure - motional state with 2 structure and 1 motional mode  
-        self.mode = MotionalMode.from_frequency(frequency=2*np.pi * 3e6, fock_dimension=5)
+        fock_dim = 5
+        self.mode = MotionalMode.from_frequency(frequency=2*np.pi * 3e6, fock_dimension=fock_dim)
         self.atomic_structure_motion_basis = StandardBasis([self.atomic_structure_a, self.atomic_structure_b, self.mode])
         state_coefficients = np.zeros(len(self.atomic_structure_motion_basis.states))
         state_coefficients[0] = 1.
         self.atomic_structure_motion_state = State.from_coefficients(self.atomic_structure_motion_basis, list(state_coefficients))
+
+        # Test a coherent state at alpha = 1 to test motional displacement calculation  
+        fock_dim = 12
+        self.mode2 = MotionalMode.from_frequency(frequency=2*np.pi * 3e6, fock_dimension=fock_dim)
+        self.atomic_structure_motion_basis2 = StandardBasis([self.atomic_structure_a, self.atomic_structure_b, self.mode2])
+        state_coefficients = np.zeros(len(self.atomic_structure_motion_basis2.states))
+        state_coefficients[0] = 1.
+        for n in range(fock_dim):
+            state_coefficients[n] = np.sqrt(np.exp(-1))/np.sqrt(math.factorial(n))  # |00>; n
+        self.atomic_structure_coherent_state = State.from_coefficients(self.atomic_structure_motion_basis2, list(state_coefficients))
 
     def test_density_matrix_in_new_basis(self):
         """Test the density matrix in the new basis."""
@@ -46,8 +57,9 @@ class TestState(unittest.TestCase):
     def test_wigner_function(self):
         """ Test Wigner function computation from a motional density matrix in the Fock state basis""" 
         domain_limit = 2.
-        x_grid = np.linspace(-domain_limit, domain_limit, 25)
-        p_grid = np.linspace(-domain_limit, domain_limit, 25)
+        size = 25 
+        x_grid = np.linspace(-domain_limit, domain_limit, size)
+        p_grid = np.linspace(-domain_limit, domain_limit, size)
         W_distribution = self.atomic_structure_motion_state.compute_wigner_distribution(x_grid, p_grid)[0]        
 
         # Test just one slice of the array and half of its contents (U(1) symmetric about origin)) 
@@ -77,7 +89,7 @@ class TestState(unittest.TestCase):
         self.assertAlmostEqual(chi_max, expected_max, places=7)
 
     def test_quadrature_computation(self):
-        """ Yest computation of x, p, and x^2, and p^2 expectations """ 
+        """ Test computation of x, p, and x^2, and p^2 expectations """ 
         include_squared_quantities = True
         # method 1
         use_partial_trace = False 
@@ -99,6 +111,15 @@ class TestState(unittest.TestCase):
         self.assertAlmostEqual(p[0].real, p_expected, places=6) 
         self.assertAlmostEqual(x2[0].real, x2_expected, places=6) 
         self.assertAlmostEqual(p2[0].real, p2_expected, places=6) 
+
+    def test_coherent_displacement_calculation(self):
+        """ Test calculation of a coherent displacement for a state |00> otimes |alpha=1>"""
+        # For a coherent state with magnitude alpha = 1, we expect the displacement to be 1 for the |00> projection 
+        # Note: We expect some error between our state and expectation for a finite Fock cutoff
+        displacements = self.atomic_structure_coherent_state.compute_coherent_displacements(self.mode2) 
+        expected_displacements = np.array([1., 0., 0., 0.])
+        assert_array_close(np.array(displacements), expected_displacements, atol = 1e-7) 
+
 
 if __name__ == '__main__':
     unittest.main()
