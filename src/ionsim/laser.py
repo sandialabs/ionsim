@@ -16,9 +16,6 @@ from scipy import constants as const
 from scipy import integrate
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-#from scipy import integrate as _int
-#from scipy import interpolate as _interp
-#from scipy.special import comb 
 from numpy.typing import NDArray
 import sympy 
 from sympy.physics.wigner import clebsch_gordan
@@ -36,13 +33,10 @@ from ionsim.operator import Operator, CouplingOperator
 def _unit_vector(vec: Vector) -> Vector:
     """ Returns a real unit vector of an input vector """ 
     v = np.asarray(vec)
-
     norm = np.linalg.norm(v)
     if norm < 1E-9:
         raise ValueError("Cannot normalize a vector with norm near zero. Computed norm {norm}")
-
     return v/norm
-
 
 def _perpendicular_basis(n_hat: Vector, ref_axis: Vector | None=None) -> tuple[Vector, Vector]:
     """ Orthonormal transverse unit vectors (e1, e2) for a direction n_hat, with (e1, e2, n_hat) right-handed (e2 = n_hat x e1).
@@ -143,8 +137,6 @@ class Laser():
     power: float
     modulation_functions: dict | None=None #e.g. {'phase': Callable, 'amplitude' : Callable, 'frequency' : Callable}
     MODULATION_KEYS = ('amplitude', 'phase', 'frequency')
-
-    # TODO: Can set propagation vector from polarization, or should we allow specification here and check compatibility with polarization?  
 
     def __post_init__(self):
         # Safety checks on propagation vector  
@@ -325,7 +317,7 @@ class Laser():
 
         return mod_function
 
-    # Method for IA laser  
+    # Method for individually-addressing laser  
     def build_individual_atom_laser_coupling_operators(self, basis: Basis, addressed_atom: AtomicStructure, ground_levels: list[AtomicInternalEnergyLevel], 
                                                         excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift: float=0.) -> list[CouplingOperator]: 
         """ Builds a list of coupling operators corresponding to |g> <-> |e> couplings from laser light upon a particular atom.
@@ -419,20 +411,6 @@ class Laser():
         coupling_matrix[ground_index, excited_index] = np.conj(coupling_matrix[excited_index,ground_index]) 
         return coupling_matrix
 
-    #==============================================================================================
-    #==============================================================================================
-    #==============================================================================================
-
- #    def __init__(self):
- #        super(Laser, self).__init__()
- #        self.circular_basis = {
- #             1: array([-1., 1.j,0])/sqrt(2.),
- #             0: array([0,0,1.]),
- #            -1: array([1., 1.j,0])/sqrt(2.)}
- #        self.circular_tensor = {q: sum( [sqrt(10./3)*(-1)**q * self.Wigner3j(1,m1,1,m2,2,-q) * array((mat(self.circular_basis[m1]).T * mat(self.circular_basis[m2])).tolist()) for m1 in [1,0,-1] for m2 in [1,0,-1]], 0) for q in [2,1,0,-1,-2] }
- #
- #        self.label = None
- #
  #    # TODO: get rid of this laser type, replace with two logical lasers
  #    def define_logical_raman(self, single_photon_frequency, nhat, spin_states,
  #                             rabi_rate, detuning=0, gamma=0, phi=0, atom=None,
