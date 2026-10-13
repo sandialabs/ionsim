@@ -430,11 +430,6 @@ class YPauliBasis(Basis):
 @dataclass(frozen=True, eq=False)
 class XPauliAndFockBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix and Fock states."""
-    #atomic_structure_DOFs: list[AtomicStructure]
-
- #    @property
- #    def motional_modes(self):
- #        return [dof for dof in self.degrees_of_freedom if dof not in self.atomic_structure_DOFs]
 
     @property
     def vectors(self):
@@ -450,3 +445,14 @@ class XPauliAndFockBasis(Basis):
         ))
         return [ft.reduce(np.kron, group) for group in groups]
 
+    @property
+    def atomic_basis(self):
+        if self.atomic_structure_dofs:
+            return XPauliBasis(self.atomic_structure_dofs) 
+        return None
+
+    @property
+    def motional_basis(self):
+        if self.motional_modes:
+            return StandardBasis(self.motional_modes) 
+        return None
