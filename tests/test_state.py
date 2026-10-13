@@ -61,16 +61,40 @@ class TestState(unittest.TestCase):
         self.assertAlmostEqual(W_max, expected_W_max, places=7)
         assert_array_close(W_distribution[slice_indx, 0:13], W_expected_at_slice, rtol=1e-04, atol=1E-7) 
 
+    def test_characteristic_function(self):
+        """ Test Wigner function computation from a motional density matrix in the Fock state basis""" 
+        domain_limit = 2.
+        size = 25 
+        x_grid = np.linspace(-domain_limit, domain_limit, size)
+        p_grid = np.linspace(-domain_limit, domain_limit, size)
+        re_beta, im_beta, chi_distributions = self.atomic_structure_motion_state.compute_characteristic_functions(x_grid, p_grid)
+        chi = chi_distributions[0].reshape(size, size)
+
+        # Test just one slice of the array and half of its contents (U(1) symmetric about origin)) 
+        chi_max = np.max(chi)
+        expected_max = 0.9937179749826316 
+        #print(chi[slice_indx, 0:13])
+        self.assertAlmostEqual(chi_max, expected_max, places=7)
 
     def test_quadrature_computation(self):
         """ Yest computation of x, p, and x^2, and p^2 expectations """ 
         include_squared_quantities = True
-        x, p, x2, p2 = self.atomic_structure_motion_state.compute_quadratures(include_squared_quantities)
+        # method 1
+        use_partial_trace = False 
+        x, p, x2, p2 = self.atomic_structure_motion_state.compute_quadratures(include_squared_quantities, use_partial_trace)
 
         x_expected = 0.
         p_expected = 0.
         x2_expected = 0.5
         p2_expected = 0.5
+        self.assertAlmostEqual(x[0].real, x_expected, places=6) 
+        self.assertAlmostEqual(p[0].real, p_expected, places=6) 
+        self.assertAlmostEqual(x2[0].real, x2_expected, places=6) 
+        self.assertAlmostEqual(p2[0].real, p2_expected, places=6) 
+
+        # method 2
+        use_partial_trace = True
+        x, p, x2, p2 = self.atomic_structure_motion_state.compute_quadratures(include_squared_quantities, use_partial_trace)
         self.assertAlmostEqual(x[0].real, x_expected, places=6) 
         self.assertAlmostEqual(p[0].real, p_expected, places=6) 
         self.assertAlmostEqual(x2[0].real, x2_expected, places=6) 
