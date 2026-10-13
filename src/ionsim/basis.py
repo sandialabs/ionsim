@@ -217,7 +217,7 @@ class StandardBasis(Basis):
 
     @property
     def motional_modes(self) -> list[MotionalMode]:
-        return [dof for dof in self.degrees_of_freedom if isinstance(dof, MotionalMode)]
+        return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, MotionalMode)]
 
     @property
     def atom_basis(self):

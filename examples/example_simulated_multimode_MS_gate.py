@@ -50,7 +50,7 @@ basis = ism.StandardBasis([*spins, *modes])
 
 def MS_hamiltonian(basis, modes, etas, rabi_rate, omega_b, omega_r, sparse=False, mod=None):
 
-    motional_basis = ism.StandardBasis([*modes])
+    motional_basis = basis.motional_basis 
 
     operators = []
     for mode, eta in zip(modes, etas):
