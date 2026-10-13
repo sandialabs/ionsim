@@ -135,7 +135,7 @@ class DissipatorSpontaneousEmission(Dissipator):
     @classmethod
     def from_atomic_structure_data(cls, basis: StandardBasis, ground_levels: list[AtomicInternalEnergyLevel],
                                    excited_levels: list[AtomicInternalEnergyLevel], frame_energies: list[float] | None = None,
-                                   sparse: bool = False, select_DOFs: list[AtomicStructure] | None = None,
+                                   sparse: bool = False, select_dofs: list[AtomicStructure] | None = None,
                                    decay_to_sink: bool = False):
         """Build the spontaneous-emission dissipator for decay from excited_levels to ground_levels.
 
@@ -184,36 +184,36 @@ class DissipatorSpontaneousEmission(Dissipator):
         if frame_energies is None:
             frame_energies = [0.] * len(basis.states)
 
-        if select_DOFs is None:
-            DOF_list = basis.atomic_structure_DOFs
+        if select_dofs is None:
+            dof_list = basis.atomic_structure_dofs
         else:
-            DOF_list = select_DOFs
-            if any(not any(dof is basis_dof for basis_dof in basis.degrees_of_freedom) for dof in DOF_list):
+            dof_list = select_dofs
+            if any(not any(dof is basis_dof for basis_dof in basis.degrees_of_freedom) for dof in dof_list):
                 raise IonSimError("Every DOF in select_DOFs must be an AtomicStructure degree of freedom of the basis.")
-        if not DOF_list:
+        if not dof_list:
             raise IonSimError("The basis has no AtomicStructure degrees of freedom to add spontaneous emission to.")
 
         lindblad_operators = []
-        for DOF in DOF_list:
-            dimension = len(DOF.energy_levels)
-            level_index = {level.name: index for index, level in enumerate(DOF.energy_levels)}
+        for dof in dof_list:
+            dimension = len(dof.energy_levels)
+            level_index = {level.name: index for index, level in enumerate(dof.energy_levels)}
             missing = [level.name for level in [*ground_levels, *excited_levels] if level.name not in level_index]
             if missing:
-                raise IonSimError(f"Levels {missing} are not in the degree of freedom {DOF.name or ''}. "
-                                  f"Use select_DOFs to choose which atomic structures to add decay to.")
+                raise IonSimError(f"Levels {missing} are not in the degree of freedom {dof.name or ''}. "
+                                  f"Use select_dofs to choose which atomic structures to add decay to.")
             # Use this DOF's own level objects, so ions built separately (or at different fields) are handled correctly.
-            ground = [DOF.energy_levels[level_index[level.name]] for level in ground_levels]
-            excited = [DOF.energy_levels[level_index[level.name]] for level in excited_levels]
+            ground = [dof.energy_levels[level_index[level.name]] for level in ground_levels]
+            excited = [dof.energy_levels[level_index[level.name]] for level in excited_levels]
             if decay_to_sink:
-                sinks = [index for index, level in enumerate(DOF.energy_levels) if isinstance(level, SinkLevel)]
+                sinks = [index for index, level in enumerate(dof.energy_levels) if isinstance(level, SinkLevel)]
                 if len(sinks) != 1:
-                    raise IonSimError(f"decay_to_sink requires exactly one SinkLevel in each selected DOF, found {len(sinks)}. "
+                    raise IonSimError(f"decay_to_sink requires exactly one SinkLevel in each selected dof, found {len(sinks)}. "
                                       f"Build the structure with AtomicStructure.from_species(..., include_sink=True).")
 
             def add_decay(to_index: int, from_index: int, rate: float):
                 lowering_matrix = np.zeros((dimension, dimension))
                 lowering_matrix[to_index, from_index] = np.sqrt(rate)
-                lindblad_operators.append(CouplingOperator.from_matrix(basis, basis.enlarge_matrix(lowering_matrix, [DOF]), 0.))
+                lindblad_operators.append(CouplingOperator.from_matrix(basis, basis.enlarge_matrix(lowering_matrix, [dof]), 0.))
 
             for e_level in excited:
                 rates = cls._decay_rates(e_level, ground, require_paths=not decay_to_sink)
