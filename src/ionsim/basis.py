@@ -403,10 +403,6 @@ class XPauliBasis(Basis):
         pairs = list(itertools.product(*[[plus, minus] for dof in self.degrees_of_freedom]))
         return [np.kron(*pair) for pair in pairs]
 
- #    @property
- #    def atomic_structure_dofs(self):
- #        """ Returns list of spin degrees of freedom """ 
- #        return self.degrees_of_freedom 
 
 @dataclass(frozen=True, eq=False)
 class YPauliBasis(Basis):
