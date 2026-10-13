@@ -893,7 +893,6 @@ class Polarization:
     def __repr__(self):
         return f"Polarization(vector={self.vector}, n_hat={self.n_hat})" 
 
-
     @classmethod
     def linear(cls, propagation_direction: Vector, angle: float = 0., ref_axis: Vector | None=None):
         """ Linear polarization at an angle (radians) from a reference direction in the perpendicular plane. """ 
@@ -915,7 +914,6 @@ class Polarization:
 
         """
         e1, e2 = _perpendicular_basis(propagation_direction, ref_axis)
-
         if handedness == '+':
             polarization_vector = (e1 + 1j * e2)/np.sqrt(2.)
         elif handedness == '-':
@@ -924,7 +922,6 @@ class Polarization:
             raise IonSimError("Handedness must be specified either by a string, e.g. '+' or '-'.")
 
         return cls(polarization_vector, propagation_direction)
-
 
     @classmethod
     def from_spherical(cls, epsilon_vector: Vector, propagation_direction: Vector, 
@@ -954,31 +951,6 @@ class Polarization:
         components = np.array([eps_p1, eps_0, eps_m1])
         return dict(zip((1, 0, -1), components)) 
 
-
- #    def quadrupole_components(self, quantization_axis):
- #        """ Computes quadrupole polarization components"""
- #        circular_basis = _spherical_basis_vectors(quantization_axis)
- #        circular_tensor = { q: sum( [ np.sqrt(10./3)*(-1)**q * complex(sp.N(wigner_3j(1, 1, 2, m1, m2, -q)) ) * 
- #                              np.array((np.mat(circular_basis[m1]).T *
- #                              np.mat(circular_basis[m2])).tolist())
- #                          for m1 in [1,0,-1]
- #                          for m2 in [1,0,-1]], 0)
- #                      for q in [2,1,0,-1,-2] }
- #
- #        quadrupole_polarizations = {q:np.vdot(self.vector, np.vdot(circular_tensor[q], self.)) for q in [2,1,0,-1,-2]}
-#            quadrupole_pols = {q:_np.dot(pol, _np.dot(amo.circular_tensor[q], self.nhat)) for q in [2,1,0,-1,-2]}
- #        return circuilar_t
- #
-
-        #return _project_spherical(self.vector, quantization_axis).values() 
-
- #    def quadrupole_tensor_components(self, quantization_axis: Vector) -> dict[int, complex]:
- #        """ Rank-2 spherical tensor T_q(n_hat, eps), q = -2, -1, 0, 1, 2, which is built
- #            by the Clebsch-Gordan coefficients coupling of the spherical components of the polarization
- #            vector and the propagation vector. 
- #
- #            This represents the geometric factor governing E2 transitions. 
- #        """ 
     @staticmethod
     def rank2_spherical_basis(quantization_axis: Vector = np.array([0., 0., 1.])) -> dict[int, Matrix]:
         """ Orthonormal rank-2 spherical basis tensors E_q = sum_{m1, m2} <1 m1; 1 m2 | 2 q> e_m1 (x) e_m2, q = -2..2.
