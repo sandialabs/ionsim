@@ -18,9 +18,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 #from scipy import integrate as _int
 #from scipy import interpolate as _interp
-#from numpy import linalg as lin
-#from ionsim.tools import amotools as amo
-#from ionsim.tools import constants as const
 #from scipy.special import comb 
 from numpy.typing import NDArray
 import sympy 
@@ -845,13 +842,11 @@ class Laser():
     #==============================================================================================
     #==============================================================================================
 
-#TODO: Should we factor these methods out of this class since it may be used elsewhere in ionsim?
 def _spherical_basis_vectors(quantization_axis: Vector) -> dict[int, Vector]:
     """ Spherical basis vectors eps +1, 0, -1. See eq. 7.188 from "Quantum and Atom Optics by Daniel Steck""" 
     z = _unit_vector(quantization_axis)
     x, y = _perpendicular_basis(z)
     return {1: -(x + 1j*y)/np.sqrt(2.), 0: z.astype(complex), -1 : (x - 1j*y)/np.sqrt(2.)}
-
 
 def _project_spherical(v: Vector, quantization_axis: Vector) -> dict[int, complex]:
     """ Spherical components v_+1, v_0, v_-1 of a lab-frame vector "v", relative to the 
@@ -862,27 +857,25 @@ def _project_spherical(v: Vector, quantization_axis: Vector) -> dict[int, comple
     # For components via spherical basis dot product, the e_q vectors need conjugation, therefore put in first arg: 
     return {q: np.vdot(sph_basis[q], v) for q in (1, 0, -1)} 
 
-
 @dataclass(frozen=True, eq=False)
 class Polarization:
     """ Complex Cartesian polarization (Jones) Vector in the lab frame. This is set to be perpendicular to a reference propagation direction (e.g. of a laser) """
-    # TODO: make quantization axis an attribute; make resulting basis vectors a property? 
     # TODO: For naming, Should we use "components" or "vector" to refer to the polarization vector? 
     vector: Vector # input polarization vector; normalized in post init 
     n_hat: Vector  # propagation direction 
 
     def __post_init__(self):
         """ Check that polarization vector is perpendicular to propagation vector """  
-        #self.normalized_n_hat = _unit_vector(self.n_hat) 
         normalized_n_hat = _unit_vector(self.n_hat) 
 
-        # Safety check: 
+        # Check that polarization components (vector) are orthogonal to propagation vector 
         projection = np.dot(self.vector, normalized_n_hat)
         if np.abs(projection) > 1E-9: 
             raise ValueError(f"Polarization vector is not perpendicular to the reference propagation direction. Dot product = {projection}, should be zero.")
 
         # Normalize the vector if is not normalized 
         norm = np.sqrt(np.vdot(self.vector, self.vector).real)
+        # Check normalization is near 1 
         if norm < 1E-9: 
             raise ValueError("Cannot normalize a vector with norm near zero. Computed norm {norm}")
 
@@ -897,7 +890,6 @@ class Polarization:
     def linear(cls, propagation_direction: Vector, angle: float = 0., ref_axis: Vector | None=None):
         """ Linear polarization at an angle (radians) from a reference direction in the perpendicular plane. """ 
         e1, e2 = _perpendicular_basis(propagation_direction, ref_axis)
-
         polarization_vector = np.cos(angle) * e1 + np.sin(angle) * e2
         return cls(polarization_vector, propagation_direction)
 
@@ -941,7 +933,6 @@ class Polarization:
         polarization_vector = e_p1 * epsilon_vector[0] + e_0 * epsilon_vector[1] + e_m1 * epsilon_vector[2] 
         return cls(polarization_vector, propagation_direction)
 
-    # TODO: make quantization axis an attribute of the class? Then this would become a property method 
     def dipole_components(self, quantization_axis: Vector = np.array([0., 0., 1.])) -> dict[int, complex]:
         """ Spherical (dipole) components eps_q, keyed by q = +1, 0, -1, with polarization vector = sum_q eps_q e_q. """
         e_q = _spherical_basis_vectors(quantization_axis)
