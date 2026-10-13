@@ -95,11 +95,11 @@ class Fock:
     def number(cls, fock_dimension: int):
         return np.diag(np.arange(fock_dimension))
 
-    @classmethod # or "x" or "X"?
+    @classmethod 
     def position(cls, fock_dimension: int):
         return np.sqrt(0.5)*(cls.raising(fock_dimension) + cls.lowering(fock_dimension))
         
-    @classmethod # or "p" or "P"?
+    @classmethod 
     def momentum(cls, fock_dimension: int):
         return 1j*np.sqrt(0.5)*(cls.raising(fock_dimension) - cls.lowering(fock_dimension))
 
