@@ -45,7 +45,7 @@ class State:
 
         # Trace out atomic structure DOFs to obtain a purely motional state  
         state = self
-        for dof in self.basis.atomic_structure_DOFs:
+        for dof in self.basis.atomic_structure_dofs:
             state = state.trace_out_degree_of_freedom(dof)
         return state 
 
@@ -273,8 +273,8 @@ class State:
 
     def compute_coherent_displacements(self, motional_dof: DegreeOfFreedom):
         """Compute the coherent displacement (expectation value of the lowering operator) for each angular momentum state."""
-        assert(len(self.basis.degrees_of_freedom) == len(self.basis.atomic_structure_DOFs) + 1) # TODO: trace out other degrees of freedom
-        structure_basis = StandardBasis(self.basis.atomic_structure_DOFs)
+        assert(len(self.basis.degrees_of_freedom) == len(self.basis.atomic_structure_dofs) + 1) # TODO: trace out other degrees of freedom
+        structure_basis = StandardBasis(self.basis.atomic_structure_dofs)
         lowering = Fock.lowering(len(motional_dof.energy_levels))
         diplacements = []
         for vector in structure_basis.vectors:

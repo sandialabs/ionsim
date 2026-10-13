@@ -221,7 +221,7 @@ class StandardBasis(Basis):
 
     @property
     def atomic_basis(self):
-        if self.atomic_structure_DOFS:
+        if self.atomic_structure_DOFs:
             return StandardBasis(self.atomic_structure_DOFs) 
         return None
 

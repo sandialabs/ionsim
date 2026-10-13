@@ -96,6 +96,11 @@ class TestBasis(unittest.TestCase):
         # Test alias for full basis state 
         self.assertEqual(full_basis.states[3].alias('; '), '0; 0; Mode 0, n = 1; Mode 1, n = 1') 
 
+        # Test subspace creation:
+        atom_basis = full_basis.atomic_basis 
+        motional_basis = full_basis.motional_basis
+
+
     def test_z_pauli_basis_vectors(self):
         """Test the vectors of the Z Pauli basis."""
         basis_z = ZPauliBasis([self.spin_a])
