@@ -869,15 +869,15 @@ class Polarization:
     # TODO: make quantization axis an attribute; make resulting basis vectors a property? 
     # TODO: For naming, Should we use "components" or "vector" to refer to the polarization vector? 
     vector: Vector # input polarization vector; normalized in post init 
-    EM_field_propagation_direction: Vector
+    n_hat: Vector  # propagation direction 
 
     def __post_init__(self):
         """ Check that polarization vector is perpendicular to propagation vector """  
-        #self.normalized_EM_field_propagation_direction = _unit_vector(self.EM_field_propagation_direction) 
-        normalized_EM_field_propagation_direction = _unit_vector(self.EM_field_propagation_direction) 
+        #self.normalized_n_hat = _unit_vector(self.n_hat) 
+        normalized_n_hat = _unit_vector(self.n_hat) 
 
         # Safety check: 
-        projection = np.dot(self.vector, normalized_EM_field_propagation_direction)
+        projection = np.dot(self.vector, normalized_n_hat)
         if np.abs(projection) > 1E-9: 
             raise ValueError(f"Polarization vector is not perpendicular to the reference propagation direction. Dot product = {projection}, should be zero.")
 
@@ -891,7 +891,7 @@ class Polarization:
             object.__setattr__(self, "vector", normalized_vector)
 
     def __repr__(self):
-        return f"Polarization(vector={self.vector}, EM_field_propagation_direction={self.EM_field_propagation_direction})" 
+        return f"Polarization(vector={self.vector}, n_hat={self.n_hat})" 
 
 
     @classmethod
@@ -941,23 +941,18 @@ class Polarization:
         e_0 = e_q[0]
         e_m1 = e_q[-1]
 
-        #polarization_vector = np.array([epsilon_vector, np.array(list(sph_basis_vectors.values())) for  ]) 
         polarization_vector = e_p1 * epsilon_vector[0] + e_0 * epsilon_vector[1] + e_m1 * epsilon_vector[2] 
         return cls(polarization_vector, propagation_direction)
 
     # TODO: make quantization axis an attribute of the class? Then this would become a property method 
-    def spherical_components(self, quantization_axis: Vector = np.array([0., 0., 1.])) -> Vector: 
-        """ Projects the polarization vector's components along a specified quantization axis. """ 
+    def dipole_components(self, quantization_axis: Vector = np.array([0., 0., 1.])) -> dict[int, complex]:
+        """ Spherical (dipole) components eps_q, keyed by q = +1, 0, -1, with polarization vector = sum_q eps_q e_q. """
         e_q = _spherical_basis_vectors(quantization_axis)
-        # TODO Decide - return as a tuple or a Vector? 
         eps_p1 = np.vdot(e_q[1], self.vector)
         eps_0 = np.vdot(e_q[0], self.vector)
         eps_m1 = np.vdot(e_q[-1], self.vector)
-        return np.array([eps_p1, eps_0, eps_m1])
-
-    def dipole_components(self, quantization_axis: Vector = np.array([0., 0., 1.])) -> dict[int, complex]:
-        """ Spherical components eps_q, keyed by q = +1, 0, -1, with polarization vector = sum_q eps_q e_q. """
-        return dict(zip((1, 0, -1), self.spherical_components(quantization_axis)))
+        components = np.array([eps_p1, eps_0, eps_m1])
+        return dict(zip((1, 0, -1), components)) 
 
 
  #    def quadrupole_components(self, quantization_axis):
@@ -1009,6 +1004,6 @@ class Polarization:
             the spherical components of the polarization and propagation unit vectors. For an E2 coupling these play
             the role eps_q plays for E1: sum_ij eps_i n_j Q_ij = sum_q C_q Q_q for a symmetric traceless tensor Q.
         """
-        n_hat = _unit_vector(self.EM_field_propagation_direction)
+        n_hat = _unit_vector(self.n_hat)
         tensors = self.rank2_spherical_basis(quantization_axis)
         return {q: complex(np.einsum('ij,i,j->', np.conj(tensors[q]), self.vector, n_hat)) for q in range(-2, 3)}

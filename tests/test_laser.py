@@ -234,12 +234,16 @@ class TestLaserFrequencyAndModulation(unittest.TestCase):
         return np.asarray(Hamiltonian(basis, operators, frame).hamiltonian_function(t))[0, 1]
 
     def test_resonant_laser_is_static_in_level_frame(self):
+        """In IonSim's interaction picture (rotating_frame_energies = -E, which removes H0) a resonant laser is static."""
         for ground_first in (True, False):
             with self.subTest(ground_first=ground_first):
                 atom, basis, g, e = self.build(ground_first)
                 n_hat = np.array([0., 0., 1.])
                 laser = Laser.gaussian_from_frequency(e.energy - g.energy, 1e-3, 20e-6, n_hat, Polarization.circular(n_hat, '+'), 0.)
-                frame = [state.energy for state in basis.states]
+                frame = [-state.energy for state in basis.states]
+                operators = laser.build_individual_atom_laser_coupling_operators(basis, atom, [g], [e], 1)
+                H0 = Hamiltonian(basis, operators, frame).H0_H0Shifts_Hints_and_Rates[0].toarray()
+                np.testing.assert_allclose(H0, 0., atol=0.)
                 values = [self.coupling(laser, atom, basis, g, e, t, frame) for t in self.TIMES]
                 np.testing.assert_allclose(values, values[0], rtol=1e-6)
 
@@ -261,6 +265,81 @@ class TestLaserFrequencyAndModulation(unittest.TestCase):
                         modulated = self.coupling(modulated_laser, atom, basis, g, e, t)
                         # Lab-frame phases are ~1e7 rad at these times, so allow floating-point phase error.
                         self.assertLess(abs(modulated - static) / abs(static), 1e-7)
+
+
+class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
+    """Two-level dynamics driven by Laser-built couplings, in the frame rotating_frame_energies = -E.
+
+    These check the physics (detuning value and sign), not only that a resonant coupling is static.
+    """
+
+    def build(self, ground_first: bool):
+        qn_g, qn_e = {'n': 6, 'l': 0, 'f': 1, 'mf': 0}, {'n': 6, 'l': 1, 'f': 1, 'mf': 1}
+        atom = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'P1/2'],
+                                            quantum_numbers=[qn_g, qn_e] if ground_first else [qn_e, qn_g])
+        g = next(level for level in atom.energy_levels if level.term_symbol == 'S1/2')
+        e = next(level for level in atom.energy_levels if level.term_symbol == 'P1/2')
+        return atom, StandardBasis([atom]), g, e
+
+    def laser(self, frequency, **kwargs):
+        n_hat = np.array([0., 0., 1.])
+        # Low power so the Rabi frequency (~2pi x 1 MHz scale) is far below the optical frequency.
+        return Laser.gaussian_from_frequency(frequency, 1e-9, 20e-6, n_hat, Polarization.circular(n_hat, '+'), 0., **kwargs)
+
+    def evolve(self, laser, atom, basis, g, e, duration, frequency_shift=0.):
+        operators = laser.build_individual_atom_laser_coupling_operators(basis, atom, [g], [e], 1, frequency_shift=frequency_shift)
+        rabi = 2. * abs(operators[0].couplings[0].strength)
+        hamiltonian = Hamiltonian(basis, operators, [-state.energy for state in basis.states])
+        psi0 = np.array([1. if state.components[0] is g else 0. for state in basis.states], dtype=complex)
+        # Dense output: odeint's step limit applies per output interval, and when it is exceeded odeint only warns and
+        # returns an invalid state. The norm check below guards against such silent solver failures.
+        _, psis = hamiltonian.evolve_wavefunction(psi0, duration(rabi), np.linspace(0., duration(rabi), 2001))
+        self.assertAlmostEqual(np.linalg.norm(psis[-1]), 1., delta=1e-5)  # odeint's default rtol allows ~1e-6 drift
+        index_g = [state.components[0] for state in basis.states].index(g)
+        return psis[-1], index_g, rabi
+
+    def test_resonant_pi_pulse(self):
+        for ground_first in (True, False):
+            with self.subTest(ground_first=ground_first):
+                atom, basis, g, e = self.build(ground_first)
+                psi, index_g, _ = self.evolve(self.laser(e.energy - g.energy), atom, basis, g, e, lambda rabi: np.pi / rabi)
+                self.assertLess(abs(psi[index_g])**2, 1e-6)
+
+    def test_detuning_is_compensated_by_frequency_shift_and_modulation(self):
+        """A laser detuned by +delta driven with frequency_shift = -delta (or a constant 'frequency' modulation of -delta)
+        is resonant again: a pi pulse transfers all population. Without the compensation it does not."""
+        for ground_first in (True, False):
+            atom, basis, g, e = self.build(ground_first)
+            rabi = 2. * abs(self.laser(e.energy - g.energy).build_individual_atom_laser_coupling_operators(
+                basis, atom, [g], [e], 1)[0].couplings[0].strength)
+            delta = 2. * rabi  # rad/s; large enough that an uncompensated pi pulse clearly fails
+            detuned = self.laser(e.energy - g.energy + delta)
+            pi_time = lambda r: np.pi / r
+            with self.subTest(ground_first=ground_first, case='uncompensated'):
+                psi, index_g, _ = self.evolve(detuned, atom, basis, g, e, pi_time)
+                self.assertGreater(abs(psi[index_g])**2, 0.1)
+            with self.subTest(ground_first=ground_first, case='frequency_shift'):
+                psi, index_g, _ = self.evolve(detuned, atom, basis, g, e, pi_time, frequency_shift=-delta)
+                self.assertLess(abs(psi[index_g])**2, 1e-6)
+            with self.subTest(ground_first=ground_first, case='frequency modulation'):
+                modulated = dataclasses.replace(detuned, modulation_functions={'frequency': lambda t: -delta})
+                psi, index_g, _ = self.evolve(modulated, atom, basis, g, e, pi_time)
+                self.assertLess(abs(psi[index_g])**2, 1e-4)  # 'frequency' phase is integrated numerically
+
+    def test_light_shift_sign(self):
+        """A far red-detuned laser (omega < omega_0) lowers |g> by |Omega|^2 / (4 |delta|): in the interaction picture the
+        ground amplitude acquires the phase +|Omega|^2 t / (4 |delta|)."""
+        for ground_first in (True, False):
+            with self.subTest(ground_first=ground_first):
+                atom, basis, g, e = self.build(ground_first)
+                rabi = 2. * abs(self.laser(e.energy - g.energy).build_individual_atom_laser_coupling_operators(
+                    basis, atom, [g], [e], 1)[0].couplings[0].strength)
+                delta = -50. * rabi  # red detuning
+                duration = lambda r: 40. * np.pi / r
+                psi, index_g, _ = self.evolve(self.laser(e.energy - g.energy + delta), atom, basis, g, e, duration)
+                expected_phase = -(rabi**2 / (4. * delta)) * duration(rabi)    # = -LS t with LS = Omega^2 / (4 delta) < 0
+                self.assertGreater(expected_phase, 0.)
+                self.assertAlmostEqual(np.angle(psi[index_g]), expected_phase, delta=0.05 * expected_phase)
 
 
 class TestTransverseBasis(unittest.TestCase):
