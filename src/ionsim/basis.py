@@ -23,7 +23,7 @@ import functools as ft
 from icecream import ic
 
 from ionsim.ionsim_error import IonSimError
-from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure
+from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure, MotionalMode
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.custom_types import Vector, Matrix
@@ -211,13 +211,25 @@ class StandardBasis(Basis):
         return list(np.eye(len(self.states)))
 
     @property
-    def atomic_structure_DOFs(self):
+    def atomic_structure_DOFs(self) -> list[AtomicStructure]:
         """ Returns list of atomic structure degrees of freedom or empty list if none. """
         return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicStructure)]
 
     @property
-    def motional_modes(self):
-        return [dof for dof in self.degrees_of_freedom if dof not in self.atomic_structure_DOFs]
+    def motional_modes(self) -> list[MotionalMode]:
+        return [dof for dof in self.degrees_of_freedom if isinstance(dof, MotionalMode)]
+
+    @property
+    def atom_basis(self):
+        if self.atomic_structure_DOFS:
+            return StandardBasis(self.atomic_structure_DOFs) 
+        return None
+
+    @property
+    def motional_basis(self):
+        if self.motional_modes:
+            return StandardBasis(self.motional_modes) 
+        return None
 
     def build_subspace_basis_from_states_to_project(self, states_to_project_out: list[EnergyEigenstate]): 
         """ Builds a subspace from a larger Hilbert space with states projected out """  
