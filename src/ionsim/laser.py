@@ -288,11 +288,16 @@ class Laser():
     def _carrier_sign(ground_index: int, excited_index: int) -> int:
         """ Sign of the oscillation rate for the coupling operator of one (|g>, |e>) pair at these basis indices.
 
-            The Hamiltonian applies exp(-i rate t) to the upper-triangle element of a coupling matrix and its rotating-frame
-            shift as rate + E_row - E_column. A resonant laser is static in the frame E = level energies only if the
-            rate is +frequency when |g> comes first in the basis and -frequency when |e> comes first.
+            The Hamiltonian keeps the upper-triangle element of a coupling matrix and multiplies it by
+            exp(-i (rate + f_row - f_column) t), where f = rotating_frame_energies. IonSim's interaction picture uses
+            f = -E (state energies), which removes H0. In that frame, with omega_0 = E_e - E_g:
+                |g> first (|g><e| kept): the physical factor is exp(-i (omega_0 - omega) t) and f_g - f_e = +omega_0,
+                                         so rate = -omega.
+                |e> first (|e><g| kept): the physical factor is exp(-i (omega - omega_0) t) and f_e - f_g = -omega_0,
+                                         so rate = +omega.
+            Either way the total rate is +/- the detuning, so a resonant laser is static with H0 removed.
         """
-        return 1 if ground_index < excited_index else -1
+        return -1 if ground_index < excited_index else 1
 
     def _pair_oscillation_rate(self, ground_index: int, excited_index: int, frequency_shift: float = 0.) -> float:
         """ Oscillation rate for the coupling operator of one (|g>, |e>) pair; see _carrier_sign. """
@@ -304,7 +309,8 @@ class Laser():
             The Hamiltonian multiplies the upper-triangle element of a coupling matrix by the modulation function and adds
             the Hermitian conjugate. The laser phase sits on |e><g|, so the envelope A(t) exp(i phi(t)) is conjugated when
             |g><e| is the upper-triangle element (ground_index < excited_index). The frequency part follows the sign of the
-            laser frequency on that element (_carrier_sign), so a constant delta matches frequency_shift=delta.
+            laser frequency on that element (_carrier_sign): exp(-i int delta) on |e><g| (rate +omega) and its conjugate on
+            |g><e| (rate -omega), so a constant delta matches frequency_shift=delta for either level order.
         """
         envelope, frequency_phase = self._modulation_parts()
         if envelope is None and frequency_phase is None:
