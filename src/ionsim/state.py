@@ -283,7 +283,7 @@ class State:
             diplacements.append(displacement)
         return diplacements
 
-    def compute_matrix_observable_expectation(self, observable_operator: Matrix) -> Matrix:
+    def compute_matrix_observable_expectation(self, observable_operator: Matrix) -> float:
         """ Compute the expectation value of an operator observable, represented by <O>. 
 
             - Computes via Tr[O rho], where rho is the density matrix. 
@@ -297,7 +297,7 @@ class State:
 
         return np.trace(observable_operator.dot(self.density_matrix))
 
-    def compute_operator_observable_expectation(self, observable_operator: Operator) -> Matrix:
+    def compute_operator_observable_expectation(self, observable_operator: Operator) -> float:
         """ Compute the expectation value of an operator observable, represented by <O>. 
 
             - Computes via Tr[O rho], where rho is the density matrix. 
