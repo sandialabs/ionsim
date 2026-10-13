@@ -310,7 +310,7 @@ class State:
 
         return self.compute_matrix_observable_expectation(observable_operator.static_matrix) 
 
-    def compute_quadratures(self, enable_squared_quadratures: bool=False):
+    def compute_quadratures(self, enable_squared_quadratures: bool=False, use_partial_trace: bool=False):
         """ Returns quadrature expectation values <x> and <p> for each motional mode in the state. 
             - fails if there are no motional DOFs 
             - returns lists of <x> and <p>; each list element corresponds to 1 motional mode 
@@ -323,9 +323,8 @@ class State:
             x2 = []        
             p2 = []        
 
-        use_partial_trace = False 
         # Either compute partial trace on the density matrix or elevate observable to full space 
-        # It may be cheaper to compute the expectation value in the full space 
+        # It may be cheaper to compute the expectation value in the full space, depending on problem and problem size  
         if not use_partial_trace :
             full_basis = self.basis
 
