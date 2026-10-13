@@ -220,7 +220,7 @@ class StandardBasis(Basis):
         return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, MotionalMode)]
 
     @property
-    def atom_basis(self):
+    def atomic_basis(self):
         if self.atomic_structure_DOFS:
             return StandardBasis(self.atomic_structure_DOFs) 
         return None
