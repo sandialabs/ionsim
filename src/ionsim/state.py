@@ -293,7 +293,7 @@ class State:
         # Check that observable and density matrix are compatible 
         basis_size = len(self.basis.vectors)
         if observable_operator.shape != (basis_size, basis_size):
-            raise IonSimError("Observable operator must correspond with a matrix of shape: {(basis_size, basis_size)}.")
+            raise IonSimError(f"Observable operator must correspond with a matrix of shape: {(basis_size, basis_size)}.")
 
         return np.trace(observable_operator.dot(self.density_matrix))
 

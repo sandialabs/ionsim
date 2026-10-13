@@ -12,11 +12,7 @@ import unittest
 import numpy as np
 
 from ionsim.state import State
-#<<<<<<< HEAD
-#from ionsim.degree_of_freedom import AtomicSpin, MotionalMode
-#=======
 from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
-#>>>>>>> main
 from ionsim.basis import StandardBasis, XPauliBasis
 from ionsim.named_operators import Pauli
 from ionsim.testing import assert_array_close
