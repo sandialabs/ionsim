@@ -178,7 +178,7 @@ class TestSpontaneousEmissionMultipleIons(unittest.TestCase):
 
     def test_select_dofs(self):
         dissipator = DissipatorSpontaneousEmission.from_atomic_structure_data(
-            self.basis, levels_in_manifold(self.ion_a, 'S1/2'), levels_in_manifold(self.ion_a, 'P1/2'), select_DOFs=[self.ion_b])
+            self.basis, levels_in_manifold(self.ion_a, 'S1/2'), levels_in_manifold(self.ion_a, 'P1/2'), select_dofs=[self.ion_b])
         totals = self._total_decay_out_of(dissipator)
         # Only ion b decays: an excited ion a contributes nothing.
         self.assertEqual(totals[(True, False)], {0.})
@@ -221,7 +221,7 @@ class TestSpontaneousEmissionErrors(unittest.TestCase):
         other = AtomicStructure.from_species(species='40Ca+', term_symbols=['S1/2', 'P1/2'])
         with self.assertRaises(IonSimError):
             DissipatorSpontaneousEmission.from_atomic_structure_data(
-                StandardBasis([ca]), levels_in_manifold(ca, 'S1/2'), levels_in_manifold(ca, 'P1/2'), select_DOFs=[other])
+                StandardBasis([ca]), levels_in_manifold(ca, 'S1/2'), levels_in_manifold(ca, 'P1/2'), select_dofs=[other])
 
     def test_lindbladian_needs_hamiltonian_or_dissipator(self):
         with self.assertRaises(IonSimError):

@@ -23,7 +23,7 @@ import functools as ft
 from icecream import ic
 
 from ionsim.ionsim_error import IonSimError
-from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure
+from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure, MotionalMode
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.custom_types import Vector, Matrix
@@ -55,6 +55,16 @@ class Basis(ABC):
                 for dof in self.degrees_of_freedom
             ])
         return False 
+
+    @property
+    def atomic_structure_dofs(self) -> list[AtomicStructure]:
+        """ Returns list of atomic structure degrees of freedom or empty list if none. """
+        return [dof for dof in self.degrees_of_freedom if isinstance(dof, AtomicStructure)]
+
+    @property
+    def motional_modes(self) -> list[MotionalMode]:
+        return [dof for dof in self.degrees_of_freedom if isinstance(dof, MotionalMode)]
+
          
     def transform_vector_to_standard_basis(self, vector: Vector):
         """Transform a vector in this basis to the standard basis."""
@@ -211,9 +221,16 @@ class StandardBasis(Basis):
         return list(np.eye(len(self.states)))
 
     @property
-    def atomic_structure_DOFs(self):
-        """ Returns list of atomic structure degrees of freedom or empty list if none. """
-        return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicStructure)]
+    def atomic_basis(self):
+        if self.atomic_structure_dofs:
+            return StandardBasis(self.atomic_structure_dofs) 
+        return None
+
+    @property
+    def motional_basis(self):
+        if self.motional_modes:
+            return StandardBasis(self.motional_modes) 
+        return None
 
     def build_subspace_basis_from_states_to_project(self, states_to_project_out: list[EnergyEigenstate]): 
         """ Builds a subspace from a larger Hilbert space with states projected out """  
@@ -386,6 +403,7 @@ class XPauliBasis(Basis):
         pairs = list(itertools.product(*[[plus, minus] for dof in self.degrees_of_freedom]))
         return [np.kron(*pair) for pair in pairs]
 
+
 @dataclass(frozen=True, eq=False)
 class YPauliBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix."""
@@ -408,11 +426,6 @@ class YPauliBasis(Basis):
 @dataclass(frozen=True, eq=False)
 class XPauliAndFockBasis(Basis):
     """A basis in which the basis vectors correspond to the (plus/minus) eigenstates of the x-Pauli spin matrix and Fock states."""
-    atomic_structure_DOFs: list[AtomicStructure]
-
-    @property
-    def motional_modes(self):
-        return [dof for dof in self.degrees_of_freedom if dof not in self.atomic_structure_DOFs]
 
     @property
     def vectors(self):
@@ -421,9 +434,21 @@ class XPauliAndFockBasis(Basis):
         minus = 1/np.sqrt(2)*np.array([1, -1])
         groups = list(itertools.product(
             *[
-                [plus, minus] if dof in self.atomic_structure_DOFs else
+                [plus, minus] if dof in self.atomic_structure_dofs else
                 [np.eye(len(dof.energy_levels))[i] for i in range(len(dof.energy_levels))]
                 for dof in self.degrees_of_freedom
             ]
         ))
         return [ft.reduce(np.kron, group) for group in groups]
+
+    @property
+    def atomic_basis(self):
+        if self.atomic_structure_dofs:
+            return XPauliBasis(self.atomic_structure_dofs) 
+        return None
+
+    @property
+    def motional_basis(self):
+        if self.motional_modes:
+            return StandardBasis(self.motional_modes) 
+        return None

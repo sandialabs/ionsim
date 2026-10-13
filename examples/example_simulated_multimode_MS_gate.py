@@ -50,7 +50,7 @@ basis = ism.StandardBasis([*spins, *modes])
 
 def MS_hamiltonian(basis, modes, etas, rabi_rate, omega_b, omega_r, sparse=False, mod=None):
 
-    motional_basis = ism.StandardBasis([*modes])
+    motional_basis = basis.motional_basis 
 
     operators = []
     for mode, eta in zip(modes, etas):
@@ -163,11 +163,12 @@ def main():
         end = time.perf_counter()
         ic(f'Propagating state took {end - start} s.')
 
-        basis_xx = ism.XPauliAndFockBasis([*spins, *modes], spins)
+        basis_xx = ism.XPauliAndFockBasis([*spins, *modes])
         psis_xx = [ism.State.from_state(basis_xx, psi) for psi in psis]
 
-        alphas = np.array([psi.compute_coherent_displacements(spins, modes[0]) for psi in psis_xx])
-        spin_basis_xx = ism.XPauliBasis(spins)
+        alphas = np.array([psi.compute_coherent_displacements(modes[0]) for psi in psis_xx])
+        spin_basis_xx = basis_xx.atomic_basis 
+        mode_basis_test = basis_xx.motional_basis
 
         for i,vector in enumerate(spin_basis_xx.vectors):
             plt.plot(times, alphas[:, i].real, label=i)
