@@ -28,6 +28,7 @@ from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRES
 from ionsim.ionsim_error import IonSimError
 from ionsim.operator import Operator, CouplingOperator
 
+## TODO: Add first-order sideband transitions? 
 
 ## Vector helper operations
 def _unit_vector(vec: Vector) -> Vector:
@@ -559,10 +560,6 @@ class Laser():
  #        f = atom[hyperfine_label].f
  #        fp = atom[hyperfine_label_p].f
  #
- #        if polarization is not None and nhat is None:
- #            raise ValueError("Must specify nhat!")
- #        if polarization is None and nhat is not None:
- #            raise ValueError("Must sepcify polarization!")
  #        if (polarization is None) or (nhat is None):
  #            dq = -mfp + mf
  #            self.dipole_polarizations = {q:float(q==dq) for q in [1,0,-1]}
@@ -573,27 +570,9 @@ class Laser():
  #                self.quadrupole_polarizations = {q:1./_np.sqrt(3.) * float((q == dq)) for q in [2,1,0,-1,-2]}
  #            if dq == 0:
  #                self.quadrupole_polarizations = {2:sqs/2., 1:0., 0:sqs, -1:0., -2:sqs/2.}
- #        else:
- #            # Check that polarization is perpendicular to k-vector:
- #            self.polarization = _np.array(polarization)/lin.norm(polarization) # complex 3-vector
- #            self.nhat = _np.array(nhat)/lin.norm(nhat) # real 3-vector
- #            if abs(_np.dot(self.polarization,self.nhat)) > 1.e-6:
- #                raise ValueError('Laser polarization is not perpendicular to k vector')
- #            self.dipole_polarizations = {q:_np.dot(self.polarization, amo.circular_basis[q]) for q in [1,0,-1]}      
- #            # self.quadrupole_polarizations = {q:abs(_np.dot(self.polarization, _np.dot(amo.circular_tensor[q], self.nhat))) for q in [2,1,0,-1,-2]}
  #            self.quadrupole_polarizations = {q:_np.dot(self.polarization, _np.dot(amo.circular_tensor[q], self.nhat)) for q in [2,1,0,-1,-2]}
- #            
- #        self.wavelength = const.c/ self.frequency_0 # meters
- #        self.wavenumber = 2*_np.pi/self.wavelength # inverse meters
- #
- #        # Computing electric field
  #        coupling = atom.coupling_strength(hyperfine_label, hyperfine_label_p, self, known_electric_field=False)
  #        self.target_element = coupling # save target transition's electric dipole matrix element
- #        self.electric_field = 1/(4 * self.pi_time * coupling) * 2*_np.pi
- #        if verbose:
- #            print("Coupling strength from {} to {}is: {}".format(hyperfine_label, hyperfine_label_p, _np.real(coupling)))
- #            print("Computed electric field is: {}".format(self.electric_field))
- #
  #        # Computing the electric dipole maxtrix elements for each pair of hyperfine states in raman transition
  #        # Matrix elements defined by: rabi_rate/2 = element * electric_field, in rad/sec
  #        if self.raman_states is not None:
@@ -607,19 +586,6 @@ class Laser():
  #                        self.elements += [atom.coupling_strength(sublabel_low, sublabel_high, self, known_electric_field=False)]
  #                        self.hf_pairs += [[sublabel_low, sublabel_high]]
  #    
- #        # Computed quantities
- #        self.intensity = self.electric_field**2 / (2 * const.IMPEDENCE_OF_FREE_SPACE) # Watts/meter^2
- #        if waist is not None:
- #            self.waist = waist
- #            self.power_0 = ( _np.pi * self.intensity * waist**2 ) / 2 # Watts
- #            if verbose:
- #                print("Calculated power is: {} W".format(self.power))
- #        # if power_0 is not None:
- #        #     self.power_0 = power_0
- #        #     self.waist = _np.sqrt( 2 * power_0 / (_np.pi * self.intensity ))  # Meters
- #        #     if verbose:
- #        #         print("Calculated waist is: {} m".format(self.waist))
- #
  #        # # Compute Lamb-Dicke parameters
  #        # if atom.secular_frequencies is not None:
  #        #     self.lamb_dicke_parameters = [0,0,0]
@@ -629,17 +595,6 @@ class Laser():
  #
  #        # Allow for method chaining
  #        return self
- #
- #    def polarization_check(self, pol, nhat=None):
- #        pol = _np.array(pol)/lin.norm(pol) # complex 3-vector
- #        dipole_pols = {q:abs(_np.dot(pol, amo.circular_basis[q])) for q in [1,0,-1]}
- #
- #        if nhat is not None:
- #            # quadrupole_pols = {q:abs(_np.dot(pol, _np.dot(amo.circular_tensor[q], self.nhat))) for q in [2,1,0,-1,-2]}
- #            quadrupole_pols = {q:_np.dot(pol, _np.dot(amo.circular_tensor[q], self.nhat)) for q in [2,1,0,-1,-2]}
- #            return dipole_pols, quadrupole_pols
- #        else:
- #            return dipole_pols
  #
  #    def define_modulation_functions(self, xxx, frequency, phase, logical=False):
  #        """Turn laser input parameters into time-dependent functions."""
@@ -756,66 +711,8 @@ class Laser():
  #        self.raman_states = raman_states
  #        self.choose_sidebands = choose_sidebands
  #        self.frequency_jump_times = frequency_jump_times
- #
- #        # define modulation functions
- #        self.define_modulation_functions(power, frequency, phase)
- #
- #        # Check that polarization is perpendicular to k-vector:
- #        if abs(_np.dot(self.polarization,self.nhat)) > 1.e-6:
- #            raise ValueError('Laser polarization is not perpendicular to k vector')
- #
- #        # Computed quantities
- #        self.dipole_polarizations = {q:_np.dot(self.polarization, amo.circular_basis[q]) for q in [1,0,-1]}
- #        # self.quadrupole_polarizations = {q:abs(_np.dot(self.polarization, _np.dot(amo.circular_tensor[q], self.nhat))) for q in [2,1,0,-1,-2]}
- #        self.quadrupole_polarizations = {q:_np.dot(self.polarization, _np.dot(amo.circular_tensor[q], self.nhat)) for q in [2,1,0,-1,-2]}
- #
- #        self.wavelength = const.SPEED_OF_LIGHT / self.frequency_0
- #        self.wavenumber = 2*_np.pi/self.wavelength # Wavenumber, Inverse meters (often inverse centimeters, but we work in mks)
- #        
- #        self.intensity = 2*self.power_0/(_np.pi * self.waist**2) # Watts/meter^2
- #        self.electric_field = _np.sqrt( 2 * self.intensity * const.IMPEDENCE_OF_FREE_SPACE ) # Volts/meter
- #        #self.intensity = self.electric_field**2 / (2 * const.IMPEDENCE_OF_FREE_SPACE) # Watts/meter^2
- #
- #        # Allow for method chaining
  #        return self
  #
- #    def plot_quadrupole_selection_rules(self):
- #        nhat = _np.array([0,1,0])
- #        polx = _np.array([0,0,1])
- #        poly = _np.array([1,0,0])
- #        thetas = linspace(0,_np.pi/2,100)
- #        phases = exp(1.j*linspace(0,2*_np.pi,90))
- #        x, y = meshgrid(thetas, phases)
- #        for q in range(-2,2+1):
- #            rhl = _np.dot(amo.circular_tensor[q], nhat)
- #            # print q, rhl
- #            print(q, 'RHL', rhl)
- #            z = empty([len(thetas), len(phases)], dtype='complex')
- #            for tind, theta in enumerate(thetas):
- #                for pind, phase in enumerate(phases):
- #                    pol = polx * cos(theta) + poly * sin(theta) * phase
- #                    zval = _np.dot(pol, rhl)
- #                    z[tind,pind] = zval
- #            # print 'x', x
- #            # print 'y', y
- #            # print 'z', z
- #            print(q)
- #            print(imag(z))
- #            print(real(z))
- #            if abs(z).max() > 0:
- #                cs = plt.contourf(abs(z),20)
- #                plt.colorbar()
- #                plt.show()
- #            # cs = plt.contour(imag(z), 20)
- #            # plt.colorbar()
- #            # plt.show()
- #            # cs = plt.contour(real(z), 20)
- #            # plt.colorbar()
- #            # plt.show()
- #
- #
- #
-
     #==============================================================================================
     #==============================================================================================
     #==============================================================================================
