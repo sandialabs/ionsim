@@ -60,6 +60,12 @@ class TestProcess(unittest.TestCase):
         fidelity = extra_noisy_gate.compute_process_fidelity(self.Sx.process_matrix)
         self.assertAlmostEqual(fidelity, 0.9306176541502549, places=14)
 
+    def test_gate_parameter_ordering(self):
+        """Test removal of a bug where Gate creation depended on parameter ordering."""
+        g0 = Gate.from_unitary_function(self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.phi_noise)
+        g1 = Gate.from_unitary_function(self.basis, Unitary.R, {'theta': np.pi/2, 'phi': 0}, [self.spin_a], self.phi_noise)
+        np.testing.assert_array_equal(g0.process_matrix, g1.process_matrix)
+
     def test_ramsey_circuit_process_fidelity(self):
         """Test the process fidelity of the Ramsey circuit."""
         ramsey = Circuit.from_gates(

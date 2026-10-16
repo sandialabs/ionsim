@@ -58,10 +58,9 @@ class Gate(Process):
     unitary: Matrix | None = None
 
     def __post_init__(self):
-        # Check that process_matrix_function(*parameter_args) == process_matrix 
-        parameter_names, arguments = list(self.parameters.keys()), list(self.parameters.values())
+        # Check that process_matrix_function(**parameter_args) == process_matrix 
         if self.process_matrix_function:
-            if not (self.process_matrix_function(*arguments) == self.process_matrix).all:
+            if not (self.process_matrix_function(**self.parameters) == self.process_matrix).all:
                 raise IonSimError(f"Error, process matrix function and process matrix attributes do not correspond.")
 
 
@@ -76,30 +75,30 @@ class Gate(Process):
     def from_unitary_function(cls, basis: Basis, unitary_function: Callable,
             parameters: dict[str, float], target_dofs: list[DegreeOfFreedom], noise: Noise | None = None):
         """Build a gate from a unitary-gate function and its arguments."""
-        parameter_names, arguments = list(parameters.keys()), list(parameters.values())
+        parameter_names = list(parameters.keys())
         full_function = basis.enlarge_matrix_function(unitary_function, target_dofs)
         process_matrix_function = basis.create_superoperator_function_from_unitary_operator_function(full_function)
         if noise is not None:
             noisy_parameter_index = parameter_names.index(noise.parameter_name)
             process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
-        return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+        return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
 
     @classmethod
     def from_process_matrix_function(cls, basis: Basis, process_matrix_function: Callable,
             parameters: dict[str, float], noise: Noise | None = None):
         """Build a gate from a process-matrix function and its arguments."""
-        parameter_names, arguments = list(parameters.keys()), list(parameters.values())
+        parameter_names = list(parameters.keys())
         if noise is None or noise.parameter_name not in parameter_names:
-            return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+            return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
         noisy_parameter_index = parameter_names.index(noise.parameter_name)
         process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
-        return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+        return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
 
     @classmethod
     def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, duration: float,  
             parameters: dict[str, float], target_dofs: list[DegreeOfFreedom], noise: Noise | None = None):
         """ Build a gate from a hamiltonian function and its arguments."""
-        parameter_names, arguments = list(parameters.keys()), list(parameters.values())
+        parameter_names = list(parameters.keys())
 
         @wraps(hamiltonian_function)
         def process_matrix_function(*args, **kwargs):
@@ -110,7 +109,7 @@ class Gate(Process):
             noisy_parameter_index = parameter_names.index(noise.parameter_name)
             process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
 
-        return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+        return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
 
     @classmethod
     def from_hamiltonian(cls, basis: StandardBasis, hamiltonian: Hamiltonian, duration: float,
@@ -284,7 +283,7 @@ class Gate(Process):
             parameters: dict[str, float], noise: Noise | None = None, lindbladian_time_independent: bool=False, 
             lindbladian_commutes_at_later_times: bool = False): 
         """ Build a gate from a hamiltonian function and its arguments."""
-        parameter_names, arguments = list(parameters.keys()), list(parameters.values())
+        parameter_names = list(parameters.keys())
 
         @wraps(lindbladian_function)
         def process_matrix_function(*args, **kwargs):
@@ -296,7 +295,7 @@ class Gate(Process):
             process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index, 
                 lindbladian_time_independent = lindbladian_time_independent, lindbladian_commutes_at_later_times = lindbladian_commutes_at_later_times)
 
-        return cls(basis, process_matrix_function(*arguments), process_matrix_function, parameters)
+        return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
 
     def compute_pauli_error_rates(self) -> dict[str, float]:
         """ Computes Pauli channel error rates via the Pauli twirled approximation,
