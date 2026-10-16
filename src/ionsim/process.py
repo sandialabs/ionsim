@@ -457,7 +457,8 @@ def _combine_process_matrices(process_matrices: list[Matrix]):
     if len(process_matrices) == 1:
         return process_matrices[0]
     else:
-        return np.linalg.multi_dot(process_matrices[::-1])
+        return reduce(lambda later, earlier: later @ earlier, process_matrices[::-1])  # faster than np.linalg.muli_dot when you have long circuits 
+        #return np.linalg.multi_dot(process_matrices[::-1])
 
 
 def predict_outcome_probability_from_process_matrix(initial_state: State, process_matrix: Matrix, outcome_operator: Operator) -> float:
