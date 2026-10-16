@@ -23,6 +23,10 @@ from ionsim.gst_circuit_parser import GstGate, gate_from_label, canonical_gate_l
 from ionsim.ionsim_error import IonSimError
 from ionsim.gate_interpolator import GateInterpolator
 from ionsim.process import Gate
+from ionsim.noise import Noise
+
+# Model label of the circuit-level noise's distribution parameters (see GateSetModel.add_circuit_noise)
+CIRCUIT_NOISE = 'circuit_noise'
 
 
 class GateSetModel:
@@ -46,6 +50,12 @@ class GateSetModel:
 
         The same object is given to the GST solvers and to GSTCircuitPlanner so that the analysis and the circuit design /
         Fisher information use identical parameters.
+
+        Circuit-level (quasistatic) noise (optional): add_circuit_noise() declares a Noise on a gate argument, e.g. a fractional
+        Rabi-rate error, that fluctuates from shot to shot but is the same in every gate of a circuit in a shot. The parameters of
+        its distribution (e.g. the standard deviation) become GST parameters, and circuit outcome probabilities are averaged over
+        the noise realizations (Noise.realizations) with every listed gate displaced by the same realization; see
+        add_circuit_noise().
 
         Interpolated gate models (optional): for gate models that are expensive to evaluate, interpolate_gate_model() builds a
         cubic-spline interpolation of the model's process matrix on a grid of its parameters (GateInterpolator). The GST solvers
@@ -90,11 +100,17 @@ class GateSetModel:
         self._interpolated_gate_models = {}
         self._warned_outside_grid = set()
 
+        # Optional circuit-level noise (see add_circuit_noise)
+        self._circuit_noise = None
+
 
     ### Models ###
     def model_label(self, model: str | GstGate) -> str:
-        """ Returns the canonical model label for 'prep', 'POVM', or a gate label (e.g. '[]' -> 'idle'). """
+        """ Returns the canonical model label for 'prep', 'POVM', a gate label (e.g. '[]' -> 'idle'), or CIRCUIT_NOISE (when
+            circuit-level noise has been added). """
         if model in ('prep', 'POVM'):
+            return model
+        if model == CIRCUIT_NOISE and CIRCUIT_NOISE in self._model_functions:
             return model
         if isinstance(model, GstGate):
             raise TypeError(f"Specify gates by string label (e.g. {model.label!r}) rather than GstGate objects.")
@@ -444,10 +460,145 @@ class GateSetModel:
             raise IonSimError(f"Measurement effect models are violating completenss constraint with residual {np.abs(completeness_violation)}")
         return effects
 
-    def gate_process_matrix(self, gate: str | GstGate, theta: Vector):
-        """ Process matrix of a gate (label or GstGate) at theta, from the exact gate model """
+    def gate_process_matrix(self, gate: str | GstGate, theta: Vector, displacement: float=0.):
+        """ Process matrix of a gate (label or GstGate) at theta, from the exact gate model.
+
+            With circuit-level noise (add_circuit_noise), this is the nominal gate (no displacement) unless a displacement of the
+            noisy argument is given; it is not the noise-averaged gate, which would describe the noise as Markovian.
+        """
         gate = gate if isinstance(gate, GstGate) else gate_from_label(gate)
-        return self.gate_models[gate](*self.model_parameters(theta, gate))
+        return self.gate_models[gate](*self.displaced_model_parameters(theta, gate, displacement))
+
+
+    ### Circuit-level (quasistatic) noise ###
+    def add_circuit_noise(self, noise: Noise, models: list[str] | None=None, guess: float | dict | None=None,
+                          bounds: tuple | dict | None=None):
+        """ Add circuit-level (quasistatic) noise: the gate argument noise.parameter_name is displaced by a random amount x
+            drawn from the noise's distribution once per shot (circuit execution), the same x in every gate in `models`. Circuit
+            outcome probabilities are then averaged over the noise realizations (Noise.realizations):
+                p(circuit) = sum_k w_k p(circuit | every noisy gate displaced by x_k),
+            which is not a product of noise-averaged gates (that would describe the noise as Markovian).
+
+            - noise: a Noise, e.g. Noise.from_named_pdf('amplitude_offset', 'gaussian', {'standard_deviation': 0.01},
+                np.linspace(-5, 5, 21), domain_scale_parameter='standard_deviation'). A grid that scales with the width
+                (domain_scale_parameter or domain_scale_function) keeps the quadrature accurate as the width is fitted. The cost
+                of a likelihood evaluation grows linearly with the number of grid points.
+            - models: labels of the gates sharing the noise, e.g. ['Gxpi2:0', 'Gypi2:0'] (gates driven by the same laser).
+                Default: every gate with an argument named noise.parameter_name.
+            - guess, bounds: initial guess and (lower, upper) bounds of the distribution's parameters, which become GST
+                parameters named 'shared:<argument name>', e.g. 'shared:amplitude_offset_noise_standard_deviation'. For a
+                distribution with one parameter, a value / pair; otherwise a dictionary keyed by pdf parameter name (e.g.
+                'standard_deviation'). Guesses default to the noise's pdf parameter values. They can also be changed later with
+                specify_parameter('<argument name>', model='shared', ...).
+                Outcome probabilities depend on even moments of the noise (e.g. the variance), so their derivative with
+                respect to a width vanishes at zero width; bound the width away from zero, e.g. bounds=(1e-4, 10.).
+
+            Only one circuit noise is supported. Noise built from a plain pdf (no pdf parameters) adds no GST parameters.
+            With interpolated gate models (interpolate_gate_model), the interpolation grid must cover the displaced arguments.
+        """
+        if not isinstance(noise, Noise):
+            raise TypeError(f"noise must be an ionsim Noise; received {type(noise).__name__}.")
+        if self._circuit_noise is not None:
+            raise ValueError("The gate set model already has circuit-level noise; only one circuit noise is supported "
+                             "(remove it first with remove_circuit_noise()).")
+        argument = noise.parameter_name
+        if models is None:
+            gates = [gate for gate in self.gate_models if argument in self._model_parameter_names[gate.label]]
+            if not gates:
+                raise ValueError(f"No gate model has an argument named {argument!r} (the noise's parameter_name). "
+                                 f"Gate model arguments: { {g.label: self._model_parameter_names[g.label] for g in self.gate_models} }.")
+        else:
+            if isinstance(models, str):
+                models = [models]
+            gates = [self._gate_key(label) for label in models]
+            if not gates or len(set(gates)) != len(gates):
+                raise ValueError(f"models must be a non-empty list of distinct gate labels; received {models!r}.")
+            lacking = [g.label for g in gates if argument not in self._model_parameter_names[g.label]]
+            if lacking:
+                raise ValueError(f"Gate model(s) {lacking} have no argument named {argument!r} (the noise's parameter_name).")
+
+        pdf_parameters = list(noise.pdf_parameters) if noise.parameterized_pdf is not None else []
+        argument_names = [noise.argument_name(p) for p in pdf_parameters]
+        collisions = [a for a in argument_names if any(a in names for names in self._model_parameter_names.values())]
+        if collisions:
+            raise ValueError(f"The noise parameter name(s) {collisions} are also model arguments; rename the noisy parameter.")
+        guesses = self._per_pdf_parameter(guess, pdf_parameters, argument_names, 'guess')
+        bounds_by = self._per_pdf_parameter(bounds, pdf_parameters, argument_names, 'bounds')
+
+        def circuit_noise_parameters(*values):
+            return dict(zip(pdf_parameters, values))
+        circuit_noise_parameters.__signature__ = inspect.Signature(
+            [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in argument_names])
+        self._model_functions[CIRCUIT_NOISE] = circuit_noise_parameters
+        self._model_parameter_names[CIRCUIT_NOISE] = list(argument_names)
+        self._circuit_noise = {'noise': noise, 'gates': tuple(gates), 'pdf_parameters': pdf_parameters,
+                               'argument_positions': {g: self._model_parameter_names[g.label].index(argument) for g in gates}}
+        for pdf_parameter, name in zip(pdf_parameters, argument_names):
+            value = guesses.get(pdf_parameter)
+            self.specify_parameter(name, model=[CIRCUIT_NOISE], guess=noise.pdf_parameters[pdf_parameter] if value is None else value,
+                                   bounds=bounds_by.get(pdf_parameter))
+        if not argument_names:
+            self._invalidate_layout()
+
+    @staticmethod
+    def _per_pdf_parameter(value, pdf_parameters: list[str], argument_names: list[str], role: str) -> dict:
+        """ {pdf parameter: value} from a single value (one pdf parameter) or a dictionary keyed by pdf parameter or argument name """
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            lookup = dict(zip(argument_names, pdf_parameters))
+            result = {}
+            for key, item in value.items():
+                name = key if key in pdf_parameters else lookup.get(key)
+                if name is None:
+                    raise ValueError(f"Unknown pdf parameter {key!r} in {role}; the noise's pdf parameters are {pdf_parameters}.")
+                result[name] = item
+            return result
+        if len(pdf_parameters) != 1:
+            raise ValueError(f"The noise has pdf parameters {pdf_parameters}; give {role} as a dictionary keyed by pdf parameter.")
+        return {pdf_parameters[0]: value}
+
+    def remove_circuit_noise(self):
+        """ Remove circuit-level noise (and its parameters) """
+        if self._circuit_noise is None:
+            return
+        for name in self._model_parameter_names.pop(CIRCUIT_NOISE):
+            self._shared_parameter_specs.pop(name, None)
+        self._model_functions.pop(CIRCUIT_NOISE)
+        self._circuit_noise = None
+        self._invalidate_layout()
+
+    @property
+    def circuit_noise(self) -> Noise | None:
+        """ The circuit-level Noise (see add_circuit_noise), or None """
+        return None if self._circuit_noise is None else self._circuit_noise['noise']
+
+    @property
+    def circuit_noise_gates(self) -> list[GstGate]:
+        """ Gates displaced by the circuit-level noise (empty without circuit noise) """
+        return [] if self._circuit_noise is None else list(self._circuit_noise['gates'])
+
+    def circuit_noise_parameters(self, theta: Vector) -> dict:
+        """ The circuit noise's pdf parameter values at theta, e.g. {'standard_deviation': 0.01} """
+        if self._circuit_noise is None:
+            raise ValueError("The gate set model has no circuit-level noise; see add_circuit_noise().")
+        return dict(zip(self._circuit_noise['pdf_parameters'], self.model_parameters(theta, CIRCUIT_NOISE)))
+
+    def circuit_noise_realizations(self, theta: Vector) -> tuple[np.ndarray, np.ndarray]:
+        """ (displacements x_k, weights w_k) of the circuit noise at theta's distribution parameters (Noise.realizations) """
+        return self.circuit_noise.realizations(**self.circuit_noise_parameters(theta))
+
+    def displaced_model_parameters(self, theta: Vector, gate: str | GstGate, displacement: float=0.) -> Vector:
+        """ A gate's arguments at theta, with its circuit-noise argument (if any) displaced by `displacement` """
+        gate = gate if isinstance(gate, GstGate) else gate_from_label(gate)
+        arguments = self.model_parameters(theta, gate)
+        if displacement != 0.:
+            position = None if self._circuit_noise is None else self._circuit_noise['argument_positions'].get(gate)
+            if position is None:
+                raise ValueError(f"Gate {gate.label!r} is not displaced by circuit-level noise.")
+            arguments = arguments.copy()
+            arguments[position] += displacement
+        return arguments
 
 
     ### Interpolated gate models (optional) ###

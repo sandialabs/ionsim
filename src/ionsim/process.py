@@ -555,7 +555,8 @@ class Circuit_Process_Matrix_Function_Helper():
 
     def __init__(self, gate_models: Sequence[Callable], separator: str = "__", noise: Noise | None = None,
                     cache_size: int = 2048, evaluator_tolerance: float | None = None, gate_labels: Sequence[str] | None = None,
-                    parameter_names: dict[str, str] | None = None, gate_cache: GateProcessMatrixCache | None = None):
+                    parameter_names: dict[str, str] | None = None, gate_cache: GateProcessMatrixCache | None = None,
+                    noisy_gate_labels: Sequence[str] | None = None):
         """
             gate_models: a sequence to represent the order of gates applied in the circuit
 
@@ -563,6 +564,9 @@ class Circuit_Process_Matrix_Function_Helper():
                 refers to the parameter arg thetaX within the gate model function X_pi2.
 
             noise: optional circuit-level quasistatic Noise; see class docstring.
+
+            noisy_gate_labels: optional labels of the gates whose noise.parameter_name argument the circuit-level noise
+                displaces (default: every gate with an argument of that name).
 
             cache_size: maximum number of gate process matrices cached across calls (0 disables caching, e.g. for
                 gate functions that are not deterministic). Ignored if gate_cache is given.
@@ -614,8 +618,9 @@ class Circuit_Process_Matrix_Function_Helper():
         # Namespaced arguments displaced by circuit-level noise
         self._noisy_arguments = []
         if self.noise is not None:
-            self._noisy_arguments = [namespace for namespace, (_, orig_name) in self._param_map.items()
-                                     if orig_name == self.noise.parameter_name]
+            noisy_labels = None if noisy_gate_labels is None else {str(label) for label in noisy_gate_labels}
+            self._noisy_arguments = [namespace for namespace, (label, orig_name) in self._param_map.items()
+                                     if orig_name == self.noise.parameter_name and (noisy_labels is None or label in noisy_labels)]
 
     # Cache controls (kept on the helper for convenience)
     @property

@@ -13,7 +13,7 @@ from ionsim.process import Circuit, Gate, Circuit_Process_Matrix_Function_Helper
 from ionsim.custom_types import Matrix, Vector
 from ionsim.custom_math import finite_difference_derivatives
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
-from ionsim.gate_set_model import GateSetModel
+from ionsim.gate_set_model import GateSetModel, CIRCUIT_NOISE
 from ionsim.gst_circuit_parser import GstCircuit, GstGate, gate_from_label
 
 class GSTCircuitPlanner:
@@ -444,11 +444,23 @@ class GSTCircuitPlanner:
             for argument, global_name in zip(argument_names, gate_set_model.argument_names(gate)):
                 parameter_names[f"{gate.label}.{argument}"] = global_name
 
+        # Circuit-level noise (GateSetModel.add_circuit_noise): averaged by the helper over the same realizations as the GST
+        # likelihood, displacing only the gate set model's noisy gates; its distribution parameters take their global names
+        noise, noisy_labels = None, None
+        noisy_gates = [g for g in dict.fromkeys(gates) if g in gate_set_model.circuit_noise_gates]
+        if noisy_gates:
+            noise = gate_set_model.circuit_noise
+            noisy_labels = [g.label for g in noisy_gates]
+            for argument, global_name in zip(gate_set_model.model_parameter_names[CIRCUIT_NOISE],
+                                             gate_set_model.argument_names(CIRCUIT_NOISE)):
+                parameter_names[argument] = global_name
+
         # The helper composes its gate sequence left to right as matrices, i.e. last-applied gate first
         evaluation_models = gate_set_model.evaluation_gate_models   # interpolated where requested
         return Circuit_Process_Matrix_Function_Helper([evaluation_models[g] for g in gates[::-1]], separator='.',
                     gate_labels=[g.label for g in gates[::-1]], parameter_names=parameter_names,
-                    gate_cache=self.gate_cache, evaluator_tolerance=self.evaluator_tolerance)
+                    gate_cache=self.gate_cache, evaluator_tolerance=self.evaluator_tolerance,
+                    noise=noise, noisy_gate_labels=noisy_labels)
 
     def _circuit_probability_derivatives(self, circuit: GstCircuit, parameter_values, order: int):
         """ Outcome probabilities of a circuit (prep and POVM models included) and their derivatives with respect to every
@@ -461,8 +473,11 @@ class GSTCircuitPlanner:
         names = gate_set_model.parameter_names
         circuit_function = self.build_circuit_process_matrix_function(circuit)
 
-        # Parameters the probabilities depend on: prep, POVM, and the circuit's gates
-        wrt = gate_set_model.parameter_indices_of_models(['prep', 'POVM'] + list(dict.fromkeys(circuit.expanded_gates)))
+        # Parameters the probabilities depend on: prep, POVM, the circuit's gates, and the circuit noise if it acts on them
+        models = ['prep', 'POVM'] + list(dict.fromkeys(circuit.expanded_gates))
+        if set(gate_set_model.circuit_noise_gates).intersection(circuit.expanded_gates):
+            models.append(CIRCUIT_NOISE)
+        wrt = gate_set_model.parameter_indices_of_models(models)
         outcome_labels = list(gate_set_model.measurement_effects(theta_0).keys())
         circuit_arguments = [] if circuit_function is None else [(name, names.index(name)) for name in circuit_function.parameter_names]
 

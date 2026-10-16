@@ -19,6 +19,13 @@
     Expensive gate models can be replaced in the solvers (and the circuit planner) by interpolations on a parameter grid; see
     GateSetModel.interpolate_gate_model.
 
+    Circuit-level (quasistatic) noise (GateSetModel.add_circuit_noise): a gate argument that fluctuates from shot to shot but is
+    the same in every gate of a circuit in a shot. The MLE solvers, log_likelihood, chi_squared, and simulate_gst_data average
+    each circuit's outcome probabilities over the noise realizations, p = sum_k w_k p(circuit | x_k), with the noise
+    distribution's parameters fitted like any other parameter. The noisy gates are evaluated once per realization and each
+    circuit is composed once with them stacked over the realizations, so the arithmetic grows linearly with the number of
+    realizations. Linear GST does not support circuit noise. Gate set errors compare the nominal gates.
+
     Dimensionless fitting (dimensionless_fit=True in the solvers; off by default): the L-BFGS-B optimizations run on
     dimensionless variables x = theta / s, one scale s per parameter, rather than on theta itself. Physical parameters often
     span many orders of magnitude (e.g. an error probability ~1e-3 and a rate ~1e3 1/s); on theta, L-BFGS-B's absolute
@@ -60,7 +67,7 @@ from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 __all__ = ['GstResult', 'resolve_parameter_scale', 'linear_solve_for_gate_parameters', 'mle_solve_for_gate_parameters',
            'staged_mle_solve_for_gate_parameters',
            'log_likelihood', 'chi_squared', 'simulate_gst_data', 'evaluate_gate_set', 'gate_set_errors', 'average_gate_set_error',
-           'average_gate_set_error_uncertainty', 'write_gate_set_results']
+           'average_gate_set_error_uncertainty', 'parameter_squared_errors', 'write_gate_set_results']
 
 
 def depth_bin(depth):
@@ -294,6 +301,8 @@ class _GstProblem:
         self.outcome_to_index = {label: i for i, label in enumerate(self.outcome_labels)}
 
         self.d2 = gate_set_model.prep_state(gate_set_model.initial_guess).size
+        # Gates displaced by circuit-level noise (GateSetModel.add_circuit_noise), among the gates of these circuits
+        self.noisy_gates = set(gate_set_model.circuit_noise_gates) & self.gate_set
         self.nll_history = []
         # Dimensionless fitting (see the module docstring); its options must keep their defaults without it
         self.dimensionless_fit = bool(dimensionless_fit)
@@ -466,9 +475,12 @@ class _GstProblem:
         effect_matrix = np.vstack([np.asarray(measurement_effects[label]) for label in self.outcome_labels])
         return rho_supervector, effect_matrix
 
-    def gate_process_matrices(self, theta: Vector) -> dict:
-        """ Evaluate each gate's process matrix function once at theta """
-        return {gate: gate_model(*self.get_parameters(theta, gate)) for gate, gate_model in self.gate_models.items()}
+    def gate_process_matrices(self, theta: Vector, displacement: float=0., gates=None) -> dict:
+        """ Evaluate each gate's process matrix function once at theta (only `gates`, if given), with the circuit-noise argument
+            of the noisy gates displaced by `displacement` """
+        gates = self.gate_models.keys() if gates is None else gates
+        return {gate: self.gate_models[gate](*self.gate_set_model.displaced_model_parameters(
+                    theta, gate, displacement if gate in self.noisy_gates else 0.)) for gate in gates}
 
     def compose_quantum_map(self, gates: tuple, gate_matrices: dict, circuit_map_cache: dict) -> np.ndarray:
         """ Compose the circuit map once for each unique gate sequence in an evaluation.
@@ -488,16 +500,33 @@ class _GstProblem:
         return quantum_map
 
     def predict_sequence_probabilities(self, theta: Vector, sequences: list) -> np.ndarray:
-        """ Clipped outcome probabilities (n_sequences x n_outcomes, outcome-label order) for gate sequences at theta """
-        gate_matrices = self.gate_process_matrices(theta)
+        """ Clipped outcome probabilities (n_sequences x n_outcomes, outcome-label order) for gate sequences at theta.
+
+            With circuit-level noise, the probabilities of each sequence are averaged over the noise realizations, with every
+            noisy gate of the sequence displaced by the same realization; sequences without noisy gates are evaluated once.
+        """
         rho_supervector, effect_matrix = self.prep_and_effects(theta)
+        gate_matrices = self.gate_process_matrices(theta)
+        probabilities = np.zeros((len(sequences), len(effect_matrix)))
         circuit_map_cache = {}
-        probabilities = []
-        for gates in sequences:
-            mapped_state = self.compose_quantum_map(gates, gate_matrices, circuit_map_cache) @ rho_supervector
-            probability_values = np.real(effect_matrix @ mapped_state)
-            probabilities.append(np.clip(probability_values, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. - NUMERICAL_EQUIVALENCE_THRESHOLD))
-        return np.array(probabilities)
+        noisy = [k for k, gates in enumerate(sequences) if self.noisy_gates.intersection(gates)]
+        noisy_set = set(noisy)
+        for k in (k for k in range(len(sequences)) if k not in noisy_set):
+            mapped_state = self.compose_quantum_map(sequences[k], gate_matrices, circuit_map_cache) @ rho_supervector
+            probabilities[k] = np.real(effect_matrix @ mapped_state)
+        if noisy:
+            # Noisy gates as stacks over the realizations (K, d2, d2); composition broadcasts over the stack, so each
+            # sequence is composed once for all realizations
+            displacements, weights = self.gate_set_model.circuit_noise_realizations(theta)
+            displaced = [self.gate_process_matrices(theta, x, self.noisy_gates) for x in displacements]
+            stacked = dict(gate_matrices)
+            for gate in self.noisy_gates:
+                stacked[gate] = np.stack([matrices[gate] for matrices in displaced])
+            circuit_map_cache = {}
+            for k in noisy:
+                mapped_states = self.compose_quantum_map(sequences[k], stacked, circuit_map_cache) @ rho_supervector   # (K, d2)
+                probabilities[k] = weights @ np.real(mapped_states @ effect_matrix.T)
+        return np.clip(probabilities, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. - NUMERICAL_EQUIVALENCE_THRESHOLD)
 
     ### Objectives ###
     def log_likelihood(self, theta: Vector, data: _CircuitData) -> float:
@@ -761,6 +790,10 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
         Returns a GstResult; result.lgst_estimates holds the final pass's LGST estimates (gate estimates keyed by gate label),
         result.gauge_iterations the number of re-gauging passes, and result.success whether re-gauging converged.
     """
+    if gate_set_model.circuit_noise is not None:
+        raise NotImplementedError("Linear GST does not support circuit-level noise (GateSetModel.add_circuit_noise): LGST "
+                                  "estimates noise-averaged gates. Use mle_solve_for_gate_parameters or "
+                                  "staged_mle_solve_for_gate_parameters.")
     problem = _GstProblem(gst_circuits, gate_set_model, verbose, parameter_scale=parameter_scale,
                           dimensionless_fit=dimensionless_fit, finite_differences=finite_differences,
                           max_restarts=max_restarts)
@@ -948,6 +981,9 @@ def gate_set_errors(gate_set_model: GateSetModel, theta: Vector | dict, referenc
 
         Returns {gate label: error, 'prep': error, 'POVM': error} for every gate model. Prep and POVM errors are Euclidean norms
         of the supervector / summed superbra differences.
+        With circuit-level noise (GateSetModel.add_circuit_noise), the nominal gates (no noise displacement) are compared: the
+        noise distribution is assessed through its parameters (e.g. parameter_squared_errors), since noise-averaged gates would
+        describe it as Markovian.
     """
     if error_metric not in ('frobenius norm', 'process infidelity'):
         raise ValueError(f"Unknown error metric {error_metric!r}; use 'frobenius norm' or 'process infidelity'.")
@@ -970,6 +1006,25 @@ def gate_set_errors(gate_set_model: GateSetModel, theta: Vector | dict, referenc
     modeled_effects = gate_set_model.measurement_effects(theta)
     errors['POVM'] = sum(np.linalg.norm(np.asarray(modeled_effects[outcome]) - effect) for outcome, effect in reference_set['POVM'].items())
     return errors
+
+
+def parameter_squared_errors(gate_set_model: GateSetModel, theta: Vector | dict, reference: Vector | dict,
+                             relative: bool=False) -> dict:
+    """ Squared error of each parameter estimate, {parameter name: (theta_i - reference_i)^2}, in the order of
+        gate_set_model.parameter_names (e.g. reference = the true values in a simulation study). Averaged over replicates, these
+        are the mean squared errors to compare with the Cramer-Rao bounds (squared).
+
+        - theta, reference: parameter vectors or dictionaries of parameter names to values (unlisted parameters take their
+            initial guesses).
+        - relative: if True, ((theta_i - reference_i) / reference_i)^2 (nan where reference_i = 0).
+    """
+    estimate = gate_set_model.parse_theta(theta)
+    reference = gate_set_model.parse_theta(reference)
+    squared = (estimate - reference)**2
+    if relative:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            squared = np.where(reference != 0., squared / reference**2, np.nan)
+    return dict(zip(gate_set_model.parameter_names, squared.tolist()))
 
 
 def average_gate_set_error(errors: dict, include_SPAM_error: bool=True) -> float:

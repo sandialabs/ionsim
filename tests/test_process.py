@@ -46,12 +46,13 @@ class TestProcess(unittest.TestCase):
     def test_noisy_phi_gate_process_fidelity(self):
         """Test the process fidelity of the noisy phi gate."""
         fidelity = self.noisy_phi_gate.compute_process_fidelity(self.Sx.process_matrix)
-        self.assertAlmostEqual(fidelity, 0.9535335189419549, places=14)
+        self.assertAlmostEqual(fidelity, 0.9535335138400007, places=14)
 
     def test_noisy_theta_gate_process_fidelity(self):
         """Test the process fidelity of the noisy theta gate."""
         fidelity = self.noisy_theta_gate.compute_process_fidelity(self.Sx.process_matrix)
-        self.assertAlmostEqual(fidelity, 0.9759249157026244, places=14)
+        # analytic (1 + exp(-sigma^2/2)) / 2 = 0.97592490368; normalized realization weights (Noise.realizations) are 6.8e-9 from it
+        self.assertAlmostEqual(fidelity, 0.9759249104808633, places=14)
 
     def test_extra_noisy_gate_process_fidelity(self):
         """Test the process fidelity of the extra noisy gate."""
@@ -60,7 +61,7 @@ class TestProcess(unittest.TestCase):
             self.basis, self.noisy_phi_gate.process_matrix_function, {'phi': 0, 'theta': np.pi/2}, self.theta_noise,
         )
         fidelity = extra_noisy_gate.compute_process_fidelity(self.Sx.process_matrix)
-        self.assertAlmostEqual(fidelity, 0.9306176541502549, places=14)
+        self.assertAlmostEqual(fidelity, 0.930617644191573, places=14)
 
     def test_ramsey_circuit_process_fidelity(self):
         """Test the process fidelity of the Ramsey circuit."""
@@ -72,14 +73,14 @@ class TestProcess(unittest.TestCase):
             self.theta_noise,
         )
         fidelity = ramsey.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
-        self.assertAlmostEqual(fidelity, 0.9306176541502548, places=14)
+        self.assertAlmostEqual(fidelity, 0.930617644191573, places=14)
 
         # Test computing outcome probabilities 
         outcome_operator = EnergyShiftOperator.from_matrix(self.basis, np.kron(Pauli.projector_1, Pauli.projector_0)) 
         initial_state = State.from_coefficients(self.basis, [1., 0., 0., 0.]) 
 
         outcome_probability = ramsey.predict_outcome_probabilities(initial_state, [outcome_operator]) 
-        self.assertAlmostEqual(outcome_probability[0], 0.9530090510307307, places = 10)
+        self.assertAlmostEqual(outcome_probability[0], 0.9530090408324356, places = 10)
 
     def test_circuit_process_matrix_functions(self):
         """ Test the process matrix function of a circuit and derivatives of probability outcomes """ 
@@ -98,7 +99,7 @@ class TestProcess(unittest.TestCase):
         prob_function = ramsey_circuit.build_outcome_probability_function(initial_state, outcome_operator)
         circuit_parameters = {'R__phi' : 0., 'R__theta' : np.pi/2}
         outcome_prob = prob_function(**circuit_parameters)
-        self.assertAlmostEqual(outcome_prob, 0.9530090510307307, places = 10)
+        self.assertAlmostEqual(outcome_prob, 0.9530090408324356, places = 10)
 
         # Compute outcome probability using probability function: 
         prob, prob_gradients = circuit_pm_function.gradient(prob_function, wrt = ["R__phi", "R__theta"], **circuit_parameters) 
@@ -294,7 +295,9 @@ class TestProcess(unittest.TestCase):
         noisy = Gate.from_lindbladian_function(basis, lindbladian, duration, {'rabi_rate': rabi_rate}, noise=noise, lindbladian_time_independent=True)
         averaged = noise.average(lambda x: Gate.from_lindbladian(basis, lindbladian(rabi_rate + x), duration, lindbladian_time_independent=True).process_matrix)
         np.testing.assert_allclose(noisy.process_matrix, averaged, atol=1e-12)
-        self.assertGreater(np.linalg.norm(noisy.process_matrix - gate.process_matrix), 1e-4)
+        # rotation-angle noise sigma_theta = 2 pi 1e3 * 1e-6 = 6.3e-3 rad dephases by ~sigma_theta^2 / 2 ~ 2e-5 (normalized weights;
+        # unnormalized trapezoid weights on +-4 sigma also lost 6e-5 of the weight)
+        self.assertGreater(np.linalg.norm(noisy.process_matrix - gate.process_matrix), 1e-5)
 
         h_gate = Gate.from_hamiltonian_function(basis, hamiltonian, duration, {'rabi_rate': rabi_rate}, [spin])
         h_reference = Gate.from_hamiltonian(basis, hamiltonian(rabi_rate), duration)
