@@ -1008,8 +1008,7 @@ def gate_set_errors(gate_set_model: GateSetModel, theta: Vector | dict, referenc
     return errors
 
 
-def parameter_squared_errors(gate_set_model: GateSetModel, theta: Vector | dict, reference: Vector | dict,
-                             relative: bool=False) -> dict:
+def parameter_squared_errors(gate_set_model: GateSetModel, theta: Vector | dict, reference: Vector | dict, relative_error: bool=False) -> dict:
     """ Squared error of each parameter estimate, {parameter name: (theta_i - reference_i)^2}, in the order of
         gate_set_model.parameter_names (e.g. reference = the true values in a simulation study). Averaged over replicates, these
         are the mean squared errors to compare with the Cramer-Rao bounds (squared).
@@ -1021,7 +1020,7 @@ def parameter_squared_errors(gate_set_model: GateSetModel, theta: Vector | dict,
     estimate = gate_set_model.parse_theta(theta)
     reference = gate_set_model.parse_theta(reference)
     squared = (estimate - reference)**2
-    if relative:
+    if relative_error:
         with np.errstate(divide='ignore', invalid='ignore'):
             squared = np.where(reference != 0., squared / reference**2, np.nan)
     return dict(zip(gate_set_model.parameter_names, squared.tolist()))

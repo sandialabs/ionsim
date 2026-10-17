@@ -396,7 +396,7 @@ class GateSetModel:
         return theta
 
     def parse_theta(self, parameter_values: Vector | dict | None) -> Vector:
-        """ A full parameter vector from a vector, a dictionary of parameter names to values (unlisted parameters take their
+        """ Returns a full parameter vector from a vector, a dictionary of parameter names to values (unlisted parameters take their
             initial guesses), or None (the initial guess). """
         if parameter_values is None:
             return self.initial_guess
