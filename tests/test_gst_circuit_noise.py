@@ -117,7 +117,7 @@ class TestCircuitNoise(unittest.TestCase):
 
     def circuits(self, sequences):
         planner = GSTCircuitPlanner([X, Y, IDLE], [0], prep_fiducials=[[]], measure_fiducials=[[]], germs=[[X]], germ_powers=[1])
-        return [GstCircuit._from_gates([], [planner.to_gst_gate(g) for g in seq], 1, [], [0]) for seq in sequences]
+        return [GstCircuit._from_gst_gates([], [planner.to_gst_gate(g) for g in seq], 1, [], [0]) for seq in sequences]
 
     def probabilities(self, gate_set_model, sequences, values):
         circuits = self.circuits(sequences)

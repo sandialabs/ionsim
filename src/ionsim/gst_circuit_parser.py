@@ -6,6 +6,7 @@ import re
 __all__ = ['CircuitData', 'GstGate', 'GstCircuit', 'IDLE_LABEL', 'IDLE_ALIASES', 'gate_from_label', 'canonical_gate_label',
            'parse_circuit_string', 'parse_measurement_outcome_labels', 'parse_circuit_line', 'parse_gst_circuit_file']
 
+# TODO: Handle case where data is time-dependent 
 @dataclass()
 class CircuitData:
     """ Circuit experiment data either in the form of counts or single-shots with timestamps. 
@@ -18,11 +19,15 @@ class CircuitData:
     counts: dict[str, int] | None=None
     timestamped_shots: list[tuple[float, str]] | None=None
 
+    @property
+    def total_counts(self):
+        if self.counts is not None:
+            return sum(self.counts.values()) 
+        return len(self.timestamped_shots)
 
     @staticmethod
     def from_counts(counts):
         return CircuitData(counts=counts, timestamped_shots = None)
-        
 
     @staticmethod
     def from_timestamped_shots(single_shot_data):
@@ -47,9 +52,7 @@ class CircuitData:
 
         """
         N_bins = len(bin_edges) - 1
-
         bins = [{} for _ in range(N_bins) ]
-
         # loop over all outcomes, binning as the loop proceeds
         for t, outcome in self.timestamped_shots:
             for i in range(N_bins):
@@ -58,13 +61,6 @@ class CircuitData:
                     break
         return bins
                     
-
-    @property
-    def total_counts(self):
-        if self.counts is not None:
-            return sum(self.counts.values()) 
-        return len(self.timestamped_shots)
-
 
 
 # Accepted spellings of the global idle gate (acts on all qubits, takes no qubit arguments).
@@ -93,15 +89,17 @@ class GstGate:
     qubits: tuple[int, ...] = ()
 
     def __post_init__(self):
-        # Canonicalize so that 'idle' and '[]' always produce the same (equal, same-hash) object.
+        # Standardize so that 'idle' and '[]' always produce the same (equal, same-hash) object.
         name = IDLE_LABEL if self.name in IDLE_ALIASES else self.name
         qubits = tuple(int(q) for q in self.qubits)
 
+        # "idle" name should only be used for single-qubit GST. Otherwise the user should specify which qubits are idleing.  
         if name == IDLE_LABEL:
             if qubits:
                 raise ValueError(f"The '{IDLE_LABEL}' gate is a global idle and takes no qubit arguments; received qubits {qubits}. "
                                  f"For a qubit-specific idle, use a distinct gate name, e.g. 'Gi:{qubits[0]}'.")
         else:
+            # Enforce specifying qubits in gate name 
             if not _GATE_NAME_PATTERN.fullmatch(name):
                 raise ValueError(f"Invalid gate name {name!r}. Gate names must start with a letter and contain only letters, digits, '_', '+', or '-'.")
             if not qubits:
@@ -115,7 +113,7 @@ class GstGate:
         object.__setattr__(self, 'qubits', qubits)
 
     @classmethod
-    def from_string(cls, gate_str: str) -> "GstGate":
+    def from_string(cls, gate_str: str):
         """ Creates an instance from a gate label, e.g. 'Gxpi2:0', 'MS:0:1', 'idle', or '[]'.
 
             The qubit argument(s) are required (colon-separated) for every gate except idle.
@@ -134,7 +132,7 @@ class GstGate:
         return cls(name.strip(), tuple(int(q) for q in qubit_strs))
 
     @classmethod
-    def idle(cls) -> "GstGate":
+    def idle(cls):
         """ The global idle gate. """
         return cls(IDLE_LABEL, ())
 
@@ -144,7 +142,7 @@ class GstGate:
 
     @property
     def label(self) -> str:
-        """ Canonical string label, e.g. 'Gxpi2:0', 'MS:0:1', or 'idle'. """
+        """ String label, e.g. 'Gxpi2:0', 'MS:0:1', or 'idle'. """
         if self.is_idle:
             return IDLE_LABEL
         return self.name + ":" + ":".join(str(q) for q in self.qubits)
@@ -185,15 +183,13 @@ class GstCircuit:
     fiducial_measurement_gates: list[GstGate]
     germ_power: int 
 
-    line_labels: list[int]   # not as important, TODO: delete?   
+    line_labels: list[int]   
     measurement_data: CircuitData | None
-
 
     @property
     def expanded_gates(self) -> list[GstGate]:
         """ List of gates, expanded (no germ power included) """
         return self.fiducial_prep_gates + self.germ_gates * self.germ_power + self.fiducial_measurement_gates
-
 
     @property
     def expanded_gate_labels(self) -> list[str]:
@@ -204,13 +200,11 @@ class GstCircuit:
     def total_counts(self) -> int:
         """ Number of measurement counts """
         return self.measurement_data.total_counts 
-        #return sum(self.measurement_counts.values())
 
     @property
     def depth(self) -> int:
         """ Number of total gates in the circuit """
         return len(self.expanded_gates)
-
 
     def __repr__(self):
         gates_readable = " ".join(repr(gate) for gate in self.expanded_gates) or "(empty)"
@@ -219,7 +213,6 @@ class GstCircuit:
     @property
     def num_qubits(self):
         return len(self.line_labels)
-
 
     def build_circuit_string(self) -> str: 
         """ Build string representation, useful for writing circuit instructions. """
@@ -232,6 +225,7 @@ class GstCircuit:
         prep = _gates_to_str(self.fiducial_prep_gates)
         measure = _gates_to_str(self.fiducial_measurement_gates)
 
+        # Structure as Prep, Measure or Prep, Germ^p, Measure
         if self.germ_gates:
             germ = _gates_to_str(self.germ_gates)
             if self.germ_power > 1:
@@ -254,10 +248,8 @@ class GstCircuit:
         if self.measurement_data is None or self.measurement_data.counts is None: 
             return circuit_str
 
-        # Check spacings to align with gstdata formatting from pygsti 
         counts_str = "  ".join(str(self.measurement_data.counts[k]) for k in sorted(self.measurement_data.counts.keys()))
         return f"{circuit_str}  {counts_str}"
-
 
     @staticmethod
     def plan(prep_gates: list[str], germ_gates: list[str], germ_power: int, measure_gates: list[str], line_labels: list[int]) -> "GstCircuit":
@@ -270,11 +262,11 @@ class GstCircuit:
                 raise TypeError(f"{role} gates must be a list of gate labels, e.g. ['Gxpi2:0']; received the string {labels!r}.")
             return [gate_from_label(g) for g in labels]
 
-        return GstCircuit._from_gates(_to_gates(prep_gates, 'Prep'), _to_gates(germ_gates, 'Germ'), germ_power,
+        return GstCircuit._from_gst_gates(_to_gates(prep_gates, 'Prep'), _to_gates(germ_gates, 'Germ'), germ_power,
                                       _to_gates(measure_gates, 'Measure'), line_labels)
 
     @staticmethod
-    def _from_gates(prep_gates: list[GstGate], germ_gates: list[GstGate], germ_power: int, measure_gates: list[GstGate], line_labels: list[int]) -> "GstCircuit":
+    def _from_gst_gates(prep_gates: list[GstGate], germ_gates: list[GstGate], germ_power: int, measure_gates: list[GstGate], line_labels: list[int]) -> "GstCircuit":
         """ Internal constructor for a planned circuit from GstGate objects (used by the circuit planner). """
         planned_circ = GstCircuit("", list(prep_gates), list(germ_gates), list(measure_gates), germ_power, list(line_labels), measurement_data = None)
         planned_circ.unparsed_data = planned_circ.build_circuit_string()
@@ -331,7 +323,6 @@ def parse_measurement_outcome_labels(header: str) -> list[str]:
 
     labels = [col.strip().split()[0] for col in columns.split(",")]
     return labels 
-
 
 
 def parse_circuit_line(line: str, outcome_labels: list[str]) -> GstCircuit:

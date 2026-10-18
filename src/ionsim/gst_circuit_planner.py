@@ -9,7 +9,7 @@ import warnings
 
 from ionsim.state import State 
 from ionsim.operator import Operator  
-from ionsim.process import Circuit, Gate, Circuit_Process_Matrix_Function_Helper, GateProcessMatrixCache
+from ionsim.process import Circuit, Gate, Circuit_Process_Matrix_Function, GateProcessMatrixCache
 from ionsim.custom_types import Matrix, Vector
 from ionsim.custom_math import finite_difference_derivatives
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
@@ -205,15 +205,15 @@ class GSTCircuitPlanner:
         # Group 1: Fiducial prep & measure 
         for prep_fiducial in self.prep_fiducials:
             for measure_fiducial in self.measure_fiducials:
-                circuits.append( GstCircuit._from_gates(prep_fiducial, [], 1, measure_fiducial, self.qubit_labels)) 
+                circuits.append( GstCircuit._from_gst_gates(prep_fiducial, [], 1, measure_fiducial, self.qubit_labels)) 
 
         # Group 2: Fiducial prep, gate, and measure. For each gate, run the prep & measure circuits. 
         for gate in self.gate_lookup.values():
             for prep_fiducial in self.prep_fiducials:
                 for measure_fiducial in self.measure_fiducials:
-                    circuits.append( GstCircuit._from_gates(prep_fiducial, [gate], 1, measure_fiducial, self.qubit_labels)) 
+                    circuits.append( GstCircuit._from_gst_gates(prep_fiducial, [gate], 1, measure_fiducial, self.qubit_labels)) 
 
-        do_nothing_circuit = GstCircuit._from_gates([], [], 1, [], self.qubit_labels)
+        do_nothing_circuit = GstCircuit._from_gst_gates([], [], 1, [], self.qubit_labels)
         if do_nothing_circuit not in circuits:
             circuits.insert(0, do_nothing_circuit)
 
@@ -227,7 +227,7 @@ class GSTCircuitPlanner:
             for power in powers:
                 for prep_fiducial in self.prep_fiducials:
                     for measure_fiducial in self.measure_fiducials:
-                        circuits.append( GstCircuit._from_gates(prep_fiducial, germ, power, measure_fiducial, self.qubit_labels)) 
+                        circuits.append( GstCircuit._from_gst_gates(prep_fiducial, germ, power, measure_fiducial, self.qubit_labels)) 
 
         return circuits 
 
@@ -423,8 +423,8 @@ class GSTCircuitPlanner:
             germ_process_matrix = gate_set_model.gate_process_matrix(gate, theta) @ germ_process_matrix
         return germ_process_matrix
 
-    def build_circuit_process_matrix_function(self, circuit: GstCircuit) -> Circuit_Process_Matrix_Function_Helper | None:
-        """ Circuit process matrix function (Circuit_Process_Matrix_Function_Helper) whose keyword arguments are the global
+    def build_circuit_process_matrix_function(self, circuit: GstCircuit) -> Circuit_Process_Matrix_Function | None:
+        """ Circuit process matrix function (Circuit_Process_Matrix_Function) whose keyword arguments are the global
             parameter names of self.gate_set_model, e.g. 'shared:amplitude_noise_strength' or 'MS:0:1.phi_error', so shared
             parameters are a single argument. Gate process matrices are cached across all circuits of the planner.
             Returns None for an empty circuit.
@@ -457,7 +457,7 @@ class GSTCircuitPlanner:
 
         # The helper composes its gate sequence left to right as matrices, i.e. last-applied gate first
         evaluation_models = gate_set_model.evaluation_gate_models   # interpolated where requested
-        return Circuit_Process_Matrix_Function_Helper([evaluation_models[g] for g in gates[::-1]], separator='.',
+        return Circuit_Process_Matrix_Function([evaluation_models[g] for g in gates[::-1]], separator='.',
                     gate_labels=[g.label for g in gates[::-1]], parameter_names=parameter_names,
                     gate_cache=self.gate_cache, evaluator_tolerance=self.evaluator_tolerance,
                     noise=noise, noisy_gate_labels=noisy_labels)
@@ -585,8 +585,6 @@ class GSTCircuitPlanner:
                           "determined by these circuits.")
         return eigenvalues, inverse_Fisher_infos
 
-
-
     def write_circuit_design(self, filepath):
         """ Writes a design yaml file with circuit design information """
         #filename = 'GST_circuit_design.yaml'  
@@ -615,7 +613,6 @@ class GSTCircuitPlanner:
         with open(filepath, 'w') as f:
             yaml.dump(design, f, default_flow_style=False, sort_keys=False) 
 
-    
     @classmethod
     def load_design(cls, filepath):
         """ Load an experimental design from a YAML file, returns the planner class instance """ 
@@ -649,4 +646,3 @@ class GSTCircuitPlanner:
                     germs = germs, germ_powers = germ_powers, long_sequence_GST = design.get('long_sequence_GST', True))
 
         return planner 
-

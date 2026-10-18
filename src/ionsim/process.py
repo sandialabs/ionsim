@@ -335,17 +335,17 @@ class Circuit(Process):
     @classmethod
     def from_gates(cls, gates: list[Gate], noise: Noise | None = None, gate_labels: list[str] | None = None,
                     parameter_names: dict[str, str] | None = None):
-        """Build a circuit from a series of gates in the same basis.
+        """ Build a circuit from a series of gates in the same basis.
 
             gate_labels / parameter_names: optional namespacing labels (one per gate) and shared parameter names for the
-            circuit's process matrix function; see Circuit_Process_Matrix_Function_Helper.
+            circuit's process matrix function; see Circuit_Process_Matrix_Function.
 
             noise: optional circuit-level quasistatic noise. The same displacement of noise.parameter_name is applied to every
             gate with a parameter of that name, and the circuit is averaged over the noise distribution. The circuit's process
             matrix function takes the distribution's parameters as arguments (e.g. 'theta_noise_standard_deviation').
-            TODO: Gates are matched by parameter name, so a parameter name with different meanings in different gates would
-            all be displaced; targeting specific gates (e.g. by gate label) would remove this ambiguity.
         """
+        #TODO: Gates are matched by parameter name, so a parameter name with different meanings in different gates would
+        # all be displaced; targeting specific gates (e.g. by gate label) would remove this ambiguity.
         if any(gate.basis is not gates[0].basis for gate in gates):
             raise IonSimError('All gates in a circuit must be in the same basis.')
 
@@ -367,26 +367,26 @@ class Circuit(Process):
         # Reverse gate function order by convention (last gate in original list is first gate to apply)
         gate_functions = gate_functions[::-1]
         labels = None if gate_labels is None else list(gate_labels)[::-1]
-        circuit_process_matrix_function = Circuit_Process_Matrix_Function_Helper(gate_functions, noise = None if deterministic else noise,
+        circuit_process_matrix_function = Circuit_Process_Matrix_Function(gate_functions, noise = None if deterministic else noise,
                                                 gate_labels = labels, parameter_names = parameter_names)
 
         if deterministic:
             process_matrix = _combine_process_matrices([gate.process_matrix for gate in gates])
-            return cls(gates[0].basis, process_matrix, gates, circuit_process_matrix_function)
-
-        # Circuit-level noise: the same displacement of the noisy parameter in every gate that takes it (each gate at its own
-        # parameter values), averaged over the noise distribution.
-        def displaced_circuit(darg):
-            matrices = []
-            for gate in gates:
-                if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
-                    arguments = np.array(list(gate.parameters.values()))
-                    vec = np.array([1 if noise.parameter_name == name else 0 for name in gate.parameters])
-                    matrices.append(gate.process_matrix_function(*list(arguments + darg * vec)))
-                else:
-                    matrices.append(gate.process_matrix)
-            return _combine_process_matrices(matrices)
-        process_matrix = noise.average(displaced_circuit)
+        else:
+            # Circuit-level noise: the same displacement of the noisy parameter in every gate that takes it (each gate at its own
+            # parameter values), averaged over the noise distribution.
+            def displaced_circuit(darg):
+                matrices = []
+                for gate in gates:
+                    # TODO: Consider providing a list of gates that take in the quasistatic noise and add a check so that a same-name parameter in a non-quasitatic noise gate doesn't get used.  
+                    if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
+                        arguments = np.array(list(gate.parameters.values()))
+                        vec = np.array([1 if noise.parameter_name == name else 0 for name in gate.parameters])
+                        matrices.append(gate.process_matrix_function(*list(arguments + darg * vec)))
+                    else:
+                        matrices.append(gate.process_matrix)
+                return _combine_process_matrices(matrices)
+            process_matrix = noise.average(displaced_circuit)
         return cls(gates[0].basis, process_matrix, gates, circuit_process_matrix_function)
 
     def predict_outcome_probability(self, initial_state: State, outcome_operator: Operator) -> float:
@@ -415,18 +415,14 @@ class Circuit(Process):
 
         return np.array(outcome_probabilities)
 
-
     def build_outcome_probability_function(self, initial_state: State, outcome_operator: Operator) -> Callable:
         """ Returns a function that returns an outcome probability as a function of circuit model parameters """  
-
-        def scalar_function(circuit_process_matrix):
-            return predict_outcome_probability_from_process_matrix(initial_state, circuit_process_matrix, outcome_operator)
-
         def outcome_probability_function(**kwargs):
-            return scalar_function(self.process_matrix_function(**kwargs)) 
+            return predict_outcome_probability_from_process_matrix(initial_state, self.process_matrix_function(**kwargs), outcome_operator) 
 
         if hasattr(self.process_matrix_function, '__signature__'):
             outcome_probability_function.__signature__ = self.process_matrix_function.__signature__
+
         outcome_probability_function.__name__ = "outcome_probability" 
         outcome_probability_function.__doc__ = "Outcome probability given a circuit acted on an initial state.\n"
         outcome_probability_function.process_matrix_function = self.process_matrix_function 
@@ -438,11 +434,8 @@ class Circuit(Process):
             return [None for _ in range(len(outcome_operators))] 
 
         outcome_matrix = np.vstack([outcome_op.superbra for outcome_op in outcome_operators])
-        def vector_function(circuit_process_matrix):
-            return predict_outcome_probabilities_from_process_matrix(initial_state, circuit_process_matrix, outcome_matrix)
-
         def outcome_probabilities_function(**kwargs):
-            return vector_function(self.process_matrix_function(**kwargs)) 
+            return predict_outcome_probabilities_from_process_matrix(initial_state, self.process_matrix_function(**kwargs), outcome_matrix)
 
         if hasattr(self.process_matrix_function, '__signature__'):
             outcome_probabilities_function.__signature__ = self.process_matrix_function.__signature__
@@ -451,7 +444,8 @@ class Circuit(Process):
         outcome_probabilities_function.process_matrix_function = self.process_matrix_function 
         return outcome_probabilities_function
 
-        
+
+## Process matrix and outcome probability helper functions         
 def _combine_process_matrices(process_matrices: list[Matrix]):
     """Combine a series of process matrices (in chronological order) into a single process matrix for the whole circuit."""
     if len(process_matrices) == 1:
@@ -459,7 +453,6 @@ def _combine_process_matrices(process_matrices: list[Matrix]):
     else:
         return reduce(lambda later, earlier: later @ earlier, process_matrices[::-1])  # faster than np.linalg.muli_dot when you have long circuits 
         #return np.linalg.multi_dot(process_matrices[::-1])
-
 
 def predict_outcome_probability_from_process_matrix(initial_state: State, process_matrix: Matrix, outcome_operator: Operator) -> float:
     """ Predicts the outcome of a process matrix on a state after measurement/projection <==> outcome operator """   
@@ -470,7 +463,6 @@ def predict_outcome_probabilities_from_process_matrix(initial_state: State, proc
     """ Predicts the probabilities of outcomes of a process matrix on a state after measurement/projection <==> outcome operator """   
     propagated_state = initial_state.propagate_using_process_matrix(process_matrix)
     return (outcome_matrix @ propagated_state.supervector).real  
-    #return (outcome_operator.superbra @ propagated_state.supervector).real  
 
 
 class GateProcessMatrixCache:
@@ -526,7 +518,7 @@ class GateProcessMatrixCache:
         return len(self._entries)
 
 
-class Circuit_Process_Matrix_Function_Helper():
+class Circuit_Process_Matrix_Function():
     """ Builds a single process matrix function for a circuit, represented as a composition of gates
             where each gate is represented by its own gate process matrix function.
 
@@ -705,7 +697,7 @@ class Circuit_Process_Matrix_Function_Helper():
 
         origin = get_origin(expected)
         if origin is typing.Union:
-            return any(Circuit_Process_Matrix_Function_Helper._type_matches(value, arg) for arg in get_args(expected))
+            return any(Circuit_Process_Matrix_Function._type_matches(value, arg) for arg in get_args(expected))
 
         if origin is not None:
             try:
