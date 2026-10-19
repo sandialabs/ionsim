@@ -1,6 +1,5 @@
 import unittest
 
-import qiskit
 import numpy as np
 
 from ionsim.process import Gate, Circuit
@@ -8,13 +7,16 @@ from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis
 from ionsim.named_operators import Unitary, Pauli
 from ionsim.noise import Noise
-from ionsim.circuit_builder import CircuitBuilder
+from ionsim.circuit_builder import CircuitBuilder, HAS_QISKIT
 
 
+@unittest.skipIf(HAS_QISKIT)
 class QiskitIntegrationTester(unittest.TestCase):
 
     def setUp(self):
         """Set up the necessary objects for testing."""
+        import qiskit
+
         self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.spin_c = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2','P1/2'], level_names=['S1/2,0,0', 'S1/2,1,0','P1/2,1,-1'])
