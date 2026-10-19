@@ -23,15 +23,11 @@ class CircuitBuilder:
         gates = []
         for ci in qc.data:
             name = ci.name
-            pair = qiskit_unitary_table.get(name)
-            if pair is None:
+            info = qiskit_unitary_table.get(name)
+            if info is None:
                 raise ValueError(f"Could not look up unitary for Qiskit gate {name}")
-            ionsim_name, unitary = pair
-            if name == 'r':
-                # TODO: Don't hard code
-                params = {'phi': ci.params[1], 'theta': ci.params[0]}
-            else:
-                params = {}
+            ionsim_name, unitary, args = info
+            params = {name: ci.params[i] for i, name in enumerate(args)}
             if isinstance(unitary, np.ndarray):
                 lazy_gate = QiskitGateFromUnitary(ionsim_name, unitary, ci.qubits, Gate.from_unitary)
             elif callable(unitary):
@@ -131,6 +127,6 @@ class QiskitGateFromUnitaryFunction:
 if HAS_QISKIT:
     # TODO: Fill out this table
     qiskit_unitary_table = {
-        'sx': ('sqrtX', Unitary.sqrtX),
-        'r': ('R', Unitary.R),
+        'sx': ('sqrtX', Unitary.sqrtX, ()),
+        'r': ('R', Unitary.R, ('theta', 'phi')),
     }
