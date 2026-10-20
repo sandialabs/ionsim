@@ -184,13 +184,13 @@ class TestProcess(unittest.TestCase):
             return np.kron(Unitary.R(0., theta), Unitary.R(0., theta).conj())
 
         # The same function under two labels: independent parameters
-        independent = Circuit_Process_Matrix_Function_Helper([rotation, rotation], separator='.', gate_labels=['Rx:0', 'Rx:1'])
+        independent = Circuit_Process_Matrix_Function([rotation, rotation], separator='.', gate_labels=['Rx:0', 'Rx:1'])
         self.assertEqual(independent.parameter_names, ['Rx:0.theta', 'Rx:1.theta'])
         self.assertFalse(hasattr(independent, '__signature__'))   # names are not Python identifiers
         np.testing.assert_allclose(independent(**{'Rx:0.theta': 0.3, 'Rx:1.theta': 0.5}), rotation(0.3) @ rotation(0.5))
 
         # Shared: both arguments fed by one parameter
-        shared = Circuit_Process_Matrix_Function_Helper([rotation, rotation], separator='.', gate_labels=['Rx:0', 'Rx:1'],
+        shared = Circuit_Process_Matrix_Function([rotation, rotation], separator='.', gate_labels=['Rx:0', 'Rx:1'],
                         parameter_names={'Rx:0.theta': 'shared:theta', 'Rx:1.theta': 'shared:theta'})
         self.assertEqual(shared.parameter_names, ['shared:theta'])
         np.testing.assert_allclose(shared(**{'shared:theta': 0.4}), rotation(0.4) @ rotation(0.4))
@@ -203,7 +203,7 @@ class TestProcess(unittest.TestCase):
         self.assertAlmostEqual(d_shared['shared:theta'], d_indep['Rx:0.theta'] + d_indep['Rx:1.theta'], places=9)
 
         with self.assertRaises(ValueError):
-            Circuit_Process_Matrix_Function_Helper([rotation], gate_labels=['Rx:0'], parameter_names={'Rx:0__phi': 'x'})
+            Circuit_Process_Matrix_Function([rotation], gate_labels=['Rx:0'], parameter_names={'Rx:0__phi': 'x'})
         with self.assertRaises(TypeError):
             shared(**{'Rx:0.theta': 0.4})
 
@@ -214,8 +214,8 @@ class TestProcess(unittest.TestCase):
             calls.append(theta)
             return np.kron(Unitary.R(0., theta), Unitary.R(0., theta).conj())
         cache = GateProcessMatrixCache()
-        first = Circuit_Process_Matrix_Function_Helper([rotation], gate_cache=cache)
-        second = Circuit_Process_Matrix_Function_Helper([rotation, rotation, rotation], gate_cache=cache)
+        first = Circuit_Process_Matrix_Function([rotation], gate_cache=cache)
+        second = Circuit_Process_Matrix_Function([rotation, rotation, rotation], gate_cache=cache)
         first(rotation__theta=0.2)
         second(rotation__theta=0.2)
         self.assertEqual(len(calls), 1)

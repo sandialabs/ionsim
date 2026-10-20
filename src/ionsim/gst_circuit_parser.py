@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from pathlib import Path 
 import re
 
-__all__ = ['CircuitData', 'GstGate', 'GstCircuit', 'IDLE_LABEL', 'IDLE_ALIASES', 'gate_from_label', 'canonical_gate_label',
+__all__ = ['CircuitData', 'GstGate', 'GstCircuit', 'IDLE_LABEL', 'IDLE_ALIASES', 'gst_gate_from_label', 'canonical_gate_label',
            'parse_circuit_string', 'parse_measurement_outcome_labels', 'parse_circuit_line', 'parse_gst_circuit_file']
 
 # TODO: Handle case where data is time-dependent 
@@ -158,7 +158,7 @@ class GstGate:
         return self.label
 
 
-def gate_from_label(gate: str) -> GstGate:
+def gst_gate_from_label(gate: str) -> GstGate:
     """ Converts a user-specified gate label (string) into a GstGate. Raises TypeError for non-strings. """
     return GstGate.from_string(gate)
 

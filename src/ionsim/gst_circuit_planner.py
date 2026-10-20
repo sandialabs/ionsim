@@ -14,7 +14,7 @@ from ionsim.custom_types import Matrix, Vector
 from ionsim.custom_math import finite_difference_derivatives
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 from ionsim.gate_set_model import GateSetModel, CIRCUIT_NOISE
-from ionsim.gst_circuit_parser import GstCircuit, GstGate, gate_from_label
+from ionsim.gst_circuit_parser import GstCircuit, GstGate, gst_gate_from_label
 
 class GSTCircuitPlanner:
     def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials: list[list[str]] | None=None,
@@ -156,7 +156,7 @@ class GSTCircuitPlanner:
             raise TypeError(f"gate_names must be a list of gate labels, e.g. ['Gxpi2:0', 'Gypi2:0']; received the string {gate_names!r}.")
         self.gate_lookup = {}
         for name in gate_names:
-            gate = gate_from_label(name)
+            gate = gst_gate_from_label(name)
             if gate.label in self.gate_lookup:
                 raise ValueError(f"Gate {name!r} appears more than once in gate_names.")
             for q in gate.qubits:
@@ -297,7 +297,7 @@ class GSTCircuitPlanner:
         X_pi2 = f'Gxpi2:{qubit}'
         Y_pi2 = f'Gypi2:{qubit}'
 
-        has_idle = any(gate_from_label(name).is_idle for name in gate_names)
+        has_idle = any(gst_gate_from_label(name).is_idle for name in gate_names)
         if has_idle:
             germs = [ [X_pi2], [Y_pi2], ['idle'], [X_pi2, Y_pi2], [X_pi2, X_pi2, Y_pi2] ]
         else:
@@ -310,7 +310,7 @@ class GSTCircuitPlanner:
         X_pi2 = 'Gxpi2:0'
         Y_pi2 = 'Gypi2:0'
         idle = 'idle'
-        gate_names = [gate_from_label(name).label for name in gate_names]
+        gate_names = [gst_gate_from_label(name).label for name in gate_names]
 
         # Generate comprehensive candidate set
         candidates = []
@@ -385,7 +385,7 @@ class GSTCircuitPlanner:
 
             The idle gate ('idle' or '[]') is always permitted.
         """
-        gate = gate_from_label(label)
+        gate = gst_gate_from_label(label)
         if gate.is_idle or gate.label in self.gate_lookup:
             return self.gate_lookup.get(gate.label, gate)
         raise ValueError(f"Gate {label!r} is not in the planner's default gate set {self.gate_names}.")

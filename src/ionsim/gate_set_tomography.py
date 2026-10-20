@@ -56,7 +56,7 @@ import warnings
 
 from ionsim.process import Gate
 from ionsim.basis import StandardBasis
-from ionsim.gst_circuit_parser import GstGate, GstCircuit, CircuitData, gate_from_label
+from ionsim.gst_circuit_parser import GstGate, GstCircuit, CircuitData, gst_gate_from_label
 from ionsim.gate_set_model import GateSetModel
 from ionsim.ionsim_error import IonSimError
 from ionsim.custom_types import Vector, Matrix
@@ -256,7 +256,7 @@ def _internal_gate_set(gate_set_model: GateSetModel, values: Vector | dict | Non
         elif key == 'POVM':
             internal['POVM'] = {outcome: _as_superbra(effect) for outcome, effect in value.items()}
         else:
-            gate = gate_from_label(key)
+            gate = gst_gate_from_label(key)
             if gate in internal:
                 raise ValueError(f"Gate {key!r} appears more than once in the {role} gate set.")
             internal[gate] = np.asarray(value)
@@ -711,7 +711,7 @@ class _GstProblem:
         if label == 'POVM':
             modeled_effects = self.gate_set_model.POVM_effect_models(*self.get_parameters(theta, 'POVM'))
             return sum(np.linalg.norm(np.asarray(modeled_effects[outcome]) - effect)**2 for outcome, effect in lgst['estimated_effects'].items())
-        gate = gate_from_label(label)
+        gate = gst_gate_from_label(label)
         M = self.gate_models[gate](*self.get_parameters(theta, gate))
         return np.linalg.norm(M - lgst['gate_estimates'][gate], 'fro')**2
 

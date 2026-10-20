@@ -19,7 +19,7 @@ from typing import Callable
 import numpy as np
 
 from ionsim.custom_types import Vector
-from ionsim.gst_circuit_parser import GstGate, gate_from_label, canonical_gate_label, IDLE_ALIASES
+from ionsim.gst_circuit_parser import GstGate, gst_gate_from_label, canonical_gate_label, IDLE_ALIASES
 from ionsim.ionsim_error import IonSimError
 from ionsim.gate_interpolator import GateInterpolator
 from ionsim.process import Gate
@@ -74,10 +74,10 @@ class GateSetModel:
         self.prep_state_model = prep_state_model
         self.POVM_effect_models = POVM_effect_models
 
-        # Gate models keyed internally by GstGate (users key them by string label)
+        # Set up gate model dictionary, keyed internally by GstGate (users key them by string label)
         self.gate_models = {}
         for key, model in gate_models.items():
-            gate = gate_from_label(key)
+            gate = gst_gate_from_label(key)
             if gate in self.gate_models:
                 raise ValueError(f"Gate {key!r} has more than one model (labels {IDLE_ALIASES} all refer to the idle gate).")
             if not callable(model):
@@ -466,7 +466,7 @@ class GateSetModel:
             With circuit-level noise (add_circuit_noise), this is the nominal gate (no displacement) unless a displacement of the
             noisy argument is given; it is not the noise-averaged gate, which would describe the noise as Markovian.
         """
-        gate = gate if isinstance(gate, GstGate) else gate_from_label(gate)
+        gate = gate if isinstance(gate, GstGate) else gst_gate_from_label(gate)
         return self.gate_models[gate](*self.displaced_model_parameters(theta, gate, displacement))
 
 
@@ -590,7 +590,7 @@ class GateSetModel:
 
     def displaced_model_parameters(self, theta: Vector, gate: str | GstGate, displacement: float=0.) -> Vector:
         """ A gate's arguments at theta, with its circuit-noise argument (if any) displaced by `displacement` """
-        gate = gate if isinstance(gate, GstGate) else gate_from_label(gate)
+        gate = gate if isinstance(gate, GstGate) else gst_gate_from_label(gate)
         arguments = self.model_parameters(theta, gate)
         if displacement != 0.:
             position = None if self._circuit_noise is None else self._circuit_noise['argument_positions'].get(gate)
@@ -616,7 +616,7 @@ class GateSetModel:
     def _gate_key(self, gate: str) -> GstGate:
         if isinstance(gate, GstGate):
             raise TypeError(f"Specify gates by string label (e.g. {gate.label!r}) rather than GstGate objects.")
-        key = gate_from_label(gate)
+        key = gst_gate_from_label(gate)
         if key not in self.gate_models:
             raise ValueError(f"No model for gate {gate!r}. Gate models: {[g.label for g in self.gate_models]}.")
         return key
