@@ -11,7 +11,7 @@ import unittest
 
 import numpy as np
 
-from ionsim.process import Gate, Circuit, Circuit_Process_Matrix_Function_Helper, GateProcessMatrixCache
+from ionsim.process import Gate, Circuit, Circuit_Process_Matrix_Function, GateProcessMatrixCache
 from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis
 from ionsim.named_operators import Unitary, Pauli

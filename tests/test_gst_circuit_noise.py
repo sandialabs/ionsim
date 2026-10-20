@@ -234,7 +234,7 @@ class TestCircuitNoise(unittest.TestCase):
 
     ### Fisher information and fits ###
     def test_planner_fisher_information_matches_likelihood(self):
-        """ The planner's Fisher information (Circuit_Process_Matrix_Function_Helper with the noise) equals the Fisher
+        """ The planner's Fisher information (Circuit_Process_Matrix_Function with the noise) equals the Fisher
             information of the GST likelihood's probabilities (finite differences), including for the noise width """
         model = self.gate_set_model(gaussian_noise(n_points=21, half_width=5.), bounds=(1e-4, 1.))
         planner = GSTCircuitPlanner([X, Y, IDLE], [0], prep_fiducials=[[]], measure_fiducials=[[]], germs=[[X]], germ_powers=[1],
