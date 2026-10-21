@@ -1,11 +1,12 @@
 """ Gate set tomography (GST) analysis.
 
-    The analysis is a set of functions. Each takes the GST circuits (with measurement data), a GateSetModel (the models of
+    The analysis is called by a set of "solve" functions. Each takes the GST circuits (with measurement data), a GateSetModel (the models of
     the prep, POVM, and gates, and their parameters), and any options explicitly, and returns its results:
 
-        lin  = linear_solve_for_gate_parameters(gst_circuits, gate_set_model, circuit_design, target=ideal_values)
-        fit  = mle_solve_for_gate_parameters(gst_circuits, gate_set_model, initial_guess=lin.theta)
-        errs = gate_set_errors(gate_set_model, fit.theta, reference=true_values)
+    For example:
+        lin_results = linear_solve_for_gate_parameters(gst_circuits, gate_set_model, circuit_design, target=ideal_values)
+        mle_results = mle_solve_for_gate_parameters(gst_circuits, gate_set_model, initial_guess=lin_results.theta)
+        errs = gate_set_errors(gate_set_model, mle_results.theta, reference=true_values)
 
     Studies (e.g. of the number of shots or of circuit depth) loop over these with simulate_gst_data():
 
@@ -30,11 +31,11 @@
     dimensionless variables x = theta / s, one scale s per parameter, rather than on theta itself. Physical parameters often
     span many orders of magnitude (e.g. an error probability ~1e-3 and a rate ~1e3 1/s); on theta, L-BFGS-B's absolute
     finite-difference step, gradient tolerance, and quasi-Newton updates treat every coordinate alike, so large-valued
-    parameters can stop near their initial guesses while the solver reports success. The scaling is internal: every theta
+    parameters can stop near their initial guesses while the solver reports success. The scaling is internal, so every theta
     passed in or returned (initial guesses, results, stage estimates, optimizer_result.x) is in physical units.
 
     A dimensionless fit combines:
-    - Adaptive scales: the first L-BFGS-B run uses the initial scales (resolve_parameter_scale: by default |initial guess|);
+    - Adaptive scales: the first L-BFGS-B run uses the initial scales (parse_parameter_scalings: by default |initial guess|);
       each run is then restarted from its result with s = |theta| (the initial scale for parameters below SCALE_FLOOR of
       it, e.g. at 0) until a restart no longer improves the objective (max_restarts). This makes the scaling insensitive to
       initial guesses that are off by orders of magnitude, and clears L-BFGS-B's curvature memory, which otherwise can stop
@@ -64,7 +65,7 @@ from ionsim.custom_types import Vector, Matrix
 from ionsim.io import write_results_to_file
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
-__all__ = ['GstResult', 'resolve_parameter_scale', 'linear_solve_for_gate_parameters', 'mle_solve_for_gate_parameters',
+__all__ = ['GstResult', 'parse_parameter_scalings', 'linear_solve_for_gate_parameters', 'mle_solve_for_gate_parameters',
            'staged_mle_solve_for_gate_parameters',
            'log_likelihood', 'chi_squared', 'simulate_gst_data', 'gate_set_errors', 'average_gate_set_error',
            'average_gate_set_error_uncertainty', 'parameter_squared_errors', 'write_gate_set_results']
@@ -92,7 +93,7 @@ class GstResult:
         - lgst_estimates: linear GST estimates, e.g. 'gate_estimates' (keyed by gate label), 'gram_matrix' (linear GST)
         - gauge_iterations: number of re-gauging passes after the first linear GST fit (linear GST)
         - negative_log_likelihood_history: objective value at each evaluation (MLE solvers)
-        - parameter_scale: with dimensionless_fit, the scale s of each parameter in the optimizer's last run (x = theta / s);
+        - parameter_scales: with dimensionless_fit, the scale s of each parameter in the optimizer's last run (x = theta / s);
             None otherwise. In optimizer_result, x and jac are in physical units; hess_inv refers to the scaled variables x.
     """
     theta: np.ndarray
@@ -107,7 +108,7 @@ class GstResult:
     lgst_estimates: dict | None = None
     gauge_iterations: int | None = None
     negative_log_likelihood_history: list = field(default_factory=list)
-    parameter_scale: np.ndarray | None = None
+    parameter_scales: np.ndarray | None = None
 
     @property
     def parameter_values(self) -> dict:
@@ -126,9 +127,9 @@ RESTART_TOLERANCE = 1e-10    # relative objective improvement below which L-BFGS
 LIKELIHOOD_TOLERANCE = 1e-5  # default absolute tolerance on the log-likelihood for dimensionless MLE (a change of 0.5 is ~1 sigma)
 
 
-def resolve_parameter_scale(gate_set_model: GateSetModel, parameter_scale: str | Vector | dict='auto') -> np.ndarray:
-    """ The initial scale s of each parameter (theta order) for dimensionless fits, which run on x = theta / s. Later
-        L-BFGS-B runs use |theta| at their start (s where |theta| < SCALE_FLOOR * s); see the module docstring.
+def parse_parameter_scalings(gate_set_model: GateSetModel, parameter_scales: str | Vector | dict='auto') -> Vector: 
+    """ Parsing of user input for the initial scale s of each parameter (theta order) for dimensionless fits, which run on x = theta / s. 
+        Later L-BFGS-B runs use |theta| at their start (s where |theta| < SCALE_FLOOR * s); see the module docstring.
 
         - 'auto' (default): s = |initial guess| (the guesses given to specify_parameter, not a per-solve starting point, so the
             scale does not depend on e.g. a linear GST estimate that lands near zero). Where a guess is 0, s = the width of the
@@ -146,19 +147,19 @@ def resolve_parameter_scale(gate_set_model: GateSetModel, parameter_scale: str |
         if auto[i] == 0.:
             finite_width = lo is not None and hi is not None and np.isfinite(lo) and np.isfinite(hi) and hi > lo
             auto[i] = (hi - lo) if finite_width else 1.
-    if isinstance(parameter_scale, str):
-        if parameter_scale != 'auto':
-            raise ValueError(f"parameter_scale must be 'auto', a vector, or a dictionary; received {parameter_scale!r}.")
+    if isinstance(parameter_scales, str):
+        if parameter_scales != 'auto':
+            raise ValueError(f"parameter_scales must be 'auto', a vector, or a dictionary; received {parameter_scales!r}.")
         scale = auto
-    elif isinstance(parameter_scale, dict):
-        unknown = set(parameter_scale) - set(names)
+    elif isinstance(parameter_scales, dict):
+        unknown = set(parameter_scales) - set(names)
         if unknown:
-            raise ValueError(f"parameter_scale has unknown parameters {sorted(unknown)}. Parameters: {names}.")
-        scale = np.array([parameter_scale.get(name, a) for name, a in zip(names, auto)], dtype=float)
+            raise ValueError(f"parameter_scales has unknown parameters {sorted(unknown)}. Parameters: {names}.")
+        scale = np.array([parameter_scales.get(name, a) for name, a in zip(names, auto)], dtype=float)
     else:
-        scale = np.asarray(parameter_scale, dtype=float)
+        scale = np.asarray(parameter_scales, dtype=float)
         if scale.shape != (len(names),):
-            raise ValueError(f"parameter_scale must have one entry per parameter ({len(names)}); received shape {scale.shape}.")
+            raise ValueError(f"parameter_scales must have one entry per parameter ({len(names)}); received shape {scale.shape}.")
     if not np.all(np.isfinite(scale)) or np.any(scale <= 0.):
         raise ValueError(f"Parameter scales must be finite and positive; received {dict(zip(names, scale))}.")
     return scale
@@ -230,7 +231,7 @@ class _GstProblem:
         holds no results between calls. """
 
     def __init__(self, gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, verbose: bool=False, exact_models: bool=False,
-                 dimensionless_fit: bool=False, parameter_scale: str | Vector | dict='auto', finite_differences: str='forward',
+                 dimensionless_fit: bool=False, parameter_scales: str | Vector | dict='auto', finite_differences: str='forward',
                  max_restarts: int=5, likelihood_tolerance: float=LIKELIHOOD_TOLERANCE):
         if not isinstance(gate_set_model, GateSetModel):
             raise TypeError(f"gate_set_model must be a GateSetModel object; received {type(gate_set_model).__name__}.")
@@ -266,16 +267,16 @@ class _GstProblem:
         self.dimensionless_fit = bool(dimensionless_fit)
         if not self.dimensionless_fit:
             changed = [name for name, is_default in [
-                ('parameter_scale', isinstance(parameter_scale, str) and parameter_scale == 'auto'),
+                ('parameter_scales', isinstance(parameter_scales, str) and parameter_scales == 'auto'),
                 ('finite_differences', finite_differences == 'forward'),
                 ('max_restarts', isinstance(max_restarts, (int, np.integer)) and max_restarts == 5),
                 ('likelihood_tolerance', likelihood_tolerance == LIKELIHOOD_TOLERANCE)] if not is_default]
             if changed:
                 raise ValueError(f"{changed} only apply with dimensionless_fit=True.")
-            self.parameter_scale = None
+            self.parameter_scales = None
             self.last_scale = None
             return
-        self.parameter_scale = resolve_parameter_scale(gate_set_model, parameter_scale)
+        self.parameter_scales = parse_parameter_scalings(gate_set_model, parameter_scales)
         if finite_differences not in ('forward', 'central'):
             raise ValueError(f"finite_differences must be 'forward' or 'central'; received {finite_differences!r}.")
         self.finite_differences = finite_differences
@@ -285,15 +286,15 @@ class _GstProblem:
         if not likelihood_tolerance > 0.:
             raise ValueError(f"likelihood_tolerance must be positive; received {likelihood_tolerance!r}.")
         self.likelihood_tolerance = float(likelihood_tolerance)
-        self.scale_floor = SCALE_FLOOR * self.parameter_scale
-        self.last_scale = self.parameter_scale.copy()          # scales of the most recent L-BFGS-B run (in GstResult)
+        self.scale_floor = SCALE_FLOOR * self.parameter_scales
+        self.last_scale = self.parameter_scales.copy()          # scales of the most recent L-BFGS-B run (in GstResult)
 
     ### Parameter scaling (dimensionless fits) ###
-    def scale_at(self, theta: Vector) -> np.ndarray:
+    def scale_at(self, theta: Vector) -> Vector: 
         """ Scales for a dimensionless L-BFGS-B run starting at theta: |theta| where |theta| >= SCALE_FLOOR times the initial
             scale, and the initial scale for parameters at or near 0 """
         magnitude = np.abs(np.asarray(theta, dtype=float))
-        return np.where(magnitude >= self.scale_floor, magnitude, self.parameter_scale)
+        return np.where(magnitude >= self.scale_floor, magnitude, self.parameter_scales)
 
     @staticmethod
     def internal_bounds(bounds: list | None, scale: np.ndarray, indices: list[int]) -> list | None:
@@ -705,7 +706,7 @@ def _build_gst_result(problem: _GstProblem, theta: Vector, method: str, theta_0:
     return GstResult(theta=np.array(theta, dtype=float), parameter_names=problem.gate_set_model.parameter_names, method=method,
                      log_likelihood=log_likelihood, initial_guess=np.array(theta_0, dtype=float),
                      negative_log_likelihood_history=history,
-                     parameter_scale=None if problem.last_scale is None else problem.last_scale.copy(), **fields)
+                     parameter_scales=None if problem.last_scale is None else problem.last_scale.copy(), **fields)
 
 
 ### Solvers ###
@@ -713,7 +714,7 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
                                      target: Vector | dict | None=None, target_gate_set: dict | None=None,
                                      initial_guess: Vector | dict | None=None, max_gauge_iterations: int=100,
                                      gauge_tolerance: float=1e-6, verbose: bool=False, dimensionless_fit: bool=False,
-                                     parameter_scale: str | Vector | dict='auto', finite_differences: str='forward',
+                                     parameter_scales: str | Vector | dict='auto', finite_differences: str='forward',
                                      max_restarts: int=5, **minimize_kwargs) -> GstResult:
     """ Linear GST (LGST): estimates the gate set from the fiducial circuits by linear inversion, then fits the model parameters
         to those estimates. Uses only the measurement data and the models, so it applies to experimental data.
@@ -736,8 +737,8 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
         - dimensionless_fit: fit dimensionless parameters theta / scale with adaptive scales, relative-step gradients, and (for
             MLE) the log-likelihood ratio objective; see the module docstring. Recommended when parameters span orders of
             magnitude. Results are in physical units either way. The following options apply only with dimensionless_fit:
-            - parameter_scale: initial scales, 'auto' (|initial guess|), a vector, or a {parameter name: scale} dictionary;
-                see resolve_parameter_scale.
+            - parameter_scales: initial scales, 'auto' (|initial guess|), a vector, or a {parameter name: scale} dictionary;
+                see parse_parameter_scalings.
             - finite_differences: 'forward' (n + 1 objective evaluations per gradient) or 'central' (2n + 1, more accurate).
             - max_restarts: maximum number of L-BFGS-B restarts with scales updated to the current estimate.
         - minimize_kwargs: passed to scipy.optimize.minimize (L-BFGS-B) for the model fits (with dimensionless_fit, options
@@ -751,7 +752,7 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
         raise NotImplementedError("Linear GST does not support circuit-level noise (GateSetModel.add_circuit_noise): LGST "
                                   "estimates noise-averaged gates. Use mle_solve_for_gate_parameters or "
                                   "staged_mle_solve_for_gate_parameters.")
-    problem = _GstProblem(gst_circuits, gate_set_model, verbose, parameter_scale=parameter_scale,
+    problem = _GstProblem(gst_circuits, gate_set_model, verbose, parameter_scales=parameter_scales,
                           dimensionless_fit=dimensionless_fit, finite_differences=finite_differences,
                           max_restarts=max_restarts)
     prep_fiducials = [tuple(fid) for fid in circuit_design.prep_fiducials]
@@ -799,7 +800,7 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
 
 def mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel,
                                   initial_guess: Vector | dict | None=None, verbose: bool=False, dimensionless_fit: bool=False,
-                                  parameter_scale: str | Vector | dict='auto', finite_differences: str='forward',
+                                  parameter_scales: str | Vector | dict='auto', finite_differences: str='forward',
                                   max_restarts: int=5, likelihood_tolerance: float=LIKELIHOOD_TOLERANCE,
                                   **minimize_kwargs) -> GstResult:
     """ Maximum likelihood estimation (MLE): finds the parameters that maximize the likelihood of the data over all circuits,
@@ -816,8 +817,8 @@ def mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model
         - dimensionless_fit: fit dimensionless parameters theta / scale with adaptive scales, relative-step gradients, and (for
             MLE) the log-likelihood ratio objective; see the module docstring. Recommended when parameters span orders of
             magnitude. Results are in physical units either way. The following options apply only with dimensionless_fit:
-            - parameter_scale: initial scales, 'auto' (|initial guess|), a vector, or a {parameter name: scale} dictionary;
-                see resolve_parameter_scale.
+            - parameter_scales: initial scales, 'auto' (|initial guess|), a vector, or a {parameter name: scale} dictionary;
+                see parse_parameter_scalings.
             - finite_differences: 'forward' (n + 1 objective evaluations per gradient) or 'central' (2n + 1, more accurate).
             - max_restarts: maximum number of L-BFGS-B restarts with scales updated to the current estimate.
             - likelihood_tolerance: absolute log-likelihood tolerance (MLE solvers): stop when an iteration, or a restart,
@@ -827,22 +828,22 @@ def mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model
 
         Returns a GstResult (the scipy result is in result.optimizer_result).
     """
-    problem = _GstProblem(gst_circuits, gate_set_model, verbose, parameter_scale=parameter_scale,
+    problem = _GstProblem(gst_circuits, gate_set_model, verbose, parameter_scales=parameter_scales,
                           dimensionless_fit=dimensionless_fit, finite_differences=finite_differences,
                           max_restarts=max_restarts, likelihood_tolerance=likelihood_tolerance)
     theta_0 = problem.parse_initial_guess(initial_guess)
     # Tabulate the circuits' current data once; every objective evaluation reuses it
-    data = problem.tabulate(problem.gst_circuits)
-    theta, solver_result = problem.minimize(problem.mle_objective(data), theta_0, objective_tolerance=problem.mle_tolerance,
+    circuit_outcomes = problem.tabulate(problem.gst_circuits)
+    theta, solver_result = problem.minimize(problem.mle_objective(circuit_outcomes), theta_0, objective_tolerance=problem.mle_tolerance,
                                             **minimize_kwargs)
-    return _build_gst_result(problem, theta, 'MLE', theta_0, data, success=bool(solver_result.success),
+    return _build_gst_result(problem, theta, 'MLE', theta_0, circuit_outcomes, success=bool(solver_result.success),
                        message=str(solver_result.message), optimizer_result=solver_result)
 
 
 def staged_mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel,
                                          initial_guess: Vector | dict | None=None, organize_circuits_by_germ_power: bool=True,
                                          verbose: bool=False, dimensionless_fit: bool=False,
-                                         parameter_scale: str | Vector | dict='auto', finite_differences: str='forward',
+                                         parameter_scales: str | Vector | dict='auto', finite_differences: str='forward',
                                          max_restarts: int=5, likelihood_tolerance: float=LIKELIHOOD_TOLERANCE,
                                          **minimize_kwargs) -> GstResult:
     """ Staged MLE: maximum likelihood estimation on cumulative batches of circuits of increasing depth, each stage starting
@@ -853,8 +854,8 @@ def staged_mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_se
         - dimensionless_fit: fit dimensionless parameters theta / scale with adaptive scales, relative-step gradients, and (for
             MLE) the log-likelihood ratio objective; see the module docstring. Recommended when parameters span orders of
             magnitude. Results are in physical units either way. The following options apply only with dimensionless_fit:
-            - parameter_scale: initial scales, 'auto' (|initial guess|), a vector, or a {parameter name: scale} dictionary;
-                see resolve_parameter_scale.
+            - parameter_scales: initial scales, 'auto' (|initial guess|), a vector, or a {parameter name: scale} dictionary;
+                see parse_parameter_scalings.
             - finite_differences: 'forward' (n + 1 objective evaluations per gradient) or 'central' (2n + 1, more accurate).
             - max_restarts: maximum number of L-BFGS-B restarts with scales updated to the current estimate.
             - likelihood_tolerance: absolute log-likelihood tolerance (MLE solvers): stop when an iteration, or a restart,
@@ -864,7 +865,7 @@ def staged_mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_se
 
         Returns a GstResult from the final stage; result.stage_estimates holds the estimate after each stage, keyed by depth.
     """
-    problem = _GstProblem(gst_circuits, gate_set_model, verbose, parameter_scale=parameter_scale,
+    problem = _GstProblem(gst_circuits, gate_set_model, verbose, parameter_scales=parameter_scales,
                           dimensionless_fit=dimensionless_fit, finite_differences=finite_differences,
                           max_restarts=max_restarts, likelihood_tolerance=likelihood_tolerance)
     theta_0 = problem.parse_initial_guess(initial_guess)
@@ -878,16 +879,16 @@ def staged_mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_se
     theta = theta_0
     for stage, L in enumerate(sorted_depths):
         cumulative_circuits.extend(circuit_groups[L])
-        data = problem.tabulate(cumulative_circuits)
+        circuit_outcomes = problem.tabulate(cumulative_circuits)
         # I found that using log likelihood for all stages gave faster and likely better results
-        theta, solver_result = problem.minimize(problem.mle_objective(data), theta, objective_tolerance=problem.mle_tolerance,
+        theta, solver_result = problem.minimize(problem.mle_objective(circuit_outcomes), theta, objective_tolerance=problem.mle_tolerance,
                                                 **minimize_kwargs)
         stage_estimates[L] = theta.copy()
         if verbose:
             print(f"    Stage {stage + 1} (L <= {L}): {len(cumulative_circuits)} circuits, "
                   f"LL = {-solver_result.fun:.3f}, converged = {solver_result.success}")
 
-    return _build_gst_result(problem, theta, 'staged MLE', theta_0, data, success=bool(solver_result.success),
+    return _build_gst_result(problem, theta, 'staged MLE', theta_0, circuit_outcomes, success=bool(solver_result.success),
                        message=str(solver_result.message), optimizer_result=solver_result, stage_estimates=stage_estimates)
 
 
@@ -916,10 +917,10 @@ def simulate_gst_data(gst_circuits: list[GstCircuit], gate_set_model: GateSetMod
     """
     rng = np.random.default_rng(rng)
     problem = _GstProblem(gst_circuits, gate_set_model, exact_models=True)   # simulate from the exact models
-    data = problem.tabulate(problem.gst_circuits, require_data=False)
-    probabilities = problem.predict_sequence_probabilities(gate_set_model.parse_theta(theta), data.sequences)
+    circuit_outcomes = problem.tabulate(problem.gst_circuits, require_data=False)
+    probabilities = problem.predict_sequence_probabilities(gate_set_model.parse_theta(theta), circuit_outcomes.sequences)
     simulated = []
-    for circ, k in zip(problem.gst_circuits, data.sequence_index):
+    for circ, k in zip(problem.gst_circuits, circuit_outcomes.sequence_index):
         p = probabilities[k] / probabilities[k].sum()
         counts = rng.multinomial(N_shots, p)
         simulated.append(replace(circ, measurement_data = CircuitData.from_counts(dict(zip(problem.outcome_labels, counts)))))
