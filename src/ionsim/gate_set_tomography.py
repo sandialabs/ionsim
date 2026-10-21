@@ -39,8 +39,9 @@
       it, e.g. at 0) until a restart no longer improves the objective (max_restarts). This makes the scaling insensitive to
       initial guesses that are off by orders of magnitude, and clears L-BFGS-B's curvature memory, which otherwise can stop
       runs early.
-    - Gradients by finite differences on x with relative steps h = r * max(|x|, 1) (finite_differences='forward' or
-      'central'), rather than L-BFGS-B's built-in absolute step of 1e-8, which is lost in round-off for large |x|.
+    - Gradients by finite differences on x with relative steps h = r * max(|x|, 1) (scipy's jac='2-point' for
+      finite_differences='forward', '3-point' for 'central'; one-sided at the bounds), rather than L-BFGS-B's default
+      absolute step of 1e-8, which is lost in round-off for large |x|.
     - For the MLE solvers, the objective log L_sat - log L(theta) >= 0 (the log-likelihood ratio to the saturated model):
       the same minimizer as -log L, with a value of order the number of circuits, so that L-BFGS-B's relative stopping
       tolerance (ftol) refers to meaningful changes rather than to the large absolute value of log L.
@@ -62,8 +63,6 @@ from ionsim.ionsim_error import IonSimError
 from ionsim.custom_types import Vector, Matrix
 from ionsim.io import write_results_to_file
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
-from ionsim.custom_math import relative_step_gradient
-
 
 __all__ = ['GstResult', 'resolve_parameter_scale', 'linear_solve_for_gate_parameters', 'mle_solve_for_gate_parameters',
            'staged_mle_solve_for_gate_parameters',
@@ -322,9 +321,9 @@ class _GstProblem:
 
             Dimensionless fit: each run uses the scales s = self.scale_at(start), and is restarted from its result (with the
             scales updated to it) until a restart improves the objective by less than objective_tolerance (or, without one,
-            RESTART_TOLERANCE times max(1, |objective|)), at most self.max_restarts times. Gradients are finite differences
-            with relative steps on x, 'forward' (n + 1 objective evaluations per gradient) or 'central' (2n + 1); see
-            relative_step_gradient from custom math.
+            RESTART_TOLERANCE times max(1, |objective|)), at most self.max_restarts times. Gradients are scipy's finite
+            differences with relative steps on x (jac='2-point' for 'forward', n + 1 objective evaluations per gradient;
+            '3-point' for 'central', 2n + 1); options['finite_diff_rel_step'] in minimize_kwargs overrides the step.
 
             Returns (theta, result): the optimized full theta in physical units, and the scipy result of the run that produced
             theta (a final restart that does not improve the objective only confirms it), with x and jac in physical units.
@@ -366,7 +365,8 @@ class _GstProblem:
             x_bounds = self.internal_bounds(bounds, scale, free)
             f_x = lambda x, full_theta=full_theta: objective(full_theta(x))
             x0 = theta[free] / scale[free]
-            fun_and_grad = relative_step_gradient(f_x, x_bounds, central=(self.finite_differences == 'central'))
+            # scipy's relative-step finite differences, h = r * max(|x|, 1), one-sided at the bounds
+            scheme = '3-point' if self.finite_differences == 'central' else '2-point'
             run_kwargs = minimize_kwargs
             if objective_tolerance is not None and 'ftol' not in minimize_kwargs.get('options', {}):
                 # L-BFGS-B's ftol is relative to max(|f|, 1); |f| only decreases during the run, so this bounds the absolute
@@ -374,7 +374,7 @@ class _GstProblem:
                 run_kwargs = dict(minimize_kwargs)
                 run_kwargs['options'] = dict(minimize_kwargs.get('options', {}),
                                              ftol=objective_tolerance / max(1., abs(f_previous)))
-            result = opt.minimize(fun_and_grad, x0, jac=True, method='L-BFGS-B', bounds=x_bounds, **run_kwargs)
+            result = opt.minimize(f_x, x0, jac=scheme, method='L-BFGS-B', bounds=x_bounds, **run_kwargs)
             total_nit += result.nit
             total_nfev += result.nfev
             improvement = f_previous - result.fun
