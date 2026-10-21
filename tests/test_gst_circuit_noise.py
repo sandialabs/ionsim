@@ -25,7 +25,8 @@ from ionsim.gate_set_model import GateSetModel, CIRCUIT_NOISE
 from ionsim.gst_circuit_planner import GSTCircuitPlanner
 from ionsim.gst_circuit_parser import GstCircuit
 from ionsim.gate_set_tomography import (_GstProblem, simulate_gst_data, staged_mle_solve_for_gate_parameters, log_likelihood,
-                                        linear_solve_for_gate_parameters, parameter_squared_errors, gate_set_errors)
+                                        linear_solve_for_gate_parameters, parameter_squared_errors, gate_set_errors,
+                                        parse_parameter_scalings)
 
 X, Y, IDLE = 'Gxpi2:0', 'Gypi2:0', 'idle'
 SIGMA = 'amplitude_offset_noise_standard_deviation'
@@ -279,6 +280,25 @@ class TestCircuitNoise(unittest.TestCase):
         # gate set errors compare the nominal gates
         errors = gate_set_errors(model, fit.theta, reference=self.true_values)
         self.assertAlmostEqual(errors[X], np.linalg.norm(model.gate_process_matrix(X, fit.theta) - model.gate_process_matrix(X, truth)), places=14)
+
+    def test_parameter_scales(self):
+        """ Initial scales for dimensionless fits: |initial guess| by default, user scales by name or vector, and a warned
+            fallback (bound width, or 1) for parameters whose guess is 0 """
+        model = self.gate_set_model()         # amplitude_offset has guess 0 and bounds (-0.2, 0.2)
+        names = model.parameter_names
+        offset = names.index('shared:amplitude_offset')
+        expected = np.abs(np.asarray(model.initial_guess, dtype=float))
+        expected[offset] = 0.4
+
+        with self.assertRaises(ValueError):   # unknown name
+            parse_parameter_scalings(model, {'not_a_parameter': 1.})
+        with self.assertRaises(ValueError):   # wrong length
+            parse_parameter_scalings(model, [1.])
+        with self.assertRaises(ValueError):   # non-positive
+            parse_parameter_scalings(model, {'shared:amplitude_offset': 0.})
+        circuits = self.circuits([[X]])
+        with self.assertRaises(ValueError):   # scales without dimensionless_fit
+            _GstProblem(circuits, model, parameter_scales={'shared:amplitude_offset': 1e-3})
 
     def test_linear_gst_is_not_supported(self):
         model = self.gate_set_model(gaussian_noise())
