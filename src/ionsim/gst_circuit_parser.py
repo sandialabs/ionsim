@@ -6,8 +6,14 @@ import re
 __all__ = ['CircuitData', 'GstGate', 'GstCircuit', 'IDLE_LABEL', 'IDLE_ALIASES', 'gst_gate_from_label', 'canonical_gate_label',
            'parse_circuit_string', 'parse_measurement_outcome_labels', 'parse_circuit_line', 'parse_gst_circuit_file']
 
-# TODO: Handle case where data is time-dependent 
-@dataclass()
+def timestamped_shots_to_counts(timestamped_shots: list[tuple[float,str]]) -> dict:
+    """ Time-average single shots into counts (discards time information). """
+    counts = {}
+    # Loop through times and incriment the count of each outcome
+    for _, outcome in timestamped_shots:
+        counts[outcome] = counts.get(outcome, 0) + 1
+    return counts
+
 class CircuitData:
     """ Circuit experiment data either in the form of counts or single-shots with timestamps. 
 
@@ -15,9 +21,12 @@ class CircuitData:
         - (single) shots: [ (t0, '0') , (t1, '0'), (t2, '1'), ... (t_i, 'outcome') , ... ]
             where t_i are floats representing the time of the measurement. 
     """
+    def __init__(self, counts: dict[str, int] | None=None, timestamped_shots: list[tuple[float, str]] | None=None):
+        self.counts = counts 
+        self.timestamped_shots = timestamped_shots 
 
-    counts: dict[str, int] | None=None
-    timestamped_shots: list[tuple[float, str]] | None=None
+    #_counts: dict[str, int] | None=None
+    #_timestamped_shots: list[tuple[float, str]] | None=None
 
     @property
     def total_counts(self):
@@ -25,25 +34,14 @@ class CircuitData:
             return sum(self.counts.values()) 
         return len(self.timestamped_shots)
 
-    @staticmethod
-    def from_counts(counts):
-        return CircuitData(counts=counts, timestamped_shots = None)
+    @classmethod
+    def from_counts(cls, counts: dict[str, int]):
+        return cls(counts=counts, timestamped_shots = None)
 
-    @staticmethod
-    def from_timestamped_shots(single_shot_data):
-        return CircuitData(timestamped_shots = single_shot_data) 
-
-
-    def to_counts(self) -> dict:
-        """ Time-average single shots into counts (discards time information). """
-        if self.counts is not None:
-            return self.counts
-
-        c = {}
-        # Loop through times and incriment the count of each outcome
-        for _, outcome in self.timestamped_shots:
-            c[outcome] = c.get(outcome, 0) + 1
-        return c
+    @classmethod
+    def from_single_shots(cls, single_shot_data: list[tuple[float,str]]):
+        counts = timestamped_shots_to_counts(single_shot_data)
+        return cls(counts, single_shot_data) 
 
     def time_binned(self, bin_edges: list[float]):
         """ Bin the single-shot data into windows of time. Bin edges is a list of time points defining the N-1 bins. 
