@@ -579,9 +579,6 @@ class _GstProblem:
         # 1. Build the Gram matrix: <<F_i|F_j>> from the circuits' current data
         frequencies = self.tabulate(self.gst_circuits).frequencies_by_sequence(self.outcome_labels)
         gram_matrix = self.build_probability_matrix(frequencies, prep_fiducials, measure_fiducials)
-        gram_matrix_det = np.linalg.det(gram_matrix)
-        if np.abs(gram_matrix_det) < 1E-12:
-            raise ValueError(f"Gram matrix is not invertible, determinant = {gram_matrix_det}")
 
         # 2. Compute SVD to get projector to linear-independent subspace
         U, S, Vh = np.linalg.svd(gram_matrix)
