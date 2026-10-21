@@ -19,6 +19,7 @@ from ionsim.noise import Noise
 from ionsim.operator import EnergyShiftOperator, CouplingOperator
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.state import State 
+from ionsim.testing import assert_array_close
 
 class TestProcess(unittest.TestCase):
 
@@ -41,6 +42,27 @@ class TestProcess(unittest.TestCase):
         self.noisy_theta_gate = Gate.from_unitary_function(
             self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.theta_noise,
         )
+
+    def test_R_hamiltonian_matches_unitary(self):
+        """ Test that R hamiltonian produces a unitary evolution operator that matches expected value """ 
+        basis = StandardBasis([self.spin_a])  # 00, 01, 10, 11 
+
+        rabi_rate = 100e3 * 2 * np.pi  # rad./s
+        omega = self.spin_a.energy_levels[1].energy - self.spin_a.energy_levels[0].energy
+        static_operator = (rabi_rate / 2) * Pauli.plus
+        theta = np.pi/16.
+        duration = theta/rabi_rate
+
+        operator_a = CouplingOperator.from_matrix(basis, static_operator, omega) 
+        
+        interaction_frame_energies = [-1 * state.energy for state in basis.states]
+        hamiltonian = Hamiltonian(basis, [operator_a], interaction_frame_energies, sparse=False)
+        X_pi16_gate = Gate.from_hamiltonian(basis, hamiltonian, duration)
+        
+        # Check R gate unitary matrix form  
+        X_pi16_ref = Unitary.R(0., theta) 
+        assert_array_close(X_pi16_ref, X_pi16_gate.unitary, rtol=1e-6, atol=1e-6) # we expect agreement up to numerical timestep error and precision  
+
 
     def test_noisy_phi_gate_process_fidelity(self):
         """Test the process fidelity of the noisy phi gate."""
@@ -127,8 +149,7 @@ class TestProcess(unittest.TestCase):
 
         # Process fidelity 
         X_pi16_ref = Unitary.R(0., theta) 
-        global_phase_correction = np.exp(-1j*theta)
-        X_pi16_ref *= global_phase_correction
+
         X_pi16_ref = Gate.from_unitary(reduced_basis, X_pi16_ref, [self.spin_c])
 
         process_fidelity = X_pi16_Raman_gate.compute_process_fidelity(X_pi16_ref.process_matrix)
