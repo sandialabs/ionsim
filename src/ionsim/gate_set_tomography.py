@@ -62,6 +62,7 @@ from ionsim.ionsim_error import IonSimError
 from ionsim.custom_types import Vector, Matrix
 from ionsim.io import write_results_to_file
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
+from ionsim.custom_math import relative_step_gradient
 
 
 __all__ = ['GstResult', 'resolve_parameter_scale', 'linear_solve_for_gate_parameters', 'mle_solve_for_gate_parameters',
@@ -162,39 +163,6 @@ def resolve_parameter_scale(gate_set_model: GateSetModel, parameter_scale: str |
     if not np.all(np.isfinite(scale)) or np.any(scale <= 0.):
         raise ValueError(f"Parameter scales must be finite and positive; received {dict(zip(names, scale))}.")
     return scale
-
-
-def _relative_step_gradient(f: Callable, bounds: list | None, central: bool=False) -> Callable:
-    """ Objective and finite-difference gradient (for scipy.optimize.minimize with jac=True) with relative steps
-        h_i = r * max(|x_i|, 1), one-sided inward at the bounds. Forward differences (n + 1 evaluations, r = sqrt(machine
-        eps)) or central differences (2n + 1 evaluations, r = machine eps^(1/3)).
-
-        On the scaled variables x = theta / s, the floor of 1 is one scale unit, so a parameter at or near 0 still gets a
-        step of r * s in physical units. """
-    eps = np.finfo(float).eps
-    r = eps**(1/3) if central else np.sqrt(eps)
-
-    def fun_and_grad(x):
-        x = np.asarray(x, dtype=float)
-        f0 = f(x)
-        grad = np.empty_like(x)
-        for i in range(len(x)):
-            h = r * max(abs(x[i]), 1.)
-            lo, hi = (None, None) if bounds is None else bounds[i]
-            up_ok = hi is None or x[i] + h <= hi
-            down_ok = lo is None or x[i] - h >= lo
-            if central and up_ok and down_ok:
-                xp, xm = x.copy(), x.copy(); xp[i] += h; xm[i] -= h
-                grad[i] = (f(xp) - f(xm)) / (2*h)
-            elif up_ok:
-                xp = x.copy(); xp[i] += h
-                grad[i] = (f(xp) - f0) / h
-            else:
-                xm = x.copy(); xm[i] -= h
-                grad[i] = (f0 - f(xm)) / h
-        return f0, grad
-
-    return fun_and_grad
 
 
 ### Circuit data ###
@@ -364,7 +332,7 @@ class _GstProblem:
             scales updated to it) until a restart improves the objective by less than objective_tolerance (or, without one,
             RESTART_TOLERANCE times max(1, |objective|)), at most self.max_restarts times. Gradients are finite differences
             with relative steps on x, 'forward' (n + 1 objective evaluations per gradient) or 'central' (2n + 1); see
-            _relative_step_gradient.
+            relative_step_gradient from custom math.
 
             Returns (theta, result): the optimized full theta in physical units, and the scipy result of the run that produced
             theta (a final restart that does not improve the objective only confirms it), with x and jac in physical units.
@@ -406,7 +374,7 @@ class _GstProblem:
             x_bounds = self.internal_bounds(bounds, scale, free)
             f_x = lambda x, full_theta=full_theta: objective(full_theta(x))
             x0 = theta[free] / scale[free]
-            fun_and_grad = _relative_step_gradient(f_x, x_bounds, central=(self.finite_differences == 'central'))
+            fun_and_grad = relative_step_gradient(f_x, x_bounds, central=(self.finite_differences == 'central'))
             run_kwargs = minimize_kwargs
             if objective_tolerance is not None and 'ftol' not in minimize_kwargs.get('options', {}):
                 # L-BFGS-B's ftol is relative to max(|f|, 1); |f| only decreases during the run, so this bounds the absolute
@@ -1017,9 +985,9 @@ def parameter_squared_errors(gate_set_model: GateSetModel, theta: Vector | dict,
             initial guesses).
         - relative: if True, ((theta_i - reference_i) / reference_i)^2 (nan where reference_i = 0).
     """
-    estimate = gate_set_model.parse_theta(theta)
+    parameter_estimate = gate_set_model.parse_theta(theta)
     reference = gate_set_model.parse_theta(reference)
-    squared = (estimate - reference)**2
+    squared = (parameter_estimate - reference)**2
     if relative_error:
         with np.errstate(divide='ignore', invalid='ignore'):
             squared = np.where(reference != 0., squared / reference**2, np.nan)

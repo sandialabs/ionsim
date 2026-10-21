@@ -83,6 +83,39 @@ def solve_time_evolution_equation(interaction_function: Callable, initial_state_
     else:
         raise IonSimError(f'ODE solver {ode_solver} is not implemented.')
 
+def relative_step_gradient(f: Callable, bounds: list | None, central: bool=False) -> Callable:
+    """ Objective and finite-difference gradient (for scipy.optimize.minimize with jac=True) with relative steps
+        h_i = r * max(|x_i|, 1), one-sided inward at the bounds. Forward differences (n + 1 evaluations, r = sqrt(machine
+        eps)) or central differences (2n + 1 evaluations, r = machine eps^(1/3)).
+
+        On the scaled variables x = theta / s, the floor of 1 is one scale unit, so a parameter at or near 0 still gets a
+        step of r * s in physical units. """
+    eps = np.finfo(float).eps
+    r = eps**(1/3) if central else np.sqrt(eps)
+
+    def fun_and_grad(x):
+        x = np.asarray(x, dtype=float)
+        f0 = f(x)
+        grad = np.empty_like(x)
+        for i in range(len(x)):
+            h = r * max(abs(x[i]), 1.)
+            lo, hi = (None, None) if bounds is None else bounds[i]
+            up_ok = hi is None or x[i] + h <= hi
+            down_ok = lo is None or x[i] - h >= lo
+            if central and up_ok and down_ok:
+                xp, xm = x.copy(), x.copy(); xp[i] += h; xm[i] -= h
+                grad[i] = (f(xp) - f(xm)) / (2*h)
+            elif up_ok:
+                xp = x.copy(); xp[i] += h
+                grad[i] = (f(xp) - f0) / h
+            else:
+                xm = x.copy(); xm[i] -= h
+                grad[i] = (f0 - f(xm)) / h
+        return f0, grad
+
+    return fun_and_grad
+
+
 @dataclass(frozen=True, eq=False)
 class OdeSolver(ABC):
     """A numerical routine to solve an ordinarty differential equation (ODE)."""
