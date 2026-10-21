@@ -199,8 +199,6 @@ def _as_superbra(element) -> np.ndarray:
     """ Superbra of a measurement effect given as an ionsim operator or an array """
     return np.asarray(element.superbra if hasattr(element, 'superbra') else element)
 
-
-
 def _internal_gate_set(gate_set_model: GateSetModel, values: Vector | dict | None, gate_set: dict | None, role: str) -> dict:
     """ A gate set keyed internally by GstGate (plus 'prep', 'POVM'), from parameter values or an explicit gate-set dictionary.
         Exactly one of values / gate_set must be given. """
@@ -306,13 +304,14 @@ class _GstProblem:
         return [(None if bounds[i][0] is None else bounds[i][0] / scale[i],
                  None if bounds[i][1] is None else bounds[i][1] / scale[i]) for i in indices]
 
-    def minimize(self, objective: Callable[[np.ndarray], float], theta_start: Vector, indices: list[int] | None=None,
+    def minimize(self, objective: Callable[[np.ndarray], float], theta_start: Vector, subset_indices: list[int] | None=None,
                  objective_tolerance: float | None=None, **minimize_kwargs) -> tuple[np.ndarray, opt.OptimizeResult]:
         """ Minimize objective(theta) with L-BFGS-B within the parameter bounds: on theta itself with L-BFGS-B's built-in
             finite-difference gradients (default), or with dimensionless_fit on scaled variables x = theta / s.
 
             - objective: a function of the full physical parameter vector theta.
-            - theta_start: the starting point (full theta). With indices, only those parameters are optimized; the others stay
+            - theta_start: the starting point (full theta). 
+            - subset_indices: only those parameters are optimized; the others stay
                 at their values in theta_start.
             - objective_tolerance: with dimensionless_fit, an absolute tolerance on the objective: L-BFGS-B stops when an
                 iteration improves the objective by less than it (its ftol is set to objective_tolerance / |objective at the
@@ -334,12 +333,12 @@ class _GstProblem:
             restarts.
         """
         theta = np.array(theta_start, dtype=float, copy=True)
-        free = list(range(len(theta))) if indices is None else list(indices)
+        free = list(range(len(theta))) if subset_indices is None else list(subset_indices)
         bounds = self.gate_set_model.parameter_bounds
 
         if not self.dimensionless_fit:
             # L-BFGS-B on theta, as before dimensionless fitting was available
-            if indices is None:
+            if subset_indices is None:
                 result = opt.minimize(objective, theta, method='L-BFGS-B', bounds=bounds, **minimize_kwargs)
                 return result.x, result
 
@@ -1000,7 +999,6 @@ def average_gate_set_error_uncertainty(error_uncertainties: dict, include_SPAM_e
     if include_SPAM_error:
         gst_variance += (error_uncertainties['prep'] + error_uncertainties['POVM'])**2
     return np.sqrt(gst_variance)
-
 
 ### Output ###
 def write_gate_set_results(gate_set_model: GateSetModel, theta: Vector | dict, prefix: str='gst_optimal_'):
