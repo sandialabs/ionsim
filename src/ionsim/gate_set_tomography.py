@@ -199,7 +199,7 @@ def _relative_step_gradient(f: Callable, bounds: list | None, central: bool=Fals
 
 ### Circuit data ###
 @dataclass
-class _CircuitData:
+class _CircuitSetOutcomes:
     """ Measurement data of a list of circuits, tabulated from the circuits' current data.
 
         Built at the start of every GST operation, so it always reflects the data as it is then; the solvers build it once and
@@ -207,9 +207,9 @@ class _CircuitData:
     """
     circuits: list                  # the circuits, in order
     sequences: list                 # unique expanded gate sequences (tuples of GstGate)
-    sequence_index: np.ndarray      # (n_circuits,) index into sequences for each circuit
-    counts: np.ndarray              # (n_circuits, n_outcomes) counts aligned with the outcome labels
-    has_data: np.ndarray            # (n_circuits,) whether each circuit has measurement data
+    sequence_index: np.ndarray      # n_circuits x 1;  index into sequences for each circuit
+    counts: np.ndarray              # n_circuits x  n_outcomes counts aligned with the outcome labels
+    has_data: np.ndarray            # n_circuits x 1, whether each circuit has measurement data
 
     def frequencies_by_sequence(self, outcome_labels) -> dict:
         """ Observed outcome frequencies for each unique gate sequence, pooling repeated circuits """
@@ -440,7 +440,7 @@ class _GstProblem:
         return theta, reported
 
     ### Data ###
-    def tabulate(self, circuits: list[GstCircuit], require_data: bool=True) -> _CircuitData:
+    def tabulate(self, circuits: list[GstCircuit], require_data: bool=True) -> _CircuitSetOutcomes:
         """ Tabulate the current measurement data of `circuits`. Counts are aligned with the outcome labels by label. """
         sequences = {}
         sequence_index = np.zeros(len(circuits), dtype=np.int64)
@@ -462,7 +462,7 @@ class _GstProblem:
                     raise IonSimError(f"Negative count {count} for outcome '{outcome}' in circuit {circ.build_circuit_string()}.")
                 counts[i, self.outcome_to_index[outcome]] = count
             has_data[i] = True
-        return _CircuitData(list(circuits), list(sequences.keys()), sequence_index, counts, has_data)
+        return _CircuitSetOutcomes(list(circuits), list(sequences.keys()), sequence_index, counts, has_data)
 
     ### Model predictions ###
     def get_parameters(self, theta: Vector, key):
@@ -529,7 +529,7 @@ class _GstProblem:
         return np.clip(probabilities, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. - NUMERICAL_EQUIVALENCE_THRESHOLD)
 
     ### Objectives ###
-    def log_likelihood(self, theta: Vector, data: _CircuitData) -> float:
+    def log_likelihood(self, theta: Vector, data: _CircuitSetOutcomes) -> float:
         """ Log-likelihood of theta for tabulated data: sum over circuits and outcomes of N_outcome log p_outcome(theta) """
         log_probabilities = np.log(self.predict_sequence_probabilities(theta, data.sequences))
         l_likelihood = 0.
@@ -546,7 +546,7 @@ class _GstProblem:
         return self.likelihood_tolerance if self.dimensionless_fit else None
 
     @staticmethod
-    def saturated_log_likelihood(data: _CircuitData) -> float:
+    def saturated_log_likelihood(data: _CircuitSetOutcomes) -> float:
         """ Log-likelihood of the saturated model (each circuit's outcome probabilities equal to its observed frequencies):
             the maximum attainable log-likelihood of the data, sum over circuits and outcomes of N log(N / N_circuit) """
         total = 0.
@@ -556,7 +556,7 @@ class _GstProblem:
             total += np.dot(counts[observed], np.log(counts[observed] / n))
         return float(total)
 
-    def mle_objective(self, data: _CircuitData) -> Callable[[np.ndarray], float]:
+    def mle_objective(self, data: _CircuitSetOutcomes) -> Callable[[np.ndarray], float]:
         """ The MLE solvers' objective: -log L(theta); with dimensionless_fit, log L_sat - log L(theta) >= 0 (the
             log-likelihood ratio to the saturated model), which has the same minimizer and a value of order the number of
             circuits, so that relative tolerances are meaningful """
@@ -565,7 +565,7 @@ class _GstProblem:
         offset = self.saturated_log_likelihood(data)
         return lambda theta: offset - self.log_likelihood(theta, data)
 
-    def chi_squared(self, theta: Vector, data: _CircuitData) -> float:
+    def chi_squared(self, theta: Vector, data: _CircuitSetOutcomes) -> float:
         """ chi^2 between observed frequencies and model probabilities, scaled by the shots of each circuit """
         probabilities = self.predict_sequence_probabilities(theta, data.sequences)
         chi_squared = 0.
@@ -741,7 +741,7 @@ class _GstProblem:
         return groups
 
 
-def _gst_result(problem: _GstProblem, theta: Vector, method: str, theta_0: Vector, data: _CircuitData, **fields) -> GstResult:
+def _gst_result(problem: _GstProblem, theta: Vector, method: str, theta_0: Vector, data: _CircuitSetOutcomes, **fields) -> GstResult:
     """ Package a GstResult (log-likelihood of theta on the data, history of objective values) """
     history = list(problem.nll_history)
     log_likelihood = problem.log_likelihood(theta, data)
