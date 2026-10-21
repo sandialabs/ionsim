@@ -980,7 +980,7 @@ def parameter_squared_errors(gate_set_model: GateSetModel, theta: Vector | dict,
 
         - theta, reference: parameter vectors or dictionaries of parameter names to values (unlisted parameters take their
             initial guesses).
-        - relative: if True, ((theta_i - reference_i) / reference_i)^2 (nan where reference_i = 0).
+        - relative_error: if True, ((theta_i - reference_i) / reference_i)^2 (nan where reference_i = 0).
     """
     parameter_estimate = gate_set_model.parse_theta(theta)
     reference = gate_set_model.parse_theta(reference)
