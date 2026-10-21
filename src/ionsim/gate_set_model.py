@@ -106,7 +106,7 @@ class GateSetModel:
 
     ### Models ###
     def model_label(self, model: str | GstGate) -> str:
-        """ Returns the canonical model label for 'prep', 'POVM', a gate label (e.g. '[]' -> 'idle'), or CIRCUIT_NOISE (when
+        """ Returns the standardized model label for 'prep', 'POVM', a gate label (e.g. '[]' -> 'idle'), or CIRCUIT_NOISE (when
             circuit-level noise has been added). """
         if model in ('prep', 'POVM'):
             return model
@@ -139,10 +139,9 @@ class GateSetModel:
         label = model.label if isinstance(model, GstGate) else self.model_label(model)
         return self._model_functions[label]
 
-
     ### Parameter specification ###
     @staticmethod
-    def _validate_bounds(bounds, context: str) -> tuple | None:
+    def _parse_bounds(bounds, context: str) -> tuple | None:
         if bounds is None:
             return None
         if not isinstance(bounds, (tuple, list)) or len(bounds) != 2:
@@ -213,7 +212,7 @@ class GateSetModel:
             spec = dict(self._model_parameter_specs.get((label, name), {'guess': None, 'bounds': None}))
 
         if bounds is not None:
-            spec['bounds'] = self._validate_bounds(bounds, context)
+            spec['bounds'] = self._parse_bounds(bounds, context)
         if guess is not None:
             spec['guess'] = guess
         self._check_guess_within_bounds(spec['guess'], spec['bounds'], context)
@@ -222,9 +221,11 @@ class GateSetModel:
             self._shared_parameter_specs[name] = spec
         else:
             self._model_parameter_specs[(label, name)] = spec
-        self._invalidate_layout()
 
-    def _invalidate_layout(self):
+        # Discard old parameter organizations  
+        self._discard_layout()
+
+    def _discard_layout(self):
         """ Discard the parameter layout; it is rebuilt on next use. """
         if self._layout is not None:
             warnings.warn("The GST parameter specification changed after the parameter vector was organized. The parameter vector "
@@ -331,14 +332,6 @@ class GateSetModel:
     def initial_guess(self) -> Vector:
         """ Initial guess for theta, built from specify_parameter() guesses (0 by default). """
         return self.layout['initial_guess'].copy()
-
-    def print_layout(self):
-        """ Prints each entry of the parameter vector with its initial guess and bounds. """
-        layout = self.layout
-        print("\n --- GST parameter layout --- ")
-        for i, (name, guess, bound) in enumerate(zip(layout['names'], layout['initial_guess'], layout['bounds'])):
-            print(f"  [{i:3d}] {name:<45s} guess = {guess:<12.6g} bounds = {bound}")
-
 
     ### Parameter names, vectors, and values ###
     def canonical_parameter_name(self, key: str) -> str:
@@ -479,10 +472,8 @@ class GateSetModel:
                 p(circuit) = sum_k w_k p(circuit | every noisy gate displaced by x_k),
             which is not a product of noise-averaged gates (that would describe the noise as Markovian).
 
-            - noise: a Noise, e.g. Noise.from_named_pdf('amplitude_offset', 'gaussian', {'standard_deviation': 0.01},
-                np.linspace(-5, 5, 21), domain_scale_parameter='standard_deviation'). A grid that scales with the width
-                (domain_scale_parameter or domain_scale_function) keeps the quadrature accurate as the width is fitted. The cost
-                of a likelihood evaluation grows linearly with the number of grid points.
+            - noise: an IonSim Noise object, . A grid that scales with the width (domain_scale_parameter or domain_scale_function) 
+                keeps the quadrature accurate as the width is fitted. 
             - models: labels of the gates sharing the noise, e.g. ['Gxpi2:0', 'Gypi2:0'] (gates driven by the same laser).
                 Default: every gate with an argument named noise.parameter_name.
             - guess, bounds: initial guess and (lower, upper) bounds of the distribution's parameters, which become GST
@@ -502,21 +493,23 @@ class GateSetModel:
             raise ValueError("The gate set model already has circuit-level noise; only one circuit noise is supported "
                              "(remove it first with remove_circuit_noise()).")
         argument = noise.parameter_name
+        # Check whether gate models have the noisy parameter 
         if models is None:
-            gates = [gate for gate in self.gate_models if argument in self._model_parameter_names[gate.label]]
-            if not gates:
+            gst_gates = [gate for gate in self.gate_models if argument in self._model_parameter_names[gate.label]]
+            if not gst_gates:
                 raise ValueError(f"No gate model has an argument named {argument!r} (the noise's parameter_name). "
                                  f"Gate model arguments: { {g.label: self._model_parameter_names[g.label] for g in self.gate_models} }.")
         else:
             if isinstance(models, str):
                 models = [models]
-            gates = [self._gate_key(label) for label in models]
-            if not gates or len(set(gates)) != len(gates):
+            gst_gates = [self._key_as_gst_gate(label) for label in models]
+            if not gst_gates or len(set(gst_gates)) != len(gst_gates):
                 raise ValueError(f"models must be a non-empty list of distinct gate labels; received {models!r}.")
-            lacking = [g.label for g in gates if argument not in self._model_parameter_names[g.label]]
+            lacking = [g.label for g in gst_gates if argument not in self._model_parameter_names[g.label]]
             if lacking:
                 raise ValueError(f"Gate model(s) {lacking} have no argument named {argument!r} (the noise's parameter_name).")
 
+        # Check for naming collisions 
         pdf_parameters = list(noise.pdf_parameters) if noise.parameterized_pdf is not None else []
         argument_names = [noise.argument_name(p) for p in pdf_parameters]
         collisions = [a for a in argument_names if any(a in names for names in self._model_parameter_names.values())]
@@ -531,14 +524,14 @@ class GateSetModel:
             [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in argument_names])
         self._model_functions[CIRCUIT_NOISE] = circuit_noise_parameters
         self._model_parameter_names[CIRCUIT_NOISE] = list(argument_names)
-        self._circuit_noise = {'noise': noise, 'gates': tuple(gates), 'pdf_parameters': pdf_parameters,
-                               'argument_positions': {g: self._model_parameter_names[g.label].index(argument) for g in gates}}
+        self._circuit_noise = {'noise': noise, 'gates': tuple(gst_gates), 'pdf_parameters': pdf_parameters,
+                               'argument_positions': {g: self._model_parameter_names[g.label].index(argument) for g in gst_gates}}
         for pdf_parameter, name in zip(pdf_parameters, argument_names):
             value = guesses.get(pdf_parameter)
             self.specify_parameter(name, model=[CIRCUIT_NOISE], guess=noise.pdf_parameters[pdf_parameter] if value is None else value,
                                    bounds=bounds_by.get(pdf_parameter))
         if not argument_names:
-            self._invalidate_layout()
+            self._discard_layout()
 
     @staticmethod
     def _per_pdf_parameter(value, pdf_parameters: list[str], argument_names: list[str], role: str) -> dict:
@@ -566,7 +559,7 @@ class GateSetModel:
             self._shared_parameter_specs.pop(name, None)
         self._model_functions.pop(CIRCUIT_NOISE)
         self._circuit_noise = None
-        self._invalidate_layout()
+        self._discard_layout()
 
     @property
     def circuit_noise(self) -> Noise | None:
@@ -613,7 +606,8 @@ class GateSetModel:
         """ GateInterpolator of each interpolated gate model, keyed by gate label (e.g. to write it to a file) """
         return {gate.label: interpolator for gate, interpolator in self._gate_interpolators.items()}
 
-    def _gate_key(self, gate: str) -> GstGate:
+    def _key_as_gst_gate(self, gate: str) -> GstGate:
+        """ Returns GstGate representation of the string key input """ 
         if isinstance(gate, GstGate):
             raise TypeError(f"Specify gates by string label (e.g. {gate.label!r}) rather than GstGate objects.")
         key = gst_gate_from_label(gate)
@@ -641,7 +635,7 @@ class GateSetModel:
 
             Returns the GateInterpolator (e.g. to save it with its write_to_file method).
         """
-        key = self._gate_key(gate)
+        key = self._key_as_gst_gate(gate)
         argument_names = self._model_parameter_names[key.label]
         exact_model = self.gate_models[key]
         if (grid_axes is None) == (interpolator is None):
@@ -713,14 +707,14 @@ class GateSetModel:
 
     def remove_gate_interpolation(self, gate: str):
         """ Use the exact model for a gate again """
-        key = self._gate_key(gate)
+        key = self._key_as_gst_gate(gate)
         self._gate_interpolators.pop(key, None)
         self._interpolated_gate_models.pop(key, None)
 
     def gate_interpolation_error(self, gate: str, n_samples: int=50, rng: np.random.Generator | int | None=None) -> float:
         """ Largest absolute difference between the interpolated and exact process matrix elements, at n_samples random
             points of the interpolation grid's domain (each point costs one exact model evaluation). """
-        key = self._gate_key(gate)
+        key = self._key_as_gst_gate(gate)
         if key not in self._gate_interpolators:
             raise ValueError(f"Gate {gate!r} has no interpolated model; see interpolate_gate_model().")
         rng = np.random.default_rng(rng)

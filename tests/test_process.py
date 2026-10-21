@@ -110,7 +110,6 @@ class TestProcess(unittest.TestCase):
         probs_function = ramsey_circuit.build_outcome_probabilities_function(initial_state, [outcome_operator, outcome_operator2])
 
         probs, jacobian = circuit_pm_function.jacobian(probs_function, wrt = ["R__phi", "R__theta"], **circuit_parameters)
-        #print(f"Jacobian: \n{jacobian}")
 
 
     def test_circuit_function_with_circuit_noise(self):
