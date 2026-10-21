@@ -698,7 +698,7 @@ class _GstProblem:
         return groups
 
 
-def _gst_result(problem: _GstProblem, theta: Vector, method: str, theta_0: Vector, data: _CircuitSetOutcomes, **fields) -> GstResult:
+def _build_gst_result(problem: _GstProblem, theta: Vector, method: str, theta_0: Vector, data: _CircuitSetOutcomes, **fields) -> GstResult:
     """ Package a GstResult (log-likelihood of theta on the data, history of objective values) """
     history = list(problem.nll_history)
     log_likelihood = problem.log_likelihood(theta, data)
@@ -793,7 +793,7 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
     if not converged:
         warnings.warn(f"Linear GST: {message}. Increase max_gauge_iterations or gauge_tolerance.")
     lgst = dict(lgst, gate_estimates={gate.label: matrix for gate, matrix in lgst['gate_estimates'].items()})
-    return _gst_result(problem, theta, 'linear', theta_0, problem.tabulate(problem.gst_circuits), lgst_estimates=lgst,
+    return _build_gst_result(problem, theta, 'linear', theta_0, problem.tabulate(problem.gst_circuits), lgst_estimates=lgst,
                        gauge_iterations=iterations, success=converged, message=message)
 
 
@@ -835,7 +835,7 @@ def mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model
     data = problem.tabulate(problem.gst_circuits)
     theta, solver_result = problem.minimize(problem.mle_objective(data), theta_0, objective_tolerance=problem.mle_tolerance,
                                             **minimize_kwargs)
-    return _gst_result(problem, theta, 'MLE', theta_0, data, success=bool(solver_result.success),
+    return _build_gst_result(problem, theta, 'MLE', theta_0, data, success=bool(solver_result.success),
                        message=str(solver_result.message), optimizer_result=solver_result)
 
 
@@ -887,7 +887,7 @@ def staged_mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_se
             print(f"    Stage {stage + 1} (L <= {L}): {len(cumulative_circuits)} circuits, "
                   f"LL = {-solver_result.fun:.3f}, converged = {solver_result.success}")
 
-    return _gst_result(problem, theta, 'staged MLE', theta_0, data, success=bool(solver_result.success),
+    return _build_gst_result(problem, theta, 'staged MLE', theta_0, data, success=bool(solver_result.success),
                        message=str(solver_result.message), optimizer_result=solver_result, stage_estimates=stage_estimates)
 
 
