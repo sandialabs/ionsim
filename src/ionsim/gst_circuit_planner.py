@@ -444,7 +444,7 @@ class GSTCircuitPlanner:
             for argument, global_name in zip(argument_names, gate_set_model.argument_names(gate)):
                 parameter_names[f"{gate.label}.{argument}"] = global_name
 
-        # Circuit-level noise (GateSetModel.add_circuit_noise): averaged by the helper over the same realizations as the GST
+        # Circuit-level noise (GateSetModel.set_circuit_noise): averaged by the helper over the same realizations as the GST
         # likelihood, displacing only the gate set model's noisy gates; its distribution parameters take their global names
         noise, noisy_labels = None, None
         noisy_gates = [g for g in dict.fromkeys(gates) if g in gate_set_model.circuit_noise_gates]

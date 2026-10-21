@@ -39,11 +39,11 @@ class GateSetModel:
             - gate models, keyed by gate label (e.g. 'Gxpi2:0', 'MS:0:1', 'idle'), callables returning process matrices.
 
         Every argument of every model function is a parameter. By default each parameter is independent, unbounded, and has an
-        initial guess of zero. specify_parameter() sets initial guesses and bounds and shares parameters among models:
+        initial guess of zero. set_parameter() sets initial guesses and bounds and shares parameters among models:
 
             gate_set_model = GateSetModel(prep_state_function, POVM_models, {'Gxpi2:0': X_pi2_q0, 'MS:0:1': MS_pm})
-            gate_set_model.specify_parameter("SPAM_error_probability", model="shared", guess=1e-4, bounds=(0., 1.))
-            gate_set_model.specify_parameter("phi_error", model="MS:0:1", guess=0., bounds=(0., np.pi/16))
+            gate_set_model.set_parameter("SPAM_error_probability", model="shared", guess=1e-4, bounds=(0., 1.))
+            gate_set_model.set_parameter("phi_error", model="MS:0:1", guess=0., bounds=(0., np.pi/16))
 
         Parameter names (e.g. 'shared:SPAM_error_probability', 'MS:0:1.phi_error', 'prep.p') and the layout of theta are
         organized lazily when first needed, so parameters may be specified in any order.
@@ -174,7 +174,7 @@ class GateSetModel:
         if (lower is not None and guess < lower) or (upper is not None and guess > upper):
             raise ValueError(f"Initial guess {guess} for {context} lies outside its bounds {bounds}.")
 
-    def specify_parameter(self, name: str, model: str | list[str], guess: float | None=None, bounds: tuple | None=None):
+    def set_parameter(self, name: str, model: str | list[str], guess: float | None=None, bounds: tuple | None=None):
         """ Specify the initial guess, bounds, and/or sharing of a model parameter. Parameters are identified by the argument
             names of the model functions.
 
@@ -190,9 +190,9 @@ class GateSetModel:
             Calling this again for the same parameter updates it; arguments left as None keep their previous values.
 
             Examples:
-                gate_set_model.specify_parameter("SPAM_error_probability", model="shared", guess=1e-4, bounds=(0., 1.))
-                gate_set_model.specify_parameter("amplitude_noise_strength", model="shared", guess=0.01, bounds=(1e-4, 10.))
-                gate_set_model.specify_parameter("phi_error", model="MS:0:1", guess=0., bounds=(0., np.pi/16))
+                gate_set_model.set_parameter("SPAM_error_probability", model="shared", guess=1e-4, bounds=(0., 1.))
+                gate_set_model.set_parameter("amplitude_noise_strength", model="shared", guess=0.01, bounds=(1e-4, 10.))
+                gate_set_model.set_parameter("phi_error", model="MS:0:1", guess=0., bounds=(0., np.pi/16))
         """
         if not isinstance(name, str):
             raise TypeError(f"Parameter name must be a string; received {type(name).__name__}.")
@@ -274,7 +274,7 @@ class GateSetModel:
 
         conflicts = [f"{label}.{name}" for (label, name) in self._model_parameter_specs if (label, name) in shared_lookup]
         if conflicts:
-            raise ValueError(f"Parameter(s) {conflicts} were specified as independent but are also shared (specify_parameter(..., model='shared')). "
+            raise ValueError(f"Parameter(s) {conflicts} were specified as independent but are also shared (set_parameter(..., model='shared')). "
                              f"Either share the parameter among a list of models that excludes these, or drop the independent specification.")
 
         names, bounds, guesses = [], [], []
@@ -345,7 +345,7 @@ class GateSetModel:
 
     @property
     def initial_guess(self) -> Vector:
-        """ Initial guess for theta, built from specify_parameter() guesses (0 by default). """
+        """ Initial guess for theta, built from set_parameter() guesses (0 by default). """
         return self.layout['initial_guess'].copy()
 
     ### Parameter names, vectors, and values ###
@@ -479,7 +479,7 @@ class GateSetModel:
 
 
     ### Circuit-level (quasistatic) noise ###
-    def add_circuit_noise(self, noise: Noise, models: list[str] | None=None, guess: float | dict | None=None,
+    def set_circuit_noise(self, noise: Noise, models: list[str] | None=None, guess: float | dict | None=None,
                           bounds: tuple | dict | None=None):
         """ Add circuit-level (quasistatic) noise: the gate argument noise.parameter_name is displaced by a random amount x
             drawn from the noise's distribution once per shot (circuit execution), the same x in every gate in `models`. Circuit
@@ -495,7 +495,7 @@ class GateSetModel:
                 parameters named 'shared:<argument name>', e.g. 'shared:amplitude_offset_noise_standard_deviation'. For a
                 distribution with one parameter, a value / pair; otherwise a dictionary keyed by pdf parameter name (e.g.
                 'standard_deviation'). Guesses default to the noise's pdf parameter values. They can also be changed later with
-                specify_parameter('<argument name>', model='shared', ...).
+                set_parameter('<argument name>', model='shared', ...).
                 Outcome probabilities depend on even moments of the noise (e.g. the variance), so their derivative with
                 respect to a width vanishes at zero width; bound the width away from zero, e.g. bounds=(1e-4, 10.).
 
@@ -543,7 +543,7 @@ class GateSetModel:
                                'argument_positions': {g: self._model_parameter_names[g.label].index(argument) for g in gst_gates}}
         for pdf_parameter, name in zip(pdf_parameters, argument_names):
             value = guesses.get(pdf_parameter)
-            self.specify_parameter(name, model=[CIRCUIT_NOISE], guess=noise.pdf_parameters[pdf_parameter] if value is None else value,
+            self.set_parameter(name, model=[CIRCUIT_NOISE], guess=noise.pdf_parameters[pdf_parameter] if value is None else value,
                                    bounds=bounds_by.get(pdf_parameter))
         if not argument_names:
             self._discard_layout()
@@ -637,7 +637,7 @@ class GateSetModel:
             Worthwhile when the gate model is expensive to evaluate (e.g. Hamiltonian / Lindbladian simulations): the model is
             evaluated once per grid point, and each later evaluation interpolates. Choose the grid to cover the relevant
             parameter values (e.g. around reference values used for circuit planning) and set the parameters' bounds
-            (specify_parameter) within the grid, so that the solvers stay on it. Outside the grid, the exact model is used
+            (set_parameter) within the grid, so that the solvers stay on it. Outside the grid, the exact model is used
             (with a warning). Check the accuracy with gate_interpolation_error().
 
             - gate: gate label, e.g. 'MS:0:1'.

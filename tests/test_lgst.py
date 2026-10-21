@@ -152,8 +152,8 @@ class TestGST(unittest.TestCase):
         # model = "shared" ties together every model with an argument of that name:
         #   SPAM_error_probability -> prep & POVM models;  amplitude_noise_strength -> Gxpi2:0 & Gypi2:0 models
         self.gate_set_model = GateSetModel(self.prep_state_model, self.POVM_models, self.gate_models)
-        self.gate_set_model.specify_parameter("SPAM_error_probability", model = "shared", guess = 1e-4, bounds = (0., 1.))
-        self.gate_set_model.specify_parameter("amplitude_noise_strength", model = "shared", guess = 0.5, bounds = (0.0001, 10.0))
+        self.gate_set_model.set_parameter("SPAM_error_probability", model = "shared", guess = 1e-4, bounds = (0., 1.))
+        self.gate_set_model.set_parameter("amplitude_noise_strength", model = "shared", guess = 0.5, bounds = (0.0001, 10.0))
 
         # True parameter values used to simulate the data (the reference for gate set errors), and ideal values (the gauge
         # target for linear GST: noise-free gates, perfect state preparation and measurement)
@@ -282,7 +282,7 @@ class TestGST(unittest.TestCase):
         circuit = [c for c in self.gst_circuits if {'Gxpi2:0', 'Gypi2:0'} <= set(c.expanded_gate_labels)][-1]
 
         shared = GateSetModel(self.prep_state_model, self.POVM_models, self.gate_models)
-        shared.specify_parameter("amplitude_noise_strength", model = "shared")
+        shared.set_parameter("amplitude_noise_strength", model = "shared")
         independent = GateSetModel(self.prep_state_model, self.POVM_models, self.gate_models)
 
         self.gst_circuit_planner.gate_set_model = shared
@@ -364,8 +364,8 @@ class TestGST(unittest.TestCase):
         """ Interpolated gate models: the solvers use the interpolations, one-off gate set evaluations use the exact models """
         def model(interpolate):
             gate_set_model = GateSetModel(self.prep_state_model, self.POVM_models, self.gate_models)
-            gate_set_model.specify_parameter("SPAM_error_probability", model = "shared", guess = 1e-4, bounds = (0., 1.))
-            gate_set_model.specify_parameter("amplitude_noise_strength", model = "shared", guess = 0.5, bounds = (0.0001, 1.0))
+            gate_set_model.set_parameter("SPAM_error_probability", model = "shared", guess = 1e-4, bounds = (0., 1.))
+            gate_set_model.set_parameter("amplitude_noise_strength", model = "shared", guess = 0.5, bounds = (0.0001, 1.0))
             if interpolate:
                 for gate in ['Gxpi2:0', 'Gypi2:0']:
                     gate_set_model.interpolate_gate_model(gate, grid_axes = {'amplitude_noise_strength': np.linspace(0., 1., 9)})

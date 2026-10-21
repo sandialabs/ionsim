@@ -6,7 +6,7 @@
 # in compliance with the License. You may obtain a copy of the License at
 # http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
 #***************************************************************************************************
-""" Tests of circuit-level (quasistatic) noise in GST: Noise realizations, GateSetModel.add_circuit_noise, the noise-averaged
+""" Tests of circuit-level (quasistatic) noise in GST: Noise realizations, GateSetModel.set_circuit_noise, the noise-averaged
     GST likelihood and simulated data, the circuit planner's Fisher information, and parameter_squared_errors """
 import unittest
 import warnings
@@ -109,11 +109,11 @@ class TestCircuitNoise(unittest.TestCase):
 
     def gate_set_model(self, noise=None, **kwargs):
         model = GateSetModel(self.models['prep'], self.models['POVM'], {X: self.models['X'], Y: self.models['Y'], IDLE: self.models['idle']})
-        model.specify_parameter('SPAM_error_probability', model='shared', guess=1e-3, bounds=(0., 0.2))
-        model.specify_parameter('amplitude_offset', model=[X, Y], guess=0., bounds=(-0.2, 0.2))
-        model.specify_parameter('detuning_phase', model=IDLE, guess=0.02, bounds=(-1., 1.))
+        model.set_parameter('SPAM_error_probability', model='shared', guess=1e-3, bounds=(0., 0.2))
+        model.set_parameter('amplitude_offset', model=[X, Y], guess=0., bounds=(-0.2, 0.2))
+        model.set_parameter('detuning_phase', model=IDLE, guess=0.02, bounds=(-1., 1.))
         if noise is not None:
-            model.add_circuit_noise(noise, **kwargs)
+            model.set_circuit_noise(noise, **kwargs)
         return model
 
     def circuits(self, sequences):
@@ -128,7 +128,7 @@ class TestCircuitNoise(unittest.TestCase):
         return np.array([p[k] for k in data.sequence_index])
 
     ### GateSetModel ###
-    def test_add_circuit_noise(self):
+    def test_set_circuit_noise(self):
         model = self.gate_set_model(gaussian_noise(), guess=0.02, bounds=(1e-4, 1.))
         self.assertEqual(model.parameter_names,
                          ['shared:SPAM_error_probability', 'shared:amplitude_offset', f'shared:{SIGMA}', 'idle.detuning_phase'])
@@ -150,13 +150,13 @@ class TestCircuitNoise(unittest.TestCase):
         self.assertEqual([g.label for g in other.circuit_noise_gates], [X])
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')        # re-organizing the layout after it was built
-            other.specify_parameter(SIGMA, model='shared', bounds=(1e-3, 0.5))
+            other.set_parameter(SIGMA, model='shared', bounds=(1e-3, 0.5))
         self.assertEqual(other.layout['bounds'][other.parameter_names.index(f'shared:{SIGMA}')], (1e-3, 0.5))
 
-    def test_add_circuit_noise_errors(self):
+    def test_set_circuit_noise_errors(self):
         model = self.gate_set_model(gaussian_noise())
         with self.assertRaises(ValueError):                       # one circuit noise only
-            model.add_circuit_noise(gaussian_noise())
+            model.set_circuit_noise(gaussian_noise())
         with self.assertRaises(ValueError):                       # the idle has no amplitude_offset argument
             self.gate_set_model(gaussian_noise(), models=[X, IDLE])
         with self.assertRaises(ValueError):                       # no gate has the argument
@@ -317,7 +317,7 @@ class TestParameterSquaredErrors(unittest.TestCase):
         def gate(a: float, b: float):
             return np.eye(4)
         model = GateSetModel(prep, POVM, {'Gxpi2:0': gate})
-        model.specify_parameter('p', model='shared')
+        model.set_parameter('p', model='shared')
         squared = parameter_squared_errors(model, [0.1, 1., 2.], {'shared:p': 0.2, 'Gxpi2:0.a': 0.5, 'Gxpi2:0.b': 0.})
         self.assertEqual(list(squared), ['shared:p', 'Gxpi2:0.a', 'Gxpi2:0.b'])
         np.testing.assert_allclose(list(squared.values()), [0.01, 0.25, 4.])

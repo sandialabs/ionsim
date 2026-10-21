@@ -111,8 +111,8 @@ class TestGST(unittest.TestCase):
         # both the circuit planner (Fisher information) and the GST analysis.
         # SPAM_error_probability is an argument of both the prep and POVM models, so model = "shared" ties them together.
         self.gate_set_model = GateSetModel(self.prep_state_model, self.POVM_models, self.gate_models)
-        self.gate_set_model.specify_parameter("SPAM_error_probability", model = "shared", guess = 1e-4, bounds = (0., 1.))
-        self.gate_set_model.specify_parameter("amplitude_noise_strength", model = "Gxpi8:0", guess = 0.5, bounds = (0.0001, 10.0))
+        self.gate_set_model.set_parameter("SPAM_error_probability", model = "shared", guess = 1e-4, bounds = (0., 1.))
+        self.gate_set_model.set_parameter("amplitude_noise_strength", model = "Gxpi8:0", guess = 0.5, bounds = (0.0001, 10.0))
 
         num_qubits = len(qubit_indices)
         powers = [1, 2, 4, 8, 16, 32, 64, 128]

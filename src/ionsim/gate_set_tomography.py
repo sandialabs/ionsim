@@ -20,7 +20,7 @@
     Expensive gate models can be replaced in the solvers (and the circuit planner) by interpolations on a parameter grid; see
     GateSetModel.interpolate_gate_model.
 
-    Circuit-level (quasistatic) noise (GateSetModel.add_circuit_noise): a gate argument that fluctuates from shot to shot but is
+    Circuit-level (quasistatic) noise (GateSetModel.set_circuit_noise): a gate argument that fluctuates from shot to shot but is
     the same in every gate of a circuit in a shot. The MLE solvers, log_likelihood, chi_squared, and simulate_gst_data average
     each circuit's outcome probabilities over the noise realizations, p = sum_k w_k p(circuit | x_k), with the noise
     distribution's parameters fitted like any other parameter. The noisy gates are evaluated once per realization and each
@@ -132,7 +132,7 @@ def parse_parameter_scalings(gate_set_model: GateSetModel, parameter_scales: Vec
     """ Parsing of user input for the initial scale s of each parameter (theta order) for dimensionless fits, which run on x = theta / s.
         Later L-BFGS-B runs use |theta| at their start (s where |theta| < SCALE_FLOOR * s); see the module docstring.
 
-        - None (default): s = |initial guess| (the guesses given to specify_parameter, not a per-solve starting point, so the
+        - None (default): s = |initial guess| (the guesses given to set_parameter, not a per-solve starting point, so the
             scale does not depend on e.g. a linear GST estimate that lands near zero).
         - a vector (one positive value per parameter, theta order), or a dictionary {parameter name: scale} in which unlisted
             parameters take their default scales.
@@ -279,7 +279,7 @@ class _GstProblem:
         self.outcome_to_index = {label: i for i, label in enumerate(self.outcome_labels)}
 
         self.d2 = gate_set_model.prep_state(gate_set_model.initial_guess).size
-        # Gates displaced by circuit-level noise (GateSetModel.add_circuit_noise), among the gates of these circuits
+        # Gates displaced by circuit-level noise (GateSetModel.set_circuit_noise), among the gates of these circuits
         self.noisy_gates = set(gate_set_model.circuit_noise_gates) & self.gate_set
         self.nll_history = []
         # Dimensionless fitting (see the module docstring); its options must keep their defaults without it
@@ -769,7 +769,7 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
         result.gauge_iterations the number of re-gauging passes, and result.success whether re-gauging converged.
     """
     if gate_set_model.circuit_noise is not None:
-        raise NotImplementedError("Linear GST does not support circuit-level noise (GateSetModel.add_circuit_noise): LGST "
+        raise NotImplementedError("Linear GST does not support circuit-level noise (GateSetModel.set_circuit_noise): LGST "
                                   "estimates noise-averaged gates. Use mle_solve_for_gate_parameters or "
                                   "staged_mle_solve_for_gate_parameters.")
     problem = _GstProblem(gst_circuits, gate_set_model, verbose, parameter_scales=parameter_scales,
@@ -961,7 +961,7 @@ def gate_set_errors(gate_set_model: GateSetModel, theta: Vector | dict, referenc
 
         Returns {gate label: error, 'prep': error, 'POVM': error} for every gate model. Prep and POVM errors are Euclidean norms
         of the supervector / summed superbra differences.
-        With circuit-level noise (GateSetModel.add_circuit_noise), the nominal gates (no noise displacement) are compared: the
+        With circuit-level noise (GateSetModel.set_circuit_noise), the nominal gates (no noise displacement) are compared: the
         noise distribution is assessed through its parameters (e.g. parameter_squared_errors), since noise-averaged gates would
         describe it as Markovian.
     """
