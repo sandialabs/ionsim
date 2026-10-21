@@ -124,8 +124,7 @@ class Unitary:
     def R(phi: float, theta: float):
         """A single-qubit rotation on the XY plane of the Bloch sphere."""
         sigma_phi = np.cos(phi) * Pauli.X + np.sin(phi) * Pauli.Y
-        # TODO: Resolve global phase convention 
-        return np.exp(1j*theta/2) * (np.cos(theta/2) * Pauli.I - 1j*np.sin(theta/2) * sigma_phi)
+        return (np.cos(theta/2) * Pauli.I - 1j*np.sin(theta/2) * sigma_phi)
 
     @staticmethod
     def R_bloch(bloch_vector: list[float]):
@@ -152,18 +151,18 @@ class Unitary:
         sigma_n = (n_vector[0] * Pauli.X + n_vector[1] * Pauli.Y + n_vector[2] * Pauli.Z ) # to absorb normalization  
         return np.cos(alpha) * Pauli.I - 1j*np.sin(alpha) * sigma_n
 
-    X = R(0, np.pi)
-    sqrtX = R(0, np.pi/2)
-    Y = R(np.pi/2, np.pi)
-    sqrtY = R(np.pi/2, np.pi/2)
-    I = R(0, 0)
+    # global_phase of np.exp(1j*theta/2) converts R(phi, theta) to X, Y, sqrtX, sqrtY gates  
+    X = R(0, np.pi) * np.exp(1j*np.pi/2)
+    sqrtX = R(0, np.pi/2) * np.exp(1j * np.pi/4.) 
+    Y = R(np.pi/2, np.pi) * np.exp(1j * np.pi/2.)
+    sqrtY = R(np.pi/2, np.pi/2) * np.exp(1j * np.pi/4.)
+    I = R(0, 0) 
 
     @staticmethod
     def MS(phi: float, theta: float):
         """The Molmer-Sorensen entangling gate."""
         sigma_phi = np.cos(phi) * Pauli.X + np.sin(phi) * Pauli.Y
         return np.cos(theta/2) * np.kron(Pauli.I, Pauli.I) - 1j*np.sin(theta/2) * np.kron(sigma_phi, sigma_phi)
-    # The extra -i factor likely comes from book-keeping on the planar "R" method above, which has an extra exp(i theta /2) global factor  
     CNOT = np.exp(1j*np.pi/2.)*np.exp(-1j*np.pi/4.)*(np.kron(np.conj(sqrtY).T,I)) @ (np.kron(np.conj(sqrtX).T,I)) @ (np.kron(I, np.conj(sqrtX).T)) @ MS(0., np.pi/2.) @ (np.kron(sqrtY, I))
 
     @staticmethod
