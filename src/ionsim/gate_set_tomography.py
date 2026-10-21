@@ -67,7 +67,7 @@ from ionsim.custom_math import relative_step_gradient
 
 __all__ = ['GstResult', 'resolve_parameter_scale', 'linear_solve_for_gate_parameters', 'mle_solve_for_gate_parameters',
            'staged_mle_solve_for_gate_parameters',
-           'log_likelihood', 'chi_squared', 'simulate_gst_data', 'evaluate_gate_set', 'gate_set_errors', 'average_gate_set_error',
+           'log_likelihood', 'chi_squared', 'simulate_gst_data', 'gate_set_errors', 'average_gate_set_error',
            'average_gate_set_error_uncertainty', 'parameter_squared_errors', 'write_gate_set_results']
 
 
@@ -190,16 +190,7 @@ class _CircuitSetOutcomes:
                 frequencies[sequence] = dict(zip(outcome_labels, pooled[k] / total))
         return frequencies
 
-
-### Gate sets (models evaluated at parameter values, or given explicitly) ###
-def evaluate_gate_set(gate_set_model: GateSetModel, theta: Vector | dict | None=None) -> dict:
-    """ Evaluates the gate set model at the specified parameter values (theta defaults to the specified initial guesses). """
-    theta = gate_set_model.parse_theta(theta)
-    gate_set = {'prep': gate_set_model.prep_state(theta), 'POVM': gate_set_model.measurement_effects(theta)}
-    for gate in gate_set_model.gate_models:
-        gate_set[gate.label] = gate_set_model.gate_process_matrix(gate, theta)
-    return gate_set
-
+# Wrapper methods for supervector/superbra 
 def _as_supervector(element) -> np.ndarray:
     """ Supervector of a prep state given as an ionsim State or an array """
     return np.asarray(element.supervector if hasattr(element, 'supervector') else element)
@@ -208,13 +199,15 @@ def _as_superbra(element) -> np.ndarray:
     """ Superbra of a measurement effect given as an ionsim operator or an array """
     return np.asarray(element.superbra if hasattr(element, 'superbra') else element)
 
+
+
 def _internal_gate_set(gate_set_model: GateSetModel, values: Vector | dict | None, gate_set: dict | None, role: str) -> dict:
     """ A gate set keyed internally by GstGate (plus 'prep', 'POVM'), from parameter values or an explicit gate-set dictionary.
         Exactly one of values / gate_set must be given. """
     if (values is None) == (gate_set is None):
         raise ValueError(f"Specify the {role} as either parameter values ({role}=...) or an explicit gate set ({role}_gate_set=...), not both or neither.")
     if gate_set is None:
-        gate_set = evaluate_gate_set(gate_set_model, values)
+        gate_set = gate_set_model(values)
     if not isinstance(gate_set, dict):
         raise TypeError(f"The {role} gate set must be a dictionary of gate labels, 'prep', and 'POVM'; received {type(gate_set).__name__}.")
     internal = {}
@@ -598,12 +591,12 @@ class _GstProblem:
         if len(S) > self.d2:
             ratio = S[self.d2]/S[self.d2 - 1]  # should be small
             if ratio > 0.1:
-                print(f"WARNING: There is weak separation between signal and noise subspace. Ratio = {ratio}")
+                warnings.warn(f"WARNING: There is weak separation between signal and noise subspace. Ratio = {ratio}")
 
         # Check condition number of d^2 subspace:
         cond = S[0] / S[self.d2 - 1]
         if cond > 100:
-            print(f"WARNING: Poorly conditioned linear GST. LGST estimates may be noisy. Condition number = {cond}")
+            warnings.warn(f"WARNING: Poorly conditioned linear GST. LGST estimates may be noisy. Condition number = {cond}")
 
         # Decomposition of Gram matrix = AB, where A is measurement matrix and B is prep matrix
         #   See Section 3. of "Gate Set Tomography" published in Quantum, 2021.

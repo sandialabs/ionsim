@@ -22,7 +22,7 @@ from ionsim.lindbladian import Dissipator, Lindbladian
 from ionsim.gst_circuit_planner import GSTCircuitPlanner
 from ionsim.gst_circuit_parser import CircuitData 
 from ionsim.gate_set_tomography import (linear_solve_for_gate_parameters, mle_solve_for_gate_parameters, gate_set_errors,
-                                        log_likelihood, chi_squared, simulate_gst_data, evaluate_gate_set)
+                                        log_likelihood, chi_squared, simulate_gst_data)
 from ionsim.gate_set_model import GateSetModel
 
 
@@ -244,7 +244,7 @@ class TestGST(unittest.TestCase):
         # Independent prep and measurement errors are gauge-equivalent here: the data determine the SPAM outcome probabilities
         # (no gates applied), not how the error is split between preparation and measurement
         def spam_probabilities(gate_set_model, theta):
-            gate_set = evaluate_gate_set(gate_set_model, theta)
+            gate_set = gate_set_model(theta) 
             return np.real([np.asarray(gate_set['POVM'][outcome]) @ gate_set['prep'] for outcome in ['0', '1']])
         np.testing.assert_allclose(spam_probabilities(independent, result.theta), spam_probabilities(self.gate_set_model, true_theta), atol=1e-7)
 
@@ -272,7 +272,7 @@ class TestGST(unittest.TestCase):
         self.assertAlmostEqual(SPAM_error, 0.0003452514250604332, places=5)
 
         # Errors against the true values equal errors against the explicit true gate set
-        true_gate_set = evaluate_gate_set(self.gate_set_model, self.true_values)
+        true_gate_set = self.gate_set_model(self.true_values) #(self.gate_set_model, self.true_values)
         errors_explicit = gate_set_errors(self.gate_set_model, result.theta, reference_gate_set = true_gate_set)
         for key in gate_set_error:
             self.assertAlmostEqual(errors_explicit[key], gate_set_error[key], places=14)
@@ -356,7 +356,7 @@ class TestGST(unittest.TestCase):
             linear_solve_for_gate_parameters(self.gst_circuits, self.gate_set_model, self.gst_circuit_planner)
         with self.assertRaisesRegex(ValueError, "either parameter values"):
             gate_set_errors(self.gate_set_model, self.true_values, reference = self.true_values,
-                            reference_gate_set = evaluate_gate_set(self.gate_set_model, self.true_values))
+                            reference_gate_set = self.gate_set_model(self.true_values))
         with self.assertRaises(TypeError):
             mle_solve_for_gate_parameters(self.gate_set_model, self.gst_circuits)
 

@@ -104,6 +104,21 @@ class GateSetModel:
         self._circuit_noise = None
 
 
+    def __call__(self, theta: Vector | dict | None=None) -> dict:
+        return self.evaluate_gate_set(theta)
+
+    def evaluate_gate_set(self, theta: Vector | dict | None=None) -> dict:
+        """ Evaluates the gate set model at the specified parameter values (theta defaults to the specified initial guesses). 
+
+            Returns a dictionary with model keys ("prep", "POVM", e.g. "Gxpi2:0") and supervector, superbras, and process matrices as respective values.
+
+        """
+        theta = self.parse_theta(theta)
+        gate_set = {'prep': self.prep_state(theta), 'POVM': self.measurement_effects(theta)}
+        for gate in self.gate_models:
+            gate_set[gate.label] = self.gate_process_matrix(gate, theta)
+        return gate_set
+
     ### Models ###
     def model_label(self, model: str | GstGate) -> str:
         """ Returns the standardized model label for 'prep', 'POVM', a gate label (e.g. '[]' -> 'idle'), or CIRCUIT_NOISE (when
