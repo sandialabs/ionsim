@@ -8,6 +8,7 @@
 #***************************************************************************************************
 
 import unittest
+from inspect import getfullargspec
 
 import numpy as np
 
@@ -32,7 +33,9 @@ class TestNoise(unittest.TestCase):
         def f(z):
             return np.array([[1, 1], [1, 1]])
 
-        noisy_f = self.noise.add_noise_to_matrix_function(f)
+        # Get the parameter index for 'z'
+        parameter_index = getfullargspec(f)[0].index('z')
+        noisy_f = self.noise.add_noise_to_matrix_function(f, parameter_index)
 
         # Test the noisy function at specific points
         zs = np.linspace(-1, 1, 3)

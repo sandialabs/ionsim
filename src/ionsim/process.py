@@ -79,16 +79,19 @@ class Gate(Process):
         full_function = basis.enlarge_matrix_function(unitary_function, target_dofs)
         process_matrix_function = basis.create_superoperator_function_from_unitary_operator_function(full_function)
         if noise is not None:
-            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function)
+            noisy_parameter_index = parameter_names.index(noise.parameter_name)
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
         return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
 
     @classmethod
     def from_process_matrix_function(cls, basis: Basis, process_matrix_function: Callable,
             parameters: dict[str, float], noise: Noise | None = None):
         """Build a gate from a process-matrix function and its arguments."""
-        if noise is None or noise.parameter_name not in parameters:
+        parameter_names = list(parameters.keys())
+        if noise is None or noise.parameter_name not in parameter_names:
             return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
-        process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function)
+        noisy_parameter_index = parameter_names.index(noise.parameter_name)
+        process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
         return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
 
     @classmethod
@@ -103,7 +106,8 @@ class Gate(Process):
             return gate.process_matrix
 
         if noise is None or noise.parameter_name not in parameter_names:
-            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function)
+            noisy_parameter_index = parameter_names.index(noise.parameter_name)
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
 
         return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
 
@@ -287,7 +291,8 @@ class Gate(Process):
             return gate.process_matrix
 
         if noise is None or noise.parameter_name not in parameter_names:
-            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function,
+            noisy_parameter_index = parameter_names.index(noise.parameter_name)
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index, 
                 lindbladian_time_independent = lindbladian_time_independent, lindbladian_commutes_at_later_times = lindbladian_commutes_at_later_times)
 
         return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)

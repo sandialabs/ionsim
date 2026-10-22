@@ -9,13 +9,13 @@
 
 from ionsim.custom_math import trapz_for_matrix
 from ionsim.custom_types import Vector
-from ionsim.ionsim_error import IonSimError
 
 import numpy as np
 from dataclasses import dataclass
 from functools import wraps
 from typing import Callable
-import inspect
+
+from icecream import ic
 
 def _gaussian(x: float, standard_deviation: float, mean: float = 0):
     """A normalized Gaussian function."""
@@ -59,28 +59,34 @@ class Noise:
             return _PROBABILITY_DENSITY_FUNCTIONS[pdf_name](x, **pdf_parameters)
         return cls(parameter_name, pdf, domain_arguments)
 
-    def add_noise_to_matrix_function(self, matrix_function: Callable):
+    def add_noise_to_matrix_function(self, matrix_function: Callable, parameter_index: int | None):
         """Replace a function with one averaged over the noisy parameter."""
+        if parameter_index is None:
+            return matrix_function
 
         @wraps(matrix_function)
         def wrapper(*args, **kwargs):
-            # Locate the named parameter in the arguments, either
-            # keyword or positional, so that we can change it later.
-            sig = inspect.signature(matrix_function)
-            bound = sig.bind(*args, **kwargs)
-            bound.apply_defaults()
+            args = list(args)
+            param_in_kwargs = self.parameter_name in kwargs
+            if param_in_kwargs:
+                base_value = float(kwargs[self.parameter_name])
+            else:
+                if parameter_index >= len(args):
+                    raise IonSimError(f"Noisy parameter at position {parameter_index} was not provided positionally nor specified as a keyword argument.")
+                base_value = float(args[parameter_index])
 
-            if not self.parameter_name in bound.arguments:
-                raise IonSimError(f"No paramter {self.parameter_name} in function to add noise to")
-
-            base_value = bound.arguments[self.parameter_name]
-
-            def call_noisy(delta):
-                noisy_value = base_value + delta
-                bound.arguments[self.parameter_name] = noisy_value
-                return matrix_function(*bound.args, **bound.kwargs)
-
-            ys = np.array([self.probability_density_function(darg) * call_noisy(darg)
-                           for darg in self.domain_arguments])
+            function_values = []
+            for darg in self.domain_arguments:
+                noisy_value = base_value + darg
+                if param_in_kwargs:
+                    call_kwargs = dict(kwargs)
+                    call_kwargs[self.parameter_name] = noisy_value
+                    function_values.append(matrix_function(*args, **call_kwargs))
+                else:
+                    call_args = list(args)
+                    call_args[parameter_index] = noisy_value
+                    function_values.append(matrix_function(*call_args, **kwargs))
+            probs = [self.probability_density_function(darg) for darg in self.domain_arguments]
+            ys = np.array([p*fv for p, fv in zip(probs, function_values)])
             return trapz_for_matrix(ys, self.domain_arguments)
         return wrapper
