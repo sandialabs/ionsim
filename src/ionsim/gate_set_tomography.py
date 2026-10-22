@@ -35,8 +35,8 @@
     passed in or returned (initial guesses, results, stage estimates, optimizer_result.x) is in physical units.
 
     A dimensionless fit combines:
-    - Adaptive scales: the first L-BFGS-B run uses the initial scales (parse_parameter_scalings: by default |initial guess|,
-      with a warned fallback for guesses of 0);
+    - Adaptive scales: the first L-BFGS-B run uses the initial scales (parameter_scales; by default |initial guess|,
+      with a warned fallback for guesses of 0: the width of the parameter's bounds, or 1);
       each run is then restarted from its result with s = |theta| (the initial scale for parameters below SCALE_FLOOR of
       it, e.g. at 0) until a restart no longer improves the objective (max_restarts). This makes the scaling insensitive to
       initial guesses that are off by orders of magnitude, and clears L-BFGS-B's curvature memory, which otherwise can stop
@@ -65,7 +65,7 @@ from ionsim.custom_types import Vector
 from ionsim.io import write_results_to_file
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
-__all__ = ['GstResult', 'parse_parameter_scalings', 'linear_solve_for_gate_parameters', 'mle_solve_for_gate_parameters',
+__all__ = ['GstResult', 'linear_solve_for_gate_parameters', 'mle_solve_for_gate_parameters',
            'staged_mle_solve_for_gate_parameters',
            'log_likelihood', 'chi_squared', 'simulate_gst_data', 'gate_set_errors', 'average_gate_set_error',
            'average_gate_set_error_uncertainty', 'parameter_squared_errors', 'write_gate_set_results']
@@ -118,62 +118,6 @@ SCALE_FLOOR = 1e-2           # adaptive scaling uses |theta| only where it is at
 RESTART_TOLERANCE = 1e-10    # relative objective improvement below which L-BFGS-B is not restarted (without an absolute
                              # objective tolerance, e.g. for the linear GST model fits)
 LIKELIHOOD_TOLERANCE = 1e-5  # default absolute tolerance on the log-likelihood for dimensionless MLE (a change of 0.5 is ~1 sigma)
-
-
-def parse_parameter_scalings(gate_set_model: GateSetModel, parameter_scales: Vector | dict | None=None) -> Vector:
-    """ Parsing of user input for the initial scale s of each parameter (theta order) for dimensionless fits, which run on x = theta / s.
-        Later L-BFGS-B runs use |theta| at their start (s where |theta| < SCALE_FLOOR * s); see the module docstring.
-
-        - None (default): s = |initial guess| (the guesses given to set_parameter, not a per-solve starting point, so the
-            scale does not depend on e.g. a linear GST estimate that lands near zero).
-        - a vector (one positive value per parameter, theta order), or a dictionary {parameter name: scale} in which unlisted
-            parameters take their default scales.
-
-        A parameter whose initial guess is 0 has no magnitude to scale by. Unless parameter_scales gives its scale, s = the
-        width of its bounds if both are finite, and 1 (in the parameter's units) otherwise, with a warning: these fallbacks
-        can be off by orders of magnitude (e.g. bounds of +-0.2 on an offset of order 1e-3), so give such parameters a scale.
-
-        A good scale is the magnitude a parameter is expected to have; it need not be precise (within ~10x is fine).
-    """
-    names = gate_set_model.parameter_names
-    guess = np.abs(np.asarray(gate_set_model.initial_guess, dtype=float))
-    bounds = gate_set_model.parameter_bounds or [(None, None)] * len(names)
-    if parameter_scales is None:
-        given = {}
-    elif isinstance(parameter_scales, dict):
-        unknown = set(parameter_scales) - set(names)
-        if unknown:
-            raise ValueError(f"parameter_scales has unknown parameters {sorted(unknown)}. Parameters: {names}.")
-        given = parameter_scales
-    elif isinstance(parameter_scales, (list, tuple, np.ndarray)):
-        vector = np.asarray(parameter_scales, dtype=float)
-        if vector.shape != (len(names),):
-            raise ValueError(f"parameter_scales must have one entry per parameter ({len(names)}); received shape {vector.shape}.")
-        given = dict(zip(names, vector))
-    else:
-        raise TypeError(f"parameter_scales must be None, a vector, or a dictionary; received {type(parameter_scales).__name__}.")
-
-    scales = np.empty(len(names))
-    parameter_warnings = {}
-    for i, (name, (lo, hi)) in enumerate(zip(names, bounds)):
-        if name in given:
-            scales[i] = given[name]
-        elif guess[i] != 0.:
-            scales[i] = guess[i]
-        else:
-            finite = lo is not None and hi is not None and np.isfinite(lo) and np.isfinite(hi)
-            # Scale given by width of user-specified bounds 
-            scales[i] = (hi - lo) if finite and hi > lo else 1.
-            if not (finite and hi == lo):          # a parameter fixed by its bounds does not move; no need to warn
-                parameter_warnings[name] = scales[i]
-    if not np.all(np.isfinite(scales)) or np.any(scales <= 0.):
-        raise ValueError(f"Parameter scales must be finite and positive; received {dict(zip(names, scales))}.")
-    if parameter_warnings:
-        listed = ", ".join(f"{name!r}: {value:g}" for name, value in parameter_warnings.items())
-        warnings.warn(f"Dimensionless fit: parameters with initial guess 0 have no magnitude to scale by, so their scales fall "
-                      f"back to the width of their bounds (or 1): {{{listed}}}. If these are far from the parameters' expected "
-                      f"magnitudes, give them with parameter_scales={{name: scale, ...}}.", stacklevel=2)
-    return scales
 
 
 ### Circuit data ###
@@ -284,9 +228,9 @@ def _reference_gate_set(gate_set: dict) -> dict:
 
 ### Internal: one GST problem (circuits + models) ###
 class _GstProblem:
-    """ The circuits and models of one GST calculation, with quantities derived from them. Created by each public function
-        (one problem per call; nothing is kept between calls). A solver's result is stored in self.solution
-        (build_solution_from_theta); None until then. """
+    """ The circuits and models of one GST calculation, with quantities derived from them. Created by each public function.
+        A solver's result is stored in self.solution which is generated in each public solve function.
+    """
 
     def __init__(self, gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, verbose: bool=False, exact_models: bool=False,
                  require_data: bool=True, dimensionless_fit: bool=False, parameter_scales: Vector | dict | None=None, finite_differences: str='forward',
@@ -340,7 +284,7 @@ class _GstProblem:
             self.parameter_scales = None
             self.last_scale = None
             return
-        self.parameter_scales = parse_parameter_scalings(gate_set_model, parameter_scales)
+        self.parameter_scales = self.parse_parameter_scalings(parameter_scales)
         if finite_differences not in ('forward', 'central'):
             raise ValueError(f"finite_differences must be 'forward' or 'central'; received {finite_differences!r}.")
         self.finite_differences = finite_differences
@@ -354,6 +298,61 @@ class _GstProblem:
         self.last_scale = self.parameter_scales.copy()  # scales of the most recent L-BFGS-B run (in GstResult)
 
     ### Parameter scaling (dimensionless fits) ###
+    def parse_parameter_scalings(self, parameter_scales: Vector | dict | None=None) -> Vector:
+        """ Parsing of user input for the initial scale s(theta) of each parameter (theta order) for dimensionless fits, which run on x = theta / s(theta).
+            Later L-BFGS-B runs use |theta| at their start (s where |theta| < SCALE_FLOOR * s); see the module docstring.
+
+            - None (default): s = |initial guess| (the guesses given to set_parameter, not a per-solve starting point, so the
+                scale does not depend on e.g. a linear GST estimate that lands near zero).
+            - a vector (one positive value per parameter, theta order), or a dictionary {parameter name: scale} in which unlisted
+                parameters take their default scales.
+
+            A parameter whose initial guess is 0 has no magnitude to scale by. Unless parameter_scales gives its scale, s = the
+            width of its bounds if both are finite, and 1 (in the parameter's units) otherwise, with a warning: these fallbacks
+            can be off by orders of magnitude (e.g. bounds of +-0.2 on an offset of order 1e-3), so give such parameters a scale.
+
+            A good scale is the magnitude a parameter is expected to have, but it need not be precise. 
+        """
+        names = self.gate_set_model.parameter_names
+        guess = np.abs(np.asarray(self.gate_set_model.initial_guess, dtype=float))
+        bounds = self.gate_set_model.parameter_bounds or [(None, None)] * len(names)
+        if parameter_scales is None:
+            given = {}
+        elif isinstance(parameter_scales, dict):
+            unknown = set(parameter_scales) - set(names)
+            if unknown:
+                raise ValueError(f"parameter_scales has unknown parameters {sorted(unknown)}. Parameters: {names}.")
+            given = parameter_scales
+        elif isinstance(parameter_scales, (list, tuple, np.ndarray)):
+            vector = np.asarray(parameter_scales, dtype=float)
+            if vector.shape != (len(names),):
+                raise ValueError(f"parameter_scales must have one entry per parameter ({len(names)}); received shape {vector.shape}.")
+            given = dict(zip(names, vector))
+        else:
+            raise TypeError(f"parameter_scales must be None, a vector, or a dictionary; received {type(parameter_scales).__name__}.")
+
+        scales = np.empty(len(names))
+        parameter_warnings = {}
+        for i, (name, (lo, hi)) in enumerate(zip(names, bounds)):
+            if name in given:
+                scales[i] = given[name]
+            elif guess[i] != 0.:
+                scales[i] = guess[i]
+            else:
+                finite = lo is not None and hi is not None and np.isfinite(lo) and np.isfinite(hi)
+                # Scale given by width of user-specified bounds 
+                scales[i] = (hi - lo) if finite and hi > lo else 1.
+                if not (finite and hi == lo):          # a parameter fixed by its bounds does not move; no need to warn
+                    parameter_warnings[name] = scales[i]
+        if not np.all(np.isfinite(scales)) or np.any(scales <= 0.):
+            raise ValueError(f"Parameter scales must be finite and positive; received {dict(zip(names, scales))}.")
+        if parameter_warnings:
+            listed = ", ".join(f"{name!r}: {value:g}" for name, value in parameter_warnings.items())
+            warnings.warn(f"Dimensionless fit: parameters with initial guess 0 have no magnitude to scale by, so their scales fall "
+                          f"back to the width of their bounds (or 1): {{{listed}}}. If these are far from the parameters' expected "
+                          f"magnitudes, give them with parameter_scales={{name: scale, ...}}.", stacklevel=2)
+        return scales
+
     def parameter_scales_from_theta(self, theta: Vector) -> Vector: 
         """ Scales for a dimensionless L-BFGS-B run starting at theta: |theta| where |theta| >= SCALE_FLOOR times the initial
             scale, and the initial scale for parameters at or near 0 """
@@ -753,8 +752,8 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
             MLE) the log-likelihood ratio objective; see the module docstring. Recommended when parameters span orders of
             magnitude. Results are in physical units either way. The following options apply only with dimensionless_fit:
             - parameter_scales: initial scales: None (|initial guess|), a vector, or a {parameter name: scale} dictionary
-                (unlisted parameters take |initial guess|). Give scales for parameters whose initial guess is 0; see
-                parse_parameter_scalings.
+                (unlisted parameters take |initial guess|). Give scales for parameters whose initial guess is 0: their
+                scales otherwise fall back to the width of their bounds (or 1), with a warning.
             - finite_differences: 'forward' (n + 1 objective evaluations per gradient) or 'central' (2n + 1, more accurate).
             - max_restarts: maximum number of L-BFGS-B restarts with scales updated to the current estimate.
         - minimize_kwargs: passed to scipy.optimize.minimize (L-BFGS-B) for the model fits (with dimensionless_fit, options
@@ -836,8 +835,8 @@ def mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model
             MLE) the log-likelihood ratio objective; see the module docstring. Recommended when parameters span orders of
             magnitude. Results are in physical units either way. The following options apply only with dimensionless_fit:
             - parameter_scales: initial scales: None (|initial guess|), a vector, or a {parameter name: scale} dictionary
-                (unlisted parameters take |initial guess|). Give scales for parameters whose initial guess is 0; see
-                parse_parameter_scalings.
+                (unlisted parameters take |initial guess|). Give scales for parameters whose initial guess is 0: their
+                scales otherwise fall back to the width of their bounds (or 1), with a warning.
             - finite_differences: 'forward' (n + 1 objective evaluations per gradient) or 'central' (2n + 1, more accurate).
             - max_restarts: maximum number of L-BFGS-B restarts with scales updated to the current estimate.
             - likelihood_tolerance: absolute log-likelihood tolerance (MLE solvers): stop when an iteration, or a restart,
@@ -871,8 +870,8 @@ def staged_mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_se
             MLE) the log-likelihood ratio objective; see the module docstring. Recommended when parameters span orders of
             magnitude. Results are in physical units either way. The following options apply only with dimensionless_fit:
             - parameter_scales: initial scales: None (|initial guess|), a vector, or a {parameter name: scale} dictionary
-                (unlisted parameters take |initial guess|). Give scales for parameters whose initial guess is 0; see
-                parse_parameter_scalings.
+                (unlisted parameters take |initial guess|). Give scales for parameters whose initial guess is 0: their
+                scales otherwise fall back to the width of their bounds (or 1), with a warning.
             - finite_differences: 'forward' (n + 1 objective evaluations per gradient) or 'central' (2n + 1, more accurate).
             - max_restarts: maximum number of L-BFGS-B restarts with scales updated to the current estimate.
             - likelihood_tolerance: absolute log-likelihood tolerance (MLE solvers): stop when an iteration, or a restart,
