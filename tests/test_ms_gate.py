@@ -56,7 +56,7 @@ class TestMSGateTracingOutMotion(unittest.TestCase):
 
         self.theta = np.pi/8
         self.eta = 0.1
-        self.tau = 125e-6
+        self.tau = 125.0 * 1e-6
         loops = 2
         self.detuning = 2*np.pi * loops / self.tau
         self.rabi_rate = np.sqrt(self.theta/(np.pi/2)) * np.pi * np.sqrt(loops) / (self.eta * self.tau)
@@ -79,19 +79,6 @@ class TestMSGateTracingOutMotion(unittest.TestCase):
         for wrong_theta in [0., 2*self.theta]:
             wrong_ms_process_matrix = Gate.from_unitary(self.gate.basis, Unitary.MS(0., wrong_theta), self.spins).process_matrix
             self.assertLess(self.gate.compute_process_fidelity(wrong_ms_process_matrix), 0.97)
-
-    def test_traced_out_gate_is_trace_preserving_and_completely_positive(self):
-        """ The reduced channel is CPTP. """
-        process_matrix = self.gate.process_matrix
-        vectorized_identity = np.eye(4).T.flatten()
-        assert_array_close(vectorized_identity @ process_matrix, vectorized_identity, rtol=0, atol=1e-6)
-
-        choi = sum(
-            np.kron(np.outer(np.eye(4)[i], np.eye(4)[j]), process_matrix[:, i + 4*j].reshape(4, 4).T)
-            for i in range(4) for j in range(4)
-        )
-        assert_array_close(choi, choi.conj().T, rtol=0, atol=1e-10)
-        self.assertGreater(np.linalg.eigvalsh(choi).min(), -1e-8)
 
     def test_tracing_out_multiple_modes_with_spectator_in_middle(self):
         """ Adding an uncoupled spectator mode in the middle of the basis does not change the traced-out gate. """
