@@ -7,7 +7,7 @@ from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis
 from ionsim.named_operators import Unitary, Pauli
 from ionsim.noise import Noise
-from ionsim.circuit_builder import CircuitBuilder, HAS_QISKIT
+from ionsim.circuit_transpiler import CircuitTranspiler, HAS_QISKIT
 
 if HAS_QISKIT:
     import qiskit
@@ -43,12 +43,12 @@ class QiskitIntegrationTester(unittest.TestCase):
         qc.r(theta=np.pi/2, phi=0, qubit=0)
 
         # Convert to ionsim Circuit
-        builder = CircuitBuilder.from_qiskit(qc)
-        builder.set_basis(self.basis)
-        builder.set_dofs([self.spin_a])
-        builder.set_gate_noise('R', self.phi_noise)
+        tp = CircuitTranspiler.from_qiskit(qc)
+        tp.set_basis(self.basis)
+        tp.set_dofs([self.spin_a])
+        tp.set_gate_noise('R', self.phi_noise)
 
-        ramsey = builder.build(noise=self.theta_noise)
+        ramsey = tp.transpiler(noise=self.theta_noise)
 
         # Compute process fidelity
         fidelity = ramsey.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)

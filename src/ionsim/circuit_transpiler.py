@@ -16,7 +16,7 @@ except ImportError:
     HAS_QISKIT = False
 
 
-class CircuitBuilder:
+class CircuitTranspiler:
 
     @classmethod
     def from_qiskit(cls, qc: QiskitCircuit):
@@ -48,7 +48,7 @@ class CircuitBuilder:
         self._noise = None
         self._gate_noise = {}
 
-    def build(self, noise=None) -> Circuit:
+    def transpile(self, noise=None) -> Circuit:
         noise = noise if noise is not None else self._noise
         gates = [
             gate(self._get_basis(), self._get_dofs(), self._gate_noise.get(gate.name))
