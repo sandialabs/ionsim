@@ -217,7 +217,7 @@ def main():
         print(ms_gate.process_matrix.shape)
 
         # Compute process fidelity 
-        target_MS_gate = ism.Gate.from_unitary(ms_gate.basis, ism.Unitary.MS(np.pi/2., -np.pi/2.), ms_gate.basis.degrees_of_freedom)
+        target_MS_gate = ism.Gate.from_unitary(ms_gate.basis, ism.Unitary.MS(0., np.pi/2.), ms_gate.basis.degrees_of_freedom)
         ms_gate_process_fidelity = ms_gate.compute_process_fidelity(target_MS_gate.process_matrix)
         ic(f"MS gate process fidelity {ms_gate_process_fidelity}")
         end = time.perf_counter()
