@@ -12,7 +12,7 @@ from ionsim.basis import StandardBasis
 # https://arxiv.org/abs/quant-ph/9702053 
 
 def characteristic_length(q: float, mass: float, omega: float) -> float:
-    """ Computes characteristic length in trapped ion system """
+    """ Computes characteristic length in trapped ion system: Coulomb + harmonic oscillator physics """
     k_e = 1 / (4 * np.pi * const.epsilon_0)  # Coulomb constant
     l0 = ((k_e * q ** 2) / (.5 * mass * omega ** 2)) ** (1 / 3)
     return l0
@@ -605,16 +605,16 @@ class TrappedIonCrystal:
     def from_atomic_structure_basis(cls, atomic_structure_basis: StandardBasis, omega_x: float, omega_y: float, omega_z: float): 
         """ Build the mode analysis class from a basis of AtomicStructure degrees of freedom under harmonic trapping. """ 
         # Extract number of ions and the mass and atomic number from the DOF in the basis 
-        atomic_struct_DOFs = atomic_structure_basis.degrees_of_freedom 
-        num_ions = len(atomic_struct_DOFs)
+        dofs = atomic_structure_basis.atomic_structure_dofs 
+        num_ions = len(dofs)
         atomic_masses = []
         atomic_charges = []
 
-        for DOF in atomic_struct_DOFs:
-            if not isinstance(DOF, AtomicStructure):
+        for dof in dofs:
+            if not isinstance(dof, AtomicStructure):
                 raise IonSimError("Atomic structure basis should only contain AtomicStructure objects. No motional modes should be included.")
-            atomic_masses.append(DOF.atomic_mass) 
-            atomic_charges.append(DOF.atomic_charge) 
+            atomic_masses.append(dof.atomic_mass) 
+            atomic_charges.append(dof.atomic_charge) 
         return cls(num_ions, omega_x, omega_y, omega_z, atomic_masses, atomic_charges)
 
     def build_mode_DOFs(self, mode_indices: list[int], fock_dimensions: Vector | int) -> list[MotionalMode]:
@@ -954,6 +954,7 @@ class IonChain(TrappedIonCrystal):
     def build_mode_DOFs_from_branch(self, branch: str, mode_indices: list[int], fock_dimensions: Vector | int) -> list[MotionalMode]:
         """ Builds and returns a list of IonSim Motional Degrees of Freedom.
 
+            - branch specifies the direction: "x", "y", "z"
             - mode_indices corresponds to a mode's index within a branch (instead of the entire set of 3N modes for N ions)
             - Applies each fock dimension to each mode, or applies the same fock dimension to all the modes
             - ex] branch = 'x', mode_indices = [0,1] (tilt and COM), fock_dimensions = 6
@@ -1002,7 +1003,7 @@ class IonChain(TrappedIonCrystal):
         lamb_dicke_by_branch = self.calculate_lamb_dicke_parameters_by_branch(wavevector)
         return lamb_dicke_by_branch['z']
 
-    def get_radial_lamb_dicke_parameters(self, wavevector: Vector | float, direction: str = 'x') -> Vector:
+    def get_radial_lamb_dicke_parameters(self, wavevector: Vector | float, direction: str) -> Vector:
         """ Get Lamb-Dicke parameters for radial modes modes in a specified direction.
 
             Returns: Lamb-Dicke parameters for radial modes, array of shape (num_ions, num_radial_modes)
