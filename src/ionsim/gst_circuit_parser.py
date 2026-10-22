@@ -25,9 +25,6 @@ class CircuitData:
         self.counts = counts 
         self.timestamped_shots = timestamped_shots 
 
-    #_counts: dict[str, int] | None=None
-    #_timestamped_shots: list[tuple[float, str]] | None=None
-
     @property
     def total_counts(self):
         if self.counts is not None:
