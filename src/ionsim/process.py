@@ -133,9 +133,13 @@ class Gate(Process):
                     f'Received {len(initial_wavefunctions_for_dofs_to_trace_out)} initial wavefunctions for '
                     f'{len(dofs_to_trace_out)} degrees of freedom to trace out.'
                 )
-            for dof in dofs_to_trace_out:
+            for i, dof in enumerate(dofs_to_trace_out):
                 if not any(dof is basis_dof for basis_dof in basis.degrees_of_freedom):
                     raise IonSimError(f'Degree of freedom to trace out {dof} is not in the basis.')
+                if any(dof is other for other in dofs_to_trace_out[:i]):
+                    raise IonSimError(f'Degree of freedom to trace out {dof} was specified more than once.')
+            # Pair each traced-out DoF with its initial wavefunction (DoFs hash by identity).
+            initial_wavefunctions_by_dof = dict(zip(dofs_to_trace_out, initial_wavefunctions_for_dofs_to_trace_out, strict=True))
 
         projection, reduced_basis, states_to_project, unwanted_state_indices, computational_indices = _determine_projection_components(reduced_basis, states_to_project, levels_to_project, basis, dofs_to_trace_out)
 
@@ -152,10 +156,7 @@ class Gate(Process):
             if dofs_to_trace_out is None:
                 initial_state = State.from_wavefunction(basis, vector)
             else:
-                initial_state = State.from_wavefunction_with_new_components(
-                    basis, vector, initial_wavefunctions_for_dofs_to_trace_out, dofs_to_trace_out
-                    #basis, vector, list(initial_wavefunctions_for_dofs_to_trace_out), list(dofs_to_trace_out)
-                )
+                initial_state = State.from_wavefunction_with_new_components(basis, vector, initial_wavefunctions_by_dof)
 
             if 'time_evals' not in ode_solver_kwargs:
                 final_states.append(

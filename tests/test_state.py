@@ -16,6 +16,7 @@ from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.basis import StandardBasis, XPauliBasis
 from ionsim.named_operators import Pauli
 from ionsim.testing import assert_array_close
+from ionsim.ionsim_error import IonSimError
 
 class TestState(unittest.TestCase):
 
@@ -58,12 +59,39 @@ class TestState(unittest.TestCase):
         state = State.from_wavefunction_with_new_component(basis, current, mode_psi, self.mode)
         assert_array_close(state.wavefunction, np.kron(current, mode_psi))
 
-        # Several new dofs, given in an order different from the basis ordering.
+        # Add a new dof in the middle
         basis = StandardBasis([self.atomic_structure_a, self.mode, self.atomic_structure_b])
-        state = State.from_wavefunction_with_new_components(
-            basis, other_spin_psi, [mode_psi, spin_psi], [self.mode, self.atomic_structure_a]
-        )
+        state = State.from_wavefunction_with_new_component(basis, current, mode_psi, self.mode)
         assert_array_close(state.wavefunction, np.kron(np.kron(spin_psi, mode_psi), other_spin_psi))
+
+        # Several new dofs; the dict order does not need to match the basis ordering.
+        expected = np.kron(np.kron(spin_psi, mode_psi), other_spin_psi)
+        for new_components in [{self.mode: mode_psi, self.atomic_structure_a: spin_psi},
+                            {self.atomic_structure_a: spin_psi, self.mode: mode_psi}]:
+            state = State.from_wavefunction_with_new_components(basis, other_spin_psi, new_components)
+            assert_array_close(state.wavefunction, expected)
+
+        # Two new dofs with equal dimension but different wavefunctions are placed by key, not by position.
+        mode_b = MotionalMode.from_frequency(frequency=2*np.pi * 2.5e6, fock_dimension=len(self.mode.energy_levels))
+        mode_b_psi = np.zeros(len(mode_b.energy_levels)); mode_b_psi[0] = 1.
+        basis = StandardBasis([self.atomic_structure_a, self.mode, mode_b])
+        state = State.from_wavefunction_with_new_components(
+            basis, spin_psi, {mode_b: mode_b_psi, self.mode: mode_psi})
+        assert_array_close(state.wavefunction, np.kron(np.kron(spin_psi, mode_psi), mode_b_psi))
+
+    def test_wavefunction_with_new_component_errors(self):
+        """Test that inconsistent inputs raise an IonSimError."""
+        basis = StandardBasis([self.atomic_structure_a, self.atomic_structure_b, self.mode])
+        current = np.kron([1., 0.], [1., 0.])
+        mode_psi = np.zeros(len(self.mode.energy_levels)); mode_psi[0] = 1.
+        with self.assertRaises(IonSimError):  # no new dofs
+            State.from_wavefunction_with_new_components(basis, current, {})
+        with self.assertRaises(IonSimError):  # dof not in basis
+            State.from_wavefunction_with_new_component(basis, current, mode_psi, self.mode2)
+        with self.assertRaises(IonSimError):  # component has the wrong length for its dof
+            State.from_wavefunction_with_new_component(basis, current, mode_psi[:-1], self.mode)
+        with self.assertRaises(IonSimError):  # current wavefunction has the wrong length
+            State.from_wavefunction_with_new_component(basis, current[:2], mode_psi, self.mode)
 
     def test_density_matrix_in_new_basis(self):
         """Test the density matrix in the new basis."""

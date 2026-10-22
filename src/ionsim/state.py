@@ -74,53 +74,59 @@ class State:
         return cls(basis, density_matrix)
 
     @classmethod
-    def from_wavefunction_with_new_component(cls, basis: Basis, current_wavefunction: Vector,
-            new_component: Vector, new_dof: DegreeOfFreedom):
+    def from_wavefunction_with_new_component(cls, basis: Basis, current_wavefunction: Vector, new_component: Vector, new_dof: DegreeOfFreedom):
         """Build a state from a wavefunction while adding component on a new degree of freedom. See from_wavefunction_with_new_components() docstring """
-        return cls.from_wavefunction_with_new_components(basis, current_wavefunction, [new_component], [new_dof])
+        return cls.from_wavefunction_with_new_components(basis, current_wavefunction, {new_dof: new_component})
 
     @classmethod
-    def from_wavefunction_with_new_components(cls, basis: Basis, current_wavefunction: Vector,
-            new_components: list[Vector], new_dofs: list[DegreeOfFreedom]):
+    def from_wavefunction_with_new_components(cls, basis: Basis, current_wavefunction: Vector, new_components: dict[DegreeOfFreedom, Vector]):
         """ Build a state from a wavefunction while adding components with new degrees of freedom.
             - basis is the full basis, containing both the current and the new degrees of freedom.
-            - current_wavefunction is defined on the degrees of freedom of `basis` that are not in
-              new_dofs, ordered as they appear in `basis`.
-            - new_component is a list of vectors (each vector is a wavefunction), corresponding 1-to-1 with DOFS in `new_dofs`. 
-            - The new dofs is a list of dofs that may appear at any position in `basis`.
+            - current_wavefunction is defined on the degrees of freedom of `basis` that are not
+              keys of `new_components`, ordered as they appear in `basis`.
+            - new_components maps each new DOF to its wavefunction (a vector of length equal to that DOF's
+              dimension). The new DOFs may appear at any position in `basis`, and the dict order does not matter.
+              DOFs are matched by identity (`is`), consistent with how DOFs are compared elsewhere.
+            - The resulting state is the product state of current_wavefunction and the new components.
         """
-        # Check that user specified a new DOF and that the wavefxn to add is consistent with new DOF 
-        if len(new_dofs) == 0:
+        # Check that user specified a new DOF
+        if len(new_components) == 0:
             raise IonSimError('At least one new degree of freedom must be specified.')
 
-        if len(new_components) != len(new_dofs):
-            raise IonSimError(f'Received {len(new_components)} new components for {len(new_dofs)} new degrees of freedom.')
-
-        # Gather DOFs of full basis and look for new DOFS in the basis; record indices in the full basis  
+        # Gather DOFs of full basis and look for new DOFS in the basis; record indices in the full basis.
         dofs = list(basis.degrees_of_freedom)
-        new_dof_indices = [] # new DOF indices in the full basis  
-        for new_dof in new_dofs:
+        new_dof_indices = [] # new DOF indices in the full basis, in the iteration order of new_components
+        component_vectors = [] # new components, in the same order as new_dof_indices
+        for new_dof, component in new_components.items():
             matches = [i for i, dof in enumerate(dofs) if dof is new_dof]
             if not matches:
                 raise IonSimError(f'New degree of freedom {new_dof} is not in the basis.')
-            if matches[0] in new_dof_indices:
-                raise IonSimError(f'New degree of freedom {new_dof} was specified more than once.')
             new_dof_indices.append(matches[0])
+            component_vectors.append(np.asarray(component))
         original_dof_indices = [i for i in range(len(dofs)) if i not in new_dof_indices]
 
-        # Get dimension of each DOF in basis  
+        # Get dimension of each DOF in basis
         dims = [len(dof.energy_levels) for dof in dofs]
 
-        # Check dimensionality of each component matches its corresponding dof  
-        for index, component in zip(new_dof_indices, new_components):
-            if len(component) != dims[index]:
-                raise IonSimError(f'New component has length {len(component)}, but its degree of freedom has dimension {dims[index]}.')
+        # Check dimensionality of each component matches its corresponding dof
+        for index, component in zip(new_dof_indices, component_vectors):
+            if component.shape != (dims[index],):
+                raise IonSimError(f'New component has shape {component.shape}, but its degree of freedom has dimension {dims[index]}.')
+
+        # Check dimensionality of the current wavefunction matches the remaining dofs
+        current_wavefunction = np.asarray(current_wavefunction)
+        original_dims = [dims[i] for i in original_dof_indices]
+        if current_wavefunction.shape != (int(np.prod(original_dims)),):
+            raise IonSimError(
+                f'Current wavefunction has shape {current_wavefunction.shape}, but the remaining degrees of '
+                f'freedom have total dimension {int(np.prod(original_dims))}.'
+            )
 
         # Build the product state as a tensor with axes ordered (current dofs..., new dofs...),
-        # then permute the axes into the basis ordering. 
-        tensor_prod_state = current_wavefunction.reshape([dims[i] for i in original_dof_indices])
-        for component in new_components:
-            tensor_prod_state = np.multiply.outer(tensor_prod_state, np.asarray(component))
+        # then permute the axes into the basis ordering.
+        tensor_prod_state = current_wavefunction.reshape(original_dims)
+        for component in component_vectors:
+            tensor_prod_state = np.multiply.outer(tensor_prod_state, component)
         
         dof_ordering_in_basis = original_dof_indices + new_dof_indices
 

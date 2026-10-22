@@ -16,6 +16,7 @@ from ionsim.named_operators import Pauli, Fock, Unitary
 from ionsim.operator import CouplingOperator
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.testing import assert_array_close
+from ionsim.ionsim_error import IonSimError
 
 
 def _ms_hamiltonian(basis, spins, mode, eta, rabi_rate, detuning):
@@ -104,6 +105,20 @@ class TestMSGateTracingOutMotion(unittest.TestCase):
         )
         self.assertTrue(all(a is b for a, b in zip(gate.basis.degrees_of_freedom, self.spins)))
         assert_array_close(gate.process_matrix, self.gate.process_matrix, rtol=0, atol=1e-6)
+
+    def test_trace_out_input_validation(self):
+        """ Inconsistent trace-out inputs raise an IonSimError before any time evolution. """
+        other_mode = MotionalMode.from_frequency(frequency=2*np.pi * 2.5e6, fock_dimension=self.fock_dimension)
+        bad_inputs = {
+            'missing initial wavefunctions': ([self.mode], None),
+            'length mismatch': ([self.mode], [self.psi_motion_0, self.psi_motion_0]),
+            'dof not in basis': ([other_mode], [self.psi_motion_0]),
+            'duplicate dof': ([self.mode, self.mode], [self.psi_motion_0, self.psi_motion_0]),
+        }
+        for label, (dofs, wavefunctions) in bad_inputs.items():
+            with self.subTest(label):
+                with self.assertRaises(IonSimError):
+                    Gate.from_hamiltonian(self.basis, self.hamiltonian, self.tau, dofs, wavefunctions)
 
 
 if __name__ == '__main__':
