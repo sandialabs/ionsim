@@ -179,17 +179,18 @@ def parse_parameter_scalings(gate_set_model: GateSetModel, parameter_scales: Vec
 ### Circuit data ###
 @dataclass(frozen=True)
 class _CircuitOutcomes:
-    """ Snapshot of the measurement counts of a list of circuits, as arrays, built once per GST operation (from_circuits) and
-        reused for every objective evaluation. Circuits that share an expanded gate sequence share one row of predictions.
+    """ Internal book-keeping of the measurement outcomes (counts) of a list of circuits, stored as arrays and built once per GST operation (from_circuits, in
+        the _GstProblem constructor) and reused for every objective evaluation; subset_from_rows() selects circuits, e.g. for the stages
+        of staged MLE. Circuits that share an expanded gate sequence share one row of predictions to save computation effort.
     """
     outcome_labels: tuple           # column order of counts
     sequences: list                 # unique expanded gate sequences (tuples of GstGate)
     sequence_index: np.ndarray      # (n_circuits,) index into sequences for each circuit
-    counts: np.ndarray              # (n_circuits, n_outcomes) counts; zeros for a circuit without data
+    counts: np.ndarray              # counts in shape (n_circuits, n_outcomes); zeros for a circuit without data
 
     @classmethod
     def from_circuits(cls, circuits: list[GstCircuit], outcome_labels: tuple, require_data: bool=True) -> '_CircuitOutcomes':
-        """ Tabulate the circuits' current counts, aligned with outcome_labels by label, and validate them. A circuit without
+        """ Record the circuits' current counts, aligned with outcome_labels by label, and check them. A circuit without
             data raises an error, unless require_data=False (e.g. to simulate data), in which case its counts are zero. """
         column = {label: i for i, label in enumerate(outcome_labels)}
         sequences = {}
@@ -198,6 +199,7 @@ class _CircuitOutcomes:
         for i, circ in enumerate(circuits):
             sequence_index[i] = sequences.setdefault(tuple(circ.expanded_gates), len(sequences))
             data = circ.measurement_data
+            # Check that data exists and its format 
             if data is None:
                 if require_data:
                     raise IonSimError(f"Circuit {circ.build_circuit_string()} has no measurement data.")
@@ -211,6 +213,14 @@ class _CircuitOutcomes:
                     raise IonSimError(f"Negative count {count} for outcome '{outcome}' in circuit {circ.build_circuit_string()}.")
                 counts[i, column[outcome]] = count
         return cls(tuple(outcome_labels), list(sequences), sequence_index, counts)
+
+    def subset_from_rows(self, rows: list[int]) -> '_CircuitOutcomes':
+        """ The outcomes of the circuits at `rows` (indices into the circuits, in that order), keeping only the sequences they
+            use, so that predictions are not computed for the other circuits' sequences """
+        rows = np.asarray(rows, dtype=np.int64)
+        used, sequence_index = np.unique(self.sequence_index[rows], return_inverse=True)
+        return _CircuitOutcomes(self.outcome_labels, [self.sequences[k] for k in used], sequence_index.astype(np.int64),
+                                self.counts[rows])
 
     def log_likelihood(self, probabilities: np.ndarray) -> float:
         """ sum over circuits and outcomes of N log p, for probabilities (n_sequences x n_outcomes) of the unique sequences """
@@ -281,7 +291,7 @@ class _GstProblem:
         holds no results between calls. """
 
     def __init__(self, gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, verbose: bool=False, exact_models: bool=False,
-                 dimensionless_fit: bool=False, parameter_scales: Vector | dict | None=None, finite_differences: str='forward',
+                 require_data: bool=True, dimensionless_fit: bool=False, parameter_scales: Vector | dict | None=None, finite_differences: str='forward',
                  max_restarts: int=5, likelihood_tolerance: float=LIKELIHOOD_TOLERANCE):
         if not isinstance(gate_set_model, GateSetModel):
             raise TypeError(f"gate_set_model must be a GateSetModel object; received {type(gate_set_model).__name__}.")
@@ -289,8 +299,11 @@ class _GstProblem:
             raise TypeError("gst_circuits must be a list of GstCircuit objects (e.g. from parse_gst_circuit_file).")
         if len(gst_circuits) == 0:
             raise ValueError("gst_circuits is empty.")
+
         self.gst_circuits = list(gst_circuits)
         self.gate_set_model = gate_set_model
+        self.d2 = gate_set_model.prep_state(gate_set_model.initial_guess).size
+
         # Repeated evaluations use the evaluation models (interpolated where requested); exact_models forces the exact models
         self.gate_models = gate_set_model.gate_models if exact_models else gate_set_model.evaluation_gate_models
         self.verbose = verbose
@@ -308,7 +321,10 @@ class _GstProblem:
         else:
             self.outcome_labels = tuple(gate_set_model.measurement_effects(gate_set_model.initial_guess).keys())
 
-        self.d2 = gate_set_model.prep_state(gate_set_model.initial_guess).size
+        # Tabulate the circuits' measurement counts and check them once (require_data=False allows circuits without data, e.g. to build outcome references via simulation)
+        self.outcomes = _CircuitOutcomes.from_circuits(self.gst_circuits, self.outcome_labels, require_data)
+
+
         # Gates displaced by circuit-level noise (GateSetModel.set_circuit_noise), among the gates of these circuits
         self.noisy_gates = set(gate_set_model.circuit_noise_gates) & self.gate_set
         self.nll_history = []
@@ -339,7 +355,7 @@ class _GstProblem:
         self.last_scale = self.parameter_scales.copy()          # scales of the most recent L-BFGS-B run (in GstResult)
 
     ### Parameter scaling (dimensionless fits) ###
-    def scale_at(self, theta: Vector) -> Vector: 
+    def parameter_scales_from_theta(self, theta: Vector) -> Vector: 
         """ Scales for a dimensionless L-BFGS-B run starting at theta: |theta| where |theta| >= SCALE_FLOOR times the initial
             scale, and the initial scale for parameters at or near 0 """
         magnitude = np.abs(np.asarray(theta, dtype=float))
@@ -369,7 +385,7 @@ class _GstProblem:
             - minimize_kwargs: passed to scipy.optimize.minimize; with dimensionless_fit, options (e.g. gtol) apply to the
                 scaled variables.
 
-            Dimensionless fit: each run uses the scales s = self.scale_at(start), and is restarted from its result (with the
+            Dimensionless fit: each run uses the scales s = self.parameter_scales_from_theta(start), and is restarted from its result (with the
             scales updated to it) until a restart improves the objective by less than objective_tolerance (or, without one,
             RESTART_TOLERANCE times max(1, |objective|)), at most self.max_restarts times. Gradients are scipy's finite
             differences with relative steps on x (jac='2-point' for 'forward', n + 1 objective evaluations per gradient;
@@ -401,7 +417,7 @@ class _GstProblem:
         f_previous, total_nit, total_nfev = objective(theta), 0, 1
         reported, reported_scale = None, None
         for restart in range(self.max_restarts + 1):
-            scale = self.scale_at(theta)
+            scale = self.parameter_scales_from_theta(theta)
 
             def full_theta(x, scale=scale, base=theta):
                 trial = base.copy()
@@ -444,12 +460,6 @@ class _GstProblem:
             reported.jac = np.asarray(reported.jac) / reported_scale[free]      # d objective / d theta
         reported.nit, reported.nfev, reported.restarts = total_nit, total_nfev, restart
         return theta, reported
-
-    ### Data ###
-    def tabulate(self, circuits: list[GstCircuit] | None=None, require_data: bool=True) -> _CircuitOutcomes:
-        """ _CircuitOutcomes of `circuits` (default: all of the problem's circuits), in the problem's outcome-label order """
-        return _CircuitOutcomes.from_circuits(self.gst_circuits if circuits is None else circuits, self.outcome_labels,
-                                              require_data)
 
     ### Model predictions ###
     def prep_and_effects(self, theta: Vector) -> tuple[np.ndarray, np.ndarray]:
@@ -568,13 +578,13 @@ class _GstProblem:
                     raise ValueError(f"Missing LGST circuit: prep = {prep_fid}, gate = {target_list}, measure = {measure_fid}")
         return M
 
-    def run_linear_gst(self, prep_fiducials, measure_fiducials, target_gate_set: dict) -> dict:
+    def run_linear_gst(self, frequencies: dict, prep_fiducials, measure_fiducials, target_gate_set: dict) -> dict:
         """ Estimate the gate set by linear inversion (Nielsen et al., "Gate Set Tomography", Quantum 2021), in the gauge of the
-            target gate set. Returns the LGST estimates. """
+            target gate set, from the observed frequencies of each sequence (self.outcomes.pooled_frequencies()). Returns the
+            LGST estimates. """
         if self.verbose:
             print(f"\n --- Running linear GST ---")
-        # 1. Build the Gram matrix: <<F_i|F_j>> from the circuits' current data
-        frequencies = self.tabulate().pooled_frequencies()
+        # 1. Build the Gram matrix: <<F_i|F_j>> from the observed frequencies
         gram_matrix = self.build_probability_matrix(frequencies, prep_fiducials, measure_fiducials)
 
         # 2. Compute SVD to get projector to linear-independent subspace
@@ -691,15 +701,16 @@ class _GstProblem:
         return fitted
 
     def group_circuits(self, organize_circuits_by_germ_power: bool) -> dict:
-        """ Circuits grouped by germ power p, or by base depth L (germ length x germ power, binned to powers of 2) """
+        """ Indices of the circuits (rows of self.outcomes) grouped by germ power p, or by base depth L (germ length x germ
+            power, binned to powers of 2) """
         groups = {}
-        for circ in self.gst_circuits:
+        for row, circ in enumerate(self.gst_circuits):
             if organize_circuits_by_germ_power:
                 key = circ.germ_power
             else:
                 depth = len(circ.germ_gates) * circ.germ_power
                 key = 1 if depth <= 1 else int(2**np.ceil(np.log2(depth)))      # binned up to a power of 2
-            groups.setdefault(key, []).append(circ)
+            groups.setdefault(key, []).append(row)
         return groups
 
 
@@ -772,7 +783,8 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
     minimize_kwargs.setdefault('options', {'ftol': 1e-15, 'gtol': 1e-12, 'maxiter': 20000})
 
     theta_0 = problem.parse_initial_guess(initial_guess)
-    lgst = problem.run_linear_gst(prep_fiducials, measure_fiducials, gauge_target)
+    frequencies = problem.outcomes.pooled_frequencies()
+    lgst = problem.run_linear_gst(frequencies, prep_fiducials, measure_fiducials, gauge_target)
     theta = problem.parameters_from_lgst(lgst, theta_0, minimize_kwargs)
 
     # Re-gauge: repeat LGST in the gauge of the fitted model and refit, until the parameters converge
@@ -780,7 +792,7 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
     iterations = 0
     while iterations < max_gauge_iterations:
         regauge_target = _internal_gate_set(gate_set_model, theta, None, 'target')
-        lgst = problem.run_linear_gst(prep_fiducials, measure_fiducials, regauge_target)
+        lgst = problem.run_linear_gst(frequencies, prep_fiducials, measure_fiducials, regauge_target)
         new_theta = problem.parameters_from_lgst(lgst, theta, minimize_kwargs)
         iterations += 1
         change = np.max(np.abs(new_theta - theta) / np.maximum(1., np.abs(theta)))
@@ -797,7 +809,7 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
     if not converged:
         warnings.warn(f"Linear GST: {message}. Increase max_gauge_iterations or gauge_tolerance.")
     lgst = dict(lgst, gate_estimates={gate.label: matrix for gate, matrix in lgst['gate_estimates'].items()})
-    return _build_gst_result(problem, theta, 'linear', theta_0, problem.tabulate(), lgst_estimates=lgst,
+    return _build_gst_result(problem, theta, 'linear', theta_0, problem.outcomes, lgst_estimates=lgst,
                        gauge_iterations=iterations, success=converged, message=message)
 
 
@@ -814,8 +826,7 @@ def mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model
 
         - gst_circuits: circuits with measurement data.
         - gate_set_model: GateSetModel (the models of the gate set elements and their parameters).
-        - initial_guess: None (the specified guesses), a dictionary of parameter values, or a vector, e.g. the theta of a
-            linear GST result.
+        - initial_guess: None (uses the guesses specified in gate_set_model), or an override in the form of a dictionary of parameter values, or a vector
         - verbose: print each objective evaluation.
         - dimensionless_fit: fit dimensionless parameters theta / scale with adaptive scales, relative-step gradients, and (for
             MLE) the log-likelihood ratio objective; see the module docstring. Recommended when parameters span orders of
@@ -836,11 +847,9 @@ def mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model
                           dimensionless_fit=dimensionless_fit, finite_differences=finite_differences,
                           max_restarts=max_restarts, likelihood_tolerance=likelihood_tolerance)
     theta_0 = problem.parse_initial_guess(initial_guess)
-    # Tabulate the circuits' current data once; every objective evaluation reuses it
-    circuit_outcomes = problem.tabulate()
-    theta, solver_result = problem.minimize(problem.mle_objective(circuit_outcomes), theta_0, objective_tolerance=problem.mle_tolerance,
+    theta, solver_result = problem.minimize(problem.mle_objective(problem.outcomes), theta_0, objective_tolerance=problem.mle_tolerance,
                                             **minimize_kwargs)
-    return _build_gst_result(problem, theta, 'MLE', theta_0, circuit_outcomes, success=bool(solver_result.success),
+    return _build_gst_result(problem, theta, 'MLE', theta_0, problem.outcomes, success=bool(solver_result.success),
                        message=str(solver_result.message), optimizer_result=solver_result)
 
 
@@ -880,17 +889,17 @@ def staged_mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_se
         print(f"--- Staged MLE with bins by {'germ powers (p)' if organize_circuits_by_germ_power else 'circuit depth (L)'}: {sorted_depths}")
 
     stage_estimates = {}
-    cumulative_circuits = []
+    cumulative_rows = []
     theta = theta_0
     for stage, L in enumerate(sorted_depths):
-        cumulative_circuits.extend(circuit_groups[L])
-        circuit_outcomes = problem.tabulate(cumulative_circuits)
+        cumulative_rows.extend(circuit_groups[L])
+        circuit_outcomes = problem.outcomes.subset_from_rows(cumulative_rows)
         # I found that using log likelihood for all stages gave faster and likely better results
         theta, solver_result = problem.minimize(problem.mle_objective(circuit_outcomes), theta, objective_tolerance=problem.mle_tolerance,
                                                 **minimize_kwargs)
         stage_estimates[L] = theta.copy()
         if verbose:
-            print(f"    Stage {stage + 1} (L <= {L}): {len(cumulative_circuits)} circuits, "
+            print(f"    Stage {stage + 1} (L <= {L}): {len(cumulative_rows)} circuits, "
                   f"LL = {problem.log_likelihood(theta, circuit_outcomes):.3f}, converged = {solver_result.success}")
 
     return _build_gst_result(problem, theta, 'staged MLE', theta_0, circuit_outcomes, success=bool(solver_result.success),
@@ -902,13 +911,13 @@ def log_likelihood(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel,
     """ Total log-likelihood of parameter values theta given the circuits' current measurement data:
             sum over circuits and outcomes of N_outcome log( p_outcome(theta) ) """
     problem = _GstProblem(gst_circuits, gate_set_model)
-    return problem.log_likelihood(gate_set_model.parse_theta(theta), problem.tabulate())
+    return problem.log_likelihood(gate_set_model.parse_theta(theta), problem.outcomes)
 
 
 def chi_squared(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, theta: Vector | dict) -> float:
     """ chi^2 between the circuits' observed outcome frequencies and the model probabilities at theta """
     problem = _GstProblem(gst_circuits, gate_set_model)
-    return problem.chi_squared(gate_set_model.parse_theta(theta), problem.tabulate())
+    return problem.chi_squared(gate_set_model.parse_theta(theta), problem.outcomes)
 
 
 ### Simulation ###
@@ -922,12 +931,12 @@ def simulate_gst_data(gst_circuits: list[GstCircuit], gate_set_model: GateSetMod
     """
     # Simulate each circuit, generating probabilities taken to be ground truth.  
     rng = np.random.default_rng(rng)
-    problem = _GstProblem(gst_circuits, gate_set_model, exact_models=True)   # simulate from the exact models
-    circuit_outcomes = problem.tabulate(require_data=False)
-    probabilities = problem.predict_sequence_probabilities(gate_set_model.parse_theta(theta), circuit_outcomes.sequences)
+    # Simulate from the exact models; the circuits need no data
+    problem = _GstProblem(gst_circuits, gate_set_model, exact_models=True, require_data=False)
+    probabilities = problem.predict_sequence_probabilities(gate_set_model.parse_theta(theta), problem.outcomes.sequences)
     simulated = []
     # Sample outcomes for each circuit  
-    for circ, k in zip(problem.gst_circuits, circuit_outcomes.sequence_index):
+    for circ, k in zip(problem.gst_circuits, problem.outcomes.sequence_index):
         p = probabilities[k] / probabilities[k].sum()
         counts = rng.multinomial(N_shots, p)
         simulated.append(replace(circ, measurement_data = CircuitData.from_counts(dict(zip(problem.outcome_labels, counts)))))

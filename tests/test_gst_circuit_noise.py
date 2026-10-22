@@ -122,8 +122,8 @@ class TestCircuitNoise(unittest.TestCase):
 
     def probabilities(self, gate_set_model, sequences, values):
         circuits = self.circuits(sequences)
-        problem = _GstProblem(circuits, gate_set_model, exact_models=True)
-        data = problem.tabulate(circuits, require_data=False)
+        problem = _GstProblem(circuits, gate_set_model, exact_models=True, require_data=False)
+        data = problem.outcomes
         p = problem.predict_sequence_probabilities(gate_set_model.parse_theta(values), data.sequences)
         return np.array([p[k] for k in data.sequence_index])
 
@@ -298,7 +298,7 @@ class TestCircuitNoise(unittest.TestCase):
             parse_parameter_scalings(model, {'shared:amplitude_offset': 0.})
         circuits = self.circuits([[X]])
         with self.assertRaises(ValueError):   # scales without dimensionless_fit
-            _GstProblem(circuits, model, parameter_scales={'shared:amplitude_offset': 1e-3})
+            _GstProblem(circuits, model, require_data=False, parameter_scales={'shared:amplitude_offset': 1e-3})
 
     def test_linear_gst_is_not_supported(self):
         model = self.gate_set_model(gaussian_noise())
