@@ -287,8 +287,9 @@ def _internal_gate_set(gate_set_model: GateSetModel, values: Vector | dict | Non
 
 ### Internal: one GST problem (circuits + models) ###
 class _GstProblem:
-    """ The circuits and models of one GST calculation, with quantities derived from them. Created by each public function;
-        holds no results between calls. """
+    """ The circuits and models of one GST calculation, with quantities derived from them. Created by each public function
+        (one problem per call; nothing is kept between calls). A solver's result is stored in self.solution
+        (build_solution_from_theta); None until then. """
 
     def __init__(self, gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, verbose: bool=False, exact_models: bool=False,
                  require_data: bool=True, dimensionless_fit: bool=False, parameter_scales: Vector | dict | None=None, finite_differences: str='forward',
@@ -328,6 +329,7 @@ class _GstProblem:
         # Gates displaced by circuit-level noise (GateSetModel.set_circuit_noise), among the gates of these circuits
         self.noisy_gates = set(gate_set_model.circuit_noise_gates) & self.gate_set
         self.nll_history = []
+        self.solution = None  # GstResult of the solve (build_solution_from_theta)
         # Dimensionless fitting (see the module docstring); its options must keep their defaults without it
         self.dimensionless_fit = bool(dimensionless_fit)
         if not self.dimensionless_fit:
@@ -352,7 +354,7 @@ class _GstProblem:
             raise ValueError(f"likelihood_tolerance must be positive; received {likelihood_tolerance!r}.")
         self.likelihood_tolerance = float(likelihood_tolerance)
         self.scale_floor = SCALE_FLOOR * self.parameter_scales
-        self.last_scale = self.parameter_scales.copy()          # scales of the most recent L-BFGS-B run (in GstResult)
+        self.last_scale = self.parameter_scales.copy()  # scales of the most recent L-BFGS-B run (in GstResult)
 
     ### Parameter scaling (dimensionless fits) ###
     def parameter_scales_from_theta(self, theta: Vector) -> Vector: 
@@ -713,13 +715,16 @@ class _GstProblem:
             groups.setdefault(key, []).append(row)
         return groups
 
-
-def _build_gst_result(problem: _GstProblem, theta: Vector, method: str, theta_0: Vector, outcomes: _CircuitOutcomes, **fields) -> GstResult:
-    """ Package a GstResult (log-likelihood of theta on the outcomes, history of objective values) """
-    return GstResult(theta=np.array(theta, dtype=float), parameter_names=problem.gate_set_model.parameter_names, method=method,
-                     log_likelihood=problem.log_likelihood(theta, outcomes), initial_guess=np.array(theta_0, dtype=float),
-                     negative_log_likelihood_history=list(problem.nll_history),
-                     parameter_scales=None if problem.last_scale is None else problem.last_scale.copy(), **fields)
+    ### Solution ###
+    def build_solution_from_theta(self, theta: Vector, method: str, theta_0: Vector, **fields) -> GstResult:
+        """ GstResult of a solve, stored in self.solution and returned: theta and its log-likelihood on all of the problem's
+            circuits, the starting point theta_0, the history of objective evaluations, and (dimensionless fits) the scales of
+            the last run; `fields` are the solver-specific fields (e.g. success, message, optimizer_result) """
+        self.solution = GstResult(theta=np.array(theta, dtype=float), parameter_names=self.gate_set_model.parameter_names, method=method,
+                         log_likelihood=self.log_likelihood(theta, self.outcomes), initial_guess=np.array(theta_0, dtype=float),
+                         negative_log_likelihood_history=list(self.nll_history),
+                         parameter_scales=None if self.last_scale is None else self.last_scale.copy(), **fields)
+        return self.solution
 
 
 ### Solvers ###
@@ -809,8 +814,7 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
     if not converged:
         warnings.warn(f"Linear GST: {message}. Increase max_gauge_iterations or gauge_tolerance.")
     lgst = dict(lgst, gate_estimates={gate.label: matrix for gate, matrix in lgst['gate_estimates'].items()})
-    return _build_gst_result(problem, theta, 'linear', theta_0, problem.outcomes, lgst_estimates=lgst,
-                       gauge_iterations=iterations, success=converged, message=message)
+    return problem.build_solution_from_theta(theta, 'linear', theta_0, lgst_estimates=lgst, gauge_iterations=iterations, success=converged, message=message)
 
 
 def mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel,
@@ -849,8 +853,7 @@ def mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model
     theta_0 = problem.parse_initial_guess(initial_guess)
     theta, solver_result = problem.minimize(problem.mle_objective(problem.outcomes), theta_0, objective_tolerance=problem.mle_tolerance,
                                             **minimize_kwargs)
-    return _build_gst_result(problem, theta, 'MLE', theta_0, problem.outcomes, success=bool(solver_result.success),
-                       message=str(solver_result.message), optimizer_result=solver_result)
+    return problem.build_solution_from_theta(theta, 'MLE', theta_0, success=bool(solver_result.success), message=str(solver_result.message), optimizer_result=solver_result)
 
 
 def staged_mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel,
@@ -902,8 +905,10 @@ def staged_mle_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_se
             print(f"    Stage {stage + 1} (L <= {L}): {len(cumulative_rows)} circuits, "
                   f"LL = {problem.log_likelihood(theta, circuit_outcomes):.3f}, converged = {solver_result.success}")
 
-    return _build_gst_result(problem, theta, 'staged MLE', theta_0, circuit_outcomes, success=bool(solver_result.success),
-                       message=str(solver_result.message), optimizer_result=solver_result, stage_estimates=stage_estimates)
+    # The last stage includes every circuit, so the result's log-likelihood (on all circuits) is that stage's
+    return problem.build_solution_from_theta(theta, 'staged MLE', theta_0, success=bool(solver_result.success),
+                                             message=str(solver_result.message), optimizer_result=solver_result,
+                                             stage_estimates=stage_estimates)
 
 
 ### Likelihood and chi^2 ###
