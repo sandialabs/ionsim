@@ -378,9 +378,14 @@ class Circuit(Process):
 
         for gate in gates:
             if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
-                arguments = np.array(list(gate.parameters.values()))
-                vec = np.array([1 if noise.parameter_name == name else 0 for name in gate.parameters])
-                pmats = [gate.process_matrix_function(*list(arguments + darg * vec)) for darg in noise.domain_arguments]
+                sig = inspect.signature(gate.process_matrix_function)
+                bound = sig.bind(**gate.parameters)
+                bound.apply_defaults()
+                base_value = bound.arguments[noise.parameter_name]
+                pmats = []
+                for darg in noise.domain_arguments:
+                    bound.arguments[noise.parameter_name] = base_value + darg
+                    pmats.append(gate.process_matrix_function(*bound.args, **bound.kwargs))
             else:
                 pmats = [gate.process_matrix for darg in noise.domain_arguments]
             pmats_list.append(pmats)
