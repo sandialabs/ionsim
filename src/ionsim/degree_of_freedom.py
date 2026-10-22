@@ -61,21 +61,11 @@ def _check_projection(m: float, total: float, m_name: str, total_name: str, qn: 
         raise IonSimError(f"{total_name} - {m_name} must be an integer, got {total_name}={total}, {m_name}={m} in {qn}.")
 
 
- #<<<<<<< HEAD
- #class AtomicStructure(DegreeOfFreedom):
- #    """An atomic structure object, containing atomic internal energy levels corresponding to angular momentum eigenstates.""" 
- #    energy_levels: list[AtomicInternalEnergyLevel]
- #    # Store mass and atomic number 
- #    atomic_mass: float 
- #    atomic_charge: int 
- #    name: str | None = None # TODO: will we use these names?
- #=======
 @dataclass(frozen=True, eq=False)
 class MotionalMode(DegreeOfFreedom):
     """An normal mode of motion for a linear chain of ions."""
     energy_levels: list[CollectiveMotionalEnergyLevel]
     name: str | None = None 
-#>>>>>>> main
 
     @classmethod
     def from_frequency(cls, frequency: float, fock_dimension: int, name: str | None = None, level_aliases: list[str] | None=None):
@@ -124,13 +114,9 @@ class AtomicStructure(DegreeOfFreedom):
         # Import configuration data and levels for the species 
         config_data = cls.get_config_data(species)
         levels_data = config_data['levels']
-#<<<<<<< HEAD
         atomic_mass = config_data['mass'] # Daltons
         atomic_charge = config_data['charge'] # Daltons
         atomic_number = config_data['Z'] # Atomic number, number of protons 
-        #magnetic_moment = config_data['magnetic_moment'] # units of \mu_{N}
-        #structure = 'fine' if nuclear_spin == 0 else 'hyperfine' 
-#=======
 
         if level_names and quantum_numbers:
             raise IonSimError("Specify either level names or quantum numbers, not both.")
@@ -141,7 +127,6 @@ class AtomicStructure(DegreeOfFreedom):
                 raise IonSimError("level_aliases requires level_names or quantum_numbers, so each alias maps to a specific level.")
             if len(level_aliases) != len(requested):
                 raise IonSimError(f"Specify one level alias per requested level: expected {len(requested)}, got {len(level_aliases)}.")
-#>>>>>>> main
 
         if term_symbols is not None:
             available = [data['term_symbol'] for data in levels_data]
@@ -176,8 +161,6 @@ class AtomicStructure(DegreeOfFreedom):
                 levels = [replace(level, alias=level_aliases[level_names.index(level.name)]) for level in levels]
 
         return cls(levels + [SinkLevel()] if include_sink else levels, atomic_mass, atomic_charge, name)
-        #return cls(levels + [SinkLevel()] if include_sink else levels, name)
- #        return cls(levels, atomic_mass, atomic_charge, name)
 
     @classmethod
     def _levels_from_quantum_numbers(cls, quantum_numbers: list[dict], builders: list[_ManifoldBuilder],
@@ -189,55 +172,6 @@ class AtomicStructure(DegreeOfFreedom):
             qn = cls._parse_quantum_numbers(raw_qn, nuclear_spin)
             builder = cls._match_manifold(qn, builders)
             eigenbasis = cls._identify_basis(qn, nuclear_spin)
- #
- #<<<<<<< HEAD
- #            level_data['unique_term_symbol'] = level_data['term_symbol']
- #            level_data['unique_branching_ratios'] = level_data.get('branching_ratios', None)
- #            # level_data['unique_term_symbol'] = _get_unique_term_symbol(level_data, levels_data)
- #
- #            get_fine_data, FineLevel, HyperfineLevel = cls.get_level_factory(level_data['coupling_scheme'])
- #            fine_data = get_fine_data(level_data)
- #            j = fine_data['j']
- #
- #            # ic(FineLevel.__annotations__, FineLevel(**fine_data, mj={'key': 1}))
- #            # TODO: why is mypy not catching this??
- #
- #            # Use Zeeman Solver based on level manifold to compute Zeeman shifts 
- #            if magnetic_field != 0. :
- #                if level_data['coupling_scheme'] == 'j1l2': 
- #                    s2 = fine_data['s2']
- #                    if fine_data['gj'] is None:
- #                        k = fine_data['k']
- #                        j1 = fine_data['j1']
- #                        l2 = fine_data['l2']
- #                        s2 = fine_data['s2']
- #                        # See p. 100 of B. G. Wybourne, Spectroscopic Properties of Rare Earths (Interscience, New York, 1965). 
- #                        # and p. 6 and 7 of https://nvlpubs.nist.gov/nistpubs/Legacy/NSRDS/nbsnsrds60.pdf
- #                        gj1 = 1. + (j1*(j1+1) + s2*(s2+1) - l2*(l2+1))/(2. * j1*(j1+1)) # from LS formula 
- #                        gj = 2. * (gj1 - 1.) * (k*(k+1) + j1*(j1+1) - l2*(l2 + 1))/((2*j + 1)*(2*k + 1))
- #                        gj += (3*j*(j+1) - k*(k+1) + s2*(s2+1))/(2.*j*(j+1)) 
- #                        fine_data['gj'] = gj
- #                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, None, s2, fine_data['hyperfine_A']*2.*np.pi, atomic_mass, magnetic_moment, atomic_number, gj = gj)
- #                else:
- #                    s = fine_data['s']
- #                    l = fine_data['l']
- #                    Zeeman_solver = ZeemanHyperfineSolver(nuclear_spin, j, l, s, fine_data['hyperfine_A']*2.*np.pi, atomic_mass, magnetic_moment, atomic_number)
- #                zeeman_energy_shifts, zeeman_eigenvecs = Zeeman_solver.solve_at_field(magnetic_field)
- #                zeeman_energy_shifts *= np.pi*2. # convert to rad/s 
- #
- #            # Construct levels based on coupling structure 
- #            if structure == 'fine':
- #                for mj in np.arange(-j, j + 1):
- #                    # Extract any Zeeman shifts for this state 
- #                    zeeman_shift_energy = 0.
- #                    if magnetic_field != 0. :
- #                        # For fine couplings, F = J since I = 0, so F <==> J and mf <==> mj labels are interchangable. 
- #                        zeeman_shift_energy = Zeeman_solver.get_state_energy(zeeman_energy_shifts, zeeman_eigenvecs, f = j, mf = mj)
- #                    # Create the level 
- #                    level = FineLevel(**fine_data, mj=mj, external_energy_shift=zeeman_shift_energy)
- #                    if level_names is None or level.name in level_names: 
- #                        levels.append(level)
- #=======
             if eigenbasis is EigenBasis.FINE:
                 _check_projection(qn['mj'], builder.j, 'mj', 'j', raw_qn)
                 level = builder.fine_level(qn['mj'])
@@ -251,17 +185,9 @@ class AtomicStructure(DegreeOfFreedom):
                 _check_projection(qn['mj'], builder.j, 'mj', 'j', raw_qn)
                 _check_projection(qn['mi'], nuclear_spin, 'mi', 'i', raw_qn)
                 level = builder.uncoupled_level(qn['mj'], qn['mi'])
-#>>>>>>> main
             else:
                 raise IonSimError(f"Unsupported level eigenbasis {eigenbasis}.")
 
-#<<<<<<< HEAD
- #                        # Create the level 
- #                        level = HyperfineLevel(**fine_data, i=nuclear_spin, f=f, mf=mf, external_energy_shift = zeeman_shift_energy)
- #                        if level_names is None or level.name in level_names:
- #                            levels.append(level)
- #        return cls(levels, atomic_mass, atomic_charge, name)
- #=======
             if level.name in seen_names:
                 raise IonSimError(f"Quantum numbers {raw_qn} specify the level '{level.name}', which was already requested.")
             seen_names.add(level.name)
@@ -347,7 +273,6 @@ class AtomicStructure(DegreeOfFreedom):
         gj1 = 1. + (j1*(j1+1) + s2*(s2+1) - l2*(l2+1))/(2. * j1*(j1+1))  # from LS formula
         gj = 2. * (gj1 - 1.) * (k*(k+1) + j1*(j1+1) - l2*(l2 + 1))/((2*j + 1)*(2*k + 1))
         return gj + (3*j*(j+1) - k*(k+1) + s2*(s2+1))/(2.*j*(j+1))
-#>>>>>>> main
 
     @classmethod
     def get_level_factory(cls, coupling_scheme: str):
@@ -390,22 +315,6 @@ class AtomicStructure(DegreeOfFreedom):
             config_data = yaml.safe_load(file)
         return config_data
 
- #<<<<<<< HEAD
- #    @staticmethod
- #    def check_uniqueness_of_term_symbol(term_symbol: str, levels_data: list[dict]):
- #        """Check whether a term symbol corresponds to a single energy level in the energy-levels configuration data."""
- #        all_term_symbols = [data['term_symbol'] for data in levels_data]
- #        assert(term_symbol in all_term_symbols)
- #        return all_term_symbols.count(term_symbol) == 1
- #
- #@dataclass(frozen=True, eq=False)
- #class MotionalMode(DegreeOfFreedom):
- #    """An normal mode of motion for a linear chain of ions."""
- #    energy_levels: list[CollectiveMotionalEnergyLevel]
- #    name: str | None = None # TODO: will we use these names?
- #
- #=======
- #>>>>>>> main
     @classmethod
     def get_manifold_config(cls, species: str, term_symbol: str) -> dict:
         """The config-file entry for one manifold of a species, with values exactly as in the file (e.g. energies in Hz)."""
