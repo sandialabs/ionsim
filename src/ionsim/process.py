@@ -102,7 +102,7 @@ class Gate(Process):
             gate = cls.from_hamiltonian(basis, hamiltonian_function(*args, **kwargs))
             return gate.process_matrix
 
-        if noise is None or noise.parameter_name not in parameter_names:
+        if noise is not None and noise.parameter_name in parameter_names:
             process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function)
 
         return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
@@ -283,12 +283,13 @@ class Gate(Process):
 
         @wraps(lindbladian_function)
         def process_matrix_function(*args, **kwargs):
-            gate = cls.from_lindbladian(basis, lindbladian_function(*args, **kwargs), duration)
+            gate = cls.from_lindbladian(basis, lindbladian_function(*args, **kwargs), duration,
+                                        lindbladian_time_independent=lindbladian_time_independent,
+                                        lindbladian_commutes_at_later_times=lindbladian_commutes_at_later_times)
             return gate.process_matrix
 
-        if noise is None or noise.parameter_name not in parameter_names:
-            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function,
-                lindbladian_time_independent = lindbladian_time_independent, lindbladian_commutes_at_later_times = lindbladian_commutes_at_later_times)
+        if noise is not None and noise.parameter_name in parameter_names:
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function)
 
         return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
 
