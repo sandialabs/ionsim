@@ -152,7 +152,7 @@ class Gate(Process):
             if dofs_to_trace_out is None:
                 initial_state = State.from_wavefunction(basis, vector)
             else:
-                initial_state = State.from_wavefunction_with_new_component(
+                initial_state = State.from_wavefunction_with_new_components(
                     basis, vector, initial_wavefunctions_for_dofs_to_trace_out, dofs_to_trace_out
                     #basis, vector, list(initial_wavefunctions_for_dofs_to_trace_out), list(dofs_to_trace_out)
                 )

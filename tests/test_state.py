@@ -52,20 +52,15 @@ class TestState(unittest.TestCase):
         other_spin_psi = np.array([1, -1j])/np.sqrt(2)
         mode_psi = np.zeros(len(self.mode.energy_levels)); mode_psi[1] = 1.
 
-        # New DoF last.
+        # Add new dof last
         basis = StandardBasis([self.atomic_structure_a, self.atomic_structure_b, self.mode])
         current = np.kron(spin_psi, other_spin_psi)
-        state = State.from_wavefunction_with_new_component(basis, current, mode_psi, [self.mode])
+        state = State.from_wavefunction_with_new_component(basis, current, mode_psi, self.mode)
         assert_array_close(state.wavefunction, np.kron(current, mode_psi))
 
-        # New DoF in the middle.
+        # Several new dofs, given in an order different from the basis ordering.
         basis = StandardBasis([self.atomic_structure_a, self.mode, self.atomic_structure_b])
-        state = State.from_wavefunction_with_new_component(basis, current, mode_psi, [self.mode])
-        assert_array_close(state.wavefunction, np.kron(np.kron(spin_psi, mode_psi), other_spin_psi))
-
-        # Several new DoFs, given in an order different from the basis ordering.
-        basis = StandardBasis([self.atomic_structure_a, self.mode, self.atomic_structure_b])
-        state = State.from_wavefunction_with_new_component(
+        state = State.from_wavefunction_with_new_components(
             basis, other_spin_psi, [mode_psi, spin_psi], [self.mode, self.atomic_structure_a]
         )
         assert_array_close(state.wavefunction, np.kron(np.kron(spin_psi, mode_psi), other_spin_psi))
