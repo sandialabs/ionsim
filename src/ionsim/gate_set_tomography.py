@@ -74,7 +74,7 @@ __all__ = ['GstResult', 'parse_parameter_scalings', 'linear_solve_for_gate_param
 ### Results ###
 @dataclass
 class GstResult:
-    """ Result of a GST solve.
+    """ Result of a GST solve method.
 
         - theta: estimated parameter vector, in the order of parameter_names
         - method: 'linear', 'MLE', or 'staged MLE'
@@ -153,27 +153,27 @@ def parse_parameter_scalings(gate_set_model: GateSetModel, parameter_scales: Vec
     else:
         raise TypeError(f"parameter_scales must be None, a vector, or a dictionary; received {type(parameter_scales).__name__}.")
 
-    scale = np.empty(len(names))
+    scales = np.empty(len(names))
     parameter_warnings = {}
     for i, (name, (lo, hi)) in enumerate(zip(names, bounds)):
         if name in given:
-            scale[i] = given[name]
+            scales[i] = given[name]
         elif guess[i] != 0.:
-            scale[i] = guess[i]
+            scales[i] = guess[i]
         else:
             finite = lo is not None and hi is not None and np.isfinite(lo) and np.isfinite(hi)
             # Scale given by width of user-specified bounds 
-            scale[i] = (hi - lo) if finite and hi > lo else 1.
+            scales[i] = (hi - lo) if finite and hi > lo else 1.
             if not (finite and hi == lo):          # a parameter fixed by its bounds does not move; no need to warn
-                parameter_warnings[name] = scale[i]
-    if not np.all(np.isfinite(scale)) or np.any(scale <= 0.):
-        raise ValueError(f"Parameter scales must be finite and positive; received {dict(zip(names, scale))}.")
+                parameter_warnings[name] = scales[i]
+    if not np.all(np.isfinite(scales)) or np.any(scales <= 0.):
+        raise ValueError(f"Parameter scales must be finite and positive; received {dict(zip(names, scales))}.")
     if parameter_warnings:
         listed = ", ".join(f"{name!r}: {value:g}" for name, value in parameter_warnings.items())
         warnings.warn(f"Dimensionless fit: parameters with initial guess 0 have no magnitude to scale by, so their scales fall "
                       f"back to the width of their bounds (or 1): {{{listed}}}. If these are far from the parameters' expected "
                       f"magnitudes, give them with parameter_scales={{name: scale, ...}}.", stacklevel=2)
-    return scale
+    return scales
 
 
 ### Circuit data ###
@@ -260,8 +260,8 @@ def _as_superbra(element) -> np.ndarray:
     return np.asarray(element.superbra if hasattr(element, 'superbra') else element)
 
 def _internal_gate_set(gate_set_model: GateSetModel, values: Vector | dict | None, gate_set: dict | None, role: str) -> dict:
-    """ A gate set keyed internally by GstGate (plus 'prep', 'POVM'), from parameter values or an explicit gate-set dictionary.
-        Exactly one of values / gate_set must be given. """
+    """ A gate set keyed internally by GstGate (and 'prep', 'POVM'), from parameter values or an explicit gate-set dictionary.
+        Either values or gate_set must be given as arguments. """
     if (values is None) == (gate_set is None):
         raise ValueError(f"Specify the {role} as either parameter values ({role}=...) or an explicit gate set ({role}_gate_set=...), not both or neither.")
     if gate_set is None:
