@@ -705,8 +705,8 @@ class TrappedIonCrystal:
         }
 
 
-class LinearIonChain(TrappedIonCrystal):
-    """ Subclass for setting up and analyzing linear ion chains.
+class IonChain(TrappedIonCrystal):
+    """ Subclass for setting up and analyzing linear (1D) ion chains.
 
         In a linear ion chain, ions are typically aligned along the z-axis (axial direction),
         with minimal displacement in the x and y directions (radial directions).
@@ -1041,7 +1041,7 @@ class LinearIonChain(TrappedIonCrystal):
 
         def separation_error(wz_Hz):
             # Create a temporary analysis object with the current wz
-            temp_analysis = LinearIonChain(
+            temp_analysis = IonChain(
                 num_ions=self.num_ions,
                 omega_x=self.omega_x[0],
                 omega_y=self.omega_y[0],

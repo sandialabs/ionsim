@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 from scipy.linalg import expm
-from ionsim.trapped_ion_mode_analysis import TrappedIonCrystal, LinearIonChain
+from ionsim.trapped_ion_mode_analysis import TrappedIonCrystal, IonChain
 from ionsim.testing import assert_array_close
 
 class TestModeAnalysis(unittest.TestCase):
@@ -92,7 +92,7 @@ class TestModeAnalysis(unittest.TestCase):
             assert_array_close(np.abs(computed_Lamb_Dicke_parameters), np.abs(reference_values), atol = 1E-10, rtol=None)
 
     def test_linear_ion_chain_analysis(self):
-        """Test the LinearIonChain class with a 5-ion Yb+ chain."""
+        """Test the IonChain class with a 5-ion Yb+ chain."""
         # Create a 5-ion linear chain of Yb+ ions
         num_ions = 5
         TPI = 2*np.pi
@@ -103,7 +103,7 @@ class TestModeAnalysis(unittest.TestCase):
         atomic_charge = 1      
 
         # Create and analyze the linear chain
-        chain = LinearIonChain(num_ions, omega_x, omega_y, omega_z, atomic_mass, atomic_charge)
+        chain = IonChain(num_ions, omega_x, omega_y, omega_z, atomic_mass, atomic_charge)
         chain.solve_ion_trap_equilibrium()
         #chain.print_chain_summary()
 

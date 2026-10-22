@@ -7,19 +7,24 @@
 # http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
 #***************************************************************************************************
 
-from ionsim.basis import Basis, StandardBasis
-from ionsim.degree_of_freedom import DegreeOfFreedom
+import numpy as np
+from numpy.fft import ifft, fft, fft2, fftshift, ifftshift 
+from numpy.linalg import multi_dot
+from dataclasses import dataclass, replace
+from icecream import ic
+
+from ionsim.energy_level import EnergyEigenstate
+from ionsim.operator import Operator, CouplingOperator
+from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
+from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure, MotionalMode
 from ionsim.custom_types import Vector, Matrix
 from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.dissipator import Dissipator, Lindbladian
+from ionsim.lindbladian import Dissipator, Lindbladian
+from ionsim.named_operators import Fock, Pauli
+from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel 
+from ionsim.basis import Basis, StandardBasis
 
-import numpy as np
-# from typing import Any
-from dataclasses import dataclass
-from numpy.linalg import multi_dot
-
-from icecream import ic
  
 @dataclass(frozen=True, eq=False)       
 class State:
@@ -31,6 +36,18 @@ class State:
     @property
     def supervector(self) -> Vector:
         return self.basis.compute_supervector_from_density_matrix(self.density_matrix)
+
+    @property
+    def motional_state(self):
+        """ Motional portion of the state, if it exists. Returns None if no motional DOFs """ 
+        if not self.basis.motional_modes: 
+            return None 
+
+        # Trace out atomic structure DOFs to obtain a purely motional state  
+        state = self
+        for dof in self.basis.atomic_structure_dofs:
+            state = state.trace_out_degree_of_freedom(dof)
+        return state 
 
     @classmethod
     def from_coefficients(cls, basis: Basis, coefficients: list[float]): 
@@ -121,6 +138,27 @@ class State:
         rhos = [self.basis.compute_density_matrix_from_supervector(psi) for psi in supervectors]
         return [State(self.basis, rho) for rho in rhos]
 
+    def propagate_using_pauli_channel(self, Pauli_error_rates: dict[str, float]):
+        """ Propagates a state under the action of a Pauli channel, specified by its error rates 
+
+            Pauli channel acting on a state rho: 
+                E[rho] = sum_{a} P_a rho P_a 
+                
+                - E is the channel
+                - P_a is a Pauli operator from the N-qubit Pauli group 
+                - rho is the input state's density matrix  
+                - E[rho] is the output state's density matrix  
+        """
+        d2 = len(Pauli_error_rates)
+        N_qubits = int(np.log2(d2))//2
+
+        propagated_density_matrix = np.zeros_like(self.density_matrix) 
+        assert d2 == propagated_density_matrix.size 
+        pauli_operators = Pauli.product_operators(N_qubits)
+        for pauli_label in Pauli_error_rates.keys(): 
+            propagated_density_matrix += Pauli_error_rates[pauli_label] * (pauli_operators[pauli_label] @ self.density_matrix @ pauli_operators[pauli_label]) 
+        return State.from_density_matrix(self.basis, propagated_density_matrix) 
+    
     def get_wavefunction_in_new_basis(self, new_basis: Basis):
         """Get the wavefunction in a new basis."""
         if new_basis is self.basis or self.wavefunction is None:
@@ -139,11 +177,22 @@ class State:
     
     def compute_basis_state_probabilities(self):
         """Compute the probability of measuring each basis state."""
-        return [
+        probabilities = [
             np.trace(self.basis.compute_projector_matrix(vector).dot(self.density_matrix)).real
             for vector in self.basis.vectors
         ]
+        # There are numerical issues where it's possible to get probabilities like 1.0000..01 and -1e-16
+        return np.clip(probabilities, 0., 1.)
 
+    def compute_basis_state_probabilities_from_effect_matrix(self, effect_matrix):
+        """ Computes probability of measuring each basis state via a d x d^2 measurement effect matrix """ 
+        d = int(np.sqrt(len(self.supervector)))
+        if effect_matrix.shape != (d, d**2):
+            raise ValueError(f"Effect matrix must have shape {(d, d2)}.")
+
+        probabilities = (effect_matrix @ self.supervector).real
+        return np.clip(probabilities, 0., 1.)
+ 
     def compute_density_matrix_traced_over_degree_of_freedom(self, degree_of_freedom: DegreeOfFreedom):
         """Compute a reduced density matrix by tracing out a degree of freedom in the basis."""
         size = len(degree_of_freedom.energy_levels)
@@ -158,25 +207,215 @@ class State:
             small_density_matrix += multi_dot([proj_left, self.density_matrix, proj_right])
         return small_density_matrix
 
+    def project_to_qubit_subspace(self, non_qubit_levels: list[AtomicInternalEnergyLevel]):
+        """ Projects the state onto the qubit subspace """
+        # Return self if already in qubit subspace
+        if self.basis.is_qubit_basis():
+            return self
+        else:
+            return self.project_out_levels(non_qubit_levels)
+
+    def project_out_levels(self, levels: list, new_basis: StandardBasis | None=None):
+        """ Project state into a subspace without the requested levels. Returns the projected state """ 
+        # Create basis as subspace of the current state's basis  
+        if new_basis is None:
+            new_basis = build_subspace_basis_from_levels_to_project(levels)
+
+        # Get indices to project out by finding where the levels are in the basis
+        projection_indices = [] 
+        for i, state in enumerate(self.basis.states):
+            project = any([l in state.components for l in levels]) 
+            if project:
+                projection_indices.append(i)
+
+        projection_indices = set(projection_indices)
+        states_to_project = [self.basis.states[i] for i in projection_indices] 
+        return self.project_out_states(states_to_project, new_basis) 
+                    
+    def project_out_states(self, states_to_project_out: list[EnergyEigenstate], new_basis: StandardBasis | None=None):
+        """Return a projected state by projecting out a set of levels in the enlarged basis into a new basis."""
+
+        if not isinstance(self.basis, StandardBasis):
+            raise IonSimError("Projection of density matrix requires a Standard Basis of EnergyEigenstates.")
+
+        # Get indices corresponding to these states' locations in the enlarged basis
+        projection_indices = [self.basis.states.index(state) for state in states_to_project_out] 
+        if projection_indices == []:
+            return self
+
+        computational_indices = [i for i in range(len(self.basis.states)) if i not in projection_indices] 
+
+        # Compute projected density matrix
+        projected_density_matrix = self.density_matrix[np.ix_(computational_indices, computational_indices)] 
+
+        # Check if we need to re-order the basis to match the sorted order in new_basis  
+        permutation = np.argsort(computational_indices)
+        projected_density_matrix = projected_density_matrix[np.ix_(permutation, permutation)] 
+
+        # Create the new basis from the list of states to project if not provided 
+        if new_basis is None:
+            new_basis = self.basis.build_subspace_basis_from_states_to_project(states_to_project_out)
+
+        if len(new_basis.states) != len(self.basis.states) - len(states_to_project_out):
+            raise IonSimError("The specified new basis dimensionality should match the current basis without the projected states.")
+
+        if self.wavefunction is not None:        
+            projected_wavefunction = self.wavefunction[computational_indices] 
+            return State(basis = new_basis, density_matrix = projected_density_matrix, wavefunction = projected_wavefunction) 
+        else:
+            return State.from_density_matrix(new_basis, projected_density_matrix) 
+
     def trace_out_degree_of_freedom(self, degree_of_freedom: DegreeOfFreedom):
         """Trace out a degree of freedom in the basis and return a new state in a new basis."""
         density_matrix = self.compute_density_matrix_traced_over_degree_of_freedom(degree_of_freedom)
         basis = StandardBasis([dof for dof in self.basis.degrees_of_freedom if dof is not degree_of_freedom])
         return State.from_density_matrix(basis, density_matrix)
 
-    def compute_coherent_displacements(self, spin_dofs: list[DegreeOfFreedom], motional_dof: DegreeOfFreedom):
-        """Compute the coherent displacement (expectation value of the lowering operator) for each spin state."""
-        assert(len(self.basis.degrees_of_freedom) == len(spin_dofs) + 1) # TODO: trace out other degrees of freedom
-        spin_basis = StandardBasis(spin_dofs)
-        lowering = lowering_motion(len(motional_dof.energy_levels))
+    def compute_coherent_displacements(self, motional_dof: DegreeOfFreedom):
+        """Compute the coherent displacement (expectation value of the lowering operator) for each angular momentum state."""
+        assert(len(self.basis.degrees_of_freedom) == len(self.basis.atomic_structure_dofs) + 1) # TODO: trace out other degrees of freedom
+        structure_basis = StandardBasis(self.basis.atomic_structure_dofs)
+        lowering = Fock.lowering(len(motional_dof.energy_levels))
         diplacements = []
-        for vector in spin_basis.vectors:
-            spin_proj = spin_basis.compute_projector_matrix(vector)
-            displacement = np.trace(np.kron(spin_proj, lowering).dot(self.density_matrix))
+        for vector in structure_basis.vectors:
+            structure_proj = structure_basis.compute_projector_matrix(vector)
+            displacement = np.trace(np.kron(structure_proj, lowering).dot(self.density_matrix))
             diplacements.append(displacement)
         return diplacements
 
-    # def transform_to_spin_eigenbasis(self):
+    def compute_matrix_observable_expectation(self, observable_operator: Matrix) -> float:
+        """ Compute the expectation value of an operator observable, represented by <O>. 
 
-def lowering_motion(fock_dimension: int):
-    return np.diag([np.sqrt(n+1) for n in range(fock_dimension-1)], k=1)
+            - Computes via Tr[O rho], where rho is the density matrix. 
+            - O and rho must be in compatable bases.
+
+        """
+        # Check that observable and density matrix are compatible 
+        basis_size = len(self.basis.vectors)
+        if observable_operator.shape != (basis_size, basis_size):
+            raise IonSimError(f"Observable operator must correspond with a matrix of shape: {(basis_size, basis_size)}.")
+
+        return np.trace(observable_operator.dot(self.density_matrix))
+
+    def compute_operator_observable_expectation(self, observable_operator: Operator) -> float:
+        """ Compute the expectation value of an operator observable, represented by <O>. 
+
+            - Computes via Tr[O rho], where rho is the density matrix. 
+            - O and rho must be in compatable bases.
+
+        """
+        # Check that observable and density matrix are compatible 
+        if isinstance(observable_operator, CouplingOperator) and observable_operator.oscillation_rate != 0.:
+            raise IonSimeError(f"Observable operator must be a static operator, but oscillation rate is {observable_operator.oscillation_rate}.")
+
+        return self.compute_matrix_observable_expectation(observable_operator.static_matrix) 
+
+    def compute_quadratures(self, enable_squared_quadratures: bool=False, use_partial_trace: bool=False):
+        """ Returns quadrature expectation values <x> and <p> for each motional mode in the state. 
+            - fails if there are no motional DOFs 
+            - returns lists of <x> and <p>; each list element corresponds to 1 motional mode 
+            - list order matches DOF order in the state's basis 
+            - option to return <x^2> and <p^2>, the expectation of the squared quadrature operators.
+        """ 
+        x = []        
+        p = []        
+        if enable_squared_quadratures:
+            x2 = []        
+            p2 = []        
+
+        # Either compute partial trace on the density matrix or elevate observable to full space 
+        # It may be cheaper to compute the expectation value in the full space, depending on problem and problem size  
+        if not use_partial_trace :
+            full_basis = self.basis
+
+            # For each mode, build the full-space raising and lowering operators  
+            for i, mode_i in enumerate(self.basis.motional_modes):
+                if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
+                    raise IonSimError("Quadrature calculation assumes motional mode is in the Fock number state basis.")
+
+                # Enlarge the x and p operators for the current mode 
+                Fock_dim = len(mode_i.energy_levels) 
+                x_enlarged = full_basis.enlarge_one_dof_matrix(Fock.position(Fock_dim), mode_i) 
+                p_enlarged = full_basis.enlarge_one_dof_matrix(Fock.momentum(Fock_dim), mode_i) 
+
+                # Compute expectation values: 
+                x.append(self.compute_matrix_observable_expectation(x_enlarged))
+                p.append(self.compute_matrix_observable_expectation(p_enlarged))
+                if enable_squared_quadratures:
+                    x2.append(self.compute_matrix_observable_expectation(x_enlarged @ x_enlarged)) 
+                    p2.append(self.compute_matrix_observable_expectation(p_enlarged @ p_enlarged))
+
+        else:
+            for i, mode_i in enumerate(self.basis.motional_modes):
+                if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
+                    raise IonSimError("Quadrature calculation assumes motional mode is in the Fock number state basis.")
+            
+                mode_state = self.motional_state # reset the state  
+                # Trace out other modes 
+                for j, mode_j in enumerate(self.basis.motional_modes):
+                    if i == j:
+                        continue 
+                    mode_state = mode_state.trace_out_degree_of_freedom(mode_j) 
+                assert mode_state is not None
+                Fock_dim = len(mode_i.energy_levels) 
+                # Compute expectation values: 
+                x.append(mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim)))
+                p.append(mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim)))
+                if enable_squared_quadratures:
+                    x2.append(mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim) @ Fock.position(Fock_dim)))
+                    p2.append(mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim) @ Fock.momentum(Fock_dim)))
+
+        if enable_squared_quadratures:
+            return x, p, x2, p2
+        else:
+            return x, p
+                            
+
+    def compute_wigner_distribution(self, x_grid: Vector, p_grid: Vector): 
+        """ Computes W(x,p) the Wigner distribution for each motional mode in the basis; assumes a Fock basis for each mode.
+            - requires a specification of the x and p grids as 1-dimensional arrays, determines resolution of Wigner distributions. 
+            - returns a list of Wigner distributions -> one for each mode. 
+            - returns an empty list if there are no modes in the basis.  
+            - assumes the motional modes are in the Fock number state basis  
+        """  
+        from qutip import Qobj, wigner
+        wigner_distributions = []
+
+        # For each mode, trace out all other modes  
+        for i, mode_i in enumerate(self.basis.motional_modes):
+            if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
+                raise IonSimError("Wigner distribution calculation assumes motional mode is in the Fock number state basis.")
+
+            mode_state = self.motional_state # reset the state  
+            assert mode_state is not None
+
+            for j, mode_j in enumerate(self.basis.motional_modes):
+                if i == j:
+                    continue 
+                mode_state = mode_state.trace_out_degree_of_freedom(mode_j) 
+            N_fock = len(mode_i.energy_levels) 
+            wigner_distributions.append(wigner(Qobj(mode_state.density_matrix, dims=[[N_fock], [N_fock]]), x_grid, p_grid))
+
+        return wigner_distributions 
+
+    def compute_characteristic_functions(self, x_grid: Vector, p_grid: Vector):
+        """ Computes characteristic function X(beta) for each motional mode in the basis """ 
+        # First compute the Wigner distribution, then use a discrete Fourier Transform to
+        #    obtain the characteristic function. 
+        dx = np.abs(x_grid[1] - x_grid[0])
+        dp = np.abs(p_grid[1] - p_grid[0])
+        Nx = len(x_grid)
+        Np = len(p_grid)
+
+        re_beta = np.pi * fftshift(np.fft.fftfreq(Np, d=dp))*np.sqrt(2.)
+        im_beta = np.pi * fftshift(np.fft.fftfreq(Nx, d=dx))*np.sqrt(2.)
+
+        W_distributions = self.compute_wigner_distribution(x_grid, p_grid)
+        characteristic_functions = [np.zeros((len(p_grid), len(x_grid)), dtype=complex) for _ in range(len(self.basis.motional_modes))]
+
+        for i, W in enumerate(W_distributions):
+            chi = fftshift(fft(ifftshift(W, axes=0), axis=0), axes=0)
+            chi = fftshift(ifft(ifftshift(chi, axes=1), axis=1), axes=1) * Nx 
+            characteristic_functions[i] = chi * dx * dp 
+
+        return re_beta, im_beta, characteristic_functions 

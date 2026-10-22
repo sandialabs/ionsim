@@ -63,14 +63,14 @@ class TestCouplingOperator(unittest.TestCase):
         expected_big_X_matrix[0,2] = 1.
         expected_big_X_matrix[1,3] = 1.
 
-        assert_array_close(big_X_matrix, expected_big_X_matrix)
+        assert_array_close(big_X_matrix, expected_big_X_matrix + np.conj(expected_big_X_matrix.T))
         
         # When creating a CouplingOperator, the upper-right half of the Pauli Y matrix will be seen first to create unique couplings:  
         big_Y_matrix = self.Y_spin_b.static_matrix.toarray() 
         expected_big_Y_matrix = np.zeros_like(big_Y_matrix) 
         expected_big_Y_matrix[0,1] = -1j 
         expected_big_Y_matrix[2,3] = -1j 
-        assert_array_close(big_Y_matrix, expected_big_Y_matrix)
+        assert_array_close(big_Y_matrix, expected_big_Y_matrix + np.conj(expected_big_Y_matrix.T))
 
         # Test that raising and lowering operators have correct relationship to Pauli X: X = Raise + lower  
         big_Pauli_X = np.kron(Pauli.X, np.eye(2))

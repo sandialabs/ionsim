@@ -31,5 +31,40 @@ class TestNamedOperators(unittest.TestCase):
         result = expm(-1j * theta / 2 * np.kron(sig_phi, sig_phi))
         assert_array_close(result, expected_result)
 
+    def test_Bloch_rotation_unitary(self):
+        """Test that Unitary.Bloch(pi/2/2, 0, 0) is equal to SQRT_X gate."""
+        # In named operators, the SQRT_X and X gates are equivalent up to single-qubit phases defined there: 
+        assert_array_close(np.exp(1j*np.pi/2./2.)*Unitary.R_bloch([np.pi/2./2., 0, 0]), Unitary.sqrtX)
+        assert_array_close(1j*Unitary.R_bloch([np.pi/2., 0, 0]), Pauli.X)
+
+    def test_CNOT_unitary(self):
+        """ Test the unitary CNOT function """ 
+        ideal_CNOT = np.zeros((4,4),dtype=complex)
+        ideal_CNOT[0,0] = 1.
+        ideal_CNOT[1,1] = 1.
+        ideal_CNOT[2,3] = 1.
+        ideal_CNOT[3,2] = 1.
+        assert_array_close(ideal_CNOT, Unitary.CNOT)
+
+    def test_Pauli_vectors(self):
+        single_qubit_operators = dict(zip(Pauli.vector_as_string, Pauli.vector))
+        assert_array_close(single_qubit_operators["I"], np.eye(2))
+
+        N = 3
+        three_qubit_operators = Pauli.product_operators(N)        
+
+        # Test a set of labels 
+        labels = ['IXI', 'XXX', 'YXZ', "III", "ZXY", "XXY", "IXZ"] 
+
+        for l in labels:
+            q1 = l[0]
+            q2 = l[1]
+            q3 = l[2]
+            expected = np.kron(single_qubit_operators[q1], single_qubit_operators[q2])
+            expected = np.kron(expected, single_qubit_operators[q3])
+            assert_array_close(three_qubit_operators[l], expected)
+
+        
+
 if __name__ == '__main__':
     unittest.main()
