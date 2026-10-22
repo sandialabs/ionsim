@@ -154,7 +154,7 @@ def main():
     times = np.linspace(0, duration, 41) # setting to None will return only the final spin state
 
     compute_state_fidelity = True
-    compute_gate = False
+    compute_gate = True
 
     if compute_state_fidelity:
 
