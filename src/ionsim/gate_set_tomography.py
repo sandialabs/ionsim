@@ -259,30 +259,27 @@ def _as_superbra(element) -> np.ndarray:
     """ Superbra of a measurement effect given as an ionsim operator or an array """
     return np.asarray(element.superbra if hasattr(element, 'superbra') else element)
 
-def _internal_gate_set(gate_set_model: GateSetModel, values: Vector | dict | None, gate_set: dict | None, role: str) -> dict:
-    """ A gate set keyed internally by GstGate (and 'prep', 'POVM'), from parameter values or an explicit gate-set dictionary.
-        Either values or gate_set must be given as arguments. """
-    if (values is None) == (gate_set is None):
-        raise ValueError(f"Specify the {role} as either parameter values ({role}=...) or an explicit gate set ({role}_gate_set=...), not both or neither.")
-    if gate_set is None:
-        gate_set = gate_set_model(values)
+def _reference_gate_set(gate_set: dict) -> dict:
+    """ A gate set dictionary {'prep': ..., 'POVM': {outcome: ...}, gate label: process matrix} (e.g. gate_set_model(theta), or
+        one given by the user) as arrays keyed internally by GstGate (and 'prep', 'POVM'). Gate labels are canonicalized (e.g.
+        '[]' -> idle), so a gate given twice under different labels is an error. """
     if not isinstance(gate_set, dict):
-        raise TypeError(f"The {role} gate set must be a dictionary of gate labels, 'prep', and 'POVM'; received {type(gate_set).__name__}.")
-    internal = {}
+        raise TypeError(f"A gate set must be a dictionary of gate labels, 'prep', and 'POVM'; received {type(gate_set).__name__}.")
+    ref_gate_set = {}
     for key, value in gate_set.items():
         if key == 'prep':
-            internal['prep'] = _as_supervector(value)
+            ref_gate_set['prep'] = _as_supervector(value)
         elif key == 'POVM':
-            internal['POVM'] = {outcome: _as_superbra(effect) for outcome, effect in value.items()}
+            ref_gate_set['POVM'] = {outcome: _as_superbra(effect) for outcome, effect in value.items()}
         else:
             gate = gst_gate_from_label(key)
-            if gate in internal:
-                raise ValueError(f"Gate {key!r} appears more than once in the {role} gate set.")
-            internal[gate] = np.asarray(value)
+            if gate in ref_gate_set:
+                raise ValueError(f"Gate {key!r} appears more than once in the gate set.")
+            ref_gate_set[gate] = np.asarray(value)
     for required in ('prep', 'POVM'):
-        if required not in internal:
-            raise ValueError(f"The {role} gate set has no {required!r} entry.")
-    return internal
+        if required not in ref_gate_set:
+            raise ValueError(f"The gate set has no {required!r} entry.")
+    return ref_gate_set
 
 
 ### Internal: one GST problem (circuits + models) ###
@@ -776,7 +773,10 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
                           max_restarts=max_restarts)
     prep_fiducials = [tuple(fid) for fid in circuit_design.prep_fiducials]
     measure_fiducials = [tuple(fid) for fid in circuit_design.measure_fiducials]
-    gauge_target = _internal_gate_set(gate_set_model, target, target_gate_set, 'target')
+    if (target is None) == (target_gate_set is None):
+        raise ValueError("Specify the target as either parameter values (target=...) or an explicit gate set (target_gate_set=...), "
+                         "not both or neither.")
+    gauge_target = _reference_gate_set(gate_set_model(target) if target_gate_set is None else target_gate_set)
     missing = sorted({g.label for fid in prep_fiducials for g in fid} - {k.label for k in gauge_target if isinstance(k, GstGate)})
     if missing:
         raise ValueError(f"The target gate set has no process matrices for the prep fiducial gates {missing}.")
@@ -796,7 +796,7 @@ def linear_solve_for_gate_parameters(gst_circuits: list[GstCircuit], gate_set_mo
     converged = max_gauge_iterations == 0
     iterations = 0
     while iterations < max_gauge_iterations:
-        regauge_target = _internal_gate_set(gate_set_model, theta, None, 'target')
+        regauge_target = _reference_gate_set(gate_set_model(theta))
         lgst = problem.run_linear_gst(frequencies, prep_fiducials, measure_fiducials, regauge_target)
         new_theta = problem.parameters_from_lgst(lgst, theta, minimize_kwargs)
         iterations += 1
@@ -968,7 +968,10 @@ def gate_set_errors(gate_set_model: GateSetModel, theta: Vector | dict, referenc
         raise ValueError(f"Unknown error metric {error_metric!r}; use 'frobenius norm' or 'process infidelity'.")
     if error_metric == 'process infidelity' and basis is None:
         raise ValueError("The 'process infidelity' metric requires the basis.")
-    reference_set = _internal_gate_set(gate_set_model, reference, reference_gate_set, 'reference')
+    if (reference is None) == (reference_gate_set is None):
+        raise ValueError("Specify the reference as either parameter values (reference=...) or an explicit gate set "
+                         "(reference_gate_set=...), not both or neither.")
+    reference_set = _reference_gate_set(gate_set_model(reference) if reference_gate_set is None else reference_gate_set)
     theta = gate_set_model.parse_theta(theta)
 
     errors = {}
