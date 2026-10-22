@@ -73,21 +73,76 @@ class State:
         density_matrix = basis.compute_density_matrix_from_supervector(supervector)
         return cls(basis, density_matrix)
 
+ #    @classmethod
+ #    def from_wavefunction_with_new_component(cls, basis: Basis, current_wavefunction: Vector,
+ #            new_component: Vector, new_dofs: list[DegreeOfFreedom]):
+ #        """Build a state from a wavefunction while adding a component with new degrees of freedom."""
+ #        assert(len(new_dofs) == 1) # TODO generalize for adding new components with multiple DoFs.
+ #        new_dof = new_dofs[0]
+ #        if new_dof is basis.degrees_of_freedom[0]:
+ #            wavefunction = np.kron(new_component, current_wavefunction)
+ #        elif new_dof is basis.degrees_of_freedom[-1]:
+ #            wavefunction = np.kron(current_wavefunction, new_component)
+ #        else:
+ #            raise IonSimError(
+ #                'Currently, the new degree of freedom must be either the first or last '
+ #                'degree of freedom in the full basis.'
+ #            )
+ #        density_matrix = basis.compute_density_matrix_from_wavefunction(wavefunction)
+ #        return cls(basis, density_matrix, wavefunction)
+
     @classmethod
     def from_wavefunction_with_new_component(cls, basis: Basis, current_wavefunction: Vector,
-            new_component: Vector, new_dofs: list[DegreeOfFreedom]):
-        """Build a state from a wavefunction while adding a component with new degrees of freedom."""
-        assert(len(new_dofs) == 1) # TODO generalize for adding new components with multiple DoFs.
-        new_dof = new_dofs[0]
-        if new_dof is basis.degrees_of_freedom[0]:
-            wavefunction = np.kron(new_component, current_wavefunction)
-        elif new_dof is basis.degrees_of_freedom[-1]:
-            wavefunction = np.kron(current_wavefunction, new_component)
-        else:
+            new_component: Vector | list[Vector], new_dofs: list[DegreeOfFreedom]):
+        """Build a state from a wavefunction while adding components with new degrees of freedom.
+            - basis is the full basis, containing both the current and the new degrees of freedom.
+            - current_wavefunction is defined on the degrees of freedom of `basis` that are not in
+              new_dofs, ordered as they appear in `basis`.
+            - new_component is either a single vector (when there is one new degree of freedom) or a
+              list of vectors, one per entry in `new_dofs` and in the same order.
+            - The new degrees of freedom may appear at any position in `basis`.
+        """
+        if len(new_dofs) == 0:
+            raise IonSimError('At least one new degree of freedom must be specified.')
+        new_components = [new_component] if len(new_dofs) == 1 and np.ndim(new_component) == 1 else list(new_component)
+        if len(new_components) != len(new_dofs):
             raise IonSimError(
-                'Currently, the new degree of freedom must be either the first or last '
-                'degree of freedom in the full basis.'
+                f'Received {len(new_components)} new components for {len(new_dofs)} new degrees of freedom.'
             )
+
+        dofs = list(basis.degrees_of_freedom)
+        new_indices = []
+        for new_dof in new_dofs:
+            matches = [i for i, dof in enumerate(dofs) if dof is new_dof]
+            if not matches:
+                raise IonSimError(f'New degree of freedom {new_dof} is not in the basis.')
+            if matches[0] in new_indices:
+                raise IonSimError(f'New degree of freedom {new_dof} was specified more than once.')
+            new_indices.append(matches[0])
+        current_indices = [i for i in range(len(dofs)) if i not in new_indices]
+
+        dims = [len(dof.energy_levels) for dof in dofs]
+        for index, component in zip(new_indices, new_components):
+            if len(component) != dims[index]:
+                raise IonSimError(
+                    f'New component has length {len(component)}, but its degree of freedom has dimension {dims[index]}.'
+                )
+        current_wavefunction = np.asarray(current_wavefunction)
+        expected = int(np.prod([dims[i] for i in current_indices]))
+        if len(current_wavefunction) != expected:
+            raise IonSimError(
+                f'Current wavefunction has length {len(current_wavefunction)}, but the remaining degrees of '
+                f'freedom have total dimension {expected}.'
+            )
+
+        # Build the product state as a tensor with axes ordered (current dofs..., new dofs...),
+        # then permute the axes into the basis ordering. C-order flattening matches np.kron ordering.
+        tensor = current_wavefunction.reshape([dims[i] for i in current_indices])
+        for component in new_components:
+            tensor = np.multiply.outer(tensor, np.asarray(component))
+        source_axes = current_indices + new_indices
+        wavefunction = np.transpose(tensor, np.argsort(source_axes)).reshape(-1)
+
         density_matrix = basis.compute_density_matrix_from_wavefunction(wavefunction)
         return cls(basis, density_matrix, wavefunction)
 
