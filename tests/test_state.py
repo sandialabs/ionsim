@@ -46,6 +46,30 @@ class TestState(unittest.TestCase):
             state_coefficients[n] = np.sqrt(np.exp(-1))/np.sqrt(math.factorial(n))  # |00>; n
         self.atomic_structure_coherent_state = State.from_coefficients(self.atomic_structure_motion_basis2, list(state_coefficients))
 
+    def test_wavefunction_with_new_component(self):
+        """Test adding new-DoF components at the end, in the middle, and for several DoFs at once."""
+        spin_psi = np.array([0.6, 0.8j])
+        other_spin_psi = np.array([1, -1j])/np.sqrt(2)
+        mode_psi = np.zeros(len(self.mode.energy_levels)); mode_psi[1] = 1.
+
+        # New DoF last.
+        basis = StandardBasis([self.atomic_structure_a, self.atomic_structure_b, self.mode])
+        current = np.kron(spin_psi, other_spin_psi)
+        state = State.from_wavefunction_with_new_component(basis, current, mode_psi, [self.mode])
+        assert_array_close(state.wavefunction, np.kron(current, mode_psi))
+
+        # New DoF in the middle.
+        basis = StandardBasis([self.atomic_structure_a, self.mode, self.atomic_structure_b])
+        state = State.from_wavefunction_with_new_component(basis, current, mode_psi, [self.mode])
+        assert_array_close(state.wavefunction, np.kron(np.kron(spin_psi, mode_psi), other_spin_psi))
+
+        # Several new DoFs, given in an order different from the basis ordering.
+        basis = StandardBasis([self.atomic_structure_a, self.mode, self.atomic_structure_b])
+        state = State.from_wavefunction_with_new_component(
+            basis, other_spin_psi, [mode_psi, spin_psi], [self.mode, self.atomic_structure_a]
+        )
+        assert_array_close(state.wavefunction, np.kron(np.kron(spin_psi, mode_psi), other_spin_psi))
+
     def test_density_matrix_in_new_basis(self):
         """Test the density matrix in the new basis."""
         rho_p = State.from_state(self.basis, self.state).density_matrix
