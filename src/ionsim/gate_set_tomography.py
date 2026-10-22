@@ -13,6 +13,10 @@
         data = simulate_gst_data(gst_circuits, gate_set_model, true_values, N_shots, rng)
         fit  = mle_solve_for_gate_parameters(data, gate_set_model)
 
+    The model's outcome probabilities of circuits at theta (e.g. to compare with observed frequencies after a fit):
+
+        probabilities = predict_circuit_probabilities(gst_circuits, gate_set_model, fit.theta)    # [{outcome: p}, ...]
+
     A gate set is evaluated from a gate set model and its parameter values, theta. Parameter values (theta, targets,
     references, initial guesses) are given as a vector in the order of gate_set_model.parameter_names, or as a dictionary of
     parameter names to values in which unlisted parameters take their specified initial guesses.
@@ -65,9 +69,8 @@ from ionsim.custom_types import Vector
 from ionsim.io import write_results_to_file
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
-__all__ = ['GstResult', 'linear_solve_for_gate_parameters', 'mle_solve_for_gate_parameters',
-           'staged_mle_solve_for_gate_parameters',
-           'log_likelihood', 'chi_squared', 'simulate_gst_data', 'gate_set_errors', 'average_gate_set_error',
+__all__ = ['GstResult', 'linear_solve_for_gate_parameters', 'mle_solve_for_gate_parameters', 'staged_mle_solve_for_gate_parameters',
+           'log_likelihood', 'chi_squared', 'predict_circuit_probabilities', 'simulate_gst_data', 'gate_set_errors', 'average_gate_set_error',
            'average_gate_set_error_uncertainty', 'parameter_squared_errors', 'write_gate_set_results']
 
 
@@ -924,26 +927,38 @@ def chi_squared(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, th
     return problem.chi_squared(gate_set_model.parse_theta(theta), problem.outcomes)
 
 
-### Simulation ###
+### Prediction and simulation ###
+def predict_circuit_probabilities(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel,
+                                  theta: Vector | dict) -> list[dict]:
+    """ The model's outcome probabilities of each circuit at parameter values theta, [{outcome label: probability}, ...] in the
+        order of gst_circuits: the probabilities that the GST likelihood and simulate_gst_data use.
+
+        - The exact gate models are used, also for gates with interpolated models.
+        - With circuit-level noise (GateSetModel.set_circuit_noise), each circuit's probabilities are averaged over the noise
+            realizations.
+        - The circuits need no measurement data; any data they have is not used.
+        - Probabilities are clipped to [NUMERICAL_EQUIVALENCE_THRESHOLD, 1 - NUMERICAL_EQUIVALENCE_THRESHOLD] (as in the
+            likelihood, whose logarithms they enter), so they can differ from the exact values, and sum to 1, by ~1e-12.
+    """
+    problem = _GstProblem(gst_circuits, gate_set_model, exact_models=True, require_data=False)
+    probabilities = problem.predict_sequence_probabilities(gate_set_model.parse_theta(theta), problem.outcomes.sequences)
+    return [dict(zip(problem.outcome_labels, probabilities[k])) for k in problem.outcomes.sequence_index]
+
+
 def simulate_gst_data(gst_circuits: list[GstCircuit], gate_set_model: GateSetModel, theta: Vector | dict, N_shots: int,
                       rng: np.random.Generator | int | None=None) -> list[GstCircuit]:
-    """ Sample measurement outcomes for each circuit from the models at parameter values theta.
+    """ Sample measurement outcomes for each circuit from the models at parameter values theta (predict_circuit_probabilities).
 
         Returns new circuits (copies with the sampled counts); the given circuits are not modified. The exact gate models are
         used, also for gates with interpolated models.
         - rng: a numpy Generator or seed, for reproducibility (default: a new Generator).
     """
-    # Simulate each circuit, generating probabilities taken to be ground truth.  
     rng = np.random.default_rng(rng)
-    # Simulate from the exact models; the circuits need no data
-    problem = _GstProblem(gst_circuits, gate_set_model, exact_models=True, require_data=False)
-    probabilities = problem.predict_sequence_probabilities(gate_set_model.parse_theta(theta), problem.outcomes.sequences)
     simulated = []
-    # Sample outcomes for each circuit  
-    for circ, k in zip(problem.gst_circuits, problem.outcomes.sequence_index):
-        p = probabilities[k] / probabilities[k].sum()
-        counts = rng.multinomial(N_shots, p)
-        simulated.append(replace(circ, measurement_data = CircuitData.from_counts(dict(zip(problem.outcome_labels, counts)))))
+    for circ, probabilities in zip(gst_circuits, predict_circuit_probabilities(gst_circuits, gate_set_model, theta)):
+        p = np.array(list(probabilities.values()))
+        counts = rng.multinomial(N_shots, p / p.sum())
+        simulated.append(replace(circ, measurement_data=CircuitData.from_counts(dict(zip(probabilities, counts)))))
     return simulated
 
 

@@ -25,7 +25,8 @@ from ionsim.gate_set_model import GateSetModel, CIRCUIT_NOISE
 from ionsim.gst_circuit_planner import GSTCircuitPlanner
 from ionsim.gst_circuit_parser import GstCircuit
 from ionsim.gate_set_tomography import (_GstProblem, simulate_gst_data, staged_mle_solve_for_gate_parameters, log_likelihood,
-                                        linear_solve_for_gate_parameters, parameter_squared_errors, gate_set_errors)
+                                        linear_solve_for_gate_parameters, parameter_squared_errors, gate_set_errors,
+                                        predict_circuit_probabilities)
 
 X, Y, IDLE = 'Gxpi2:0', 'Gypi2:0', 'idle'
 SIGMA = 'amplitude_offset_noise_standard_deviation'
@@ -116,15 +117,12 @@ class TestCircuitNoise(unittest.TestCase):
         return model
 
     def circuits(self, sequences):
-        planner = GSTCircuitPlanner([X, Y, IDLE], [0], prep_fiducials=[[]], measure_fiducials=[[]], germs=[[X]], germ_powers=[1])
-        return [GstCircuit._from_gst_gates([], [planner.to_gst_gate(g) for g in seq], 1, [], [0]) for seq in sequences]
+        return [GstCircuit.plan([], list(seq), 1, [], [0]) for seq in sequences]
 
     def probabilities(self, gate_set_model, sequences, values):
-        circuits = self.circuits(sequences)
-        problem = _GstProblem(circuits, gate_set_model, exact_models=True, require_data=False)
-        data = problem.outcomes
-        p = problem.predict_sequence_probabilities(gate_set_model.parse_theta(values), data.sequences)
-        return np.array([p[k] for k in data.sequence_index])
+        """ Model probabilities (n_sequences x ['0', '1']) of gate sequences """
+        predicted = predict_circuit_probabilities(self.circuits(sequences), gate_set_model, values)
+        return np.array([[p['0'], p['1']] for p in predicted])
 
     ### GateSetModel ###
     def test_set_circuit_noise(self):
@@ -285,6 +283,26 @@ class TestCircuitNoise(unittest.TestCase):
         with self.assertRaises(ValueError):
             _GstProblem(self.circuits([[X]]), self.gate_set_model(), require_data=False,
                         parameter_scales={'shared:amplitude_offset': 1e-3})
+
+    def test_predict_circuit_probabilities(self):
+        """ Per-circuit {outcome: p} in circuit order, equal to prep, gates and effects composed directly (no circuit noise),
+            the same for repeated circuits, and independent of any data the circuits have """
+        model = self.gate_set_model()
+        values = {k: v for k, v in self.true_values.items() if k in model.parameter_names}
+        theta = model.parse_theta(values)
+        sequences = [[X] * 3, [IDLE, Y, X], [X] * 3, []]
+        predicted = predict_circuit_probabilities(self.circuits(sequences), model, values)
+        self.assertEqual(len(predicted), len(sequences))
+        gate_set = model(theta)
+        for seq, p in zip(sequences, predicted):
+            self.assertEqual(list(p), ['0', '1'])
+            state = gate_set['prep']
+            for gate in seq:
+                state = gate_set[gate] @ state
+            np.testing.assert_allclose([p['0'], p['1']], np.real([gate_set['POVM'][o] @ state for o in ('0', '1')]), atol=1e-12)
+        self.assertEqual(predicted[0], predicted[2])
+        with_data = simulate_gst_data(self.circuits(sequences), model, values, 100, np.random.default_rng(0))
+        self.assertEqual(predict_circuit_probabilities(with_data, model, values), predicted)
 
     def test_linear_gst_is_not_supported(self):
         model = self.gate_set_model(gaussian_noise())

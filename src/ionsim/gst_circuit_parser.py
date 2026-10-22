@@ -255,7 +255,7 @@ class GstCircuit:
         def _to_gates(labels, role):
             if isinstance(labels, str):
                 raise TypeError(f"{role} gates must be a list of gate labels, e.g. ['Gxpi2:0']; received the string {labels!r}.")
-            return [gate_from_label(g) for g in labels]
+            return [gst_gate_from_label(g) for g in labels]
 
         return GstCircuit._from_gst_gates(_to_gates(prep_gates, 'Prep'), _to_gates(germ_gates, 'Germ'), germ_power,
                                       _to_gates(measure_gates, 'Measure'), line_labels)
