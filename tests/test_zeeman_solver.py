@@ -11,12 +11,8 @@ import unittest
 import numpy as np
 from scipy.linalg import expm
 from ionsim.zeeman_solver import ZeemanHyperfineSolver 
-#<<<<<<< HEAD
-#from ionsim.degree_of_freedom import AtomicSpin
-#=======
 from ionsim.testing import assert_array_close
 from ionsim.degree_of_freedom import AtomicStructure
-#>>>>>>> main
 
 class TestZeemanSolver(unittest.TestCase):
 
