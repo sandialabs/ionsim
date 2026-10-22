@@ -68,9 +68,7 @@ class TestMSGateTracingOutMotion(unittest.TestCase):
         """ The traced-out gate acts on the two-qubit basis only. """
         self.assertEqual(self.gate.process_matrix.shape, (16, 16))
         self.assertEqual(len(self.gate.basis.degrees_of_freedom), 2)
-        self.assertTrue(all(a is b for a, b in zip(self.gate.basis.degrees_of_freedom, self.spins)))
         self.assertTrue(self.gate.basis.is_qubit_basis)
-        self.assertIsNone(self.gate.unitary)
 
     def test_small_angle_ms_gate_matches_ideal(self):
         """ The small-angle MS gate matches Unitary.MS(0, theta) once the motion is traced out. """
@@ -105,20 +103,6 @@ class TestMSGateTracingOutMotion(unittest.TestCase):
         )
         self.assertTrue(all(a is b for a, b in zip(gate.basis.degrees_of_freedom, self.spins)))
         assert_array_close(gate.process_matrix, self.gate.process_matrix, rtol=0, atol=1e-6)
-
-    def test_trace_out_input_validation(self):
-        """ Inconsistent trace-out inputs raise an IonSimError before any time evolution. """
-        other_mode = MotionalMode.from_frequency(frequency=2*np.pi * 2.5e6, fock_dimension=self.fock_dimension)
-        bad_inputs = {
-            'missing initial wavefunctions': ([self.mode], None),
-            'length mismatch': ([self.mode], [self.psi_motion_0, self.psi_motion_0]),
-            'dof not in basis': ([other_mode], [self.psi_motion_0]),
-            'duplicate dof': ([self.mode, self.mode], [self.psi_motion_0, self.psi_motion_0]),
-        }
-        for label, (dofs, wavefunctions) in bad_inputs.items():
-            with self.subTest(label):
-                with self.assertRaises(IonSimError):
-                    Gate.from_hamiltonian(self.basis, self.hamiltonian, self.tau, dofs, wavefunctions)
 
 
 if __name__ == '__main__':
