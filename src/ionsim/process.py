@@ -79,19 +79,16 @@ class Gate(Process):
         full_function = basis.enlarge_matrix_function(unitary_function, target_dofs)
         process_matrix_function = basis.create_superoperator_function_from_unitary_operator_function(full_function)
         if noise is not None:
-            noisy_parameter_index = parameter_names.index(noise.parameter_name)
-            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function)
         return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
 
     @classmethod
     def from_process_matrix_function(cls, basis: Basis, process_matrix_function: Callable,
             parameters: dict[str, float], noise: Noise | None = None):
         """Build a gate from a process-matrix function and its arguments."""
-        parameter_names = list(parameters.keys())
-        if noise is None or noise.parameter_name not in parameter_names:
+        if noise is None or noise.parameter_name not in parameters:
             return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
-        noisy_parameter_index = parameter_names.index(noise.parameter_name)
-        process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
+        process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function)
         return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
 
     @classmethod
@@ -105,9 +102,8 @@ class Gate(Process):
             gate = cls.from_hamiltonian(basis, hamiltonian_function(*args, **kwargs))
             return gate.process_matrix
 
-        if noise is None or noise.parameter_name not in parameter_names:
-            noisy_parameter_index = parameter_names.index(noise.parameter_name)
-            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
+        if noise is not None and noise.parameter_name in parameter_names:
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function)
 
         return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
 
@@ -287,13 +283,13 @@ class Gate(Process):
 
         @wraps(lindbladian_function)
         def process_matrix_function(*args, **kwargs):
-            gate = cls.from_lindbladian(basis, lindbladian_function(*args, **kwargs), duration)
+            gate = cls.from_lindbladian(basis, lindbladian_function(*args, **kwargs), duration,
+                                        lindbladian_time_independent=lindbladian_time_independent,
+                                        lindbladian_commutes_at_later_times=lindbladian_commutes_at_later_times)
             return gate.process_matrix
 
-        if noise is None or noise.parameter_name not in parameter_names:
-            noisy_parameter_index = parameter_names.index(noise.parameter_name)
-            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index, 
-                lindbladian_time_independent = lindbladian_time_independent, lindbladian_commutes_at_later_times = lindbladian_commutes_at_later_times)
+        if noise is not None and noise.parameter_name in parameter_names:
+            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function)
 
         return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
 
@@ -383,9 +379,14 @@ class Circuit(Process):
 
         for gate in gates:
             if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
-                arguments = np.array(list(gate.parameters.values()))
-                vec = np.array([1 if noise.parameter_name == name else 0 for name in gate.parameters])
-                pmats = [gate.process_matrix_function(*list(arguments + darg * vec)) for darg in noise.domain_arguments]
+                sig = inspect.signature(gate.process_matrix_function)
+                bound = sig.bind(**gate.parameters)
+                bound.apply_defaults()
+                base_value = bound.arguments[noise.parameter_name]
+                pmats = []
+                for darg in noise.domain_arguments:
+                    bound.arguments[noise.parameter_name] = base_value + darg
+                    pmats.append(gate.process_matrix_function(*bound.args, **bound.kwargs))
             else:
                 pmats = [gate.process_matrix for darg in noise.domain_arguments]
             pmats_list.append(pmats)
