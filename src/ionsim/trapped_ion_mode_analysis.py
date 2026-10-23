@@ -729,7 +729,6 @@ class IonChain(TrappedIonCrystal):
         # Set up dimensionless parameters using first ion's properties and axial trap frequency
         self.set_up_dimensionless_parameters(self.nuclear_charges[0], self.atomic_masses[0], self.omega_z[0])
 
-
         # Solve for equilibrium positions
         self.equilibrium_positions = self.solve_for_equilibrium_positions()
 
