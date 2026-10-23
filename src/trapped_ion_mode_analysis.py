@@ -88,12 +88,12 @@ class TrappedIonCrystal:
         # Keep a copy of the user inputs (original ion order) so the configuration can be rebuilt
         self._input_atomic_masses_amu = self.convert_to_array(atomic_masses).astype(float)
         self._input_atomic_charges = self.convert_to_array(atomic_charges).astype(float)
-        self.dc_radial_split = self._validate_dc_radial_split(dc_radial_split)
-        self.principal_axes = self._validate_principal_axes(principal_axes)
+        self.dc_radial_split = self._check_dc_radial_split(dc_radial_split)
+        self.principal_axes = self._check_principal_axes(principal_axes)
 
         self.atomic_masses = self._input_atomic_masses_amu * const.u  # kg from amu
         self.atomic_charges = self._input_atomic_charges.copy()      # charge state, units of e
-        self._validate_ion_properties()
+        self._check_ion_property_consistency()
 
         # Total ionic charge in Coulombs
         self.charges = self.atomic_charges * const.e
@@ -120,7 +120,7 @@ class TrappedIonCrystal:
     # ------------------------------------------------------------------------------------------------
     # Input validation and species handling
     # ------------------------------------------------------------------------------------------------
-    def _validate_ion_properties(self):
+    def _check_ion_property_consistency(self):
         if len(self.atomic_masses) != self.num_ions:
             raise ValueError(f"Expected {self.num_ions} atomic masses, received {len(self.atomic_masses)}")
         if len(self.atomic_charges) != self.num_ions:
@@ -134,7 +134,7 @@ class TrappedIonCrystal:
             raise IonSimError(f"All ions must have charges of the same sign. Received {self.atomic_charges}")
 
     @staticmethod
-    def _validate_dc_radial_split(dc_radial_split) -> NDArray:
+    def _check_dc_radial_split(dc_radial_split) -> NDArray:
         split = np.asarray(dc_radial_split, dtype=float)
         if split.shape != (2,):
             raise ValueError(f"dc_radial_split must be a pair (s_x, s_y). Received {dc_radial_split}")
@@ -143,7 +143,7 @@ class TrappedIonCrystal:
         return split
 
     @staticmethod
-    def _validate_principal_axes(principal_axes) -> Matrix:
+    def _check_principal_axes(principal_axes) -> Matrix:
         """ Returns the 3x3 rotation matrix R whose rows are the unit trap axes in lab coordinates.
             v_trap = R @ v_lab and v_lab = R.T @ v_trap.
         """
@@ -826,7 +826,7 @@ class TrappedIonCrystal:
     # IonSim DOFs and per-mode access
     # ------------------------------------------------------------------------------------------------
     @staticmethod
-    def _broadcast_fock_dimensions(fock_dimensions: Vector | int, num_modes: int) -> NDArray:
+    def _parse_fock_dimensions_input_dimensions(fock_dimensions: Vector | int, num_modes: int) -> NDArray:
         dims = np.atleast_1d(np.asarray(fock_dimensions))
         if dims.size == 1:
             dims = np.full(num_modes, dims.item())
@@ -843,7 +843,7 @@ class TrappedIonCrystal:
             - fock_dimensions: one Fock dimension per mode, or a single value applied to all modes
         """
         self._ensure_mode_analysis_run()
-        fock_dimensions = self._broadcast_fock_dimensions(fock_dimensions, len(mode_indices))
+        fock_dimensions = self._parse_fock_dimensions_input_dimensions(fock_dimensions, len(mode_indices))
         frequencies = self.normal_mode_frequencies
         return [MotionalMode.from_frequency(frequencies[mode_index], int(fock_dim))
                 for mode_index, fock_dim in zip(mode_indices, fock_dimensions)]
