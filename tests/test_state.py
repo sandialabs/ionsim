@@ -59,10 +59,17 @@ class TestState(unittest.TestCase):
         state = State.from_wavefunction_with_new_component(basis, current, mode_psi, self.mode)
         assert_array_close(state.wavefunction, np.kron(current, mode_psi))
 
+        # Add a new dof in the middle
+        basis = StandardBasis([self.atomic_structure_a, self.mode, self.atomic_structure_b])
+        state = State.from_wavefunction_with_new_component(basis, current, mode_psi, self.mode)
+        assert_array_close(state.wavefunction, np.kron(np.kron(spin_psi, mode_psi), other_spin_psi))
+
         # Several new dofs; the dict order does not need to match the basis ordering.
         expected = np.kron(np.kron(spin_psi, mode_psi), other_spin_psi)
-        for new_components in [{self.mode: mode_psi, self.atomic_structure_a: spin_psi},
-                            {self.atomic_structure_a: spin_psi, self.mode: mode_psi}]:
+        for new_components in [
+            {self.mode: mode_psi, self.atomic_structure_a: spin_psi},
+            {self.atomic_structure_a: spin_psi, self.mode: mode_psi},
+        ]:
             state = State.from_wavefunction_with_new_components(basis, other_spin_psi, new_components)
             assert_array_close(state.wavefunction, expected)
 
@@ -71,7 +78,8 @@ class TestState(unittest.TestCase):
         mode_b_psi = np.zeros(len(mode_b.energy_levels)); mode_b_psi[0] = 1.
         basis = StandardBasis([self.atomic_structure_a, self.mode, mode_b])
         state = State.from_wavefunction_with_new_components(
-            basis, spin_psi, {mode_b: mode_b_psi, self.mode: mode_psi})
+            basis, spin_psi, {mode_b: mode_b_psi, self.mode: mode_psi}
+        )
         assert_array_close(state.wavefunction, np.kron(np.kron(spin_psi, mode_psi), mode_b_psi))
 
     def test_wavefunction_with_new_component_errors(self):
