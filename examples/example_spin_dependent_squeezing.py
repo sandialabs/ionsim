@@ -10,7 +10,7 @@ from scipy.special import factorial
 
 TPI = 2*np.pi
 
-def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi_rate_x, rabi_rate_y, omega_x_red, omega_x_blue, omega_y_red, omega_y_blue, targetIon: AtomicStructure, 
+def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi_rate_x, rabi_rate_y, omega_x_red, omega_x_blue, omega_y_red, omega_y_blue, targetIon: ism.AtomicStructure, 
                         index_mode_i:int, index_mode_j:int, phi:float, sparse=False, mod=None): 
     ''' Applies 4-tone MS-like gate to a single ion "k" to produce a spin-dependent motional operation. 
         Consists of 2 sidebands (red and blue) on mode i and another 2 sidebands (red and blue) on mode j:  
@@ -257,7 +257,7 @@ def main():
     # Laser/driving parameters 
     print(f" --- Laser parameters --- ")
     wavelength = 355 # nm 
-    beam_angle = np.pi/4. # relative to axial direction 
+    beam_angle = np.pi/4. # angle from the x principal axis, in the radial (x-y) plane 
     wavevector = TPI / (355. * 1E-9) * np.array([np.cos(beam_angle), np.sin(beam_angle), 0.]) 
     if beam_counter_propagating:
         # Effective wavevector from 
