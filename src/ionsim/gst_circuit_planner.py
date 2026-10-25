@@ -16,6 +16,32 @@ from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 from ionsim.gate_set_model import GateSetModel, CIRCUIT_NOISE
 from ionsim.gst_circuit_parser import GstCircuit, GstGate, gst_gate_from_label
 
+
+def cramer_rao_bounds(fisher_information: Matrix, theta: Vector, relative: bool=False, tolerance: float=1e-10) -> np.ndarray:
+    """ Cramer-Rao bounds sqrt(diag(I^(-1))) on the standard deviations of the estimates of the parameters theta from a Fisher
+        information matrix I (same parameter order); with relative=True, divided by |theta_i| (nan where theta_i = 0).
+
+        The information is scaled to units of each parameter's magnitude, J = I s s^T with s_i = |theta_i| (1 where theta_i =
+        0), so that the determinacy test does not depend on the parameters' units. Directions of J with eigenvalues below
+        tolerance times the largest are not determined by the information: a parameter with a component along them is
+        undetermined and gets nan; the others get sqrt(diag(J^+)) s, i.e. their bounds given the determined combinations.
+    """
+    theta = np.asarray(theta, dtype=float)
+    scale = np.where(theta != 0., np.abs(theta), 1.)
+    scaled = np.asarray(fisher_information, dtype=float) * np.outer(scale, scale)
+    scaled = (scaled + scaled.T) / 2.
+    eigenvalues, eigenvectors = np.linalg.eigh(scaled)
+    determined = eigenvalues > tolerance * max(eigenvalues.max(), 1e-300)
+    pseudo_inverse = (eigenvectors[:, determined] / eigenvalues[determined]) @ eigenvectors[:, determined].T
+    bounds = np.sqrt(np.clip(np.diag(pseudo_inverse), 0., None)) * scale
+    undetermined = (eigenvectors[:, ~determined]**2).sum(axis=1) > 1e-6
+    bounds[undetermined] = np.nan
+    if relative:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            bounds = np.where(theta != 0., bounds / np.abs(theta), np.nan)
+    return bounds
+
+
 class GSTCircuitPlanner:
     def __init__(self, gate_names: list[str], qubit_labels: list[int], prep_fiducials: list[list[str]] | None=None,
                     measure_fiducials: list[list[str]] | None=None, germs: list[list[str]] | None=None, germ_powers: list[int] | dict=[1,2,4,8,16],
@@ -584,6 +610,67 @@ class GSTCircuitPlanner:
             warnings.warn("The accumulated Fisher information matrix is singular for the whole design: some parameters are not "
                           "determined by these circuits.")
         return eigenvalues, inverse_Fisher_infos
+
+    def compute_fisher_information_matrices(self, gst_circuits: list[GstCircuit], parameter_values: Vector | dict | None=None,
+                                            N_shots: int | None=None) -> np.ndarray:
+        """ Fisher information matrix of each circuit, as an array (n_circuits, n_parameters, n_parameters) in the order of
+            gst_circuits and of self.gate_set_model.parameter_names (repeated circuits keep their own entries).
+
+                I_ij = N sum_k (dp_k/dtheta_i)(dp_k/dtheta_j) / p_k
+
+            The same quantity as compute_circuit_fisher_information, computed for all the circuits together from the outcome
+            probabilities of the GST likelihood (gate_set_tomography.predict_circuit_probabilities: exact gate models, with the
+            circuit-noise average if any, and runs of a repeated gate composed as matrix powers), differentiated by finite
+            differences in every parameter (finite_difference_derivatives: steps sized by the planner's evaluator_tolerance,
+            one-sided at the parameter bounds). Each finite-difference step evaluates every circuit once, so the cost grows with
+            the number of parameters rather than the number of gates in the circuits; for many or long circuits this is much
+            faster than compute_design_fisher_information.
+
+            - parameter_values: point of evaluation (vector or dictionary; unlisted parameters use their initial guesses).
+            - N_shots: shots per circuit; defaults to each circuit's measurement data counts.
+        """
+        # Imported here: the planner is a design tool and only needs the GST module for its probabilities
+        from ionsim.gate_set_tomography import predict_circuit_probabilities
+        gate_set_model = self._require_gate_set_model()
+        theta = gate_set_model.parse_theta(parameter_values)
+        shots = np.array([self._circuit_shots(circ, N_shots) for circ in gst_circuits], dtype=float)
+        outcome_labels = list(gate_set_model.measurement_effects(theta).keys())
+
+        def probabilities(x):                                                    # (n_circuits, n_outcomes)
+            predicted = predict_circuit_probabilities(gst_circuits, gate_set_model, x)
+            return np.array([[p[label] for label in outcome_labels] for p in predicted])
+
+        p0, jacobian, _ = finite_difference_derivatives(probabilities, theta, order=1,
+                                                        evaluator_tolerance=self.evaluator_tolerance,
+                                                        bounds=gate_set_model.layout['bounds'])
+        # jacobian: (n_parameters, n_circuits, n_outcomes)
+        return shots[:, None, None] * np.einsum('ick,jck,ck->cij', jacobian, jacobian, 1. / p0)
+
+    def compute_cramer_rao_bounds(self, fisher_information: Matrix, parameter_values: Vector | dict | None=None,
+                                  relative: bool=False) -> np.ndarray:
+        """ Cramer-Rao bounds on the standard deviations of the parameter estimates, sqrt(diag(I^-1)), from a (total) Fisher
+            information matrix, in the order of self.gate_set_model.parameter_names; with relative=True, divided by |parameter|.
+
+            Parameters that the information does not determine (alone or in combination with others) get nan, while the
+            determined parameters still get their bounds, so a design can be evaluated before it informs every parameter. The
+            inverse is taken in units of each parameter's magnitude (I_ij |theta_i| |theta_j|), which makes the determinacy test
+            independent of the parameters' units (a raw Fisher matrix with parameters of ~1e-3 and ~1e3 is badly conditioned).
+
+            - parameter_values: the parameter values the information refers to (vector or dictionary; unlisted parameters use
+                their initial guesses), used for the scaling and for relative bounds.
+        """
+        theta = self._require_gate_set_model().parse_theta(parameter_values)
+        return cramer_rao_bounds(fisher_information, theta, relative)
+
+    def compute_accumulated_cramer_rao_bounds(self, fisher_information_matrices: np.ndarray,
+                                              parameter_values: Vector | dict | None=None, relative: bool=False) -> np.ndarray:
+        """ compute_cramer_rao_bounds() of the Fisher information accumulated over the circuits, circuit by circuit: an array
+            (n_circuits, n_parameters) whose row k is the bound after the first k + 1 circuits (e.g. to compare designs or the
+            stages of a design by the number of circuits). fisher_information_matrices: (n_circuits, n_parameters, n_parameters),
+            e.g. from compute_fisher_information_matrices. """
+        theta = self._require_gate_set_model().parse_theta(parameter_values)
+        accumulated = np.cumsum(np.asarray(fisher_information_matrices, dtype=float), axis=0)
+        return np.array([cramer_rao_bounds(fisher, theta, relative) for fisher in accumulated])
 
     def write_circuit_design(self, filepath):
         """ Writes a design yaml file with circuit design information """

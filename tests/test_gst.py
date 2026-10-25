@@ -239,6 +239,34 @@ class TestGST(unittest.TestCase):
         _, FI_with_hessian = self.gst_circuit_planner.compute_circuit_fisher_information(last_circuit, parameter_values, include_hessian=True)
         np.testing.assert_allclose(FI_with_hessian, FI_last_circuit, rtol=1e-5)
 
+    def test_fisher_information_matrices_and_cramer_rao_bounds(self):
+        """ The batched Fisher information (from the GST likelihood's probabilities) agrees with the per-circuit calculation,
+            and the Cramer-Rao bounds mark undetermined parameters as nan """
+        planner, values = self.gst_circuit_planner, self.true_values
+        matrices = planner.compute_fisher_information_matrices(self.gst_circuits, values)
+        self.assertEqual(matrices.shape, (len(self.gst_circuits), 2, 2))
+        _, reference = planner.compute_design_fisher_information(self.gst_circuits, values)
+        for circuit, matrix in zip(self.gst_circuits, matrices):
+            expected = reference[tuple(circuit.expanded_gates)]
+            np.testing.assert_allclose(matrix, expected, rtol=1e-5, atol=1e-8 * np.abs(expected).max())
+
+        theta = self.gate_set_model.parse_theta(values)
+        total = matrices.sum(axis=0)
+        np.testing.assert_allclose(planner.compute_cramer_rao_bounds(total, values), np.sqrt(np.diag(np.linalg.inv(total))), rtol=1e-8)
+        np.testing.assert_allclose(planner.compute_cramer_rao_bounds(total, values, relative=True),
+                                   np.sqrt(np.diag(np.linalg.inv(total))) / theta, rtol=1e-8)
+
+        # The empty circuit determines only the SPAM parameter
+        empty = [k for k, c in enumerate(self.gst_circuits) if not c.expanded_gates][0]
+        bounds = planner.compute_cramer_rao_bounds(matrices[empty], values)
+        self.assertTrue(np.isfinite(bounds[0]) and np.isnan(bounds[1]))
+        self.assertAlmostEqual(bounds[0], 1. / np.sqrt(matrices[empty][0, 0]), places=12)
+
+        # Accumulated bounds: one row per circuit, the last equal to the bounds of the whole design
+        accumulated = planner.compute_accumulated_cramer_rao_bounds(matrices, values)
+        self.assertEqual(accumulated.shape, (len(self.gst_circuits), 2))
+        np.testing.assert_allclose(accumulated[-1], planner.compute_cramer_rao_bounds(total, values), rtol=1e-12)
+
     def test_fisher_info_with_interpolated_gate_model(self):
         """ The circuit planner's Fisher information with an interpolated gate model agrees with the exact model """
         _, exact_matrices = self.gst_circuit_planner.compute_design_fisher_information(self.gst_circuits, self.true_values)
