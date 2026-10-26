@@ -268,6 +268,12 @@ class _GstProblem:
 
         # Tabulate the circuits' measurement counts and check them once (require_data=False allows circuits without data, e.g. to build outcome references via simulation)
         self.outcomes = _CircuitOutcomes.from_circuits(self.gst_circuits, self.outcome_labels, require_data)
+        # Structure (prep, germ, power, measure) of each expanded sequence, so that compose_quantum_map can compose germ^p by
+        # repeated squaring of the germ's map, once per evaluation for all fiducial pairs (the first circuit of a sequence)
+        self.sequence_structures = {}
+        for circ in self.gst_circuits:
+            self.sequence_structures.setdefault(tuple(circ.expanded_gates), (tuple(circ.fiducial_prep_gates),
+                                                tuple(circ.germ_gates), circ.germ_power, tuple(circ.fiducial_measurement_gates)))
 
 
         # Gates displaced by circuit-level noise (GateSetModel.set_circuit_noise), among the gates of these circuits
@@ -480,18 +486,36 @@ class _GstProblem:
     def compose_quantum_map(self, gates: tuple, gate_matrices: dict, circuit_map_cache: dict) -> np.ndarray:
         """ Compose the circuit map once for each unique gate sequence in an evaluation.
 
-            A run of n identical consecutive gates (e.g. a single-gate germ raised to a power) is composed as the matrix power
-            G^n by repeated squaring, which takes ~log2(n) matrix products instead of n.
+            A sequence with a germ raised to a power p > 1 (from a circuit's structure, self.sequence_structures) is composed
+            as measure x G^p x prep, where the germ map G and its power G^p (by repeated squaring, ~log2(p) matrix products
+            instead of p x germ length) are composed once per evaluation and shared by every fiducial pair. Other sequences
+            are composed gate by gate, with each run of n identical consecutive gates composed as the matrix power G^n.
+            Gate matrices may be stacks (K, d2, d2) over circuit-noise realizations; the composition broadcasts over them.
         """
         quantum_map = circuit_map_cache.get(gates)
         if quantum_map is not None:
             return quantum_map
+        structure = self.sequence_structures.get(gates)
+        if structure is not None and structure[1] and structure[2] > 1:
+            prep, germ, power, measure = structure
+            key = ('germ power', germ, power)
+            germ_power_map = circuit_map_cache.get(key)
+            if germ_power_map is None:
+                germ_power_map = np.linalg.matrix_power(self._compose_gates(germ, gate_matrices), power)
+                circuit_map_cache[key] = germ_power_map
+            quantum_map = self._compose_gates(measure, gate_matrices) @ germ_power_map @ self._compose_gates(prep, gate_matrices)
+        else:
+            quantum_map = self._compose_gates(gates, gate_matrices)
+        circuit_map_cache[gates] = quantum_map
+        return quantum_map
+
+    def _compose_gates(self, gates: tuple, gate_matrices: dict) -> np.ndarray:
+        """ Map of a gate sequence, with each run of n identical consecutive gates composed as the matrix power G^n """
         quantum_map = np.eye(self.d2, dtype=complex)
         for gate, run in groupby(gates):
             count = sum(1 for _ in run)
             matrix = gate_matrices[gate]
             quantum_map = (matrix if count == 1 else np.linalg.matrix_power(matrix, count)) @ quantum_map
-        circuit_map_cache[gates] = quantum_map
         return quantum_map
 
     def predict_sequence_probabilities(self, theta: Vector, sequences: list) -> np.ndarray:
