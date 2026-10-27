@@ -260,7 +260,6 @@ def main():
     beam_angle = np.pi/4. # angle from the x principal axis, in the radial (x-y) plane 
     wavevector = TPI / (355. * 1E-9) * np.array([np.cos(beam_angle), np.sin(beam_angle), 0.]) 
     if beam_counter_propagating:
-        # Effective wavevector from 
         wavevector *= 2. # Raman process: \delta k is 2x basic wavevector  
 
     rabi_rate = 175 * 1E3 * TPI  / np.sqrt(2.) #* np.sqrt(0.5) #/ np.sqrt(4.) # kHz -> Hz  
@@ -274,7 +273,6 @@ def main():
     print(f" - Gate duration: {duration*1E6:.3f} [µs]\n")
 
     modulate_amplitude = True 
-
     print(f" - Estimated number of loops: {duration * detuning / TPI}\n")
 
     detuning_red = detuning
@@ -298,7 +296,6 @@ def main():
     frequencies_from_carrier = (frequencies - omega_qubit)/TPI/1E6 # MHz
     print(f"  - laser frequencies (minus carrier): {frequencies_from_carrier}\n\n")
 
- 
     def blackman(t: float, magnitude: float = 1.):
         return magnitude*(0.42 - 0.5*np.cos(TPI * t /duration) + 0.08 * np.cos(2.*TPI*t/duration))
 
@@ -322,7 +319,7 @@ def main():
     r = expected_r
     print(f" - Expecting squeezing of r = {expected_r}\n")
 
-    
+
     # =============================
     ## Create Hamiltonians: 
     squeezing_phase = 0.
@@ -513,7 +510,6 @@ def main():
                 plt.title(f"$W(x,p)$: " + mode_label + f", t = {t*2.*1E6:.2f} [µs]", fontsize = 12)
             else:
                 plt.title(f"$W(x,p)$, t = {t*1E6:.2f} [µs]", fontsize = 16)
-                #plt.title(f"$W(x,p)$: " + mode_label + f", t = {t*1E6:.2f} [µs]", fontsize = 12)
             plt.xlabel('Position ($x$)', fontsize = 16)
             plt.ylabel('Momentum ($p$)', fontsize = 16)
             cbar = plt.colorbar()
