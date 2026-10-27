@@ -241,7 +241,7 @@ class TestSpontaneousEmissionSink(unittest.TestCase):
         rb = AtomicStructure.from_species(species='87Rb', term_symbols=['6 P3/2', '53 S1/2'], magnetic_field=RYDBERG_FIELD,
                                           quantum_numbers=six_p + [{'n': 53, 'mj': 0.5, 'mi': 1.5}], include_sink=True)
         return AtomicStructure([replace(level, branching_ratios=branching_ratios) if getattr(level, 'n', None) == 53 else level
-                                for level in rb.energy_levels])
+                                for level in rb.energy_levels], rb.atomic_mass, rb.atomic_charge)
 
     def test_include_sink(self):
         ca = AtomicStructure.from_species(species='40Ca+', term_symbols=['S1/2', 'P1/2'], include_sink=True)
