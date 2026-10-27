@@ -99,7 +99,7 @@ class Gate(Process):
 
         @wraps(hamiltonian_function)
         def process_matrix_function(*args, **kwargs):
-            gate = cls.from_hamiltonian(basis, hamiltonian_function(*args, **kwargs))
+            gate = cls.from_hamiltonian(basis, hamiltonian_function(*args, **kwargs), duration)
             return gate.process_matrix
 
         if noise is not None and noise.parameter_name in parameter_names:
@@ -126,26 +126,37 @@ class Gate(Process):
                 after tracing out DOFs.  
         """ 
         if dofs_to_trace_out is not None:
-            assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
-            assert(len(dofs_to_trace_out) == len(initial_wavefunctions_for_dofs_to_trace_out))
-            assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
-            dof_to_trace_out = dofs_to_trace_out[0]
-            initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
+            if initial_wavefunctions_for_dofs_to_trace_out is None:
+                raise IonSimError('Initial wavefunctions must be given for the degrees of freedom to trace out.')
+            if len(dofs_to_trace_out) != len(initial_wavefunctions_for_dofs_to_trace_out):
+                raise IonSimError(
+                    f'Received {len(initial_wavefunctions_for_dofs_to_trace_out)} initial wavefunctions for '
+                    f'{len(dofs_to_trace_out)} degrees of freedom to trace out.'
+                )
+            for i, dof in enumerate(dofs_to_trace_out):
+                if not any(dof is basis_dof for basis_dof in basis.degrees_of_freedom):
+                    raise IonSimError(f'Degree of freedom to trace out {dof} is not in the basis.')
+                if any(dof is other for other in dofs_to_trace_out[:i]):
+                    raise IonSimError(f'Degree of freedom to trace out {dof} was specified more than once.')
+            # Pair each traced-out DoF with its initial wavefunction (DoFs hash by identity).
+            initial_wavefunctions_by_dof = dict(zip(dofs_to_trace_out, initial_wavefunctions_for_dofs_to_trace_out, strict=True))
 
         projection, reduced_basis, states_to_project, unwanted_state_indices, computational_indices = _determine_projection_components(reduced_basis, states_to_project, levels_to_project, basis, dofs_to_trace_out)
 
+        # When tracing out DoFs, the gate acts on the reduced basis: we propagate each reduced-basis
+        # vector tensored with the fixed initial wavefunctions of the traced-out DoFs.
+        initial_vectors = basis.vectors if dofs_to_trace_out is None else reduced_basis.vectors
+
         final_states = []
-        for i, vector in enumerate(basis.vectors):
+        for i, vector in enumerate(initial_vectors):
             if states_to_project and (i in unwanted_state_indices):
-                # Skip basis states that we will ultimately project out. 
+                # Skip basis states that we will ultimately project out.
                 continue
 
             if dofs_to_trace_out is None:
                 initial_state = State.from_wavefunction(basis, vector)
             else:
-                initial_state = State.from_wavefunction_with_new_component(
-                    basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
-                )
+                initial_state = State.from_wavefunction_with_new_components(basis, vector, initial_wavefunctions_by_dof)
 
             if 'time_evals' not in ode_solver_kwargs:
                 final_states.append(
@@ -198,12 +209,15 @@ class Gate(Process):
                         # Set the reduced basis to the new basis specified by the projection 
                         spin_state = State.from_density_matrix(reduced_basis, density_matrix)
                     else:
-                        spin_state = State.from_density_matrix(
-                            basis, density_matrix
-                        ).trace_out_degree_of_freedom(dof_to_trace_out)
+                        # The partial trace is linear, so applying it to the (generally non-Hermitian)
+                        # operator |psi_i><psi_j| gives the action of the reduced channel on |i><j|.
+                        spin_state = State.from_density_matrix(basis, density_matrix)
+                        for dof in dofs_to_trace_out:
+                            spin_state = spin_state.trace_out_degree_of_freedom(dof)
+                        # Re-express in reduced_basis (same DoFs and ordering) so the gate's basis is consistent.
+                        spin_state = State.from_density_matrix(reduced_basis, spin_state.density_matrix)
                 supervectors.append(spin_state.supervector)
         process_matrix = np.array(supervectors).T
-
         return cls(reduced_basis, process_matrix, unitary=unitary)
 
     @classmethod
