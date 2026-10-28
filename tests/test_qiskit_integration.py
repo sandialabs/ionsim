@@ -7,7 +7,8 @@ from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis
 from ionsim.named_operators import Unitary, Pauli
 from ionsim.noise import Noise
-from ionsim.circuit_builder import CircuitBuilder, HAS_QISKIT
+from ionsim.circuit_builder import CircuitBuilder
+from ionsim.qiskit_interface import HAS_QISKIT
 
 if HAS_QISKIT:
     import qiskit
