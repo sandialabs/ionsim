@@ -347,7 +347,7 @@ class Laser():
         """
         target_atoms = self._parse_atomic_input(basis, target_atoms)
         coupling_operators = []
-        for atom in atom_DOFs:
+        for atom in target_atoms:
             coupling_operators.extend(self._atom_coupling_operators(basis, atom, ground_levels, excited_levels, multipole_order, frequency_shift))
         return coupling_operators
 

@@ -14,7 +14,12 @@ import numpy as np
 from scipy import constants as const 
 
 from ionsim.process import Gate, Circuit
-from ionsim.degree_of_freedom import AtomicStructure
+import warnings
+
+from scipy.special import genlaguerre
+
+from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
+from ionsim.state import State
 from ionsim.basis import StandardBasis
 from ionsim.laser import Laser, Polarization, GaussianBeam, _perpendicular_basis, _spherical_basis_vectors
 from ionsim.hamiltonian import Hamiltonian
@@ -75,14 +80,14 @@ class TestProcess(unittest.TestCase):
         # Test building coupling operators from laser and polarization information  
         ground_levels = [self.atom_a.energy_levels[0]] 
         excited_levels = [*self.atom_a.energy_levels[1:]] 
-        atom_a_coupling_operators = self.laser.build_individual_atom_laser_coupling_operators(self.basis, self.atom_a, ground_levels, excited_levels, 1) 
+        atom_a_coupling_operators = self.laser.build_carrier_coupling_operators(self.basis, [self.atom_a], ground_levels, excited_levels, 1) 
         # These are not dipole allowed: should be zero operators 
         self.assertEqual(len(atom_a_coupling_operators), 0)
 
         ground_levels = [self.atom_b.energy_levels[0]] 
         excited_levels = [*self.atom_b.energy_levels[1:]] 
         # Addresses atom B in a 2-atom basis 
-        atom_b_coupling_operators = self.laser.build_individual_atom_laser_coupling_operators(self.basis, self.atom_b, ground_levels, excited_levels, 1) 
+        atom_b_coupling_operators = self.laser.build_carrier_coupling_operators(self.basis, [self.atom_b], ground_levels, excited_levels, 1) 
         # Expect one transition |s1/2, 1,0> --> |P1/2,1,+1> transition, and 4 couplings since atom A has 4 levels, so the 2-qubit basis has 4 couplings  
         self.assertEqual(len(atom_b_coupling_operators), 1)
         # For 2-qubits and a + transition on qubit 2 and 4 levels on qubit 1, there are 4 unique couplings and 8 total couplings (h.c.) 
@@ -116,7 +121,7 @@ class TestProcess(unittest.TestCase):
         self.assertAlmostEqual(laser_detuning/TPI/1E9, -195.33742087632817, places=8) 
 
         # Expecting 5.523 MHz Rabi frequency  
-        atom_c_coupling_operators = self.laser_c.build_individual_atom_laser_coupling_operators(self.neutral_basis, self.atom_c, ground_levels, excited_levels, 1) 
+        atom_c_coupling_operators = self.laser_c.build_carrier_coupling_operators(self.neutral_basis, [self.atom_c], ground_levels, excited_levels, 1) 
         assert len(atom_c_coupling_operators) == 1
 
         # We expect a Rabi frequency of about ~5 MHz, but this is not precise  
@@ -208,7 +213,7 @@ class TestLaserQuadrupoleCoupling(unittest.TestCase):
         excited = [level for level in ca.energy_levels if level.term_symbol == 'D5/2']
         n_hat = np.array([1., 0., 0.])
         laser = Laser.gaussian_from_wavelength(729e-9, 1e-3, 10e-6, n_hat, Polarization(np.array([0., 0., 1.]), n_hat), 0.)
-        operators = laser.build_individual_atom_laser_coupling_operators(basis, ca, ground, excited, 2)
+        operators = laser.build_carrier_coupling_operators(basis, [ca], ground, excited, 2)
         coupled = sorted(next(state.name for state in (op.couplings[0].row_state, op.couplings[0].column_state) if 'D5/2' in state.name)
                          for op in operators)
         self.assertEqual(coupled, ['D5/2,-1/2', 'D5/2,3/2'])
@@ -229,7 +234,7 @@ class TestLaserFrequencyAndModulation(unittest.TestCase):
 
     def coupling(self, laser, atom, basis, g, e, t, frame=None, frequency_shift=0.):
         """The upper-triangle coupling element of the Hamiltonian at time t."""
-        operators = laser.build_individual_atom_laser_coupling_operators(basis, atom, [g], [e], 1, frequency_shift=frequency_shift)
+        operators = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, frequency_shift=frequency_shift)
         frame = [0.] * len(basis.states) if frame is None else frame
         return np.asarray(Hamiltonian(basis, operators, frame).hamiltonian_function(t))[0, 1]
 
@@ -241,7 +246,7 @@ class TestLaserFrequencyAndModulation(unittest.TestCase):
                 n_hat = np.array([0., 0., 1.])
                 laser = Laser.gaussian_from_frequency(e.energy - g.energy, 1e-3, 20e-6, n_hat, Polarization.circular(n_hat, '+'), 0.)
                 frame = [-state.energy for state in basis.states]
-                operators = laser.build_individual_atom_laser_coupling_operators(basis, atom, [g], [e], 1)
+                operators = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1)
                 H0 = Hamiltonian(basis, operators, frame).H0_H0Shifts_Hints_and_Rates[0].toarray()
                 np.testing.assert_allclose(H0, 0., atol=0.)
                 values = [self.coupling(laser, atom, basis, g, e, t, frame) for t in self.TIMES]
@@ -287,7 +292,7 @@ class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
         return Laser.gaussian_from_frequency(frequency, 1e-9, 20e-6, n_hat, Polarization.circular(n_hat, '+'), 0., **kwargs)
 
     def evolve(self, laser, atom, basis, g, e, duration, frequency_shift=0.):
-        operators = laser.build_individual_atom_laser_coupling_operators(basis, atom, [g], [e], 1, frequency_shift=frequency_shift)
+        operators = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, frequency_shift=frequency_shift)
         rabi = 2. * abs(operators[0].couplings[0].strength)
         hamiltonian = Hamiltonian(basis, operators, [-state.energy for state in basis.states])
         psi0 = np.array([1. if state.components[0] is g else 0. for state in basis.states], dtype=complex)
@@ -310,8 +315,8 @@ class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
         is resonant again: a pi pulse transfers all population. Without the compensation it does not."""
         for ground_first in (True, False):
             atom, basis, g, e = self.build(ground_first)
-            rabi = 2. * abs(self.laser(e.energy - g.energy).build_individual_atom_laser_coupling_operators(
-                basis, atom, [g], [e], 1)[0].couplings[0].strength)
+            rabi = 2. * abs(self.laser(e.energy - g.energy).build_carrier_coupling_operators(
+                basis, [atom], [g], [e], 1)[0].couplings[0].strength)
             delta = 2. * rabi  # rad/s; large enough that an uncompensated pi pulse clearly fails
             detuned = self.laser(e.energy - g.energy + delta)
             pi_time = lambda r: np.pi / r
@@ -332,8 +337,8 @@ class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
         for ground_first in (True, False):
             with self.subTest(ground_first=ground_first):
                 atom, basis, g, e = self.build(ground_first)
-                rabi = 2. * abs(self.laser(e.energy - g.energy).build_individual_atom_laser_coupling_operators(
-                    basis, atom, [g], [e], 1)[0].couplings[0].strength)
+                rabi = 2. * abs(self.laser(e.energy - g.energy).build_carrier_coupling_operators(
+                    basis, [atom], [g], [e], 1)[0].couplings[0].strength)
                 delta = -50. * rabi  # red detuning
                 duration = lambda r: 40. * np.pi / r
                 psi, index_g, _ = self.evolve(self.laser(e.energy - g.energy + delta), atom, basis, g, e, duration)
@@ -415,31 +420,220 @@ class TestLaserMultipleAtoms(unittest.TestCase):
         return indices
 
     def test_all_atoms_by_default(self):
-        operators = self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, None, self.ground, self.excited, 1)
+        operators = self.laser.build_carrier_coupling_operators(self.basis, None, self.ground, self.excited, 1)
         self.assertEqual(sorted(self.addressed_atoms(operators)), [0, 1])
 
     def test_selected_atom(self):
-        operators = self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, [self.atom_b], self.ground, self.excited, 1)
+        operators = self.laser.build_carrier_coupling_operators(self.basis, [self.atom_b], self.ground, self.excited, 1)
         self.assertEqual(self.addressed_atoms(operators), [1])
 
     def test_same_couplings_for_identical_atoms(self):
         """Each atom's operator has the same strengths: 4 basis states of the other atom x (|g><e| and |e><g|)."""
-        operators = self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, None, self.ground, self.excited, 1)
+        operators = self.laser.build_carrier_coupling_operators(self.basis, None, self.ground, self.excited, 1)
         strengths = [sorted(abs(coupling.strength) for coupling in operator.couplings) for operator in operators]
         self.assertEqual(len(strengths[0]), 8)
         np.testing.assert_allclose(strengths[0], strengths[1], rtol=1e-12)
 
     def test_individual_atom_with_levels_from_another_atom(self):
-        operators = self.laser.build_individual_atom_laser_coupling_operators(self.basis, self.atom_b, self.ground, self.excited, 1)
+        operators = self.laser.build_carrier_coupling_operators(self.basis, [self.atom_b], self.ground, self.excited, 1)
         self.assertEqual(self.addressed_atoms(operators), [1])
 
     def test_errors(self):
         other = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,1,0'])
         with self.subTest('atom not in basis'), self.assertRaises(ValueError):
-            self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, [other], self.ground, self.excited, 1)
+            self.laser.build_carrier_coupling_operators(self.basis, [other], self.ground, self.excited, 1)
         missing_level = AtomicStructure.from_species(species='171Yb+', term_symbols=['P3/2'], level_names=['P3/2,1,1']).energy_levels
         with self.subTest('level missing from an atom'), self.assertRaises(ValueError):
-            self.laser.build_laser_coupling_operators_multiple_atoms(self.basis, None, self.ground, missing_level, 1)
+            self.laser.build_carrier_coupling_operators(self.basis, None, self.ground, missing_level, 1)
+
+
+class TestLaserSidebandCouplings(unittest.TestCase):
+    """Red/blue sideband couplings on 40Ca+ S1/2 -> D5/2 (729 nm, E2), the standard single-laser sideband transition.
+
+    The laser propagates along x with polarization along z, which couples |S1/2, mJ=1/2> to |D5/2, mJ=3/2> (and -1/2).
+    """
+    TPI = 2. * np.pi
+    MODE_FREQUENCY = 2. * np.pi * 1e6   # rad/s; arbitrary trap frequency
+    FOCK_DIMENSION = 6
+    ETA = 0.08                          # arbitrary Lamb-Dicke parameter
+    N_HAT = np.array([1., 0., 0.])
+    QN_G, QN_E = {'n': 4, 'l': 0, 'mj': 0.5}, {'n': 3, 'l': 2, 'j': 2.5, 'mj': 1.5}
+
+    def build(self, ground_first: bool = True, mode_first: bool = False, n_atoms: int = 1, fock_dimension: int | None = None):
+        atoms = [AtomicStructure.from_species(species='40Ca+', term_symbols=['S1/2', 'D5/2'], name=f'ion{i}',
+                                              quantum_numbers=[self.QN_G, self.QN_E] if ground_first else [self.QN_E, self.QN_G])
+                 for i in range(n_atoms)]
+        mode = MotionalMode.from_frequency(self.MODE_FREQUENCY, fock_dimension or self.FOCK_DIMENSION, name='mode')
+        basis = StandardBasis([mode, *atoms] if mode_first else [*atoms, mode])
+        g = next(level for level in atoms[0].energy_levels if level.term_symbol == 'S1/2')
+        e = next(level for level in atoms[0].energy_levels if level.term_symbol == 'D5/2')
+        return atoms, mode, basis, g, e
+
+    def laser(self, frequency, power=1e-3):
+        return Laser.gaussian_from_frequency(frequency, power, 10e-6, self.N_HAT, Polarization(np.array([0., 0., 1.]), self.N_HAT), 0.)
+
+    @staticmethod
+    def index(basis, level, n):
+        """Basis index of the single-atom state |level, n> (first atom carries the level, the mode the Fock number)."""
+        for i, state in enumerate(basis.states):
+            if level in state.components and any(getattr(c, 'fock_number', None) == n for c in state.components):
+                return i
+        raise ValueError(f"No state |{level.name}, {n}>")
+
+    def carrier_rabi(self, laser, atom, basis, g, e):
+        return 2. * abs(laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 2)[0].couplings[0].strength)
+
+    def evolve(self, basis, operators, initial_index, duration):
+        hamiltonian = Hamiltonian(basis, operators, [-state.energy for state in basis.states])
+        psi0 = np.zeros(len(basis.states), dtype=complex)
+        psi0[initial_index] = 1.
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            # Dense output: odeint fails silently (warning only) when its per-interval step limit is exceeded.
+            _, psis = hamiltonian.evolve_wavefunction(psi0, duration, np.linspace(0., duration, 2001))
+        self.assertAlmostEqual(np.linalg.norm(psis[-1]), 1., delta=1e-5)
+        return psis[-1]
+
+    def test_resonant_sideband_pi_pulses_for_any_basis_ordering(self):
+        """Blue: |g,0> -> |e,1> in pi/(eta Omega) and |g,1> -> |e,2> sqrt(2) faster. Red: |g,1> -> |e,0>; |g,0> is dark.
+        The mode-first ordering flips the kept element of the red sideband (|e,n-1> precedes |g,n>), which needs the
+        opposite oscillation-rate sign; with the wrong sign the drive is off resonance by twice the laser frequency."""
+        for ground_first in (True, False):
+            for mode_first in (False, True):
+                with self.subTest(ground_first=ground_first, mode_first=mode_first):
+                    (atom,), mode, basis, g, e = self.build(ground_first, mode_first)
+                    omega_0 = e.energy - g.energy
+                    blue, red = self.laser(omega_0 + self.MODE_FREQUENCY), self.laser(omega_0 - self.MODE_FREQUENCY)
+                    rabi = self.carrier_rabi(blue, atom, basis, g, e)
+                    pi_time = np.pi / (self.ETA * rabi)
+                    blue_ops = blue.build_blue_sideband_coupling_operators(basis, [atom], [g], [e], 2, self.ETA)
+                    red_ops = red.build_red_sideband_coupling_operators(basis, [atom], [g], [e], 2, self.ETA)
+                    psi = self.evolve(basis, blue_ops, self.index(basis, g, 0), pi_time)
+                    self.assertGreater(abs(psi[self.index(basis, e, 1)])**2, 1. - 1e-5)
+                    psi = self.evolve(basis, blue_ops, self.index(basis, g, 1), pi_time / np.sqrt(2.))
+                    self.assertGreater(abs(psi[self.index(basis, e, 2)])**2, 1. - 1e-5)
+                    psi = self.evolve(basis, red_ops, self.index(basis, g, 1), pi_time)
+                    self.assertGreater(abs(psi[self.index(basis, e, 0)])**2, 1. - 1e-5)
+                    psi = self.evolve(basis, red_ops, self.index(basis, g, 0), pi_time)
+                    self.assertGreater(abs(psi[self.index(basis, g, 0)])**2, 1. - 1e-5)
+
+    def test_sideband_matrix_elements(self):
+        """Raising elements are (carrier raising element) x i eta sqrt(n+1), on |e,n+1><g,n| (blue) and
+        |e,n><g,n+1| (red), and nothing else."""
+        (atom,), mode, basis, g, e = self.build()
+        laser = self.laser(e.energy - g.energy)
+        carrier_raising = laser.build_atom_laser_ge_coupling_matrix(g, e, atom.energy_levels, 2)[
+            atom.energy_levels.index(e), atom.energy_levels.index(g)]
+        for sideband, shift in (('blue', +1), ('red', -1)):
+            with self.subTest(sideband=sideband):
+                operators = laser.build_sideband_coupling_operators(sideband, basis, [atom], [g], [e], 2, self.ETA)
+                raising = {}
+                for operator in operators:
+                    for coupling in operator.couplings:
+                        if e in coupling.row_state.components:
+                            n_e, n_g = (next(c.fock_number for c in s.components if hasattr(c, 'fock_number'))
+                                        for s in (coupling.row_state, coupling.column_state))
+                            raising[(n_g, n_e)] = coupling.strength
+                expected = {(n, n + shift): carrier_raising * 1j * self.ETA * np.sqrt(max(n, n + shift))
+                            for n in range(self.FOCK_DIMENSION) if 0 <= n + shift < self.FOCK_DIMENSION}
+                self.assertEqual(set(raising), set(expected))
+                for key, value in expected.items():
+                    self.assertAlmostEqual(abs(raising[key] / value - 1.), 0., places=12)
+
+    def test_debye_waller_matrix_elements(self):
+        """debye_waller=True: blue element eta e^{-eta^2/2} L_n^1(eta^2) / sqrt(n+1) instead of eta sqrt(n+1)."""
+        eta = 0.3  # large enough for a visible correction
+        (atom,), mode, basis, g, e = self.build()
+        laser = self.laser(e.energy - g.energy)
+        first_order, exact = (laser.build_blue_sideband_coupling_operators(basis, [atom], [g], [e], 2, eta, debye_waller=dw)[0]
+                              for dw in (False, True))
+        def by_n(operator):
+            return {next(c.fock_number for c in coupling.column_state.components if hasattr(c, 'fock_number')): coupling.strength
+                    for coupling in operator.couplings if e in coupling.row_state.components}
+        first_order, exact = by_n(first_order), by_n(exact)
+        for n in range(self.FOCK_DIMENSION - 1):
+            expected_ratio = np.exp(-eta**2 / 2.) * genlaguerre(n, 1)(eta**2) / (n + 1)
+            self.assertAlmostEqual(abs(exact[n] / first_order[n] - expected_ratio), 0., places=12)
+
+    def test_detuned_sideband_compensated_by_frequency_shift(self):
+        (atom,), mode, basis, g, e = self.build()
+        omega_0 = e.energy - g.energy
+        rabi = self.carrier_rabi(self.laser(omega_0), atom, basis, g, e)
+        delta = 3. * self.ETA * rabi
+        detuned = self.laser(omega_0 + self.MODE_FREQUENCY + delta)
+        pi_time = np.pi / (self.ETA * rabi)
+        for shift, transferred in ((0., False), (-delta, True)):
+            with self.subTest(frequency_shift=shift):
+                operators = detuned.build_blue_sideband_coupling_operators(basis, [atom], [g], [e], 2, self.ETA, frequency_shift=shift)
+                population = abs(self.evolve(basis, operators, self.index(basis, g, 0), pi_time)[self.index(basis, e, 1)])**2
+                if transferred:
+                    self.assertGreater(population, 1. - 1e-5)
+                else:
+                    self.assertLess(population, 0.2)
+
+    def test_molmer_sorensen_gate(self):
+        """Two ions, one mode, bichromatic tones at omega_0 +/- (omega_mode + delta) built from two Laser objects (blue
+        sideband of the blue tone, red sideband of the red tone). With eta Omega = delta / 2 and duration 2 pi / delta,
+        |gg, 0> -> (|gg> + e^{i theta}|ee>)/sqrt(2) with the mode disentangled, for either basis ordering."""
+        duration = 100e-6                       # s; arbitrary
+        delta = self.TPI / duration             # one loop in phase space
+        sideband_rabi = delta / 2.              # eta * Omega for a maximally entangling single-loop gate
+        for mode_first in (False, True):
+            with self.subTest(mode_first=mode_first):
+                atoms, mode, basis, g, e = self.build(mode_first=mode_first, n_atoms=2, fock_dimension=10)
+                omega_0 = e.energy - g.energy
+                reference_power = 1e-3
+                rabi_per_reference = self.carrier_rabi(self.laser(omega_0, reference_power), atoms[0], basis, g, e)
+                power = reference_power * (sideband_rabi / self.ETA / rabi_per_reference)**2   # Omega scales as sqrt(P)
+                blue = self.laser(omega_0 + self.MODE_FREQUENCY + delta, power)
+                red = self.laser(omega_0 - self.MODE_FREQUENCY - delta, power)
+                etas = {(atom, mode): self.ETA for atom in atoms}
+                operators = (blue.build_blue_sideband_coupling_operators(basis, None, [g], [e], 2, etas)
+                             + red.build_red_sideband_coupling_operators(basis, None, [g], [e], 2, etas))
+                initial = next(i for i, state in enumerate(basis.states)                       # |g, g, n=0>
+                               if all(getattr(c, 'fock_number', 0) == 0 and getattr(c, 'term_symbol', 'S1/2') == 'S1/2'
+                                      for c in state.components))
+                psi = self.evolve(basis, operators, initial, duration)
+                spins = State.from_wavefunction(basis, psi).trace_out_degree_of_freedom(mode)
+                rho = spins.density_matrix
+                labels = [''.join('g' if c.term_symbol == 'S1/2' else 'e' for c in s.components) for s in spins.basis.states]
+                gg, ee = labels.index('gg'), labels.index('ee')
+                bell_fidelity = 0.5 * (rho[gg, gg] + rho[ee, ee]).real + abs(rho[gg, ee])   # best phase theta
+                self.assertGreater(bell_fidelity, 1. - 1e-4)
+                self.assertGreater(np.trace(rho @ rho).real, 1. - 1e-4)                 # mode disentangled
+
+    def test_lamb_dicke_parameter(self):
+        laser = self.laser(2. * np.pi * const.c / 729e-9)
+        mass = 39.96259087  # daltons, 40Ca
+        expected = laser.wavevector[0] * np.sqrt(const.hbar / (2. * mass * const.value('atomic mass constant') * self.MODE_FREQUENCY))
+        self.assertAlmostEqual(laser.lamb_dicke_parameter(self.MODE_FREQUENCY, mass, [1., 0., 0.]), expected, places=14)
+        self.assertAlmostEqual(expected, 0.0969, places=4)  # 729 nm, 1 MHz, k along the mode
+        self.assertAlmostEqual(laser.lamb_dicke_parameter(self.MODE_FREQUENCY, mass, [-1. / np.sqrt(2.), 0., 0.]),
+                               -expected / np.sqrt(2.), places=14)
+        self.assertAlmostEqual(laser.lamb_dicke_parameter(self.MODE_FREQUENCY, mass, [0., 0., 1.]), 0., places=14)
+
+    def test_errors_and_deprecated_names(self):
+        (atom,), mode, basis, g, e = self.build()
+        laser = self.laser(e.energy - g.energy)
+        no_mode_basis = StandardBasis([atom])
+        other_mode = MotionalMode.from_frequency(self.MODE_FREQUENCY, 3)
+        with self.subTest('no modes in basis'), self.assertRaises(ValueError):
+            laser.build_red_sideband_coupling_operators(no_mode_basis, [atom], [g], [e], 2, self.ETA)
+        with self.subTest('mode not in basis'), self.assertRaises(ValueError):
+            laser.build_red_sideband_coupling_operators(basis, [atom], [g], [e], 2, self.ETA, modes=[other_mode])
+        with self.subTest('missing (atom, mode) entry'), self.assertRaises(IonSimError):
+            laser.build_red_sideband_coupling_operators(basis, [atom], [g], [e], 2, {})
+        with self.subTest('unknown sideband'), self.assertRaises(IonSimError):
+            laser.build_sideband_coupling_operators('green', basis, [atom], [g], [e], 2, self.ETA)
+        with self.subTest('eta = 0 skips the pair'):
+            self.assertEqual(laser.build_blue_sideband_coupling_operators(basis, [atom], [g], [e], 2, {(atom, mode): 0.}), [])
+ #        with self.subTest('deprecated names'):
+ #            new = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 2)
+ #            for old in (lambda: laser.build_individual_atom_laser_coupling_operators(basis, atom, [g], [e], 2),
+ #                        lambda: laser.build_laser_coupling_operators_multiple_atoms(basis, [atom], [g], [e], 2)):
+ #                with self.assertWarns(DeprecationWarning):
+ #                    old_ops = old()
+ #                self.assertEqual([[c.strength for c in op.couplings] for op in old_ops], [[c.strength for c in op.couplings] for op in new])
 
 
 if __name__ == '__main__':
