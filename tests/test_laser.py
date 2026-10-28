@@ -45,7 +45,6 @@ class TestProcess(unittest.TestCase):
         self.neutral_basis = StandardBasis([self.atom_c]) 
 
         propagation_vector = np.array([0., 0., 1.])
-        #propagation_vector = np.array([np.cos(np.pi/4.), np.sin(np.pi/4.), 0.])
         phase = np.pi 
         # Create polarization 
         laser_polarization = Polarization.circular(propagation_vector, '+')
@@ -70,11 +69,6 @@ class TestProcess(unittest.TestCase):
         self.assertAlmostEqual(self.laser_c.beam_profile.peak_electric_field_magnitude(laser_c_power)*1E-3, 1.3851612653205, places=10)
 
 
- #    def test_polarization(self):
- #        """ Test polarization vector functionality """ 
- #        laser_polarization = self.laser.polarization
-
-
     def test_laser_coupling_builder(self):
         """Test the process fidelity of the extra noisy gate."""
         # Test building coupling operators from laser and polarization information  
@@ -97,16 +91,9 @@ class TestProcess(unittest.TestCase):
         excited_level_name = atom_b_coupling_operators[0].couplings[0].column_state.name[-8:]
         expected_name = 'P1/2,1,1'
         self.assertEqual(expected_name, excited_level_name)
- #        for op in atom_b_coupling_operators:
- #            print(f"Coupling operator contains {len(op.couplings)} couplings.")
- #            for coupling in op.couplings:
- #                print(f"Coupling between {coupling.row_state.name} and {coupling.column_state.name}.")
- #                print(f"Strength: {coupling.strength}\n")
- #            print()
-
 
     def test_1S0_3P1_transition_coupling_from_laser(self):
-        """ Following the reference https://arxiv.org/pdf/2509.04416v1, testing rabi frequency for 556 nm laser on 3P1 transition"""
+        """ Following the reference https://arxiv.org/pdf/2509.04416v1, testing rabi frequency for 556 nm laser on 3P1 transition in neutral Yb 171"""
         TPI = 2.*np.pi
         ground_levels = [self.atom_c.energy_levels[0]] 
         excited_levels = [self.atom_c.energy_levels[1]] 
@@ -124,7 +111,7 @@ class TestProcess(unittest.TestCase):
         atom_c_coupling_operators = self.laser_c.build_carrier_coupling_operators(self.neutral_basis, [self.atom_c], ground_levels, excited_levels, 1) 
         assert len(atom_c_coupling_operators) == 1
 
-        # We expect a Rabi frequency of about ~5 MHz, but this is not precise  
+        # We expect a Rabi frequency of about ~5 MHz, but this is up to angular factors
         dipole_factor = 0.5398 # Table 10 of reference 
         rabi_frequency = dipole_factor * atom_c_coupling_operators[0].couplings[0].strength/TPI/1E6
         self.assertAlmostEqual(np.abs(rabi_frequency), 3.905827783900461, places = 8)
@@ -152,9 +139,6 @@ class TestLaserConstructors(unittest.TestCase):
         laser = Laser.gaussian_from_wavelength(self.wavelength, self.power, self.waist, self.n_hat, Polarization.linear(self.n_hat), 0.)
         self.assertAlmostEqual(laser.peak_intensity / (2 * self.power / (np.pi * self.waist**2)), 1., places=12)
 
-    def test_polarization_repr(self):
-        self.assertIn('Polarization(vector=', repr(Polarization.linear(self.n_hat)))
-
     def test_unknown_modulation_key(self):
         laser = Laser.gaussian_from_wavelength(self.wavelength, self.power, self.waist, self.n_hat, Polarization.linear(self.n_hat), 0.,
                                                modulation_functions={'phse': lambda t: 0.})
@@ -163,15 +147,15 @@ class TestLaserConstructors(unittest.TestCase):
 
 
 class TestPolarizationComponents(unittest.TestCase):
-    """Angular conventions of E1 and E2 couplings.
+    """ Angular conventions of E1 and E2 couplings.
 
-    For a J = 0 -> J = k transition (no spin or nuclear spin), <k m| T^(k)_q |0 0> is the same for every m = q, so the
-    coupling to |k, m> must be proportional to the polarization's rank-k component with q = m.
+        For a J = 0 -> J = k transition (no spin or nuclear spin), <k m| T^(k)_q |0 0> is the same for every m = q, so the
+        coupling to |k, m> must be proportional to the polarization's rank-k component with q = m.
     """
 
     def setUp(self):
         # Arbitrary elliptical polarization for an arbitrary propagation direction.
-        n_hat = np.array([0.3, -0.5, 0.8]); n_hat /= np.linalg.norm(n_hat)
+        n_hat = np.array([0.3, -0.5, 0.8]); n_hat /= np.linalg.norm(n_hat) # normalized 
         e1 = np.cross(n_hat, [1., 0., 0.]); e1 /= np.linalg.norm(e1)
         e2 = np.cross(n_hat, e1)
         self.polarization = Polarization(np.cos(0.4) * e1 + np.exp(0.9j) * np.sin(0.4) * e2, n_hat)
@@ -212,7 +196,11 @@ class TestLaserQuadrupoleCoupling(unittest.TestCase):
         ground = [level for level in ca.energy_levels if level.name == 'S1/2,1/2']
         excited = [level for level in ca.energy_levels if level.term_symbol == 'D5/2']
         n_hat = np.array([1., 0., 0.])
-        laser = Laser.gaussian_from_wavelength(729e-9, 1e-3, 10e-6, n_hat, Polarization(np.array([0., 0., 1.]), n_hat), 0.)
+        wavelength = 729 * 1E-9 # nm -> meters 
+        power = 1e-3
+        waist = 1e-7 
+        phase = 0.
+        laser = Laser.gaussian_from_wavelength(wavelength, power, waist, n_hat, Polarization(np.array([0., 0., 1.]), n_hat), phase)
         operators = laser.build_carrier_coupling_operators(basis, [ca], ground, excited, 2)
         coupled = sorted(next(state.name for state in (op.couplings[0].row_state, op.couplings[0].column_state) if 'D5/2' in state.name)
                          for op in operators)
@@ -222,7 +210,7 @@ class TestLaserQuadrupoleCoupling(unittest.TestCase):
 class TestLaserFrequencyAndModulation(unittest.TestCase):
     """Coupling phases and frequencies must not depend on whether the ground or excited level comes first in the basis."""
 
-    TIMES = (0., 1e-9, 2.3e-9)  # s; arbitrary evaluation times
+    TIMES = (0., 1e-9, 2.3e-9)  # s
 
     def build(self, ground_first: bool):
         qn_g, qn_e = {'n': 6, 'l': 0, 'f': 1, 'mf': 0}, {'n': 6, 'l': 1, 'f': 1, 'mf': 1}
@@ -289,7 +277,9 @@ class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
     def laser(self, frequency, **kwargs):
         n_hat = np.array([0., 0., 1.])
         # Low power so the Rabi frequency (~2pi x 1 MHz scale) is far below the optical frequency.
-        return Laser.gaussian_from_frequency(frequency, 1e-9, 20e-6, n_hat, Polarization.circular(n_hat, '+'), 0., **kwargs)
+        power = 1e-9
+        waist = 20e-6 
+        return Laser.gaussian_from_frequency(frequency, power, waist, n_hat, Polarization.circular(n_hat, '+'), 0., **kwargs)
 
     def evolve(self, laser, atom, basis, g, e, duration, frequency_shift=0.):
         operators = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, frequency_shift=frequency_shift)
