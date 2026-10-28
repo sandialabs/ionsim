@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from typing import Callable
+import warnings
 
 import numpy as np
 from scipy import constants as const
@@ -22,13 +23,12 @@ from sympy.physics.wigner import clebsch_gordan
 
 from ionsim.basis import Basis 
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, compute_multipole_amplitude, compute_rabi_frequency_between_atomic_levels
-from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure
+from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure, MotionalMode
 from ionsim.custom_types import Matrix, Vector
-from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD, SMALLEST_ENERGY_SCALE 
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD, SMALLEST_ENERGY_SCALE
 from ionsim.ionsim_error import IonSimError
 from ionsim.operator import Operator, CouplingOperator
-
-## TODO: Add first-order sideband transitions? 
+from ionsim.named_operators import Fock
 
 ## Vector helper operations
 def _unit_vector(vec: Vector) -> Vector:
@@ -262,7 +262,7 @@ class Laser():
     @property
     def modulation_function(self) -> Callable | None:
         """ The complex modulation factor f(t) of the |e><g| (absorption) part of a coupling built with the ground level
-            first in the basis, or None if unmodulated. Coupling builders use _pair_modulation_function, which handles
+            first in the basis, or None if unmodulated. Coupling builders use _modulation_function_for_level_pair, which handles
             either level order.
 
             modulation_functions holds optional callables:
@@ -272,7 +272,7 @@ class Laser():
             A constant 'phase' phi is equivalent to adding phi to the laser phase, and a constant 'frequency' delta to
             frequency_shift=delta in the coupling builders.
         """
-        return self._pair_modulation_function(ground_index=0, excited_index=1)
+        return self._modulation_function_for_level_pair(ground_index=0, excited_index=1)
 
     @staticmethod
     def _carrier_sign(ground_index: int, excited_index: int) -> int:
@@ -289,11 +289,11 @@ class Laser():
         """
         return -1 if ground_index < excited_index else 1
 
-    def _pair_oscillation_rate(self, ground_index: int, excited_index: int, frequency_shift: float = 0.) -> float:
+    def _oscillation_rate_for_level_pair(self, ground_index: int, excited_index: int, frequency_shift: float = 0.) -> float:
         """ Oscillation rate for the coupling operator of one (|g>, |e>) pair; see _carrier_sign. """
         return self._carrier_sign(ground_index, excited_index) * (self.frequency + frequency_shift)
 
-    def _pair_modulation_function(self, ground_index: int, excited_index: int) -> Callable | None:
+    def _modulation_function_for_level_pair(self, ground_index: int, excited_index: int) -> Callable | None:
         """ Modulation function for the coupling operator of one (|g>, |e>) pair at these basis indices.
 
             The Hamiltonian multiplies the upper-triangle element of a coupling matrix by the modulation function and adds
@@ -318,43 +318,213 @@ class Laser():
 
         return mod_function
 
-    # Method for individually-addressing laser  
-    def build_individual_atom_laser_coupling_operators(self, basis: Basis, addressed_atom: AtomicStructure, ground_levels: list[AtomicInternalEnergyLevel], 
-                                                        excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift: float=0.) -> list[CouplingOperator]: 
-        """ Builds a list of coupling operators corresponding to |g> <-> |e> couplings from laser light upon a particular atom.
+    # ---------------------------------------------------------------------------------------------------------------
+    # Coupling-operator builders
+    #
+    # Light-atom interaction for atom j at equilibrium position 0 (Lamb-Dicke expansion of the field's spatial phase):
+    #     H_j = (Omega/2) e^{i phi} |e><g| exp(i sum_k eta_jk (a_k + a_k^dag)) e^{-i omega t} + h.c.
+    #         ~ (Omega/2) e^{i phi} |e><g| [ 1  +  i sum_k eta_jk a_k  +  i sum_k eta_jk a_k^dag ] e^{-i omega t} + h.c.
+    #                                       carrier   red sideband (n -> n-1)   blue sideband (n -> n+1)
+    # Every term oscillates at the same laser frequency omega. In the interaction picture
+    # (rotating_frame_energies = -E of each basis state, motional energies included) the frame supplies the transition
+    # frequency of each element, omega_0 for the carrier and omega_0 -/+ omega_k for the red/blue sideband, so all three
+    # builders share the same oscillation-rate and modulation conventions (_carrier_sign, _modulation_function_for_level_pair).
+    # ---------------------------------------------------------------------------------------------------------------
+    SIDEBANDS = ('red', 'blue')
 
-            Levels are matched to the atom's own levels by name, so levels taken from another (identical) atom also work.
-        """
-        if not any(addressed_atom is dof for dof in basis.atomic_structure_DOFs):
-            raise ValueError(f"Addressed atom {addressed_atom} has not been included in the basis degrees of freedom.") 
-        return self._atom_coupling_operators(basis, addressed_atom, ground_levels, excited_levels, multipole_order, frequency_shift)
+    def build_carrier_coupling_operators(self, basis: Basis, target_atoms: list[AtomicStructure] | None, ground_levels: list[AtomicInternalEnergyLevel], 
+                                               excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift: float = 0.) -> list[CouplingOperator]:
+        """ Carrier couplings |g, n> <-> |e, n> (motional state unchanged) for the requested ground and excited levels.
 
-    def build_laser_coupling_operators_multiple_atoms(self, basis: Basis, atom_DOFs: list[AtomicStructure] | None, ground_levels: list[AtomicInternalEnergyLevel], 
-                                        excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift: float=0.) -> list[Operator]: 
-        """ Builds light-atom coupling operators for several atoms in the basis, for the requested ground and excited levels.
-
-            atom_DOFs: the AtomicStructure DOFs the laser addresses; all AtomicStructure DOFs of the basis if None.
+            target_atoms: addressed AtomicStructure DOFs; all of the basis if None. Levels are matched by name (as for the carrier).
+                Pass a single atom, e.g. [atom], for an individually addressing beam.
             ground_levels, excited_levels: matched to each atom's own levels by name, so they may come from any one of the
                 atoms. Each atom must contain all of them. Each atom's couplings are computed from its own levels.
+            frequency_shift: rad/s added to the laser frequency (e.g. a constant frequency shift from an AOM).
 
-            The laser couples every addressed atom with the same field (its peak electric field and phase).
-        """ 
-        if atom_DOFs is None:
-            atom_DOFs = basis.atomic_structure_DOFs
-        if not atom_DOFs:
-            raise ValueError("No atoms to address: the basis has no AtomicStructure degrees of freedom.")
-        for atom in atom_DOFs:
-            if not any(atom is dof for dof in basis.atomic_structure_DOFs):
-                raise ValueError(f"Atom {atom.name or atom} has not been included in the basis degrees of freedom.")
-
+            The laser couples every addressed atom with the same field (its peak electric field and phase). Motional modes in
+            the basis are spectators (identity); the carrier's Debye-Waller reduction exp(-eta^2/2) L_n(eta^2) is not included.
+        """
+        target_atoms = self._parse_atomic_input(basis, target_atoms)
         coupling_operators = []
         for atom in atom_DOFs:
             coupling_operators.extend(self._atom_coupling_operators(basis, atom, ground_levels, excited_levels, multipole_order, frequency_shift))
-        return coupling_operators 
+        return coupling_operators
+
+    def build_red_sideband_coupling_operators(self, basis: Basis, target_atoms: list[AtomicStructure] | None, target_modes: list[MotionalMode] | None,
+                                              ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel],
+                                              multipole_order: int, lamb_dicke_parameters: float | dict, frequency_shift: float = 0.,
+                                              debye_waller: bool = False) -> list[CouplingOperator]:
+        """ First red-sideband couplings |g, n> <-> |e, n-1> (absorption removes one phonon); resonant at
+            omega = omega_0 - omega_mode. See build_sideband_coupling_operators for the arguments. """
+        return self.build_sideband_coupling_operators('red', basis, target_atoms, target_modes, ground_levels, excited_levels, multipole_order,
+                                                      lamb_dicke_parameters, frequency_shift, debye_waller)
+
+    def build_blue_sideband_coupling_operators(self, basis: Basis, target_atoms: list[AtomicStructure] | None, target_modes: list[MotionalMode] | None,
+                                               ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel],
+                                               multipole_order: int, lamb_dicke_parameters: float | dict, frequency_shift: float = 0.,
+                                               debye_waller: bool = False) -> list[CouplingOperator]:
+        """ First blue-sideband couplings |g, n> <-> |e, n+1> (absorption adds one phonon); resonant at
+            omega = omega_0 + omega_mode. See build_sideband_coupling_operators for the arguments. """
+        return self.build_sideband_coupling_operators('blue', basis, target_atoms, target_modes, ground_levels, excited_levels, multipole_order,
+                                                      lamb_dicke_parameters, frequency_shift, debye_waller)
+
+    def build_sideband_coupling_operators(self, sideband: str, basis: Basis, target_atoms: list[AtomicStructure] | None, target_modes: list[MotionalMode] | None,
+                                          ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, 
+                                          lamb_dicke_parameters: float | dict, frequency_shift: float = 0., debye_waller: bool = False) -> list[CouplingOperator]:
+        """ First red ('red') or blue ('blue') sideband couplings of the requested levels with each requested motional mode.
+
+            The absorption element of atom j and mode k is (Omega/2) e^{i phi} (i eta_jk) |e><g| (x) a_k (red) or a_k^dag
+            (blue), where Omega e^{i phi} is the carrier Rabi frequency of the same transition (E1 or E2). 
+
+            target_atoms: addressed AtomicStructure DOFs; all of the basis if None. Levels are matched by name (as for the carrier).
+            lamb_dicke_parameters: signed eta_jk, either one float for every (atom, mode) pair or a dict keyed by
+                (atom, mode) DOF objects. Every requested pair must have an entry; an entry of 0 skips that pair. The sign
+                (the atom's normal-mode amplitude relative to k) sets the relative phase of different atoms' sideband
+                couplings, e.g. for stretch modes. See lamb_dicke_parameter() to compute eta from a mode vector.
+            modes: the MotionalMode DOFs to couple; all MotionalMode DOFs of the basis if None.
+            frequency_shift: rad/s added to the laser frequency, as for the carrier.
+            debye_waller: if True, use the exact Delta n = +/-1 matrix elements of exp(i eta (a + a^dag)) for this mode,
+                eta e^{-eta^2/2} L_n^1(eta^2) / sqrt(n+1) instead of eta sqrt(n+1) (Fock.debye_waller_lowering).
+
+            The basis may order atoms and modes in any way: the kept (upper-triangle) element of each coupling and its
+            oscillation-rate sign are determined from the basis-state indices (_coupling_operators_from_raising_matrix).
+        """
+        if sideband not in self.SIDEBANDS:
+            raise IonSimError(f"sideband must be one of {self.SIDEBANDS}, got '{sideband}'.")
+        target_atoms = self._parse_atomic_input(basis, target_atoms)
+        target_modes = self._parse_motional_mode_input(basis, target_modes)
+        etas = self._lamb_dicke_table(lamb_dicke_parameters, target_atoms, target_modes)
+
+        coupling_operators = []
+        for atom in target_atoms:
+            for mode in target_modes:
+                eta = etas[(atom, mode)]
+                if np.abs(eta) < NUMERICAL_EQUIVALENCE_THRESHOLD:
+                    continue
+                motional_matrix = basis.enlarge_matrix(self._sideband_motional_matrix(sideband, mode, eta, debye_waller), [mode])
+                coupling_operators.extend(self._atom_coupling_operators(basis, atom, ground_levels, excited_levels, multipole_order,
+                                                                        frequency_shift, motional_matrix))
+        return coupling_operators
+
+    # TODO: replace with functionality from trap 
+    def lamb_dicke_parameter(self, mode_frequency: float, atomic_mass: float, mode_participation_vector: Vector) -> float:
+        """ Signed Lamb-Dicke parameter eta = (k . b) sqrt(hbar / (2 m omega_mode)) of this laser for one atom and one mode.
+
+            mode_frequency: rad/s.  
+            atomic_mass: daltons 
+            mode_participation_vector: the atom's 3-component normal-mode participation vector b (the atom's entries of the normalized
+                mode eigenvector, e.g. z_hat / sqrt(N) for the axial center-of-mass mode of N identical ions).
+            Uses this laser's wavevector, i.e. a single-photon transition. For a two-photon (Raman) transition the
+            relevant wavevector is the difference k1 - k2 of the two beams, which a single Laser does not describe.
+        """
+        mode_participation_vector = np.asarray(mode_participation_vector, dtype=float)
+        if mode_participation_vector.shape != (3,):
+            raise IonSimError(f"mode_participation_vector must have 3 components, got shape {mode_participation_vector.shape}.")
+        if mode_frequency <= 0. or atomic_mass <= 0.:
+            raise IonSimError("mode_frequency and atomic_mass must be positive.")
+        mass = atomic_mass * const.value('atomic mass constant')
+        return float(np.dot(self.wavevector, mode_participation_vector) * np.sqrt(const.hbar / (2. * mass * mode_frequency)))
+
+ #    # Deprecated names (kept so existing scripts keep working)
+ #    def build_individual_atom_laser_coupling_operators(self, basis: Basis, addressed_atom: AtomicStructure, ground_levels: list[AtomicInternalEnergyLevel],
+ #                                                        excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift: float=0.) -> list[CouplingOperator]:
+ #        """ Deprecated: use build_carrier_coupling_operators(basis, [addressed_atom], ...). """
+ #        warnings.warn("build_individual_atom_laser_coupling_operators is deprecated; use build_carrier_coupling_operators(basis, [atom], ...).",
+ #                      DeprecationWarning, stacklevel=2)
+ #        if not any(addressed_atom is dof for dof in basis.atomic_structure_DOFs):
+ #            raise ValueError(f"Addressed atom {addressed_atom} has not been included in the basis degrees of freedom.")
+ #        return self.build_carrier_coupling_operators(basis, [addressed_atom], ground_levels, excited_levels, multipole_order, frequency_shift)
+ #
+ #    def build_laser_coupling_operators_multiple_atoms(self, basis: Basis, atom_DOFs: list[AtomicStructure] | None, ground_levels: list[AtomicInternalEnergyLevel],
+ #                                                      excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift: float=0.) -> list[CouplingOperator]:
+ #        """ Deprecated: use build_carrier_coupling_operators. """
+ #        warnings.warn("build_laser_coupling_operators_multiple_atoms is deprecated; use build_carrier_coupling_operators.",
+ #                      DeprecationWarning, stacklevel=2)
+ #        return self.build_carrier_coupling_operators(basis, atom_DOFs, ground_levels, excited_levels, multipole_order, frequency_shift)
+
+    # ---- helpers for the builders ----
+    @staticmethod
+    def _parse_atomic_input(basis: Basis, target_atoms: list[AtomicStructure] | None) -> list[AtomicStructure]:
+        if target_atoms is None:
+            target_atoms = basis.atomic_structure_DOFs
+        if not target_atoms:
+            raise ValueError("No atoms to address: the basis has no AtomicStructure degrees of freedom.")
+        for atom in target_atoms:
+            if not any(atom is dof for dof in basis.atomic_structure_DOFs):
+                raise ValueError(f"Atom {atom.name or atom} has not been included in the basis degrees of freedom.")
+        return list(target_atoms)
+
+    @staticmethod
+    def _parse_motional_mode_input(basis: Basis, target_modes: list[MotionalMode] | None) -> list[MotionalMode]:
+        basis_modes = [dof for dof in basis.degrees_of_freedom if isinstance(dof, MotionalMode)]
+        if target_modes is None:
+            target_modes = basis_modes
+        if not target_modes:
+            raise ValueError("No motional modes to couple: the basis has no MotionalMode degrees of freedom.")
+        for mode in target_modes:
+            if not any(mode is dof for dof in basis_modes):
+                raise ValueError(f"Motional mode {mode.name or mode} has not been included in the basis degrees of freedom.")
+            fock_numbers = [level.fock_number for level in mode.energy_levels]
+            if fock_numbers != list(range(len(fock_numbers))):
+                raise IonSimError(f"Sideband operators need the mode's levels to be Fock states 0, 1, ..., N-1 in order; got {fock_numbers}.")
+        return list(target_modes)
+
+    @staticmethod
+    def _lamb_dicke_table(lamb_dicke_parameters: float | dict, atom_dofs: list[AtomicStructure], mode_dofs: list[MotionalMode]) -> dict:
+        """ {(atom, mode): eta} for every requested pair, from one float or a dict keyed by (atom, mode) DOF objects. """
+        if isinstance(lamb_dicke_parameters, dict):
+            # DOFs are frozen dataclasses with eq=False, so dict keys compare by identity.
+            missing = [(atom.name or str(i), mode.name or str(k)) for i, atom in enumerate(atom_dofs) for k, mode in enumerate(mode_dofs)
+                       if (atom, mode) not in lamb_dicke_parameters]
+            if missing:
+                raise IonSimError(f"lamb_dicke_parameters has no entry for (atom, mode) pairs {missing}; give every pair "
+                                  f"(use 0. to skip a pair).")
+            return {(atom, mode): float(lamb_dicke_parameters[(atom, mode)]) for atom in atom_dofs for mode in mode_dofs}
+        if np.ndim(lamb_dicke_parameters) != 0 or np.iscomplexobj(lamb_dicke_parameters):
+            raise IonSimError("lamb_dicke_parameters must be a real float or a dict keyed by (atom, mode).")
+        return {(atom, mode): float(lamb_dicke_parameters) for atom in atom_dofs for mode in mode_dofs}
+
+    @staticmethod
+    def _sideband_motional_matrix(sideband: str, mode: MotionalMode, eta: float, debye_waller: bool) -> Matrix:
+        """ i eta a (red) or i eta a^dag (blue) on one mode in its isolated Hilbert space """
+        dimension = len(mode.energy_levels)
+        lowering = Fock.debye_waller_lowering(dimension, eta) if debye_waller else Fock.lowering(dimension)
+        motional = lowering if sideband == 'red' else lowering.conj().T
+        return 1j * eta * motional
+
+    def _coupling_operators_from_raising_matrix(self, basis: Basis, raising_matrix: Matrix, frequency_shift: float) -> list[CouplingOperator]:
+        """ Coupling operators from the raising matrix (<excited state| . |ground state>, laser phase included) of a light-atom coupling in the full basis.
+
+            The Hamiltonian keeps the upper-triangle element of each Hermitian pair. Elements of raising matrix below the diagonal have
+            the ground state first in the basis and those above it the excited state first; the two groups need opposite
+            oscillation-rate signs and envelope conjugation (_carrier_sign), so each nonempty group becomes its own operator.
+            For a carrier only one group occurs. For a sideband the group depends on whether the atom or the mode comes
+            first in the basis: e.g. with the mode first, a red-sideband pair |g, n> <-> |e, n-1> has the excited state first.
+        """
+        raising_matrix = np.asarray(raising_matrix, dtype=complex)
+        if np.any(np.abs(np.diag(raising_matrix)) > 0.):
+            raise IonSimError("Light-atom couplings must be off-diagonal.")
+        coupling_operators = []
+
+        # A raising matrix is either the upper right or lower left matrix, depending on whether |g>'s index is less than |e>'s index 
+        for part, (ground_index, excited_index) in ((np.tril(raising_matrix, -1), (0, 1)), (np.triu(raising_matrix, 1), (1, 0))):
+            if np.all(np.abs(part) < SMALLEST_ENERGY_SCALE):
+                continue
+            rate = self._oscillation_rate_for_level_pair(ground_index, excited_index, frequency_shift)
+            mod_function = self._modulation_function_for_level_pair(ground_index, excited_index)
+            coupling_operators.append(CouplingOperator.from_matrix(basis, part + part.conj().T, rate, modulation_function=mod_function))
+        return coupling_operators
 
     def _atom_coupling_operators(self, basis: Basis, atom: AtomicStructure, ground_levels: list[AtomicInternalEnergyLevel],
-                                 excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift: float) -> list[CouplingOperator]:
-        """ Coupling operators for every requested (|g>, |e>) pair of one atom, built from that atom's own level objects. """
+                                 excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift: float,
+                                 motional_matrix: Matrix | None = None) -> list[CouplingOperator]:
+        """ Coupling operators for every requested (|g>, |e>) pair of one atom, built from that atom's own level objects.
+
+            motional_matrix: optional operator on the full basis acting only on motional DOFs (e.g. i eta a_k for a red
+            sideband); the atomic raising operator is multiplied by it. Both are enlarged to the full basis separately,
+            so their product is the tensor product for any ordering of the basis DOFs.
+        """
         atomic_levels = atom.energy_levels
         level_index = {level.name: index for index, level in enumerate(atomic_levels)}
         missing = [level.name for level in [*ground_levels, *excited_levels] if level.name not in level_index]
@@ -362,7 +532,7 @@ class Laser():
             raise ValueError(f"Levels {missing} not found in the atomic structure {atom.name or ''} with levels {list(level_index)}.")
 
         coupling_operators = []
-        # Build coupling operator for each |g>, |e> pairing   
+        # Build coupling operator for each |g>, |e> pairing
         for ground_name in [level.name for level in ground_levels]:
             for excited_name in [level.name for level in excited_levels]:
                 if ground_name == excited_name:
@@ -370,20 +540,24 @@ class Laser():
                 ground_index, excited_index = level_index[ground_name], level_index[excited_name]
                 ground_level, excited_level = atomic_levels[ground_index], atomic_levels[excited_index]
 
-                coupling_matrix = self.build_atom_laser_ge_coupling_matrix(ground_level, excited_level, atomic_levels, multipole_order) 
-                # Pass this loop iteration if there are no non-zero couplings for the requested transition  
+                coupling_matrix = self.build_atom_laser_ge_coupling_matrix(ground_level, excited_level, atomic_levels, multipole_order)
+                # Pass this loop iteration if there are no non-zero couplings for the requested transition
                 if np.count_nonzero(coupling_matrix) == 0 or np.all(np.abs(coupling_matrix) < SMALLEST_ENERGY_SCALE):
-                    continue 
+                    continue
 
-                enlarged_matrix = basis.enlarge_matrix(coupling_matrix, [atom]) 
-                mod_function = self._pair_modulation_function(ground_index, excited_index)
-                rate = self._pair_oscillation_rate(ground_index, excited_index, frequency_shift)
-                coupling_operators.append(CouplingOperator.from_matrix(basis, enlarged_matrix, rate, modulation_function=mod_function))
+                raising = np.zeros_like(coupling_matrix)
+                raising[excited_index, ground_index] = coupling_matrix[excited_index, ground_index]
+
+                # Enlarge the coupling matrix for the target atom degree of freedom within the total Hilbert space  
+                raising = basis.enlarge_matrix(raising, [atom])
+                if motional_matrix is not None:
+                    raising = raising @ motional_matrix
+                coupling_operators.extend(self._coupling_operators_from_raising_matrix(basis, raising, frequency_shift))
         return coupling_operators
 
     def build_atom_laser_ge_coupling_matrix(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, 
                                             atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int) -> Matrix: 
-        """ Builds a coupling matrix representing a laser light-atom coupling """ 
+        """ Builds a coupling matrix representing a laser light-atom coupling within an ordered list of levels""" 
 
         if multipole_order == 1:
             rabi_frequency = compute_rabi_frequency_between_atomic_levels(ground_level, excited_level, self.polarization.dipole_components(), 
@@ -413,7 +587,6 @@ class Laser():
         return coupling_matrix
 
 
-## Helpers for polarization:
 def _spherical_basis_vectors(quantization_axis: Vector) -> dict[int, Vector]:
     """ Spherical basis vectors eps +1, 0, -1. See eq. 7.188 from "Quantum and Atom Optics by Daniel Steck""" 
     z = _unit_vector(quantization_axis)
@@ -429,11 +602,9 @@ def _project_spherical(v: Vector, quantization_axis: Vector) -> dict[int, comple
     # For components via spherical basis dot product, the e_q vectors need conjugation, therefore put in first arg: 
     return {q: np.vdot(sph_basis[q], v) for q in (1, 0, -1)} 
 
-
 @dataclass(frozen=True, eq=False)
 class Polarization:
     """ Complex Cartesian polarization (Jones) Vector in the lab frame. This is set to be perpendicular to a reference propagation direction (e.g. of a laser) """
-    # TODO: For naming, Should we use "components" or "vector" to refer to the polarization vector? 
     vector: Vector # input polarization vector; normalized in post init 
     n_hat: Vector  # propagation direction 
 
