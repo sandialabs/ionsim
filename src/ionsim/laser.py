@@ -441,7 +441,7 @@ class Laser():
 
     @staticmethod
     def _parse_motional_mode_input(basis: Basis, target_modes: list[MotionalMode]) -> list[MotionalMode]:
-        """ Validates the required target modes: a non-empty list (or tuple) of distinct MotionalMode DOFs of the basis,
+        """ Parses the target mode list input: a non-empty list of distinct MotionalMode DOFs of the basis,
             each with Fock levels 0, 1, ..., N-1 in order. """
         if isinstance(target_modes, MotionalMode) or not isinstance(target_modes, (list, tuple)):
             raise IonSimError(f"target_modes must be a list of MotionalMode DOFs, got {type(target_modes).__name__}; "
@@ -453,9 +453,10 @@ class Laser():
             raise IonSimError(f"target_modes must contain only MotionalMode DOFs, got {not_modes}.")
         if len({id(mode) for mode in target_modes}) != len(target_modes):
             raise IonSimError("target_modes contains the same mode more than once, which would double its sideband couplings.")
+        #modes_from_basis = basis.motional_basis.degrees_of_freedom # TODO: uncomment after updating this branch with latest main 
         basis_modes = [dof for dof in basis.degrees_of_freedom if isinstance(dof, MotionalMode)]
         for mode in target_modes:
-            if not any(mode is dof for dof in basis_modes):
+            if not any(mode is dof for dof in modes_from_basis):
                 raise ValueError(f"Motional mode {mode.name or mode} has not been included in the basis degrees of freedom.")
             fock_numbers = [level.fock_number for level in mode.energy_levels]
             if fock_numbers != list(range(len(fock_numbers))):
