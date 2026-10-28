@@ -10,6 +10,7 @@ from ionsim.basis import StandardBasis, Basis
 from ionsim.custom_types import Matrix
 from ionsim.ionsim_error import IonSimError
 from ionsim.qiskit_interface import QiskitCircuitBuilder
+from ionsim._circuit_builder_gates import GateFromUnitary, GateFromUnitaryFunction
 
 
 class CircuitBuilderBase:
@@ -82,5 +83,46 @@ class CircuitBuilderBase:
         self._gate_noise[gate] = noise
 
 
-class CircuitBuilder(CircuitBuilderBase, QiskitCircuitBuilder):
+class IonSimCircuitBuilder:
+    """Mix-in to allow the CircuitBuilder to separate out IonSim gates
+    from the rest of the CircuitBuilder machinery."""
+
+    def I(self, qubits):
+        gate = (GateFromUnitary(Unitary.I), 'I', qubits, {})
+        self._gates.append(gate)
+
+    def X(self, qubits):
+        gate = (GateFromUnitary(Unitary.X), 'X', qubits, {})
+        self._gates.append(gate)
+
+    def sqrtX(self, qubits):
+        gate = (GateFromUnitary(Unitary.sqrtX), 'sqrtX', qubits, {})
+        self._gates.append(gate)
+
+    def Y(self, qubits):
+        gate = (GateFromUnitary(Unitary.Y), 'Y', qubits, {})
+        self._gates.append(gate)
+
+    def Z(self, qubits):
+        gate = (GateFromUnitary(Unitary.Z), 'Z', qubits, {})
+        self._gates.append(gate)
+
+    def H(self, qubits):
+        gate = (GateFromUnitary(Unitary.H), 'H', qubits, {})
+        self._gates.append(gate)
+
+    def R(self, qubits, *, phi, theta):
+        gate = (GateFromUnitaryFunction(Unitary.R), 'R', qubits, {'phi': phi, 'theta': theta})
+        self._gates.append(gate)
+
+    def CNOT(self, qubits):
+        gate = (GateFromUnitary(Unitary.CNOT), 'CNOT', qubits, {})
+        self._gates.append(gate)
+
+    def MS(self, qubits, *, phi, theta):
+        gate = (GateFromUnitaryFunction(Unitary.MS), 'MS', qubits, {'phi': phi, 'theta': theta})
+        self._gates.append(gate)
+
+
+class CircuitBuilder(CircuitBuilderBase, IonSimCircuitBuilder, QiskitCircuitBuilder):
     pass

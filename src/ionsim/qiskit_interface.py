@@ -2,6 +2,7 @@ import numpy as np
 
 from ionsim.named_operators import Unitary
 from ionsim.process import Gate
+from ionsim._circuit_builder_gates import GateFromUnitary, GateFromUnitaryFunction
 
 try:
     import qiskit
@@ -26,10 +27,9 @@ class QiskitCircuitBuilder:
             qubits = [q._index for q in ci.qubits]
             params = {name: ci.params[i] for i, name in enumerate(args)}
             if isinstance(unitary, np.ndarray):
-                lazy_gate = QiskitGateFromUnitary(unitary, Gate.from_unitary)
+                lazy_gate = GateFromUnitary(unitary)
             elif callable(unitary):
-                lazy_gate = QiskitGateFromUnitaryFunction(
-                    unitary, Gate.from_unitary_function)
+                lazy_gate = GateFromUnitaryFunction(unitary)
             else:
                 raise IonSimError(f"Unknown unitary type {unitary}")
             gates.append((lazy_gate, ionsim_name, qubits, params))
