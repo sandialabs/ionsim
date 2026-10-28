@@ -156,6 +156,7 @@ class Unitary:
     sqrtX = R(0, np.pi/2) * np.exp(1j * np.pi/4.) 
     Y = R(np.pi/2, np.pi) * np.exp(1j * np.pi/2.)
     sqrtY = R(np.pi/2, np.pi/2) * np.exp(1j * np.pi/4.)
+    Z = R(0, np.pi) @ R(np.pi/2, np.pi) * np.exp(1j * np.pi/2)
     I = R(0, 0) 
 
     @staticmethod
