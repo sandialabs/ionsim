@@ -506,8 +506,8 @@ class TestLaserSidebandCouplings(unittest.TestCase):
                     blue, red = self.laser(omega_0 + self.MODE_FREQUENCY), self.laser(omega_0 - self.MODE_FREQUENCY)
                     rabi = self.carrier_rabi(blue, atom, basis, g, e)
                     pi_time = np.pi / (self.ETA * rabi)
-                    blue_ops = blue.build_blue_sideband_coupling_operators(basis, [atom], [g], [e], 2, self.ETA)
-                    red_ops = red.build_red_sideband_coupling_operators(basis, [atom], [g], [e], 2, self.ETA)
+                    blue_ops = blue.build_blue_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, self.ETA)
+                    red_ops = red.build_red_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, self.ETA)
                     psi = self.evolve(basis, blue_ops, self.index(basis, g, 0), pi_time)
                     self.assertGreater(abs(psi[self.index(basis, e, 1)])**2, 1. - 1e-5)
                     psi = self.evolve(basis, blue_ops, self.index(basis, g, 1), pi_time / np.sqrt(2.))
@@ -526,7 +526,7 @@ class TestLaserSidebandCouplings(unittest.TestCase):
             atom.energy_levels.index(e), atom.energy_levels.index(g)]
         for sideband, shift in (('blue', +1), ('red', -1)):
             with self.subTest(sideband=sideband):
-                operators = laser.build_sideband_coupling_operators(sideband, basis, [atom], [g], [e], 2, self.ETA)
+                operators = laser.build_sideband_coupling_operators(sideband, basis, [atom], [mode], [g], [e], 2, self.ETA)
                 raising = {}
                 for operator in operators:
                     for coupling in operator.couplings:
@@ -545,7 +545,7 @@ class TestLaserSidebandCouplings(unittest.TestCase):
         eta = 0.3  # large enough for a visible correction
         (atom,), mode, basis, g, e = self.build()
         laser = self.laser(e.energy - g.energy)
-        first_order, exact = (laser.build_blue_sideband_coupling_operators(basis, [atom], [g], [e], 2, eta, debye_waller=dw)[0]
+        first_order, exact = (laser.build_blue_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, eta, debye_waller=dw)[0]
                               for dw in (False, True))
         def by_n(operator):
             return {next(c.fock_number for c in coupling.column_state.components if hasattr(c, 'fock_number')): coupling.strength
@@ -564,7 +564,7 @@ class TestLaserSidebandCouplings(unittest.TestCase):
         pi_time = np.pi / (self.ETA * rabi)
         for shift, transferred in ((0., False), (-delta, True)):
             with self.subTest(frequency_shift=shift):
-                operators = detuned.build_blue_sideband_coupling_operators(basis, [atom], [g], [e], 2, self.ETA, frequency_shift=shift)
+                operators = detuned.build_blue_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, self.ETA, frequency_shift=shift)
                 population = abs(self.evolve(basis, operators, self.index(basis, g, 0), pi_time)[self.index(basis, e, 1)])**2
                 if transferred:
                     self.assertGreater(population, 1. - 1e-5)
@@ -588,8 +588,8 @@ class TestLaserSidebandCouplings(unittest.TestCase):
                 blue = self.laser(omega_0 + self.MODE_FREQUENCY + delta, power)
                 red = self.laser(omega_0 - self.MODE_FREQUENCY - delta, power)
                 etas = {(atom, mode): self.ETA for atom in atoms}
-                operators = (blue.build_blue_sideband_coupling_operators(basis, None, [g], [e], 2, etas)
-                             + red.build_red_sideband_coupling_operators(basis, None, [g], [e], 2, etas))
+                operators = (blue.build_blue_sideband_coupling_operators(basis, None, [mode], [g], [e], 2, etas)
+                             + red.build_red_sideband_coupling_operators(basis, None, [mode], [g], [e], 2, etas))
                 initial = next(i for i, state in enumerate(basis.states)                       # |g, g, n=0>
                                if all(getattr(c, 'fock_number', 0) == 0 and getattr(c, 'term_symbol', 'S1/2') == 'S1/2'
                                       for c in state.components))
@@ -612,28 +612,69 @@ class TestLaserSidebandCouplings(unittest.TestCase):
                                -expected / np.sqrt(2.), places=14)
         self.assertAlmostEqual(laser.lamb_dicke_parameter(self.MODE_FREQUENCY, mass, [0., 0., 1.]), 0., places=14)
 
-    def test_errors_and_deprecated_names(self):
+    def test_coupling_operator_from_raising_matrix(self):
+        """The helper returns one operator whose rate sign follows the triangle of the raising elements, None when every
+        element is below SMALLEST_ENERGY_SCALE, and raises for diagonal elements or elements in both triangles."""
+        (atom,), mode, basis, g, e = self.build(ground_first=True, mode_first=True)
+        laser = self.laser(e.energy - g.energy)
+        dimension = len(basis.states)
+        strength = 2. * np.pi * 1e3  # rad/s; arbitrary, well above SMALLEST_ENERGY_SCALE
+        def matrix(*elements):
+            m = np.zeros((dimension, dimension), dtype=complex)
+            for row, column, value in elements:
+                m[row, column] = value
+            return m
+        with self.subTest('lower triangle: ground first, rate -omega'):
+            operator = laser._coupling_operator_from_raising_matrix(basis, matrix((1, 0, strength), (3, 2, strength)), 0.)
+            self.assertEqual({c.oscillation_rate for c in operator.couplings}, {-laser.frequency})
+            self.assertEqual(len(operator.couplings), 4)  # 2 raising elements + Hermitian conjugates
+        with self.subTest('upper triangle: excited first, rate +omega'):
+            operator = laser._coupling_operator_from_raising_matrix(basis, matrix((0, 1, strength), (2, 3, strength)), 0.)
+            self.assertEqual({c.oscillation_rate for c in operator.couplings}, {laser.frequency})
+        with self.subTest('below threshold -> None'):
+            self.assertIsNone(laser._coupling_operator_from_raising_matrix(basis, matrix((1, 0, 1e-6)), 0.))
+        with self.subTest('sub-threshold element in the other triangle is ignored'):
+            operator = laser._coupling_operator_from_raising_matrix(basis, matrix((1, 0, strength), (0, 3, 1e-6)), 0.)
+            self.assertEqual(len(operator.couplings), 2)
+        with self.subTest('both triangles'), self.assertRaises(IonSimError):
+            laser._coupling_operator_from_raising_matrix(basis, matrix((1, 0, strength), (0, 3, strength)), 0.)
+        with self.subTest('diagonal element'), self.assertRaises(IonSimError):
+            laser._coupling_operator_from_raising_matrix(basis, matrix((1, 1, strength)), 0.)
+        with self.subTest('carrier + red sideband in one matrix, mode first'), self.assertRaises(IonSimError):
+            levels = atom.energy_levels
+            atomic = np.zeros((len(levels), len(levels)), dtype=complex)
+            atomic[levels.index(e), levels.index(g)] = strength
+            carrier = basis.enlarge_matrix(atomic, [atom])
+            red = carrier @ basis.enlarge_matrix(laser._sideband_motional_matrix('red', mode, self.ETA, False), [mode])
+            laser._coupling_operator_from_raising_matrix(basis, carrier + red, 0.)
+
+    def test_target_modes_are_required(self):
+        """target_modes must be a non-empty list of distinct MotionalMode DOFs of the basis; there is no default."""
+        (atom,), mode, basis, g, e = self.build()
+        laser = self.laser(e.energy - g.energy)
+        build = lambda target_modes: laser.build_blue_sideband_coupling_operators(basis, [atom], target_modes, [g], [e], 2, self.ETA)
+        for case, target_modes in (('None', None), ('empty list', []), ('bare mode, not a list', mode),
+                                   ('non-mode entry', [atom]), ('duplicate mode', [mode, mode])):
+            with self.subTest(case), self.assertRaises(IonSimError):
+                build(target_modes)
+        with self.subTest('tuple accepted'):
+            self.assertEqual(len(build((mode,))), len(build([mode])))
+
+    def test_input_errors(self):
         (atom,), mode, basis, g, e = self.build()
         laser = self.laser(e.energy - g.energy)
         no_mode_basis = StandardBasis([atom])
         other_mode = MotionalMode.from_frequency(self.MODE_FREQUENCY, 3)
         with self.subTest('no modes in basis'), self.assertRaises(ValueError):
-            laser.build_red_sideband_coupling_operators(no_mode_basis, [atom], [g], [e], 2, self.ETA)
+            laser.build_red_sideband_coupling_operators(no_mode_basis, [atom], [other_mode], [g], [e], 2, self.ETA)
         with self.subTest('mode not in basis'), self.assertRaises(ValueError):
-            laser.build_red_sideband_coupling_operators(basis, [atom], [g], [e], 2, self.ETA, modes=[other_mode])
+            laser.build_red_sideband_coupling_operators(basis, [atom], [other_mode], [g], [e], 2, self.ETA)
         with self.subTest('missing (atom, mode) entry'), self.assertRaises(IonSimError):
-            laser.build_red_sideband_coupling_operators(basis, [atom], [g], [e], 2, {})
+            laser.build_red_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, {})
         with self.subTest('unknown sideband'), self.assertRaises(IonSimError):
-            laser.build_sideband_coupling_operators('green', basis, [atom], [g], [e], 2, self.ETA)
+            laser.build_sideband_coupling_operators('green', basis, [atom], [mode], [g], [e], 2, self.ETA)
         with self.subTest('eta = 0 skips the pair'):
-            self.assertEqual(laser.build_blue_sideband_coupling_operators(basis, [atom], [g], [e], 2, {(atom, mode): 0.}), [])
- #        with self.subTest('deprecated names'):
- #            new = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 2)
- #            for old in (lambda: laser.build_individual_atom_laser_coupling_operators(basis, atom, [g], [e], 2),
- #                        lambda: laser.build_laser_coupling_operators_multiple_atoms(basis, [atom], [g], [e], 2)):
- #                with self.assertWarns(DeprecationWarning):
- #                    old_ops = old()
- #                self.assertEqual([[c.strength for c in op.couplings] for op in old_ops], [[c.strength for c in op.couplings] for op in new])
+            self.assertEqual(laser.build_blue_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, {(atom, mode): 0.}), [])
 
 
 if __name__ == '__main__':
