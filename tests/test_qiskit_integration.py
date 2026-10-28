@@ -7,7 +7,7 @@ from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis
 from ionsim.named_operators import Unitary, Pauli
 from ionsim.noise import Noise
-from ionsim.circuit_transpiler import CircuitTranspiler, HAS_QISKIT
+from ionsim.circuit_builder import CircuitBuilder, HAS_QISKIT
 
 if HAS_QISKIT:
     import qiskit
@@ -43,13 +43,12 @@ class QiskitIntegrationTester(unittest.TestCase):
         qc.r(theta=np.pi/2, phi=0, qubit=0)
 
         # Convert to ionsim Circuit
-        tp = CircuitTranspiler.from_qiskit(qc)
+        tp = CircuitBuilder.from_qiskit(qc)
         tp.set_basis(self.basis)
-        tp.set_dofs([self.spin_a])
         tp.set_gate_noise('R', self.phi_noise)
         tp.set_circuit_noise(self.theta_noise)
 
-        ramsey = tp.transpile()
+        ramsey = tp.build()
 
         # Compute process fidelity
         fidelity = ramsey.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
@@ -63,37 +62,35 @@ class QiskitIntegrationTester(unittest.TestCase):
         qc = qiskit.QuantumCircuit(1)
         qc.sx(0)
         qc.r(theta=np.pi/2, phi=0, qubit=0)
-        tp = CircuitTranspiler.from_qiskit(qc)
+        tp = CircuitBuilder.from_qiskit(qc)
 
         def bad_gate(*args):
             raise RuntimeError(f"Expected gate error")
 
         tp.set_gate_function('sqrtX', bad_gate)
         tp.set_basis(self.basis)
-        tp.set_dofs([self.spin_a])
         with self.assertRaises(RuntimeError):
-            tp.transpile()
+            tp.build()
 
         # Now test that our function that creates a gate from a
         # unitary produces the same result as the default processing.
-        tp = CircuitTranspiler.from_qiskit(qc)
+        tp = CircuitBuilder.from_qiskit(qc)
         tp.set_basis(self.basis)
-        tp.set_dofs([self.spin_a])
         tp.set_gate_noise('R', self.phi_noise)
         tp.set_circuit_noise(self.theta_noise)
-        circ0 = tp.transpile()
+        circ0 = tp.build()
         fidelity0 = circ0.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
 
-        def sqrtx_unitary(params, basis, dofs, noise):
+        def sqrtx_unitary(qubits, params, basis, noise):
+            dofs = [basis.degrees_of_freedom[i] for i in qubits]
             return Gate.from_unitary(basis, Unitary.sqrtX, dofs)
 
-        tp = CircuitTranspiler.from_qiskit(qc)
+        tp = CircuitBuilder.from_qiskit(qc)
         tp.set_gate_function('sqrtX', sqrtx_unitary)
         tp.set_basis(self.basis)
-        tp.set_dofs([self.spin_a])
         tp.set_gate_noise('R', self.phi_noise)
         tp.set_circuit_noise(self.theta_noise)
-        circ1 = tp.transpile()
+        circ1 = tp.build()
         fidelity1 = circ1.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
 
         self.assertEqual(fidelity0, fidelity1)
