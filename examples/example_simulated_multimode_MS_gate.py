@@ -50,7 +50,7 @@ basis = ism.StandardBasis([*spins, *modes])
 
 def MS_hamiltonian(basis, modes, etas, rabi_rate, omega_b, omega_r, sparse=False, mod=None):
 
-    motional_basis = ism.StandardBasis([*modes])
+    motional_basis = basis.motional_basis 
 
     operators = []
     for mode, eta in zip(modes, etas):
@@ -154,7 +154,7 @@ def main():
     times = np.linspace(0, duration, 41) # setting to None will return only the final spin state
 
     compute_state_fidelity = True
-    compute_gate = False
+    compute_gate = True
 
     if compute_state_fidelity:
 
@@ -163,11 +163,12 @@ def main():
         end = time.perf_counter()
         ic(f'Propagating state took {end - start} s.')
 
-        basis_xx = ism.XPauliAndFockBasis([*spins, *modes], spins)
+        basis_xx = ism.XPauliAndFockBasis([*spins, *modes])
         psis_xx = [ism.State.from_state(basis_xx, psi) for psi in psis]
 
-        alphas = np.array([psi.compute_coherent_displacements(spins, modes[0]) for psi in psis_xx])
-        spin_basis_xx = ism.XPauliBasis(spins)
+        alphas = np.array([psi.compute_coherent_displacements(modes[0]) for psi in psis_xx])
+        spin_basis_xx = basis_xx.atomic_basis 
+        mode_basis_test = basis_xx.motional_basis
 
         for i,vector in enumerate(spin_basis_xx.vectors):
             plt.plot(times, alphas[:, i].real, label=i)
@@ -213,6 +214,13 @@ def main():
         initial_motional_wavefunctions = [np.eye(fock_dimension)[0] for _ in modes]
         start = time.perf_counter()
         ms_gate = ism.Gate.from_hamiltonian(basis, hamiltonian, tau, modes, initial_motional_wavefunctions)
+        print(ms_gate.process_matrix.shape)
+
+        # Compute process fidelity 
+        # Effective MS phase is zero (XX type): See cancellation of factors of i in Hamiltonian 
+        target_MS_gate = ism.Gate.from_unitary(ms_gate.basis, ism.Unitary.MS(0., np.pi/2.), ms_gate.basis.degrees_of_freedom)
+        ms_gate_process_fidelity = ms_gate.compute_process_fidelity(target_MS_gate.process_matrix)
+        ic(f"MS gate process fidelity {ms_gate_process_fidelity}")
         end = time.perf_counter()
         ic(f'Simulating MS gate took {end - start} s.')
 

@@ -453,8 +453,8 @@ class Laser():
             raise IonSimError(f"target_modes must contain only MotionalMode DOFs, got {not_modes}.")
         if len({id(mode) for mode in target_modes}) != len(target_modes):
             raise IonSimError("target_modes contains the same mode more than once, which would double its sideband couplings.")
-        #modes_from_basis = basis.motional_basis.degrees_of_freedom # TODO: uncomment after updating this branch with latest main 
-        basis_modes = [dof for dof in basis.degrees_of_freedom if isinstance(dof, MotionalMode)]
+        modes_from_basis = [] if not basis.motional_basis else basis.motional_basis.degrees_of_freedom
+        #basis_modes = [dof for dof in basis.degrees_of_freedom if isinstance(dof, MotionalMode)]
         for mode in target_modes:
             if not any(mode is dof for dof in modes_from_basis):
                 raise ValueError(f"Motional mode {mode.name or mode} has not been included in the basis degrees of freedom.")

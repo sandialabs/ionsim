@@ -7,8 +7,14 @@
 # http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
 #***************************************************************************************************
 
-from ionsim.basis import Basis, StandardBasis
+import numpy as np
+from numpy.fft import ifft, fft, fft2, fftshift, ifftshift 
+from numpy.linalg import multi_dot
+from dataclasses import dataclass, replace
+from icecream import ic
+
 from ionsim.energy_level import EnergyEigenstate
+from ionsim.operator import Operator, CouplingOperator
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure, MotionalMode
 from ionsim.custom_types import Vector, Matrix
@@ -16,13 +22,9 @@ from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.lindbladian import Dissipator, Lindbladian
 from ionsim.named_operators import Fock, Pauli
+from ionsim.collective_motional_energy_level import CollectiveMotionalEnergyLevel 
+from ionsim.basis import Basis, StandardBasis
 
-import numpy as np
-# from typing import Any
-from dataclasses import dataclass, replace
-from numpy.linalg import multi_dot
-
-from icecream import ic
  
 @dataclass(frozen=True, eq=False)       
 class State:
@@ -34,6 +36,18 @@ class State:
     @property
     def supervector(self) -> Vector:
         return self.basis.compute_supervector_from_density_matrix(self.density_matrix)
+
+    @property
+    def motional_state(self):
+        """ Motional portion of the state, if it exists. Returns None if no motional DOFs """ 
+        if not self.basis.motional_modes: 
+            return None 
+
+        # Trace out atomic structure DOFs to obtain a purely motional state  
+        state = self
+        for dof in self.basis.atomic_structure_dofs:
+            state = state.trace_out_degree_of_freedom(dof)
+        return state 
 
     @classmethod
     def from_coefficients(cls, basis: Basis, coefficients: list[float]): 
@@ -60,20 +74,65 @@ class State:
         return cls(basis, density_matrix)
 
     @classmethod
-    def from_wavefunction_with_new_component(cls, basis: Basis, current_wavefunction: Vector,
-            new_component: Vector, new_dofs: list[DegreeOfFreedom]):
-        """Build a state from a wavefunction while adding a component with new degrees of freedom."""
-        assert(len(new_dofs) == 1) # TODO generalize for adding new components with multiple DoFs.
-        new_dof = new_dofs[0]
-        if new_dof is basis.degrees_of_freedom[0]:
-            wavefunction = np.kron(new_component, current_wavefunction)
-        elif new_dof is basis.degrees_of_freedom[-1]:
-            wavefunction = np.kron(current_wavefunction, new_component)
-        else:
+    def from_wavefunction_with_new_component(cls, basis: Basis, current_wavefunction: Vector, new_component: Vector, new_dof: DegreeOfFreedom):
+        """Build a state from a wavefunction while adding component on a new degree of freedom. See from_wavefunction_with_new_components() docstring """
+        return cls.from_wavefunction_with_new_components(basis, current_wavefunction, {new_dof: new_component})
+
+    @classmethod
+    def from_wavefunction_with_new_components(cls, basis: Basis, current_wavefunction: Vector, new_components: dict[DegreeOfFreedom, Vector]):
+        """ Build a state from a wavefunction while adding components with new degrees of freedom.
+            - basis is the full basis, containing both the current and the new degrees of freedom.
+            - current_wavefunction is defined on the degrees of freedom of `basis` that are not
+              keys of `new_components`, ordered as they appear in `basis`.
+            - new_components maps each new DOF to its wavefunction (a vector of length equal to that DOF's
+              dimension). The new DOFs may appear at any position in `basis`, and the dict order does not matter.
+              DOFs are matched by identity (`is`), consistent with how DOFs are compared elsewhere.
+            - The resulting state is the product state of current_wavefunction and the new components.
+        """
+        # Check that user specified a new DOF
+        if len(new_components) == 0:
+            raise IonSimError('At least one new degree of freedom must be specified.')
+
+        # Gather DOFs of full basis and look for new DOFS in the basis; record indices in the full basis.
+        dofs = list(basis.degrees_of_freedom)
+        new_dof_indices = [] # new DOF indices in the full basis, in the iteration order of new_components
+        component_vectors = [] # new components, in the same order as new_dof_indices
+        for new_dof, component in new_components.items():
+            matches = [i for i, dof in enumerate(dofs) if dof is new_dof]
+            if not matches:
+                raise IonSimError(f'New degree of freedom {new_dof} is not in the basis.')
+            new_dof_indices.append(matches[0])
+            component_vectors.append(np.asarray(component))
+        original_dof_indices = [i for i in range(len(dofs)) if i not in new_dof_indices]
+
+        # Get dimension of each DOF in basis
+        dims = [len(dof.energy_levels) for dof in dofs]
+
+        # Check dimensionality of each component matches its corresponding dof
+        for index, component in zip(new_dof_indices, component_vectors):
+            if component.shape != (dims[index],):
+                raise IonSimError(f'New component has shape {component.shape}, but its degree of freedom has dimension {dims[index]}.')
+
+        # Check dimensionality of the current wavefunction matches the remaining dofs
+        current_wavefunction = np.asarray(current_wavefunction)
+        original_dims = [dims[i] for i in original_dof_indices]
+        if current_wavefunction.shape != (int(np.prod(original_dims)),):
             raise IonSimError(
-                'Currently, the new degree of freedom must be either the first or last '
-                'degree of freedom in the full basis.'
+                f'Current wavefunction has shape {current_wavefunction.shape}, but the remaining degrees of '
+                f'freedom have total dimension {int(np.prod(original_dims))}.'
             )
+
+        # Build the product state as a tensor with axes ordered (current dofs..., new dofs...),
+        # then permute the axes into the basis ordering.
+        tensor_prod_state = current_wavefunction.reshape(original_dims)
+        for component in component_vectors:
+            tensor_prod_state = np.multiply.outer(tensor_prod_state, component)
+        
+        dof_ordering_in_basis = original_dof_indices + new_dof_indices
+
+        # Flatten with column-wise ordering 
+        wavefunction = np.transpose(tensor_prod_state, np.argsort(dof_ordering_in_basis)).reshape(-1)
+
         density_matrix = basis.compute_density_matrix_from_wavefunction(wavefunction)
         return cls(basis, density_matrix, wavefunction)
 
@@ -257,18 +316,151 @@ class State:
         basis = StandardBasis([dof for dof in self.basis.degrees_of_freedom if dof is not degree_of_freedom])
         return State.from_density_matrix(basis, density_matrix)
 
-    def compute_coherent_displacements(self, spin_dofs: list[DegreeOfFreedom], motional_dof: DegreeOfFreedom):
-        """Compute the coherent displacement (expectation value of the lowering operator) for each spin state."""
-        assert(len(self.basis.degrees_of_freedom) == len(spin_dofs) + 1) # TODO: trace out other degrees of freedom
-        spin_basis = StandardBasis(spin_dofs)
+    def compute_coherent_displacements(self, motional_dof: DegreeOfFreedom):
+        """Compute the coherent displacement (expectation value of the lowering operator) for each angular momentum state."""
+        assert(len(self.basis.degrees_of_freedom) == len(self.basis.atomic_structure_dofs) + 1) # TODO: trace out other degrees of freedom
+        structure_basis = StandardBasis(self.basis.atomic_structure_dofs)
         lowering = Fock.lowering(len(motional_dof.energy_levels))
         diplacements = []
-        for vector in spin_basis.vectors:
-            spin_proj = spin_basis.compute_projector_matrix(vector)
-            displacement = np.trace(np.kron(spin_proj, lowering).dot(self.density_matrix))
+        for vector in structure_basis.vectors:
+            structure_proj = structure_basis.compute_projector_matrix(vector)
+            displacement = np.trace(np.kron(structure_proj, lowering).dot(self.density_matrix))
             diplacements.append(displacement)
         return diplacements
 
-    # TODO: maybe add a method for checking if the state is normalized 
+    def compute_matrix_observable_expectation(self, observable_operator: Matrix) -> float:
+        """ Compute the expectation value of an operator observable, represented by <O>. 
 
-    # def transform_to_spin_eigenbasis(self):
+            - Computes via Tr[O rho], where rho is the density matrix. 
+            - O and rho must be in compatable bases.
+
+        """
+        # Check that observable and density matrix are compatible 
+        basis_size = len(self.basis.vectors)
+        if observable_operator.shape != (basis_size, basis_size):
+            raise IonSimError(f"Observable operator must correspond with a matrix of shape: {(basis_size, basis_size)}.")
+
+        return np.trace(observable_operator.dot(self.density_matrix))
+
+    def compute_operator_observable_expectation(self, observable_operator: Operator) -> float:
+        """ Compute the expectation value of an operator observable, represented by <O>. 
+
+            - Computes via Tr[O rho], where rho is the density matrix. 
+            - O and rho must be in compatable bases.
+
+        """
+        # Check that observable and density matrix are compatible 
+        if isinstance(observable_operator, CouplingOperator) and observable_operator.oscillation_rate != 0.:
+            raise IonSimeError(f"Observable operator must be a static operator, but oscillation rate is {observable_operator.oscillation_rate}.")
+
+        return self.compute_matrix_observable_expectation(observable_operator.static_matrix) 
+
+    def compute_quadratures(self, enable_squared_quadratures: bool=False, use_partial_trace: bool=False):
+        """ Returns quadrature expectation values <x> and <p> for each motional mode in the state. 
+            - fails if there are no motional DOFs 
+            - returns lists of <x> and <p>; each list element corresponds to 1 motional mode 
+            - list order matches DOF order in the state's basis 
+            - option to return <x^2> and <p^2>, the expectation of the squared quadrature operators.
+        """ 
+        x = []        
+        p = []        
+        if enable_squared_quadratures:
+            x2 = []        
+            p2 = []        
+
+        # Either compute partial trace on the density matrix or elevate observable to full space 
+        # It may be cheaper to compute the expectation value in the full space, depending on problem and problem size  
+        if not use_partial_trace :
+            full_basis = self.basis
+
+            # For each mode, build the full-space raising and lowering operators  
+            for i, mode_i in enumerate(self.basis.motional_modes):
+                if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
+                    raise IonSimError("Quadrature calculation assumes motional mode is in the Fock number state basis.")
+
+                # Enlarge the x and p operators for the current mode 
+                Fock_dim = len(mode_i.energy_levels) 
+                x_enlarged = full_basis.enlarge_one_dof_matrix(Fock.position(Fock_dim), mode_i) 
+                p_enlarged = full_basis.enlarge_one_dof_matrix(Fock.momentum(Fock_dim), mode_i) 
+
+                # Compute expectation values: 
+                x.append(self.compute_matrix_observable_expectation(x_enlarged))
+                p.append(self.compute_matrix_observable_expectation(p_enlarged))
+                if enable_squared_quadratures:
+                    x2.append(self.compute_matrix_observable_expectation(x_enlarged @ x_enlarged)) 
+                    p2.append(self.compute_matrix_observable_expectation(p_enlarged @ p_enlarged))
+
+        else:
+            for i, mode_i in enumerate(self.basis.motional_modes):
+                if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
+                    raise IonSimError("Quadrature calculation assumes motional mode is in the Fock number state basis.")
+            
+                mode_state = self.motional_state # reset the state  
+                # Trace out other modes 
+                for j, mode_j in enumerate(self.basis.motional_modes):
+                    if i == j:
+                        continue 
+                    mode_state = mode_state.trace_out_degree_of_freedom(mode_j) 
+                assert mode_state is not None
+                Fock_dim = len(mode_i.energy_levels) 
+                # Compute expectation values: 
+                x.append(mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim)))
+                p.append(mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim)))
+                if enable_squared_quadratures:
+                    x2.append(mode_state.compute_matrix_observable_expectation(Fock.position(Fock_dim) @ Fock.position(Fock_dim)))
+                    p2.append(mode_state.compute_matrix_observable_expectation(Fock.momentum(Fock_dim) @ Fock.momentum(Fock_dim)))
+
+        if enable_squared_quadratures:
+            return x, p, x2, p2
+        else:
+            return x, p
+                            
+
+    def compute_wigner_distribution(self, x_grid: Vector, p_grid: Vector): 
+        """ Computes W(x,p) the Wigner distribution for each motional mode in the basis; assumes a Fock basis for each mode.
+            - requires a specification of the x and p grids as 1-dimensional arrays, determines resolution of Wigner distributions. 
+            - returns a list of Wigner distributions -> one for each mode. 
+            - returns an empty list if there are no modes in the basis.  
+            - assumes the motional modes are in the Fock number state basis  
+        """  
+        from qutip import Qobj, wigner
+        wigner_distributions = []
+
+        # For each mode, trace out all other modes  
+        for i, mode_i in enumerate(self.basis.motional_modes):
+            if not isinstance(mode_i.energy_levels[0], CollectiveMotionalEnergyLevel):
+                raise IonSimError("Wigner distribution calculation assumes motional mode is in the Fock number state basis.")
+
+            mode_state = self.motional_state # reset the state  
+            assert mode_state is not None
+
+            for j, mode_j in enumerate(self.basis.motional_modes):
+                if i == j:
+                    continue 
+                mode_state = mode_state.trace_out_degree_of_freedom(mode_j) 
+            N_fock = len(mode_i.energy_levels) 
+            wigner_distributions.append(wigner(Qobj(mode_state.density_matrix, dims=[[N_fock], [N_fock]]), x_grid, p_grid))
+
+        return wigner_distributions 
+
+    def compute_characteristic_functions(self, x_grid: Vector, p_grid: Vector):
+        """ Computes characteristic function X(beta) for each motional mode in the basis """ 
+        # First compute the Wigner distribution, then use a discrete Fourier Transform to
+        #    obtain the characteristic function. 
+        dx = np.abs(x_grid[1] - x_grid[0])
+        dp = np.abs(p_grid[1] - p_grid[0])
+        Nx = len(x_grid)
+        Np = len(p_grid)
+
+        re_beta = np.pi * fftshift(np.fft.fftfreq(Np, d=dp))*np.sqrt(2.)
+        im_beta = np.pi * fftshift(np.fft.fftfreq(Nx, d=dx))*np.sqrt(2.)
+
+        W_distributions = self.compute_wigner_distribution(x_grid, p_grid)
+        characteristic_functions = [np.zeros((len(p_grid), len(x_grid)), dtype=complex) for _ in range(len(self.basis.motional_modes))]
+
+        for i, W in enumerate(W_distributions):
+            chi = fftshift(fft(ifftshift(W, axes=0), axis=0), axes=0)
+            chi = fftshift(ifft(ifftshift(chi, axes=1), axis=1), axes=1) * Nx 
+            characteristic_functions[i] = chi * dx * dp 
+
+        return re_beta, im_beta, characteristic_functions 
