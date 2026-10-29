@@ -69,12 +69,6 @@ class TestProcess(unittest.TestCase):
         self.assertAlmostEqual(self.laser_c.peak_electric_field_magnitude*1E-3, 1.3851612653205, places=10)
         self.assertAlmostEqual(self.laser_c.beam_profile.peak_electric_field_magnitude(laser_c_power)*1E-3, 1.3851612653205, places=10)
 
-
- #    def test_polarization(self):
- #        """ Test polarization vector functionality """ 
- #        laser_polarization = self.laser.polarization
-
-
     def test_laser_coupling_builder(self):
         """Test the process fidelity of the extra noisy gate."""
         # Test building coupling operators from laser and polarization information  
@@ -97,12 +91,6 @@ class TestProcess(unittest.TestCase):
         excited_level_name = atom_b_coupling_operators[0].couplings[0].column_state.name[-8:]
         expected_name = 'P1/2,1,1'
         self.assertEqual(expected_name, excited_level_name)
- #        for op in atom_b_coupling_operators:
- #            print(f"Coupling operator contains {len(op.couplings)} couplings.")
- #            for coupling in op.couplings:
- #                print(f"Coupling between {coupling.row_state.name} and {coupling.column_state.name}.")
- #                print(f"Strength: {coupling.strength}\n")
- #            print()
 
 
     def test_1S0_3P1_transition_coupling_from_laser(self):
