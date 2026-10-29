@@ -267,7 +267,7 @@ class TestSpontaneousEmissionErrors(unittest.TestCase):
         """
         yb = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'F7/2'])
         yb = AtomicStructure([replace(level, lifetime=1., branching_ratios={'S1/2': 1.}) if level.term_symbol == 'F7/2' else level
-                              for level in yb.energy_levels])
+                              for level in yb.energy_levels], yb.atomic_mass, yb.atomic_charge)
         with self.assertRaises(IonSimError):
             DissipatorSpontaneousEmission.from_atomic_structure_data(
                 StandardBasis([yb]), levels_in_manifold(yb, 'S1/2'), levels_in_manifold(yb, 'F7/2'))
