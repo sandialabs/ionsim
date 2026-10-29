@@ -113,12 +113,12 @@ class TestProcess(unittest.TestCase):
         atom_c_coupling_operators = self.laser_c.build_carrier_coupling_operators(self.neutral_basis, [self.atom_c], ground_levels, excited_levels, 1) 
         assert len(atom_c_coupling_operators) == 1
 
-        # We expect a Rabi frequency of about ~5 MHz, but this is not precise  
-        dipole_factor = 0.5398 # Table 10 of reference 
-        # Note: couplings[0].strength is the matrix element Omega/2, not Omega. Regression value halved when the E1 prefactor
-        # was corrected to Omega = |<e|d.eps|g>| E0 / hbar (E0 the real field amplitude); previously 3.905827783900461.
-        rabi_frequency = dipole_factor * atom_c_coupling_operators[0].couplings[0].strength/TPI/1E6
-        self.assertAlmostEqual(np.abs(rabi_frequency), 1.9529138919502305, places = 8)
+        # The 1S0 -> 3P1 reduced matrix element 0.5398 e a0 (Table 10 of the reference) now comes from the 171Yb config file.
+        # couplings[0].strength is the matrix element Omega/2. The reference's 2pi x 5.523(6) MHz (P = 1 mW, D = 1 mm) is for
+        # sigma+ light; this laser is linearly polarized (sigma+ amplitude 1/sqrt(2)), so Omega = 2pi x 5.523/sqrt(2) MHz.
+        rabi_frequency = 2. * np.abs(atom_c_coupling_operators[0].couplings[0].strength) / TPI / 1E6
+        self.assertAlmostEqual(rabi_frequency, 3.905827783900461, places = 8)
+        self.assertAlmostEqual(rabi_frequency / (5.523 / np.sqrt(2.)), 1., delta=2e-3)
 
 
 class TestLaserConstructors(unittest.TestCase):
@@ -835,6 +835,34 @@ class TestPhysicalDipoleCouplings(unittest.TestCase):
             g_wrong = dataclasses.replace(g, reduced_dipole_matrix_elements={'P3/2': 4.227})
             e_bare = dataclasses.replace(e_5p, reduced_dipole_matrix_elements=None)
             compute_coupling_amplitude_between_atomic_levels(g_wrong, e_bare, components, [g_wrong, e_bare], 1)
+
+    def test_yb171_rabi_frequencies_match_reference_tables(self):
+        """R. M. Kroeze et al., "171Yb Reference Data" (arXiv:2509.04416v1), Rabi frequencies for P = 1 mW, D = 1 mm (taken
+        as the 1/e^2 diameter, waist 0.5 mm) on |F=1/2, mF=1/2> -> |F'=3/2, mF'=3/2> with sigma+ light: Table 10 (1S0 -> 3P1,
+        556 nm) 2pi x 5.523(6) MHz, Table 12 (3P0 -> 3D1, 1389 nm) 2pi x 28.3(8) MHz."""
+        for lower, upper, reference, tolerance in (('S0', 'P1', 5.523, 2e-3), ('P0', 'D1', 28.3, 3e-2)):
+            with self.subTest(transition=f'{lower} -> {upper}'):
+                yb = AtomicStructure.from_species(species='171Yb', term_symbols=[lower, upper],
+                                                  level_names=[f'{lower},1/2,1/2', f'{upper},3/2,3/2'])
+                g, e = yb.energy_levels
+                laser = Laser.gaussian_from_frequency(e.energy - g.energy, 1e-3, 0.5e-3, self.Z, Polarization.circular(self.Z, '+'), 0.)
+                rabi = abs(laser.rabi_frequency(g, e, 1)) / self.TPI / 1e6
+                self.assertAlmostEqual(rabi / reference, 1., delta=tolerance)
+
+    def test_yb171_reduced_elements_reproduce_config_decay_rates(self):
+        """Partial decay rate omega_0^3/(3 pi eps0 hbar c^3) (2J+1)/(2J'+1) |<J||er||J'>|^2 = branching_ratio / lifetime
+        (Eq. 52 of the reference) for 3P1 -> 1S0 and 3D1 -> 3P0, with the config's energies, lifetimes and branching ratios."""
+        yb = AtomicStructure.from_species(species='171Yb', term_symbols=['S0', 'P0', 'P1', 'D1'])
+        manifold = {level.term_symbol: level for level in yb.energy_levels}
+        for lower, upper in (('S0', 'P1'), ('P0', 'D1')):
+            with self.subTest(transition=f'{upper} -> {lower}'):
+                g, e = manifold[lower], manifold[upper]
+                reduced = reduced_dipole_matrix_element(g, e) * const.e * const.value('Bohr radius')
+                omega_0 = e.fine_energy - g.fine_energy
+                rate = (omega_0**3 / (3. * np.pi * const.epsilon_0 * const.hbar * const.c**3)
+                        * (2. * g.j + 1.) / (2. * e.j + 1.) * reduced**2)
+                branching_ratio = (e.branching_ratios or {lower: 1.})[lower]
+                self.assertAlmostEqual(rate * e.lifetime / branching_ratio, 1., delta=1e-2)
 
     def test_e2_normalization_unchanged(self):
         """E2 keeps its previous absolute normalization: 2 x angular x (e a0/hbar) x i k a0 sqrt(2/3), in orbital units."""
