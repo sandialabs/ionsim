@@ -94,8 +94,6 @@ class PlaneWave(BeamProfile):
         return 1. + 0j
 
 
-# TODO: add a beam profile constructor by name, e.g. 'gaussian' 
-# Change name to just "Gaussian" (rm "beam")
 @dataclass(frozen=True, eq=False)
 class GaussianBeam(BeamProfile):
     """ Gaussian beam """  
