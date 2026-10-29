@@ -250,6 +250,7 @@ class AtomicStructure(DegreeOfFreedom):
         hyperfine_B = level_data.get('hyperfine_B')
         fine_data['hyperfine_B'] = None if hyperfine_B is None else 2 * np.pi * hyperfine_B
         fine_data['branching_ratios'] = level_data.get('branching_ratios')
+        fine_data['reduced_dipole_matrix_elements'] = level_data.get('reduced_dipole_matrix_elements')
         fine_data['j'] = cls.compute_j(term_symbol)
         if level_data['coupling_scheme'] == 'j1l2':
             fine_data['k'] = cls.compute_k(term_symbol)

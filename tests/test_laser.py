@@ -23,7 +23,8 @@ from ionsim.state import State
 from ionsim.basis import StandardBasis
 from ionsim.laser import Laser, Polarization, GaussianBeam, PlaneWave, _perpendicular_basis, _spherical_basis_vectors
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.atomic_internal_energy_level import LSFineLevel, compute_coupling_amplitude_between_atomic_levels
+from ionsim.atomic_internal_energy_level import (LSFineLevel, compute_coupling_amplitude_between_atomic_levels,
+                                                 compute_multipole_amplitude, reduced_dipole_matrix_element)
 from ionsim.ionsim_error import IonSimError
 from ionsim.named_operators import Unitary
 from ionsim.noise import Noise
@@ -114,8 +115,10 @@ class TestProcess(unittest.TestCase):
 
         # We expect a Rabi frequency of about ~5 MHz, but this is not precise  
         dipole_factor = 0.5398 # Table 10 of reference 
+        # Note: couplings[0].strength is the matrix element Omega/2, not Omega. Regression value halved when the E1 prefactor
+        # was corrected to Omega = |<e|d.eps|g>| E0 / hbar (E0 the real field amplitude); previously 3.905827783900461.
         rabi_frequency = dipole_factor * atom_c_coupling_operators[0].couplings[0].strength/TPI/1E6
-        self.assertAlmostEqual(np.abs(rabi_frequency), 3.905827783900461, places = 8)
+        self.assertAlmostEqual(np.abs(rabi_frequency), 1.9529138919502305, places = 8)
 
 
 class TestLaserConstructors(unittest.TestCase):
@@ -773,6 +776,79 @@ class TestLaserTargetRabiFrequency(unittest.TestCase):
         laser = Laser.from_target_rabi_frequency(target, g, e, 1, self.Z, polarization)
         with self.subTest('same level twice'), self.assertRaises(ValueError):
             laser.rabi_frequency(g, g, 1)
+
+
+class TestPhysicalDipoleCouplings(unittest.TestCase):
+    """E1 couplings with tabulated reduced matrix elements <J||er||J'> (Steck convention), benchmarked against
+    D. A. Steck, "Rubidium 87 D Line Data", rev. 1.6 (the reference of the 87Rb config file)."""
+    TPI = 2. * np.pi
+    Z = np.array([0., 0., 1.])
+    E_A0_OVER_HBAR = const.e * const.value('Bohr radius') / const.hbar
+
+    def test_rb87_d2_cycling_saturation_intensity(self):
+        """sigma+ |F=2, mF=2> -> |F'=3, mF'=3> at I_sat = 1.669 mW/cm^2 (Steck Table 7) has Omega = Gamma/sqrt(2)
+        (I/I_sat = 2 Omega^2/Gamma^2, Gamma = 2pi x 6.065 MHz, Table 3), and effective dipole 2.989 e a0 (Table 7)."""
+        rb = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', 'P3/2'], level_names=['S1/2,2,2', 'P3/2,3,3'])
+        g, e = rb.energy_levels
+        laser = Laser.from_frequency(e.energy - g.energy, self.Z, 0., Polarization.circular(self.Z, '+'), PlaneWave(1.669e-3 / 1e-4), None)
+        rabi = abs(laser.rabi_frequency(g, e, 1))
+        self.assertAlmostEqual(rabi / (self.TPI * 6.065e6 / np.sqrt(2.)), 1., delta=2e-3)    # Steck values: ~0.15% uncertainty
+        dipole = rabi / laser.peak_electric_field_magnitude / self.E_A0_OVER_HBAR             # |<e|r.eps|g>| / a0
+        self.assertAlmostEqual(dipole / 2.989, 1., delta=1e-3)
+
+    def test_reduced_elements_reproduce_config_lifetimes(self):
+        """1/tau = omega_0^3 / (3 pi eps0 hbar c^3) (2J+1)/(2J'+1) |<J||er||J'>|^2 (Steck Eq. 38) for D1 and D2, with the
+        config's reduced elements, fine-structure energies and lifetimes."""
+        rb = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', 'P1/2', 'P3/2'])
+        manifold = {level.term_symbol: level for level in rb.energy_levels}
+        ground = manifold['S1/2']
+        for upper in ('P1/2', 'P3/2'):
+            with self.subTest(upper=upper):
+                excited = manifold[upper]
+                reduced = reduced_dipole_matrix_element(ground, excited) * const.e * const.value('Bohr radius')
+                omega_0 = excited.fine_energy - ground.fine_energy
+                rate = (omega_0**3 / (3. * np.pi * const.epsilon_0 * const.hbar * const.c**3)
+                        * (2. * ground.j + 1.) / (2. * excited.j + 1.) * reduced**2)
+                self.assertAlmostEqual(rate * excited.lifetime, 1., delta=5e-3)
+
+    def test_lookup_and_fallback(self):
+        rb = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', 'P3/2', '6 P3/2'],
+                                          level_names=['S1/2,2,2', 'P3/2,3,3', '6 P3/2,3,3'])
+        g, e_5p, e_6p = rb.energy_levels
+        components = Polarization.circular(self.Z, '+').dipole_components()
+        def expected(excited, in_orbital_units, reduced=1.):
+            return reduced * self.E_A0_OVER_HBAR * sum(
+                components[q] * (-1)**q * compute_multipole_amplitude(g, excited, 1, -q, include_J_J_prime_matrix_element=in_orbital_units)
+                for q in (-1, 0, 1))
+        with self.subTest('tabulated <J||er||J\'> (5S -> 5P3/2): J-unit angular factor times the value'):
+            self.assertEqual(reduced_dipole_matrix_element(g, e_5p), 4.227)
+            coupling = compute_coupling_amplitude_between_atomic_levels(g, e_5p, components, [g, e_5p], 1)
+            self.assertAlmostEqual(abs(coupling / expected(e_5p, False, 4.227) - 1.), 0., places=12)
+        with self.subTest('no entry (5S -> 6P3/2): orbital units, <L||r||L\'> = 1 a0'):
+            self.assertIsNone(reduced_dipole_matrix_element(g, e_6p))
+            coupling = compute_coupling_amplitude_between_atomic_levels(g, e_6p, components, [g, e_6p], 1)
+            self.assertAlmostEqual(abs(coupling / expected(e_6p, True) - 1.), 0., places=12)
+        with self.subTest('stored like branching_ratios: on the upper manifold, keyed by the lower term symbol'):
+            self.assertEqual(e_5p.reduced_dipole_matrix_elements, {'S1/2': 4.227})
+            self.assertIsNone(g.reduced_dipole_matrix_elements)
+        with self.subTest('entry stored on the lower manifold raises'), self.assertRaises(IonSimError):
+            g_wrong = dataclasses.replace(g, reduced_dipole_matrix_elements={'P3/2': 4.227})
+            e_bare = dataclasses.replace(e_5p, reduced_dipole_matrix_elements=None)
+            compute_coupling_amplitude_between_atomic_levels(g_wrong, e_bare, components, [g_wrong, e_bare], 1)
+
+    def test_e2_normalization_unchanged(self):
+        """E2 keeps its previous absolute normalization: 2 x angular x (e a0/hbar) x i k a0 sqrt(2/3), in orbital units."""
+        ca = AtomicStructure.from_species(species='40Ca+', term_symbols=['S1/2', 'D5/2'],
+                                          quantum_numbers=[{'n': 4, 'l': 0, 'mj': 0.5}, {'n': 3, 'l': 2, 'j': 2.5, 'mj': 1.5}])
+        g, e = ca.energy_levels
+        x = np.array([1., 0., 0.])
+        components = Polarization(np.array([0., 0., 1.]), x).quadrupole_components()
+        k = 2. * np.pi / 729e-9
+        angular = sum(components[q] * (-1)**q * compute_multipole_amplitude(g, e, 2, -q, include_J_J_prime_matrix_element=True)
+                      for q in range(-2, 3))
+        previous = 2. * angular * self.E_A0_OVER_HBAR * 1j * k * const.value('Bohr radius') * np.sqrt(2. / 3.)
+        coupling = compute_coupling_amplitude_between_atomic_levels(g, e, components, [g, e], 2, wavenumber=k)
+        self.assertAlmostEqual(abs(coupling / previous - 1.), 0., places=12)
 
 
 if __name__ == '__main__':

@@ -100,6 +100,7 @@ class LSFineLevel(AtomicInternalEnergyLevel):
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
     lifetime: float | None=None 
     branching_ratios: dict[str, float] | None=None 
+    reduced_dipole_matrix_elements: dict[str, float] | None = None
     hyperfine_B: float | None=None
 
     def __post_init__(self):
@@ -130,6 +131,7 @@ class LSHyperfineLevel(AtomicInternalEnergyLevel):
     external_energy_shift: float = 0.
     lifetime: float | None=None 
     branching_ratios: dict[str, float] | None=None 
+    reduced_dipole_matrix_elements: dict[str, float] | None = None
     hyperfine_B: float | None=None
 
     def __post_init__(self):
@@ -157,6 +159,7 @@ class LSBackGoudsmitLevel(AtomicInternalEnergyLevel):
     external_energy_shift: float = 0.
     lifetime: float | None=None 
     branching_ratios: dict[str, float] | None=None 
+    reduced_dipole_matrix_elements: dict[str, float] | None = None
     hyperfine_B: float | None=None
 
     def __post_init__(self):
@@ -200,6 +203,7 @@ class LSPaschenBackLevel(AtomicInternalEnergyLevel):
     external_energy_shift: float = 0.
     lifetime: float | None=None 
     branching_ratios: dict[str, float] | None=None 
+    reduced_dipole_matrix_elements: dict[str, float] | None = None
     hyperfine_B: float | None=None
 
     def __post_init__(self):
@@ -242,6 +246,7 @@ class J1L2FineLevel(AtomicInternalEnergyLevel):
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
     lifetime: float | None=None 
     branching_ratios: dict[str, float] | None=None 
+    reduced_dipole_matrix_elements: dict[str, float] | None = None
     hyperfine_B: float | None=None
 
     def __post_init__(self):
@@ -276,6 +281,7 @@ class J1L2HyperfineLevel(AtomicInternalEnergyLevel):
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
     lifetime: float | None=None 
     branching_ratios: dict[str, float] | None = None 
+    reduced_dipole_matrix_elements: dict[str, float] | None = None
     hyperfine_B: float | None=None
 
     def __post_init__(self):
@@ -306,6 +312,7 @@ class J1L2BackGoudsmitLevel(AtomicInternalEnergyLevel):
     external_energy_shift : float = 0. # Energy shift from external fields, such as time-independent Zeeman or Stark shifts.
     lifetime: float | None=None 
     branching_ratios: dict[str, float] | None = None 
+    reduced_dipole_matrix_elements: dict[str, float] | None = None
     hyperfine_B: float | None=None
 
     def __post_init__(self):
@@ -462,6 +469,28 @@ def compute_hyperfine_clebsch_gordan_coefficient(ground_level: AtomicInternalEne
     return compute_multipole_amplitude(ground_level, excited_level, multipole_order, q, include_J_J_prime_matrix_element=False)
 
 
+def reduced_dipole_matrix_element(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel) -> float | None:
+    """ E1 reduced matrix element <J_ground || e r || J_excited> / (e a0) in Steck's convention, or None if not available.
+
+        Steck convention:
+            <J mJ| e r_q |J' mJ'> = <J||er||J'> <J mJ|J' mJ'; 1 q>,
+        so that the strength out of a lower sublevel summed over upper sublevels is |<J||er||J'>|^2 and the partial decay
+        rate of the upper manifold into the lower one is
+            Gamma * branching_ratio = omega_0^3 / (3 pi eps0 hbar c^3) (2J + 1)/(2J' + 1) |<J||er||J'>|^2
+
+        Note: Tables in the Edmonds convention (line strength S = |<J||d||J'>|^2) are larger by sqrt(2J + 1), J the lower level; divide by it before entering them in a config file.
+    """
+    elements = excited_level.reduced_dipole_matrix_elements
+    if elements and ground_level.term_symbol in elements:
+        return float(elements[ground_level.term_symbol])
+    reverse = ground_level.reduced_dipole_matrix_elements
+    if reverse and excited_level.term_symbol in reverse:
+        raise IonSimError(f"A reduced dipole matrix element for {ground_level.term_symbol} -> {excited_level.term_symbol} is stored "
+                          f"on the lower manifold {ground_level.term_symbol}. As for branching_ratios, store it on the upper "
+                          f"manifold ({excited_level.term_symbol}), keyed by the lower manifold's term symbol.")
+    return None
+
+
 def compute_rabi_frequency_between_atomic_levels(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel,
                                                  polarization_components: dict[int, complex], atomic_levels: list[AtomicInternalEnergyLevel],
                                                  multipole_order: int, peak_E0_amplitude: float, wavenumber: float | None = None) -> complex | float:
@@ -478,13 +507,22 @@ def compute_coupling_amplitude_between_atomic_levels(ground_level: AtomicInterna
                                                      multipole_order: int, wavenumber: float | None = None) -> complex | float:
     """ Computes a coupling amplitude (up to a electric field amplitude) between a ground level |g> and an excited level |e>, given polarization components and selection rules. 
 
-        Returns Omega/E0, the Rabi frequency up to the E_0 electric field amplitude scaling, in units of the orbital
-        reduced matrix element <L||T^(k)||L'> in atomic units: <L||r||L'> / a0 for E1, <L||r^2 C^(2)||L'> / a0^2 for E2.
+        Returns Omega/E0, the Rabi frequency per unit electric field amplitude, where E0 is the real field amplitude
+        (E = E0 Re[eps e^{i(k.r - omega t)}], intensity c eps0 E0^2 / 2) and the absorption element of the coupling is
+        (Omega/2)|e><g|.
+
+        E1: Omega = <e| e r . eps |g> E0 / hbar (Steck's convention, e.g. I/I_sat = 2 Omega^2 / Gamma^2). 
+            - Uses reduced dipole matrix element if available for a genuine rabi frequency 
+            - if reduced dipole matrix element is unavailable, the rabi frequency is in units of the orbital reduced matrix element <L||r||L'> / a0, 
+                i.e. it assumes <L||r||L'> = 1 a0.
+
+        E2: in units of <L||r^2 C^(2)||L'> / a0^2. The absolute E2 prefactor (factor 2 below) 
+            depends on the quadrupole-operator convention; relative E2 couplings (angular factors, polarization and k dependence) are unaffected.
 
         polarization_components maps q to the polarization's rank-k spherical component: eps_q for E1
-        (Polarization.dipole_components), C_q for E2 (Polarization.quadrupole_components). The absorption matrix element is
-            <e| T^(k) . eps |g> = sum_q c_q <e| T^(k)_q |g> = sum_q c_q (-1)^q <g| T^(k)_{-q} |e>,
-        using T_q^dagger = (-1)^q T_{-q} and real angular amplitudes <g| T_q |e> (compute_multipole_amplitude).
+        (Polarization.dipole_components), C_q for E2 (Polarization.quadrupole_components). 
+            The absorption matrix element is <e| T^(k) . eps |g> = sum_q c_q <e| T^(k)_q |g> = sum_q c_q (-1)^q <g| T^(k)_{-q} |e>,
+            using T_q^dagger = (-1)^q T_{-q} and real angular amplitudes <g| T_q |e> (compute_multipole_amplitude).
 
         E2 uses the field gradient of a plane wave, E0 eps exp(i k n.r): the coupling is i k E0 sum_ij eps_i n_j x_i x_j,
         and sum_ij eps_i n_j x_i x_j = sqrt(2/3) r^2 sum_q C_q C^(2)_q, so E2 carries an extra factor i k a0 sqrt(2/3)
@@ -501,15 +539,26 @@ def compute_coupling_amplitude_between_atomic_levels(ground_level: AtomicInterna
         raise IonSimError(f"polarization_components must be a dict keyed by q = {list(q_values)} for multipole order "
                           f"{multipole_order}, e.g. Polarization.dipole_components() or Polarization.quadrupole_components().")
 
-    # Absorption matrix element <e| T . eps |g>, from the amplitudes <g| T_q |e>, in units of <L||T^(k)||L'>.
-    matrix_element = sum(polarization_components[q] * (-1)**q
-                         * compute_multipole_amplitude(ground_level, excited_level, multipole_order, -q, include_J_J_prime_matrix_element=True)
-                         for q in q_values)
+    # E1 with a tabulated <J||er||J'>: angular amplitudes in units of <J||er||J'> (Steck), times its value in e a0.
+    # Otherwise: angular amplitudes in units of the orbital reduced element <L||T^(k)||L'>, taken as 1 a0^k.
+    reduced_element = reduced_dipole_matrix_element(ground_level, excited_level) if multipole_order == 1 else None
+    in_orbital_units = reduced_element is None
 
-    scientific_consts = const.e * const.value('Bohr radius') / const.hbar # from dipole moment and definition of Rabi frequency from electric dipole operator 
-    coupling = 2. * matrix_element * scientific_consts
+    # Absorption matrix element <e| T . eps |g>, from the amplitudes <g| T_q |e>.
+    matrix_element = sum(polarization_components[q] * (-1)**q
+                         * compute_multipole_amplitude(ground_level, excited_level, multipole_order, -q,
+                                                       include_J_J_prime_matrix_element=in_orbital_units)
+                         for q in q_values)
+    if reduced_element is not None:
+        matrix_element *= reduced_element
+
+    # The absorption part of -d.E is -(E0/2) <e|d.eps|g> e^{-i omega t}; with (hbar Omega/2) for that element,
+    # Omega = E0 |<e|d.eps|g>| / hbar. Checked against Steck's 87Rb D2 cycling-transition saturation intensity.
+    scientific_consts = const.e * const.value('Bohr radius') / const.hbar
+    coupling = matrix_element * scientific_consts
     if multipole_order == 2:
         if wavenumber is None:
             raise IonSimError("E2 coupling amplitudes need the laser wavenumber (rad/m).")
-        coupling *= 1j * wavenumber * const.value('Bohr radius') * np.sqrt(2. / 3.)
+        # E2 keeps its previous absolute normalization (the factor 2) until it is benchmarked; see the docstring.
+        coupling *= 2. * 1j * wavenumber * const.value('Bohr radius') * np.sqrt(2. / 3.)
     return coupling
