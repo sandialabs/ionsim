@@ -58,10 +58,15 @@ class TestZeemanSolver(unittest.TestCase):
                 for case in self.test_cases
             }
 
+ #<<<<<<< HEAD
+ #        # Test 3: Use AtomicStructure from_species()  
+ #        self.Yb = AtomicStructure.from_species(species='171Yb', term_symbols=['S0'], level_names=['S0,1/2,1/2', 'S0,1/2,-1/2'], magnetic_field = 400.) 
+ #=======
         # Use AtomicStructure from_species()  
         self.Yb = AtomicStructure.from_species(species='171Yb', term_symbols=['S0'], level_names=['S0,1/2,1/2', 'S0,1/2,-1/2'], magnetic_field = 400.) 
         self.Rb87 = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2'], level_names=['S1/2,1,0', 'S1/2,2,0'], magnetic_field = 0.005) 
         self.Rb87_P32 = AtomicStructure.from_species(species='87Rb', term_symbols=['P3/2'], level_names=['P3/2,1,0', 'P3/2,2,0'], magnetic_field = 5.0) 
+#>>>>>>> main
 
     def test_explicit_zeeman_solvers(self):
         # Test functionality when using explicit construction of Zeeman Solver objects for each test case. 

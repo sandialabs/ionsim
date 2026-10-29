@@ -261,7 +261,7 @@ class StandardBasis(Basis):
             levels_to_keep = [l for l in dof.energy_levels if l in levels]
 
         if isinstance(dof, AtomicStructure):
-            return AtomicStructure(levels_to_keep, dof.name) 
+            return AtomicStructure(levels_to_keep, dof.atomic_mass, dof.atomic_charge, dof.name) 
         elif isinstance(dof, MotionalMode):
             return MotionalMode(levels_to_keep, dof.name) 
         else:
