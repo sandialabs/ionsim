@@ -43,11 +43,14 @@ class CircuitBuilderBase:
         if not self._gates and not empty_ok:
             raise IonSimError("Creating empty circuit. Use CircuitBuilder.build(empty_ok=True) if you really want this")
 
-        gates = [
-            self._gate_functions.get(name, func)(
-                qubits, params, self._basis, self._gate_noise.get(name))
-            for func, name, qubits, params in self._gates
-        ]
+        def make_gate(gate_tuple):
+            func, name, qubits, params = gate_tuple
+            gate_func = self._gate_functions.get(name, func)
+            if gate_func is None:
+                raise IonSimError(f"Not gate {name} defined and no default available")
+            return gate_func(qubits, params, self._basis, self._gate_noise.get(name))
+
+        gates = [make_gate(gate_tuple) for gate_tuple in self._gates]
         return Circuit.from_gates(gates, self._circuit_noise)
 
     def set_gate_function(self, gate: str, func: Callable):
@@ -87,41 +90,45 @@ class IonSimCircuitBuilder:
     """Mix-in to allow the CircuitBuilder to separate out IonSim gates
     from the rest of the CircuitBuilder machinery."""
 
-    def I(self, qubits):
-        gate = (GateFromUnitary(Unitary.I), 'I', qubits, {})
+    def gate(self, name, qubits, **kwargs):
+        obj = getattr(Unitary, name, None)
+        if obj is None:
+            gate = (None, name, qubits, kwargs)
+        else:
+            obj = getattr(Unitary, name)
+            if callable(obj):
+                wrapped = GateFromUnitaryFunction(obj)
+            else:
+                wrapped = GateFromUnitary(obj)
+            gate = (wrapped, name, qubits, kwargs)
         self._gates.append(gate)
+
+    def I(self, qubits):
+        self.gate('I', qubits)
 
     def X(self, qubits):
-        gate = (GateFromUnitary(Unitary.X), 'X', qubits, {})
-        self._gates.append(gate)
+        self.gate('X', qubits)
 
     def sqrtX(self, qubits):
-        gate = (GateFromUnitary(Unitary.sqrtX), 'sqrtX', qubits, {})
-        self._gates.append(gate)
+        self.gate('sqrtX', qubits)
 
     def Y(self, qubits):
-        gate = (GateFromUnitary(Unitary.Y), 'Y', qubits, {})
-        self._gates.append(gate)
+        self.gate('Y', qubits)
 
     def Z(self, qubits):
-        gate = (GateFromUnitary(Unitary.Z), 'Z', qubits, {})
-        self._gates.append(gate)
+        self.gate('Z', qubits)
 
     def H(self, qubits):
-        gate = (GateFromUnitary(Unitary.H), 'H', qubits, {})
-        self._gates.append(gate)
+        self.gate('H', qubits)
 
     def R(self, qubits, *, phi, theta):
-        gate = (GateFromUnitaryFunction(Unitary.R), 'R', qubits, {'phi': phi, 'theta': theta})
-        self._gates.append(gate)
+        self.gate('R', qubits, phi=phi, theta=theta)
 
     def CNOT(self, qubits):
-        gate = (GateFromUnitary(Unitary.CNOT), 'CNOT', qubits, {})
-        self._gates.append(gate)
+        self.gate('CNOT', qubits)
 
     def MS(self, qubits, *, phi, theta):
-        gate = (GateFromUnitaryFunction(Unitary.MS), 'MS', qubits, {'phi': phi, 'theta': theta})
-        self._gates.append(gate)
+        self.gate('MS', qubits, phi=phi, theta=theta)
 
 
 class CircuitBuilder(CircuitBuilderBase, IonSimCircuitBuilder, QiskitCircuitBuilder):

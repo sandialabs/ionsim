@@ -7,6 +7,7 @@ from ionsim.named_operators import Unitary
 from ionsim.circuit_builder import CircuitBuilder
 from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis
+from ionsim.ionsim_error import IonSimError
 
 
 class TestCircuitBuilder(unittest.TestCase):
@@ -51,3 +52,34 @@ class TestCircuitBuilder(unittest.TestCase):
                 circuit = builder.build()
                 act_gate = circuit.gates[0]
                 np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
+
+    def test_unknown_gate(self):
+        """Test the error message thrown when an unknown gate is used."""
+        gate_name = 'bad_unimplemented_gate'
+
+        builder = CircuitBuilder()
+        builder.set_basis(self.basis)
+        builder.gate(gate_name, [0])
+        with self.assertRaises(IonSimError) as err:
+            builder.build()
+        self.assertIn(gate_name, str(err.exception))
+
+    def test_custom_gate(self):
+        """Test adding a new gate to the builder."""
+
+        unitary = 2**-0.5 * np.array([[1, 1], [1, 1]])
+
+        def custom_gate(qubits, params, basis, noise):
+            dofs = [basis.degrees_of_freedom[i] for i in qubits]
+            return Gate.from_unitary(basis, unitary, dofs)
+
+        builder = CircuitBuilder()
+        builder.set_basis(self.basis)
+        builder.set_gate_function('CustomGate', custom_gate)
+        builder.gate('CustomGate', [1])
+        circuit = builder.build()
+
+        exp_gate = Gate.from_unitary(self.basis, unitary, [self.basis.degrees_of_freedom[1]])
+        act_gate = circuit.gates[0]
+
+        np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
