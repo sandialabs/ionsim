@@ -33,6 +33,10 @@ class Pauli:
         [[1, 0],
          [0, 1]],
     )
+    H = 2**-0.5 * np.array(
+        [[1, 1],
+         [1, -1]],
+    )
 
     ''' Attribute for the single-qubit Pauli vector: sigma = (I, X, Y, Z) '''
     vector: list[Matrix] = [I, X, Y, Z]
@@ -156,6 +160,8 @@ class Unitary:
     sqrtX = R(0, np.pi/2) * np.exp(1j * np.pi/4.) 
     Y = R(np.pi/2, np.pi) * np.exp(1j * np.pi/2.)
     sqrtY = R(np.pi/2, np.pi/2) * np.exp(1j * np.pi/4.)
+    Z = R(0, np.pi) @ R(np.pi/2, np.pi) * np.exp(1j * np.pi/2)
+    H = 1j * R(0, np.pi) @ R(np.pi/2, np.pi/2)
     I = R(0, 0) 
 
     @staticmethod
