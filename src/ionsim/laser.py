@@ -211,7 +211,7 @@ class Laser():
                                    excited_level: AtomicInternalEnergyLevel, multipole_order: int, propagation_vector: Vector,
                                    polarization: Polarization, detuning: float = 0., phase: float = 0.,
                                    modulation_functions: dict | None = None) -> Laser:
-        """ Plane-wave laser whose Rabi frequency on |ground_level> -> |excited_level> has magnitude target_rabi_frequency.
+        """ Plane-wave laser whose carrier Rabi frequency on |ground_level> -> |excited_level> has magnitude target_rabi_frequency.
 
             target_rabi_frequency: rad/s, positive number.  multipole_order: 1 (E1) or 2 (E2).
             detuning: rad/s; the laser frequency is (E_excited - E_ground) + detuning.

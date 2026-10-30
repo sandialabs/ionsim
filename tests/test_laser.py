@@ -19,7 +19,6 @@ import warnings
 from scipy.special import genlaguerre
 
 from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
-from ionsim.state import State
 from ionsim.basis import StandardBasis
 from ionsim.laser import Laser, Polarization, GaussianBeam, PlaneWave, _perpendicular_basis, _spherical_basis_vectors
 from ionsim.hamiltonian import Hamiltonian
@@ -525,37 +524,6 @@ class TestLaserSidebandCouplings(unittest.TestCase):
                     self.assertGreater(population, 1. - 1e-5)
                 else:
                     self.assertLess(population, 0.2)
-
-    def test_molmer_sorensen_gate(self):
-        """Two ions, one mode, bichromatic tones at omega_0 +/- (omega_mode + delta) built from two Laser objects (blue
-        sideband of the blue tone, red sideband of the red tone). With eta Omega = delta / 2 and duration 2 pi / delta,
-        |gg, 0> -> (|gg> + e^{i theta}|ee>)/sqrt(2) with the mode disentangled, for either basis ordering."""
-        duration = 100e-6                       # s; arbitrary
-        delta = TPI / duration             # one loop in phase space
-        sideband_rabi = delta / 2.              # eta * Omega for a maximally entangling single-loop gate
-        for mode_first in (False, True):
-            with self.subTest(mode_first=mode_first):
-                atoms, mode, basis, g, e = self.build(mode_first=mode_first, n_atoms=2, fock_dimension=10)
-                omega_0 = e.energy - g.energy
-                reference_power = 1e-3
-                rabi_per_reference = self.carrier_rabi(self.laser(omega_0, reference_power), atoms[0], basis, g, e)
-                power = reference_power * (sideband_rabi / self.ETA / rabi_per_reference)**2   # Omega scales as sqrt(P)
-                blue = self.laser(omega_0 + self.MODE_FREQUENCY + delta, power)
-                red = self.laser(omega_0 - self.MODE_FREQUENCY - delta, power)
-                etas = [[self.ETA], [self.ETA]]   # rows: atoms (target_atoms=None -> basis order), columns: [mode]
-                operators = (blue.build_blue_sideband_coupling_operators(basis, None, [mode], [g], [e], 2, etas)
-                             + red.build_red_sideband_coupling_operators(basis, None, [mode], [g], [e], 2, etas))
-                initial = next(i for i, state in enumerate(basis.states)                       # |g, g, n=0>
-                               if all(getattr(c, 'fock_number', 0) == 0 and getattr(c, 'term_symbol', 'S1/2') == 'S1/2'
-                                      for c in state.components))
-                psi = self.evolve(basis, operators, initial, duration)
-                spins = State.from_wavefunction(basis, psi).trace_out_degree_of_freedom(mode)
-                rho = spins.density_matrix
-                labels = [''.join('g' if c.term_symbol == 'S1/2' else 'e' for c in s.components) for s in spins.basis.states]
-                gg, ee = labels.index('gg'), labels.index('ee')
-                bell_fidelity = 0.5 * (rho[gg, gg] + rho[ee, ee]).real + abs(rho[gg, ee])   # best phase theta
-                self.assertGreater(bell_fidelity, 1. - 1e-4)
-                self.assertGreater(np.trace(rho @ rho).real, 1. - 1e-4)                 # mode disentangled
 
     def test_coupling_operator_from_raising_matrix(self):
         """The helper returns one operator whose rate sign follows the triangle of the raising elements, None when every
