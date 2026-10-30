@@ -239,7 +239,10 @@ class Hamiltonian(CompositeOperator):
                             else:
                                 Hint = np.zeros((self.size, self.size), dtype='complex')
                                 for Ham, Rate, mod in zip(Hints, Rates, self.coupling_modulation_functions):
-                                    Hint += Ham * np.exp(-1j * Rate * t) * mod(t)
+                                    if mod is not None:
+                                        Hint += Ham * np.exp(-1j * Rate * t) * mod(t)
+                                    else:
+                                        Hint += Ham * np.exp(-1j * Rate * t)
                             Hint += Hint.conj().T
 
                             H0_shift = np.zeros_like(Hint)

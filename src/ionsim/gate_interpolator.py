@@ -225,35 +225,12 @@ class GateInterpolator():
 
 
     #### Interpolation methods #### 
-    @cached_property
-    def process_matrix_interpolator(self):
-        """ Returns a gate's process matrix interpolating function of the grid parameters, e.g. G(x,y) for x,y grid parameters.
-
-            The interpolation is the cubic spline through the gates on the grid (csaps with smooth=1, as in
-            construct_spline_for_gate). Since an interpolating spline is linear in the data, every process matrix element
-            uses the same weights, and on a tensor grid the weights factor into one set per axis. The interpolated process
-            matrix is therefore the gate data contracted with the per-axis spline weights: identical (to rounding) to
-            evaluating a spline for each element, and much faster for large process matrices.
-        """
-        gate_data = self.computed_gate_data_as_array      # (d^2, d^2, *grid_lengths)
-        names = self.parameter_list
-        # Spline weights per axis: the spline through each unit vector of the axis grid
-        weight_splines = [CubicSmoothingSpline(np.asarray(axis, dtype=float), np.eye(len(axis)), smooth=1) for axis in self.grids]
-        signature = inspect.Signature(parameters=[inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in names])
-
-        def _interpolating_function(*args, **kwargs):
-            if len(args) == 1 and not kwargs and isinstance(args[0], (list, tuple, np.ndarray)):
-                args = tuple(args[0])
-            grid_coordinate = signature.bind(*args, **kwargs).arguments
-            result = gate_data
-            for spline, name in zip(weight_splines, names):
-                weights = spline(np.atleast_1d(float(grid_coordinate[name])))[:, 0]
-                result = np.tensordot(result, weights, axes=([2], [0]))
-            return result
-
-        _interpolating_function.__signature__ = signature
-        _interpolating_function.__name__ = "process matrix_interpolator"
-        return _interpolating_function
+    @cached_property 
+    def process_matrix_interpolator(self): 
+        """ Returns a gate's process matrix interpolating function of the grid parameters, e.g. G(x,y) for x,y grid parameters""" 
+        # Extract gate spline information, then build interpolator function from the splines 
+        gate_spline_reals, gate_spline_imags = self.construct_spline_for_gate(complex_data=True)
+        return self.make_interpolated_property_from_splines([gate_spline_reals, gate_spline_imags], 'process matrix')
         
     def make_interpolated_property_from_splines(self, property_interpolator: dict | list[dict, dict], property_name: str) -> Callable:
         """ Returns a property interpolating function of the grid parameters, e.g. F(x,y) for x,y grid parameters""" 

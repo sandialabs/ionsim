@@ -46,5 +46,25 @@ class TestNamedOperators(unittest.TestCase):
         ideal_CNOT[3,2] = 1.
         assert_array_close(ideal_CNOT, Unitary.CNOT)
 
+    def test_Pauli_vectors(self):
+        single_qubit_operators = dict(zip(Pauli.vector_as_string, Pauli.vector))
+        assert_array_close(single_qubit_operators["I"], np.eye(2))
+
+        N = 3
+        three_qubit_operators = Pauli.product_operators(N)        
+
+        # Test a set of labels 
+        labels = ['IXI', 'XXX', 'YXZ', "III", "ZXY", "XXY", "IXZ"] 
+
+        for l in labels:
+            q1 = l[0]
+            q2 = l[1]
+            q3 = l[2]
+            expected = np.kron(single_qubit_operators[q1], single_qubit_operators[q2])
+            expected = np.kron(expected, single_qubit_operators[q3])
+            assert_array_close(three_qubit_operators[l], expected)
+
+        
+
 if __name__ == '__main__':
     unittest.main()

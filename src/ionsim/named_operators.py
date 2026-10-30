@@ -8,11 +8,15 @@
 #***************************************************************************************************
 
 import numpy as np
+from itertools import product
+import functools
 
-from icecream import ic
+from ionsim.custom_types import Matrix
+from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD 
 
 class Pauli:
 
+    ''' Single qubit pauli matrices ''' 
     X = np.array(
         [[0, 1],
          [1, 0]],
@@ -30,7 +34,11 @@ class Pauli:
          [0, 1]],
     )
 
-    ''' Raising/lowering operators assume |g> corresponds to row/column 1 and |e> corresponds to row/column 2 '''
+    ''' Attribute for the single-qubit Pauli vector: sigma = (I, X, Y, Z) '''
+    vector: list[Matrix] = [I, X, Y, Z]
+    vector_as_string: list[str] = ['I', 'X', 'Y', 'Z'] 
+
+    ''' Spin raising/lowering operators use convention where |g> corresponds to row/column 1 and |e> corresponds to row/column 2 '''
     plus = np.array(
         [[0, 0],
          [1, 0]],
@@ -39,7 +47,6 @@ class Pauli:
         [[0, 1],
          [0, 0]],
     )
-
     ''' Projectors for single-qubit basis states: |0><0| and |1><1| ''' 
     projector_0 = np.array(
         [[1, 0],
@@ -51,6 +58,24 @@ class Pauli:
          [0, 1]],
     )
 
+    @classmethod
+    def product_operators(cls, N_qubits: int) -> dict[str, Matrix]:
+        """ Helper function to compute a N-qubit Pauli operators. d = 2^N for N qubits. 
+            
+            - returns a list of pauli operators. 
+            - there are d^2 Pauli operators, each a d x d matrix. 
+
+        """ 
+        # Safety checks: 
+        if N_qubits <= 0 :
+            raise ValueError(f"Number of qubits cannot be negative or zero. Received N_qubits = {N_qubits}.")
+            
+        if N_qubits == 1:
+            return dict(zip(cls.vector_as_string, cls.vector))
+
+        pauli_op_labels = ["".join(label) for label in product(cls.vector_as_string, repeat = N_qubits)]
+        pauli_operators = [functools.reduce(np.kron, operators) for operators in product(cls.vector, repeat=N_qubits)]
+        return dict(zip(pauli_op_labels, pauli_operators))
 
 class Fock:
 
@@ -69,6 +94,14 @@ class Fock:
     @classmethod
     def number(cls, fock_dimension: int):
         return np.diag(np.arange(fock_dimension))
+
+    @classmethod 
+    def position(cls, fock_dimension: int):
+        return np.sqrt(0.5)*(cls.raising(fock_dimension) + cls.lowering(fock_dimension))
+        
+    @classmethod 
+    def momentum(cls, fock_dimension: int):
+        return 1j*np.sqrt(0.5)*(cls.raising(fock_dimension) - cls.lowering(fock_dimension))
 
     @staticmethod
     def debye_waller_lowering(fock_dimension: int, lamb_dicke_parameter: float):
@@ -91,8 +124,7 @@ class Unitary:
     def R(phi: float, theta: float):
         """A single-qubit rotation on the XY plane of the Bloch sphere."""
         sigma_phi = np.cos(phi) * Pauli.X + np.sin(phi) * Pauli.Y
-        # TODO: Resolve --> why is there overall phase of exp(i theta / 2)? Usually R(phi, theta) is exp[-i (theta/2) sigma_phi ]  
-        return np.exp(1j*theta/2) * (np.cos(theta/2) * Pauli.I - 1j*np.sin(theta/2) * sigma_phi)
+        return (np.cos(theta/2) * Pauli.I - 1j*np.sin(theta/2) * sigma_phi)
 
     @staticmethod
     def R_bloch(bloch_vector: list[float]):
@@ -111,9 +143,8 @@ class Unitary:
             alpha += v**2 
 
         alpha = np.sqrt(alpha)
-        TOL = 1E-10
 
-        if alpha < TOL:
+        if alpha < NUMERICAL_EQUIVALENCE_THRESHOLD:
             return np.eye(2, dtype=complex) 
         
         # Pauli spin vector:  
@@ -121,19 +152,18 @@ class Unitary:
         sigma_n = (n_vector[0] * Pauli.X + n_vector[1] * Pauli.Y + n_vector[2] * Pauli.Z ) # to absorb normalization  
         return np.cos(alpha) * Pauli.I - 1j*np.sin(alpha) * sigma_n
 
-    X = R(0, np.pi)
-    sqrtX = R(0, np.pi/2)
-    Y = R(np.pi/2, np.pi)
-    sqrtY = R(np.pi/2, np.pi/2)
-    I = R(0, 0)
+    # global_phase of np.exp(1j*theta/2) converts R(phi, theta) to X, Y, sqrtX, sqrtY gates  
+    X = R(0, np.pi) * np.exp(1j*np.pi/2)
+    sqrtX = R(0, np.pi/2) * np.exp(1j * np.pi/4.) 
+    Y = R(np.pi/2, np.pi) * np.exp(1j * np.pi/2.)
+    sqrtY = R(np.pi/2, np.pi/2) * np.exp(1j * np.pi/4.)
+    I = R(0, 0) 
 
     @staticmethod
     def MS(phi: float, theta: float):
         """The Molmer-Sorensen entangling gate."""
         sigma_phi = np.cos(phi) * Pauli.X + np.sin(phi) * Pauli.Y
         return np.cos(theta/2) * np.kron(Pauli.I, Pauli.I) - 1j*np.sin(theta/2) * np.kron(sigma_phi, sigma_phi)
-
-    # The extra -i factor likely comes from book-keeping on the planar "R" method above, which has an extra exp(i theta /2) global factor  
     CNOT = np.exp(1j*np.pi/2.)*np.exp(-1j*np.pi/4.)*(np.kron(np.conj(sqrtY).T,I)) @ (np.kron(np.conj(sqrtX).T,I)) @ (np.kron(I, np.conj(sqrtX).T)) @ MS(0., np.pi/2.) @ (np.kron(sqrtY, I))
 
     @staticmethod

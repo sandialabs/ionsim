@@ -16,6 +16,7 @@ import pint
 import math
 
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
+from ionsim.ionsim_error import IonSimError
 
 class ZeemanHyperfineSolver():
     """ Solver to compute state Zeeman splittings under the combined Zeeman + Hyperfine Hamiltonian
@@ -182,7 +183,7 @@ class ZeemanHyperfineSolver():
             # Denominator: 
             denom = 2*self.i*(2 * self.i - 1)*self.j*(2 * self.j - 1)
 
-            if np.abs(denom) < NUMERICAL_EQUIVALENCE_THRESHOLD or denom == 0. or (self.j == 0.5 or self.j == 0.5) or (self.i == 0.):
+            if np.abs(denom) < NUMERICAL_EQUIVALENCE_THRESHOLD or denom == 0. or (self.j == 0.5 or self.i == 0.5) or (self.i == 0.):
                 # Quadrapole moment requires I > 1 and J > 1  
                 return H
                     
@@ -412,7 +413,7 @@ class ZeemanHyperfineSolver():
         try:
             f_indx = list(f_range).index(f)
         except Exception as exc:
-            raise ValueError(f"Invalid F value {F}. Please choose in the range {f_range}") from exc
+            raise ValueError(f"Invalid F value {f}. Please choose in the range {f_range}") from exc
          
         approximate_states = list(zip(f_values, mf_values)) 
         state_indx = -1

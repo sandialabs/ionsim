@@ -13,14 +13,14 @@ import numpy as np
 
 from ionsim.process import Gate, Circuit, Circuit_Process_Matrix_Function, GateProcessMatrixCache
 from ionsim.degree_of_freedom import AtomicStructure
-from ionsim.basis import StandardBasis
+from ionsim.basis import StandardBasis, PauliProductBasis
 from ionsim.named_operators import Unitary, Pauli
 from ionsim.noise import Noise
-from ionsim.operator import EnergyShiftOperator
-from ionsim.state import State 
+from ionsim.operator import EnergyShiftOperator, CouplingOperator
 from ionsim.hamiltonian import Hamiltonian
+from ionsim.state import State 
 from ionsim.lindbladian import Dissipator, Lindbladian
-from ionsim.operator import CouplingOperator
+from ionsim.testing import assert_array_close
 
 class TestProcess(unittest.TestCase):
 
@@ -28,6 +28,7 @@ class TestProcess(unittest.TestCase):
         """Set up the necessary objects for testing."""
         self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.spin_c = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2','P1/2'], level_names=['S1/2,0,0', 'S1/2,1,0','P1/2,1,-1'])
         self.basis = StandardBasis([self.spin_a, self.spin_b])
 
         self.Sx = Gate.from_unitary(self.basis, Unitary.sqrtX, [self.spin_a])
@@ -42,6 +43,27 @@ class TestProcess(unittest.TestCase):
         self.noisy_theta_gate = Gate.from_unitary_function(
             self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.theta_noise,
         )
+
+    def test_R_hamiltonian_matches_unitary(self):
+        """ Test that R hamiltonian produces a unitary evolution operator that matches expected value """ 
+        basis = StandardBasis([self.spin_a])  # 00, 01, 10, 11 
+
+        rabi_rate = 100e3 * 2 * np.pi  # rad./s
+        omega = self.spin_a.energy_levels[1].energy - self.spin_a.energy_levels[0].energy
+        static_operator = (rabi_rate / 2) * Pauli.plus
+        theta = np.pi/16.
+        duration = theta/rabi_rate
+
+        operator_a = CouplingOperator.from_matrix(basis, static_operator, omega) 
+        
+        interaction_frame_energies = [-1 * state.energy for state in basis.states]
+        hamiltonian = Hamiltonian(basis, [operator_a], interaction_frame_energies, sparse=False)
+        X_pi16_gate = Gate.from_hamiltonian(basis, hamiltonian, duration)
+        
+        # Check R gate unitary matrix form  
+        X_pi16_ref = Unitary.R(0., theta) 
+        assert_array_close(X_pi16_ref, X_pi16_gate.unitary, rtol=1e-6, atol=1e-6) # we expect agreement up to numerical timestep error and precision  
+
 
     def test_noisy_phi_gate_process_fidelity(self):
         """Test the process fidelity of the noisy phi gate."""
@@ -62,6 +84,12 @@ class TestProcess(unittest.TestCase):
         )
         fidelity = extra_noisy_gate.compute_process_fidelity(self.Sx.process_matrix)
         self.assertAlmostEqual(fidelity, 0.930617644191573, places=14)
+
+    def test_gate_parameter_ordering(self):
+        """Test removal of a bug where Gate creation depended on parameter ordering."""
+        g0 = Gate.from_unitary_function(self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.phi_noise)
+        g1 = Gate.from_unitary_function(self.basis, Unitary.R, {'theta': np.pi/2, 'phi': 0}, [self.spin_a], self.phi_noise)
+        np.testing.assert_array_equal(g0.process_matrix, g1.process_matrix)
 
     def test_ramsey_circuit_process_fidelity(self):
         """Test the process fidelity of the Ramsey circuit."""
@@ -302,6 +330,86 @@ class TestProcess(unittest.TestCase):
         h_reference = Gate.from_hamiltonian(basis, hamiltonian(rabi_rate), duration)
         np.testing.assert_allclose(h_gate.process_matrix, h_reference.process_matrix, atol=1e-10)
         np.testing.assert_allclose(h_gate.process_matrix, gate.process_matrix, atol=1e-6)   # same unitary dynamics
+
+    def test_pauli_transfer_matrix_computations(self):
+        noisy_gate = self.noisy_phi_gate
+        noisy_gate_pauli = noisy_gate.convert_to_pauli_basis()
+        Sx_pauli = self.Sx.convert_to_pauli_basis()
+
+        fidelity = noisy_gate_pauli.compute_process_fidelity(Sx_pauli.process_matrix)
+        self.assertAlmostEqual(fidelity, 0.9535335189419549, places=14)
+
+    def test_Raman_gate(self):
+        full_basis = StandardBasis([self.spin_c])
+        target_rabi_rate = 10 * 2 * np.pi * 1E3 # rad/s 
+        detuning = -2. * 2. * np.pi * 1E9
+        rabi_rate = np.sqrt(np.abs(detuning) * 2. * target_rabi_rate) 
+
+        omega1 = self.spin_c.energy_levels[2].energy - self.spin_c.energy_levels[0].energy + detuning
+        omega2 = self.spin_c.energy_levels[2].energy - self.spin_c.energy_levels[1].energy + detuning
+        omega_qubit = self.spin_c.energy_levels[1].energy - self.spin_c.energy_levels[0].energy
+        assert (np.abs(omega1 - omega2) - omega_qubit)/(2*np.pi)/1E3 < 1.E-2, 'Raman resonance condition is violated.'
+
+        size = len(full_basis.states)
+        static_operator1 = np.zeros((size, size))
+        static_operator1[2, 0] = rabi_rate/2. 
+        static_operator2 = np.zeros((size, size))
+        static_operator2[2, 1] = -rabi_rate/2.  # phase of pi
+
+        raising_op1 = CouplingOperator.from_matrix(full_basis, static_operator1, omega1, [self.spin_c])
+        raising_op2 = CouplingOperator.from_matrix(full_basis, static_operator2, omega2, [self.spin_c])
+        
+        interaction_frame_energies = [-1 * state.energy for state in full_basis.states]
+        hamiltonian = Hamiltonian(full_basis, [raising_op1, raising_op2], interaction_frame_energies, sparse=False)
+
+        theta = np.pi/16.
+        duration = (np.pi/16.)/target_rabi_rate
+        undesired_levels = [self.spin_c.energy_levels[2]] # P1/2 level to project out        
+        #projection_input = {'levels' : undesired_levels}
+        dt = 0.002 * 1E-6 
+        times = np.arange(0, duration + dt, dt)
+        X_pi16_Raman_gate = Gate.from_hamiltonian(full_basis, hamiltonian, duration, levels_to_project = undesired_levels, ode_solver = 'odeintz', time_evals = times) 
+        reduced_basis = X_pi16_Raman_gate.basis
+
+        # Process fidelity 
+        X_pi16_ref = Unitary.R(0., theta) 
+
+        X_pi16_ref = Gate.from_unitary(reduced_basis, X_pi16_ref, [self.spin_c])
+
+        process_fidelity = X_pi16_Raman_gate.compute_process_fidelity(X_pi16_ref.process_matrix)
+        self.assertAlmostEqual(process_fidelity, 0.999998720951, places=8)
+
+        # Test pauli transfer matrix and pauli error rate calculations 
+        import scipy
+        error_channel_as_gate = Gate(reduced_basis, X_pi16_Raman_gate.process_matrix @ scipy.linalg.inv(X_pi16_ref.process_matrix))   
+        error_rates = error_channel_as_gate.compute_pauli_error_rates()        
+        # I <==> gate occurs as intended (no error); should be equal to process fidelity 
+        self.assertAlmostEqual(0.9999987209516402, error_rates["I"].real, places=10)
+        self.assertAlmostEqual(process_fidelity, error_rates["I"].real, places=10)
+
+    def test_pauli_transfer_matrix(self):
+        standard_2Q_basis = StandardBasis([self.spin_a, self.spin_b])
+        Pauli_2Q_basis = PauliProductBasis([self.spin_a, self.spin_b]) 
+        CZ_unitary = np.diag([1., 1., 1., -1.])
+
+        CZ_gate_standard = Gate.from_unitary(standard_2Q_basis, CZ_unitary, [self.spin_a, self.spin_b])
+
+        CZ_pauli_basis_gate = CZ_gate_standard.convert_to_pauli_basis()
+        CZ_ptm = CZ_pauli_basis_gate.process_matrix
+
+        test_diag_elements = ["II", "IZ", "ZI", "ZZ"] 
+        expected_diag_values = [1., 1., 1., 1.]
+
+        for i, diag_element in enumerate(test_diag_elements):
+            indx = Pauli_2Q_basis.index_of_label(diag_element)
+            self.assertEqual(CZ_ptm[indx, indx], expected_diag_values[i]) 
+
+        test_offdiag_elements = [("IX", "II"), ("ZX", "IX"), ("IX", "ZX"), ("YX", "XY"), ("XZ", "XI"), ("YY", "XX"), ("YI", "XZ")]
+        expected_offdiag_values = [0., 1., 1., -1., 1., 1., 0.]
+        for k, offdiag_element in enumerate(test_offdiag_elements):
+            i, j = Pauli_2Q_basis.indices_of_pauli_transfer_matrix_from_labels(*offdiag_element)
+            self.assertEqual(CZ_ptm[i, j], expected_offdiag_values[k]) 
+
 
 if __name__ == '__main__':
     unittest.main()
