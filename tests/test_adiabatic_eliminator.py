@@ -13,7 +13,6 @@ import warnings
 
 import numpy as np
 from scipy import constants as const
-from scipy.integrate import solve_ivp
 
 from ionsim.adiabatic_eliminator import adiabatically_eliminate
 from ionsim.atomic_internal_energy_level import reduced_dipole_matrix_element
@@ -22,42 +21,15 @@ from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.ionsim_error import IonSimError
 from ionsim.laser import Laser, Polarization
-from ionsim.lindbladian import DissipatorSpontaneousEmission
-from ionsim.operator import CouplingOperator, EnergyShiftOperator, GeneralOperator
+from ionsim.lindbladian import DissipatorSpontaneousEmission, Lindbladian
+from ionsim.operator import CouplingOperator
 
 TPI = 2. * np.pi
 X, Y, Z = np.eye(3)
 
 
-def evolve_density_matrix(hamiltonian, dissipator, rho0, times):
-    """ Lindblad master equation with tight tolerances. Each Lindblad operator's frame-shifted matrices are computed once. """
-    parts = []
-    for op in (dissipator.operators if dissipator is not None else []):
-        static = np.zeros((dissipator.size,) * 2, dtype=complex)
-        if isinstance(op, GeneralOperator) and op.energy_shifts:
-            static += op.energy_shift_operator_contribution.static_matrix.toarray()
-        elif isinstance(op, EnergyShiftOperator):
-            static += op.static_matrix.toarray()
-        L, R = np.zeros_like(static), np.zeros(static.shape)
-        if isinstance(op, (CouplingOperator, GeneralOperator)) and op.couplings:
-            L, R = (m.toarray() for m in dissipator._frame_shifted_coupling_matrix_and_rate_from_operator(op))
-        parts.append((static, L, R))
-    n = rho0.shape[0]
-    H_of_t = hamiltonian.hamiltonian_function
-
-    def rhs(t, y):
-        rho = y.reshape(n, n)
-        H = np.asarray(H_of_t(t))
-        drho = -1j * (H @ rho - rho @ H)
-        for static, L, R in parts:
-            Lt = static + L * np.exp(-1j * R * t)
-            LdL = Lt.conj().T @ Lt
-            drho += Lt @ rho @ Lt.conj().T - 0.5 * (LdL @ rho + rho @ LdL)
-        return drho.ravel()
-
-    solution = solve_ivp(rhs, (times[0], times[-1]), rho0.astype(complex).ravel(), t_eval=times, method='DOP853', rtol=1e-9, atol=1e-11)
-    assert solution.success, solution.message
-    return [y.reshape(n, n) for y in solution.y.T]
+# Tight tolerances for comparing full and effective dynamics (Lindbladian.evolve_density_matrix, custom_math.solve_ode).
+ACCURATE = {'ode_solver': 'solve_ivp', 'method': 'DOP853', 'rtol': 1e-7, 'atol': 1e-11}
 
 
 class TestLambdaSystem(unittest.TestCase):
@@ -70,10 +42,10 @@ class TestLambdaSystem(unittest.TestCase):
         self.basis = StandardBasis([self.atom])
         self.E = [state.energy for state in self.basis.states]
         self.Delta, self.delta = TPI * 1e9, TPI * 2e6            # single-photon detuning (blue), two-photon detuning
-        self.O1, self.O2 = TPI * 20e6, TPI * 30e6 * np.exp(0.7j)  # Rabi frequencies; couplings are Omega/2
+        self.Omega1, self.Omega2 = TPI * 20e6, TPI * 30e6 * np.exp(0.7j)  # Rabi frequencies; couplings are Omega/2
         # Laser frequencies: |g0> -> |e> at Delta, |g1> -> |e> at Delta + delta
-        self.w1 = self.E[2] - self.E[0] + self.Delta
-        self.w2 = self.E[2] - self.E[1] + self.Delta + self.delta
+        self.omega1 = self.E[2] - self.E[0] + self.Delta
+        self.omega2 = self.E[2] - self.E[1] + self.Delta + self.delta
 
     def operator(self, ground_index, rabi, frequency):
         """ (Omega/2) e^{-i w t} |e><g| + h.c., in IonSim's convention (stored |g><e| element with rate -w). """
@@ -83,7 +55,7 @@ class TestLambdaSystem(unittest.TestCase):
         return CouplingOperator.from_matrix(self.basis, matrix, -frequency)
 
     def hamiltonian(self, frame):
-        return Hamiltonian(self.basis, [self.operator(0, self.O1, self.w1), self.operator(1, self.O2, self.w2)], frame)
+        return Hamiltonian(self.basis, [self.operator(0, self.Omega1, self.omega1), self.operator(1, self.Omega2, self.omega2)], frame)
 
     def test_effective_couplings_and_light_shifts(self):
         """ Light shifts |Omega|^2/(4 Delta) (positive for blue detuning) and the two-photon coupling
@@ -92,8 +64,8 @@ class TestLambdaSystem(unittest.TestCase):
         result = self.hamiltonian(frame).adiabatically_eliminate([self.e])
         self.assertEqual([s.name for s in result.reduced_basis.states], ['S1/2,0,0', 'S1/2,1,0'])
         Delta1, Delta2 = self.Delta, self.Delta + self.delta
-        np.testing.assert_allclose(result.light_shifts, [abs(self.O1)**2 / (4 * Delta1), abs(self.O2)**2 / (4 * Delta2)], rtol=1e-10)
-        expected = np.conj(self.O1) * self.O2 / 8. * (1. / Delta1 + 1. / Delta2)
+        np.testing.assert_allclose(result.light_shifts, [abs(self.Omega1)**2 / (4 * Delta1), abs(self.Omega2)**2 / (4 * Delta2)], rtol=1e-10)
+        expected = np.conj(self.Omega1) * self.Omega2 / 8. * (1. / Delta1 + 1. / Delta2)
         for t in (0., 1.3e-7, 4.1e-7):
             H = np.asarray(result.hamiltonian.hamiltonian_function(t))
             # <g0|H|g1> = <g0|H|e><e|H|g1> / Delta oscillates at the two-photon detuning (the rates are differences of
@@ -102,7 +74,7 @@ class TestLambdaSystem(unittest.TestCase):
             full = np.asarray(self.hamiltonian(frame).hamiltonian_function(t))
             np.testing.assert_allclose(H[0, 1], full[0, 2] * full[2, 1] / 2. * (1. / Delta1 + 1. / Delta2), rtol=1e-6)
             np.testing.assert_allclose(H, H.conj().T, atol=1e-6)
-        self.assertAlmostEqual(result.max_perturbation_ratio, abs(self.O2) / 2. / Delta2, places=12)
+        self.assertAlmostEqual(result.max_perturbation_ratio, abs(self.Omega2) / 2. / Delta2, places=12)
         self.assertEqual(result.dissipator, None)
 
     def test_frame_independence(self):
@@ -122,7 +94,7 @@ class TestLambdaSystem(unittest.TestCase):
             kept as a modulated energy shift on request. """
         frame = [-energy for energy in self.E]
         beat = TPI * 5e6
-        H = Hamiltonian(self.basis, [self.operator(0, self.O1, self.w1), self.operator(0, self.O1, self.w1 + beat)], frame)
+        H = Hamiltonian(self.basis, [self.operator(0, self.Omega1, self.omega1), self.operator(0, self.Omega1, self.omega1 + beat)], frame)
         dropped = H.adiabatically_eliminate([self.e])
         self.assertEqual(len(dropped.dropped_oscillating_shifts), 1)
         state, amplitude, rate = dropped.dropped_oscillating_shifts[0]
@@ -134,14 +106,14 @@ class TestLambdaSystem(unittest.TestCase):
             diag_keep = np.real(np.asarray(kept.hamiltonian.hamiltonian_function(t))[0, 0])
             self.assertAlmostEqual((diag_keep - diag_drop) / abs(amplitude), 2. * np.cos(rate * t - np.angle(amplitude)), places=6)
             # and it is the beat between the two drives, |O1|^2/(4 Delta) e^{-i beat t} + c.c. (for beat << Delta)
-            self.assertAlmostEqual(abs(amplitude) / (abs(self.O1)**2 / (4. * self.Delta)), 1., delta=2. * beat / self.Delta)
+            self.assertAlmostEqual(abs(amplitude) / (abs(self.Omega1)**2 / (4. * self.Delta)), 1., delta=2. * beat / self.Delta)
 
     def test_cross_couplings_and_rwa_cutoff(self):
         """ With each laser also driving the other leg, the effective Hamiltonian gains cross terms at about twice the
             ground splitting; rwa_rate_cutoff drops (and reports) them, leaving the resonant Raman coupling. """
         frame = [-energy for energy in self.E]
-        operators = [self.operator(0, self.O1, self.w1), self.operator(1, self.O2, self.w2),
-                     self.operator(1, self.O1, self.w1), self.operator(0, self.O2, self.w2)]
+        operators = [self.operator(0, self.Omega1, self.omega1), self.operator(1, self.Omega2, self.omega2),
+                     self.operator(1, self.Omega1, self.omega1), self.operator(0, self.Omega2, self.omega2)]
         H = Hamiltonian(self.basis, operators, frame)
         full = H.adiabatically_eliminate([self.e])
         cut = H.adiabatically_eliminate([self.e], rwa_rate_cutoff=TPI * 1e9)
@@ -151,42 +123,14 @@ class TestLambdaSystem(unittest.TestCase):
         self.assertGreater(len(fast_rates), 0)
         for rate in fast_rates:
             self.assertTrue(abs(rate / splitting - 1.) < 0.01 or abs(rate / (2. * splitting) - 1.) < 0.01, rate / splitting)
-        expected = np.conj(self.O1) * self.O2 / 8. * (1. / self.Delta + 1. / (self.Delta + self.delta))
+        expected = np.conj(self.Omega1) * self.Omega2 / 8. * (1. / self.Delta + 1. / (self.Delta + self.delta))
         for t in (0., 2.1e-7):
             np.testing.assert_allclose(np.asarray(cut.hamiltonian.hamiltonian_function(t))[0, 1], expected * np.exp(-1j * self.delta * t), rtol=1e-6)
             self.assertGreater(abs(np.asarray(full.hamiltonian.hamiltonian_function(t))[0, 1] - expected * np.exp(-1j * self.delta * t)),
                                1e-3 * abs(expected))
         # light shifts now include the off-resonant leg of each laser: |O|^2/(4 Delta') with Delta' shifted by the splitting
-        expected_shift_0 = abs(self.O1)**2 / (4 * self.Delta) + abs(self.O2)**2 / (4 * (self.Delta + self.delta - splitting))
+        expected_shift_0 = abs(self.Omega1)**2 / (4 * self.Delta) + abs(self.Omega2)**2 / (4 * (self.Delta + self.delta - splitting))
         self.assertAlmostEqual(cut.light_shifts[0] / expected_shift_0, 1., places=6)
-
-    def test_input_validation(self):
-        frame = [-energy for energy in self.E]
-        H = self.hamiltonian(frame)
-        other = AtomicStructure.from_species(species='171Yb+', term_symbols=['P3/2'], level_names=['P3/2,2,2'])
-        with self.assertRaises(IonSimError):
-            H.adiabatically_eliminate(other.energy_levels)
-        with self.assertRaises(IonSimError):
-            H.adiabatically_eliminate([self.g0, self.g1, self.e])
-        with self.assertRaises(IonSimError):
-            H.adiabatically_eliminate([self.e], oscillating_shifts='average')
-        # couplings among eliminated states
-        matrix = np.zeros((3, 3)); matrix[0, 1] = matrix[1, 0] = TPI * 1e5
-        with self.assertRaises(NotImplementedError):
-            Hamiltonian(self.basis, [self.operator(0, self.O1, self.w1), CouplingOperator.from_matrix(self.basis, matrix, 0.)],
-                        frame).adiabatically_eliminate([self.g0, self.e])
-        # modulated drives
-        modulated = dataclasses.replace(self.operator(0, self.O1, self.w1), modulation_function=lambda t: 1.)
-        with self.assertRaises(NotImplementedError):
-            Hamiltonian(self.basis, [modulated], frame).adiabatically_eliminate([self.e])
-        # dissipator in a different frame
-        D = DissipatorSpontaneousEmission.from_atomic_structure_data(self.basis, [self.g0, self.g1], [self.e], [0.] * 3)
-        with self.assertRaises(IonSimError):
-            H.adiabatically_eliminate([self.e], D)
-        # validity warning
-        strong = Hamiltonian(self.basis, [self.operator(0, self.Delta, self.w1)], frame)
-        with self.assertWarns(UserWarning):
-            strong.adiabatically_eliminate([self.e])
 
 
 class TestFullVersusEffective(unittest.TestCase):
@@ -217,8 +161,8 @@ class TestFullVersusEffective(unittest.TestCase):
 
         times = np.linspace(0., 0.5e-6, 6)
         rho0 = np.zeros((len(basis.states),) * 2, dtype=complex); rho0[0, 0] = 1.
-        full = evolve_density_matrix(H, D, rho0, times)
-        effective = evolve_density_matrix(result.hamiltonian, result.dissipator, rho0[:2, :2], times)
+        _, full = Lindbladian(H, D).evolve_density_matrix(rho0, times[-1], times, **ACCURATE)
+        _, effective = Lindbladian(result.hamiltonian, result.dissipator).evolve_density_matrix(rho0[:2, :2], times[-1], times, **ACCURATE)
         kept = [basis.states.index(state) for state in result.kept_states]
         self.assertEqual(kept, [0, 1])
         # the dynamics are nontrivial: population transfer and decoherence

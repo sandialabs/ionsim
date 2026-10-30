@@ -57,6 +57,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 
 import numpy as np
+from scipy.sparse import csr_matrix
 
 from ionsim.basis import StandardBasis
 from ionsim.degree_of_freedom import AtomicStructure
@@ -164,7 +165,10 @@ def adiabatically_eliminate(hamiltonian: Hamiltonian, levels_to_eliminate: list[
                 model stiff. Dropped terms are reported in dropped_fast_terms.
 
         Returns:
-            AdiabaticEliminationResult.
+            AdiabaticEliminationResult. To simulate the reduced model, e.g.
+                Lindbladian(result.hamiltonian, result.dissipator).evolve_density_matrix(rho0, duration, time_evals, **solver_options)
+            or State.propagate_using_master_equation(..., representation='density_matrix'); the effective model can
+            contain fast terms (e.g. cross terms of Raman beams near twice the qubit frequency), see rwa_rate_cutoff.
     """
     if oscillating_shifts not in OSCILLATING_SHIFT_OPTIONS:
         raise IonSimError(f"oscillating_shifts must be one of {OSCILLATING_SHIFT_OPTIONS}, got {oscillating_shifts!r}.")
@@ -412,22 +416,19 @@ def _check_dissipator(hamiltonian: Hamiltonian, dissipator: Dissipator):
 
 
 def _lindblad_elements(dissipator: Dissipator) -> list[list[tuple]]:
-    """ For each Lindblad operator, its elements (row g, column e, strength, frame-shifted rate). """
+    """ For each Lindblad operator, its elements (row g, column e, strength, frame-shifted rate), from the dissipator's
+        precomputed Dissipator.lindblad_operator_parts: diagonal elements have rate 0, off-diagonal ones their
+        frame-shifted rate. """
     all_elements = []
-    for operator in dissipator.operators:
+    for operator, parts in zip(dissipator.operators, dissipator.lindblad_operator_parts):
         if operator.modulation_function is not None:
             raise NotImplementedError("Modulated Lindblad operators are not supported.")
         elements = []
-        if isinstance(operator, (EnergyShiftOperator, GeneralOperator)):
-            for shift in operator.energy_shifts:
-                index = dissipator.basis.states.index(shift.row_state)
-                elements.append((index, index, shift.strength, 0.))
-        if isinstance(operator, (CouplingOperator, GeneralOperator)) and operator.couplings:
-            matrix, rate = dissipator._frame_shifted_coupling_matrix_and_rate_from_operator(operator)
-            matrix, rate = matrix.tocoo(), rate.tocsr()
-            for g, e, lam in zip(matrix.row, matrix.col, matrix.data):
-                if abs(lam) > 0.:
-                    elements.append((int(g), int(e), lam, float(rate[g, e])))
+        if parts.static is not None:
+            static = csr_matrix(parts.static).tocoo()
+            elements.extend((int(i), int(j), value, 0.) for i, j, value in zip(static.row, static.col, static.data) if abs(value) > 0.)
+        elements.extend((int(g), int(e), value, float(rate)) for g, e, value, rate
+                        in zip(parts.rows, parts.columns, parts.values, parts.rates) if abs(value) > 0.)
         all_elements.append(elements)
     return all_elements
 
@@ -437,8 +438,9 @@ def _warn_on_offdiagonal_decay(dissipator: Dissipator, Q: list[int]):
     if len(Q) < 2:
         return
     total = np.zeros((len(Q), len(Q)), dtype=complex)
-    for operator in dissipator.operators:
-        matrix = operator.static_matrix.toarray()[:, Q]
+    for parts in dissipator.lindblad_operator_parts:
+        matrix = parts.matrix(0.)
+        matrix = (matrix.toarray() if hasattr(matrix, 'toarray') else matrix)[:, Q]
         total += matrix.conj().T @ matrix
     diagonal = np.max(np.abs(np.diag(total))) if total.size else 0.
     off_diagonal = np.max(np.abs(total - np.diag(np.diag(total))))
