@@ -404,12 +404,9 @@ class Lindbladian:
             matrix-vector product) and memory is O(N^2). The same equation as evolve_supervector, so results agree to
             solver tolerance.
 
-            initial_density_matrix: N x N; need not be Hermitian (e.g. |i><j| when building a process matrix).
             solver_options: ode_solver and its options (see custom_math.solve_ode). Explicit solvers suit this form (e.g.
                 ode_solver='solve_ivp', method='DOP853', or 'zvode' with method='adams'); for stiff problems prefer
                 evolve_supervector, whose Jacobian (the superoperator) the implicit solvers use.
-
-            Returns (times, density matrices).
         """
         n = self.dimension
         rho0 = initial_density_matrix.toarray() if hasattr(initial_density_matrix, 'toarray') else np.asarray(initial_density_matrix)
