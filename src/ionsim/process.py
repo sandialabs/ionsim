@@ -106,10 +106,6 @@ class Gate(Process):
             return gate.process_matrix
 
         if noise is not None and noise.parameter_name in parameter_names:
- #<<<<<<< HEAD
- #            noisy_parameter_index = parameter_names.index(noise.parameter_name)
- #            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
- #=======
             process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function)
 
         return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
@@ -155,17 +151,11 @@ class Gate(Process):
         initial_vectors = basis.vectors if dofs_to_trace_out is None else reduced_basis.vectors
 
         final_states = []
- #<<<<<<< HEAD
- #        #ic(len(reduced_basis.vectors))
- #        #ic(reduced_basis.vectors)
- #        for vector in reduced_basis.vectors:
- #=======
         for i, vector in enumerate(initial_vectors):
             if states_to_project and (i in unwanted_state_indices):
                 # Skip basis states that we will ultimately project out.
                 continue
 
-#>>>>>>> main
             if dofs_to_trace_out is None:
                 initial_state = State.from_wavefunction(basis, vector)
             else:
@@ -179,18 +169,6 @@ class Gate(Process):
                     )
                 )
 
- #<<<<<<< HEAD
- #            #ic(len(initial_state.wavefunction))
- #            # start = time.perf_counter()
- #            final_states.append(
- #                initial_state.propagate_using_schrodinger_equation(
- #                    hamiltonian, duration,
- #                    ode_solver=ode_solver, **ode_solver_kwargs
- #                )
- #            )
- #            # end = time.perf_counter()
- #            # ic(f'State propagation took {end-start} seconds.')
- #=======
             else:
                 states = initial_state.propagate_using_schrodinger_equation(
                         hamiltonian, duration,
@@ -202,22 +180,6 @@ class Gate(Process):
             #  compared to projecting the full process matrix. 
             if projection: 
                 final_states[-1] = final_states[-1].project_out_states(states_to_project, reduced_basis) 
-#>>>>>>> main
-
-        # TODO: how can we do multiprocessing outside of main?
-        # from concurrent.futures import ProcessPoolExecutor
-        # def propagate(vector):
-        #     if traced_out_dofs is None:
-        #         initial_state = State.from_wavefunction(basis, vector)
-        #     else:
-        #         # wavefunction = basis.build_wavefunction(vector, traced_out_initial_wavefunction, [traced_out_dof])
-        #         # TODO: crate the method above and use instead of line below
-        #         wavefunction = np.kron(vector, traced_out_initial_wavefunction)
-        #         initial_state = State.from_wavefunction(basis, wavefunction)
-        #     initial_state.propagate_using_schrodinger_equation(hamiltonian, duration)
-        # with ProcessPoolExecutor() as executor:
-        #     results = executor.map(propagate, reduced_basis.vectors)
-        # final_states = list(results)
 
         if dofs_to_trace_out is None:
             final_wavefunctions = [fs.wavefunction for fs in final_states]
@@ -266,16 +228,7 @@ class Gate(Process):
         """
         # TODO: Include tracing out DOF functionality 
         if dofs_to_trace_out is not None:
- #<<<<<<< HEAD
- #            assert(initial_wavefunctions_for_dofs_to_trace_out is not None)
- #            assert(len(dofs_to_trace_out) == len(initial_wavefunctions_for_dofs_to_trace_out))
- #            assert(len(dofs_to_trace_out) == 1) # TODO: generlize for multiple traced out DoFs
- #            dof_to_trace_out = dofs_to_trace_out[0]
- #            initial_wavefunction_for_dof_to_trace_out = initial_wavefunctions_for_dofs_to_trace_out[0]
- #            # TODO: consider if this function should just accept a reduced basis...? ==> ECM 03/2026: Yes I think so. 
- #=======
             raise NotImplementedError("Tracing out DOFs from a larger subspace not yet implemented.")
-#>>>>>>> main
 
         projection, reduced_basis, states_to_project, unwanted_state_indices, computational_indices = _determine_projection_components(reduced_basis, states_to_project, levels_to_project, basis, dofs_to_trace_out)
 
@@ -307,20 +260,6 @@ class Gate(Process):
                         continue
 
                     # Necessary to do |vector_p > <vector| to get correct basis ordering after projection  
- #<<<<<<< HEAD
- #                    initial_state = State.from_density_matrix(basis,  np.outer(vector_p, vector))
- #        
- #                    # TODO: Include tracing out DOF functionality 
- #                    # Time-evolve with Lindbladian, this yields the ij'th column of the process matrix.
- #         #            if dofs_to_trace_out is None:
- #         #                initial_state = State.from_wavefunction(basis, vector)
- #         #            else:
- #         #                initial_state = State.from_wavefunction_with_new_component(
- #         #                    basis, vector, initial_wavefunction_for_dof_to_trace_out, [dof_to_trace_out]
- #         #                )
- #                    final_state = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
- #    
- #=======
                     initial_state = State.from_density_matrix(basis, np.outer(vector_p, vector))
                     if 'time_evals' in ode_solver_kwargs:
                         states = initial_state.propagate_using_master_equation(lindbladian, duration, ode_solver=ode_solver, **ode_solver_kwargs)
@@ -330,7 +269,6 @@ class Gate(Process):
 
                     if projection: 
                         final_state = final_state.project_out_states(states_to_project, reduced_basis) 
-#>>>>>>> main
                     # Supervector of final state gives you 1 column of the process matrix  
                     process_matrix_columns.append(final_state.supervector) 
     
@@ -348,22 +286,12 @@ class Gate(Process):
         @wraps(lindbladian_function)
         def process_matrix_function(*args, **kwargs):
             gate = cls.from_lindbladian(basis, lindbladian_function(*args, **kwargs), duration,
- #<<<<<<< HEAD
- #                                        lindbladian_time_independent = lindbladian_time_independent,
- #                                        lindbladian_commutes_at_later_times = lindbladian_commutes_at_later_times)
- #            return gate.process_matrix
- #
- #        if noise is not None and noise.parameter_name in parameter_names:
- #            noisy_parameter_index = parameter_names.index(noise.parameter_name)
- #            process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function, noisy_parameter_index)
- #=======
                                         lindbladian_time_independent=lindbladian_time_independent,
                                         lindbladian_commutes_at_later_times=lindbladian_commutes_at_later_times)
             return gate.process_matrix
 
         if noise is not None and noise.parameter_name in parameter_names:
             process_matrix_function = noise.add_noise_to_matrix_function(process_matrix_function)
-#>>>>>>> main
 
         return cls(basis, process_matrix_function(**parameters), process_matrix_function, parameters)
 
@@ -474,7 +402,6 @@ class Circuit(Process):
             raise IonSimError(f"List of gates must not be empty, received: {gates}.")
 
         deterministic = (noise is None) or all([noise.parameter_name not in gate.parameters for gate in gates])
-#<<<<<<< HEAD
 
         # Circuit process matrix function: gates with a process matrix function contribute their parameters; fixed gates
         # (no function, e.g. Gate.from_unitary) enter as constants. Circuit-level noise is averaged inside the function.
@@ -483,23 +410,6 @@ class Circuit(Process):
         for k, gate in enumerate(gates):
             if gate.process_matrix_function is not None:
                 gate_functions.append(gate.process_matrix_function)
-#=======
- #        if deterministic: 
- #            process_matrix = _combine_process_matrices([gate.process_matrix for gate in gates])
- #            return cls(gates[0].basis, process_matrix, gates)
- #        pmats_list = []
- #
- #        for gate in gates:
- #            if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
- #                sig = inspect.signature(gate.process_matrix_function)
- #                bound = sig.bind(**gate.parameters)
- #                bound.apply_defaults()
- #                base_value = bound.arguments[noise.parameter_name]
- #                pmats = []
- #                for darg in noise.domain_arguments:
- #                    bound.arguments[noise.parameter_name] = base_value + darg
- #                    pmats.append(gate.process_matrix_function(*bound.args, **bound.kwargs))
-#>>>>>>> main
             else:
                 gate_functions.append(constant_functions.setdefault(id(gate), _constant_process_matrix_function(gate.process_matrix, k)))
 
@@ -519,9 +429,10 @@ class Circuit(Process):
                 for gate in gates:
                     # TODO: Consider providing a list of gates that take in the quasistatic noise and add a check so that a same-name parameter in a non-quasitatic noise gate doesn't get used.  
                     if gate.process_matrix_function is not None and noise.parameter_name in gate.parameters:
-                        arguments = np.array(list(gate.parameters.values()))
-                        vec = np.array([1 if noise.parameter_name == name else 0 for name in gate.parameters])
-                        matrices.append(gate.process_matrix_function(*list(arguments + darg * vec)))
+                        # by keyword, so the gate's parameter order need not match its function's signature
+                        arguments = dict(gate.parameters)
+                        arguments[noise.parameter_name] = arguments[noise.parameter_name] + darg
+                        matrices.append(gate.process_matrix_function(**arguments))
                     else:
                         matrices.append(gate.process_matrix)
                 return _combine_process_matrices(matrices)
@@ -586,8 +497,6 @@ class Circuit(Process):
 
 
 ## Process matrix and outcome probability helper functions         
-#=======
-#>>>>>>> main
 def _combine_process_matrices(process_matrices: list[Matrix]):
     """Combine a series of process matrices (in chronological order) into a single process matrix for the whole circuit."""
     if len(process_matrices) == 1:
@@ -1020,27 +929,6 @@ class Circuit_Process_Matrix_Function():
 
 
 
-# Possible idea: Build a IonSim circuit object from a GstCircuit object, requires gate models + basis  
-#@dataclass(frozen=True,eq=False)
-#class GST_Circuit():
-#    """ Class containing IonSim GST Circuit Objects, containing lists of gates"""
-#
-#    name: str
-#    prep_circuit: Circuit  
-#    germ_circuit: Circuit 
-#    measure_circuit: Circuit 
-#    germ_power: int 
-#    counts: dict[str, int] | None=None 
-#    
-#    @property
-#    def expanded_circuit(self) -> list[Gate]:
-#        """ List of gates, expanded (no germ power included) """
-#        return self.prep_circuit.gates + self.germ_circuit.gates * self.germ_power.gates + self.measure_circuit.gates
-#
-#    def __repr__(self):
-#        readable_name = " ".join(repr(gate.name) for gate in self.expanded_gates) or "(empty)"
-#        return f"GST_Circuit({gates_readable}, counts={self.counts})"
-#=======
 def _parse_projection_input(reduced_basis: StandardBasis | None=None, states_to_project: list[EnergyEigenstate] | None=None, 
                             levels_to_project: list[EnergyLevel] | None = None, full_basis: StandardBasis | None=None) -> tuple:
     """ Function to parse user input for projection information. """
@@ -1086,5 +974,3 @@ def _determine_projection_components(reduced_basis: StandardBasis | None=None, s
             reduced_basis = StandardBasis([dof for dof in basis.degrees_of_freedom if dof not in dofs_to_trace_out])
 
     return projection, reduced_basis, states_to_project, unwanted_state_indices, computational_indices
-
-#>>>>>>> main

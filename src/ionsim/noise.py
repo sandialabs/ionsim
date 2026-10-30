@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 from functools import wraps
 import inspect
 from typing import Callable
-import inspect
 
 def _gaussian(x: float, standard_deviation: float, mean: float = 0):
     """A normalized Gaussian function."""
@@ -200,46 +199,23 @@ class Noise:
         return np.tensordot(weights, ys, axes=1)
 
     def add_noise_to_matrix_function(self, matrix_function: Callable):
-        """Replace a function with one averaged over the noisy parameter."""
+        """Replace a function with its average over the noisy parameter (self.average: the normalized realization weights,
+            with the domain scale if set). The noisy parameter is found by name in the function's signature, so it may be
+            passed positionally or as a keyword, in any order."""
+        signature = inspect.signature(matrix_function)
 
-        # ECM Fix 07/2026 to handle the case where a user passes in kwargs only
         @wraps(matrix_function)
         def wrapper(*args, **kwargs):
- #<<<<<<< HEAD
- #            param_in_kwargs = self.parameter_name in kwargs
- #            if param_in_kwargs:
- #                base_value = float(kwargs[self.parameter_name])
- #            else:
- #                if parameter_index >= len(args):
- #                    raise TypeError(f"Noisy parameter at position {parameter_index} was not provided positionally nor specified as a keyword argument.")
- #                base_value = float(args[parameter_index])
- #
- #            def displaced(darg):
- #                noisy_value = base_value + darg
- #                if param_in_kwargs:
- #                    return matrix_function(*args, **dict(kwargs, **{self.parameter_name: noisy_value}))
- #                call_args = list(args)
- #                call_args[parameter_index] = noisy_value
- #                return matrix_function(*call_args, **kwargs)
- #            return self.average(displaced)
- #=======
-            # Locate the named parameter in the arguments, either
-            # keyword or positional, so that we can change it later.
-            sig = inspect.signature(matrix_function)
-            bound = sig.bind(*args, **kwargs)
+            bound = signature.bind(*args, **kwargs)
             bound.apply_defaults()
-
-            if not self.parameter_name in bound.arguments:
-                raise IonSimError(f"No paramter {self.parameter_name} in function to add noise to")
-
+            if self.parameter_name not in bound.arguments:
+                raise IonSimError(f"No parameter {self.parameter_name!r} in the function to add noise to.")
             base_value = bound.arguments[self.parameter_name]
 
-            def call_noisy(delta):
-                noisy_value = base_value + delta
-                bound.arguments[self.parameter_name] = noisy_value
-                return matrix_function(*bound.args, **bound.kwargs)
-
-            ys = np.array([self.probability_density_function(darg) * call_noisy(darg)
-                           for darg in self.domain_arguments])
-            return trapz_for_matrix(ys, self.domain_arguments)
+            def displaced(delta):
+                call = signature.bind(*args, **kwargs)        # fresh binding for each displacement
+                call.apply_defaults()
+                call.arguments[self.parameter_name] = base_value + delta
+                return matrix_function(*call.args, **call.kwargs)
+            return self.average(displaced)
         return wrapper

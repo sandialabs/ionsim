@@ -337,7 +337,8 @@ class TestProcess(unittest.TestCase):
         Sx_pauli = self.Sx.convert_to_pauli_basis()
 
         fidelity = noisy_gate_pauli.compute_process_fidelity(Sx_pauli.process_matrix)
-        self.assertAlmostEqual(fidelity, 0.9535335189419549, places=14)
+        # same gate as test_noisy_phi_gate_process_fidelity (normalized realization weights)
+        self.assertAlmostEqual(fidelity, 0.9535335138400007, places=14)
 
     def test_Raman_gate(self):
         full_basis = StandardBasis([self.spin_c])
