@@ -169,18 +169,29 @@ class State:
         rhos = [self.basis.compute_density_matrix_from_wavefunction(psi) for psi in psis]
         return [State(self.basis, rho, psi) for rho, psi in zip(rhos, psis)]
 
+
     def propagate_using_master_equation(self, lindbladian: Lindbladian, duration: float,
-            time_evals: Vector | None = None, **kwargs):
+            time_evals: Vector | None = None, representation: str = 'supervector', **kwargs):
         """
             Propagate the state by solving the time-dependent Lindblad master equation.
-            This builds and returns a new state in the same basis as the initial state.
-        """
+            This builds and returns a new state in the same basis as the initial state (a list of states if time_evals is given).
 
-        times, supervectors = lindbladian.evolve_supervector(self.supervector, duration, time_evals, **kwargs)
+            representation:
+                'supervector' (default): evolve the N^2 supervector with the N^2 x N^2 superoperator
+                    (Lindbladian.evolve_supervector). Its Jacobian is available to implicit (stiff) solvers.
+                'density_matrix': evolve the N x N density matrix directly (Lindbladian.evolve_density_matrix): the same
+                    equation at O(N^3) cost per term and step and O(N^2) memory; best with explicit solvers.
+            kwargs: ode_solver and solver options (see custom_math.solve_ode).
+        """
+        if representation == 'supervector':
+            times, supervectors = lindbladian.evolve_supervector(self.supervector, duration, time_evals, **kwargs)
+            rhos = [self.basis.compute_density_matrix_from_supervector(vector) for vector in supervectors]
+        elif representation == 'density_matrix':
+            times, rhos = lindbladian.evolve_density_matrix(self.density_matrix, duration, time_evals, **kwargs)
+        else:
+            raise IonSimError(f"representation must be 'supervector' or 'density_matrix', got {representation!r}.")
         if time_evals is None:
-            density_matrix = self.basis.compute_density_matrix_from_supervector(supervectors[-1])
-            return State(self.basis, density_matrix)
-        rhos = [self.basis.compute_density_matrix_from_supervector(psi) for psi in supervectors]
+            return State(self.basis, rhos[-1])
         return [State(self.basis, rho) for rho in rhos]
 
     def propagate_using_pauli_channel(self, Pauli_error_rates: dict[str, float]):
