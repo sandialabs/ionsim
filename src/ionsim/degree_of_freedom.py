@@ -35,7 +35,6 @@ UNCOUPLED_OVERLAP_WARNING_THRESHOLD = 0.9
 class DegreeOfFreedom(ABC):
     """A degree of freedom in a basis of states."""
     energy_levels: Sequence[EnergyLevel]
-    name: str | None = None # TODO: will we use these names?
 
 def _to_float(value) -> float:
     """Convert a user-supplied quantum number (int, float, Fraction, or string like '3/2') to float."""
@@ -66,6 +65,7 @@ def _check_projection(m: float, total: float, m_name: str, total_name: str, qn: 
 class MotionalMode(DegreeOfFreedom):
     """An normal mode of motion for a linear chain of ions."""
     energy_levels: list[CollectiveMotionalEnergyLevel]
+    name: str | None = None 
 
     @classmethod
     def from_frequency(cls, frequency: float, fock_dimension: int, name: str | None = None, level_aliases: list[str] | None=None):
@@ -80,6 +80,10 @@ class MotionalMode(DegreeOfFreedom):
 class AtomicStructure(DegreeOfFreedom):
     """An atomic structure object, containing atomic internal energy levels corresponding to angular momentum eigenstates."""
     energy_levels: list[AtomicInternalEnergyLevel | SinkLevel]
+ #    # TODO: Take in quantization axis or magnetic field as a vector to set the quantization axis 
+    atomic_mass: float 
+    atomic_charge: int 
+    name: str | None = None 
 
     @classmethod
     def from_species(cls, species: str, term_symbols: list[str] | None = None, level_names: list[str] | None = None,
@@ -111,6 +115,9 @@ class AtomicStructure(DegreeOfFreedom):
         # Import configuration data and levels for the species 
         config_data = cls.get_config_data(species)
         levels_data = config_data['levels']
+        atomic_mass = config_data['mass'] # Daltons
+        atomic_charge = config_data['charge'] # Daltons
+        atomic_number = config_data['Z'] # Atomic number, number of protons 
 
         if level_names and quantum_numbers:
             raise IonSimError("Specify either level names or quantum numbers, not both.")
@@ -154,7 +161,7 @@ class AtomicStructure(DegreeOfFreedom):
             if level_aliases:
                 levels = [replace(level, alias=level_aliases[level_names.index(level.name)]) for level in levels]
 
-        return cls(levels + [SinkLevel()] if include_sink else levels, name)
+        return cls(levels + [SinkLevel()] if include_sink else levels, atomic_mass, atomic_charge, name)
 
     @classmethod
     def _levels_from_quantum_numbers(cls, quantum_numbers: list[dict], builders: list[_ManifoldBuilder],
@@ -166,7 +173,6 @@ class AtomicStructure(DegreeOfFreedom):
             qn = cls._parse_quantum_numbers(raw_qn, nuclear_spin)
             builder = cls._match_manifold(qn, builders)
             eigenbasis = cls._identify_basis(qn, nuclear_spin)
-
             if eigenbasis is EigenBasis.FINE:
                 _check_projection(qn['mj'], builder.j, 'mj', 'j', raw_qn)
                 level = builder.fine_level(qn['mj'])
@@ -249,6 +255,7 @@ class AtomicStructure(DegreeOfFreedom):
         hyperfine_B = level_data.get('hyperfine_B')
         fine_data['hyperfine_B'] = None if hyperfine_B is None else 2 * np.pi * hyperfine_B
         fine_data['branching_ratios'] = level_data.get('branching_ratios')
+        fine_data['reduced_dipole_matrix_elements'] = level_data.get('reduced_dipole_matrix_elements')
         fine_data['j'] = cls.compute_j(term_symbol)
         if level_data['coupling_scheme'] == 'j1l2':
             fine_data['k'] = cls.compute_k(term_symbol)

@@ -30,7 +30,6 @@ from ionsim.custom_types import Vector, Matrix
 from ionsim.named_operators import Pauli
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD
 
-
 @dataclass(frozen=True, eq=False)
 class Basis(ABC):
     """A basis of states."""
@@ -40,6 +39,11 @@ class Basis(ABC):
     @abstractmethod
     def vectors(self):
         """Basis-state vectors."""
+
+    @property
+    def atomic_structure_DOFs(self):
+        """ Returns list of atomic structure degrees of freedom or empty list if none. """
+        return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicStructure)]
 
     @property
     def change_of_basis_matrix(self):
@@ -257,7 +261,7 @@ class StandardBasis(Basis):
             levels_to_keep = [l for l in dof.energy_levels if l in levels]
 
         if isinstance(dof, AtomicStructure):
-            return AtomicStructure(levels_to_keep, dof.name) 
+            return AtomicStructure(levels_to_keep, dof.atomic_mass, dof.atomic_charge, dof.name) 
         elif isinstance(dof, MotionalMode):
             return MotionalMode(levels_to_keep, dof.name) 
         else:

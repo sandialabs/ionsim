@@ -7,6 +7,8 @@
 # http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
 #***************************************************************************************************
 import unittest
+import warnings
+
 import numpy as np
 
 from ionsim.process import Gate
@@ -15,8 +17,26 @@ from ionsim.basis import StandardBasis
 from ionsim.named_operators import Pauli, Fock, Unitary
 from ionsim.operator import CouplingOperator
 from ionsim.hamiltonian import Hamiltonian
+from ionsim.laser import Laser, Polarization
 from ionsim.testing import assert_array_close
 from ionsim.ionsim_error import IonSimError
+
+
+# Shared gate parameters: an MS(0, THETA) gate in LOOPS phase-space loops of duration TAU with Lamb-Dicke parameter ETA.
+THETA = np.pi / 8
+ETA = 0.1
+TAU = 125.0 * 1e-6
+LOOPS = 2
+
+
+def _ms_detuning_and_rabi_rate(theta: float, eta: float, tau: float, loops: int) -> tuple[float, float]:
+    """ Detuning delta and carrier Rabi rate Omega (rad/s) of a bichromatic MS gate that closes `loops` phase-space loops
+        in time tau and gives Unitary.MS(phi, theta):
+            delta = 2 pi loops / tau,   eta Omega = sqrt(theta / (pi/2)) * delta / (2 sqrt(loops)).
+        For theta = pi/2 this is the maximally entangling condition eta Omega = delta / (2 sqrt(loops)). """
+    detuning = 2*np.pi * loops / tau
+    rabi_rate = np.sqrt(theta/(np.pi/2)) * np.pi * np.sqrt(loops) / (eta * tau)
+    return detuning, rabi_rate
 
 
 def _ms_hamiltonian(basis, spins, mode, eta, rabi_rate, detuning):
@@ -54,12 +74,8 @@ class TestMSGateTracingOutMotion(unittest.TestCase):
         self.basis = StandardBasis([*self.spins, self.mode])
         self.psi_motion_0 = np.eye(self.fock_dimension)[0]
 
-        self.theta = np.pi/8
-        self.eta = 0.1
-        self.tau = 125.0 * 1e-6
-        loops = 2
-        self.detuning = 2*np.pi * loops / self.tau
-        self.rabi_rate = np.sqrt(self.theta/(np.pi/2)) * np.pi * np.sqrt(loops) / (self.eta * self.tau)
+        self.theta, self.eta, self.tau = THETA, ETA, TAU
+        self.detuning, self.rabi_rate = _ms_detuning_and_rabi_rate(THETA, ETA, TAU, LOOPS)
 
         self.hamiltonian = _ms_hamiltonian(self.basis, self.spins, self.mode, self.eta, self.rabi_rate, self.detuning)
         self.gate = Gate.from_hamiltonian(self.basis, self.hamiltonian, self.tau, [self.mode], [self.psi_motion_0])
@@ -91,6 +107,81 @@ class TestMSGateTracingOutMotion(unittest.TestCase):
         self.assertTrue(all(a is b for a, b in zip(gate.basis.degrees_of_freedom, self.spins)))
         assert_array_close(gate.process_matrix, self.gate.process_matrix, rtol=0, atol=1e-6)
 
+
+class TestMSGateFromLaserSidebands(unittest.TestCase):
+    """ MS gate built from Laser sideband couplings on 40Ca+ S1/2 -> D5/2 (729 nm, E2), with the same gate parameters
+        (theta, eta, tau, loops, hence the same Rabi rate) as TestMSGateTracingOutMotion.
+
+        Two ions, one mode. Two lasers made with gaussian_from_target_rabi_frequency at detunings +/- (omega_mode + delta)
+        from the qubit; the blue sideband of the blue tone and the red sideband of the red tone. The lasers propagate
+        along x with polarization along z, which couples |S1/2, mJ=1/2> to |D5/2, mJ=3/2>.
+    """
+    MODE_FREQUENCY = 2*np.pi * 1e6    # rad/s; arbitrary trap frequency
+    FOCK_DIMENSION = 6                # small-angle gate: small motional displacement
+    WAIST = 10e-6                     # m
+    N_HAT = np.array([1., 0., 0.])
+    QN_G, QN_E = {'n': 4, 'l': 0, 'mj': 0.5}, {'n': 3, 'l': 2, 'j': 2.5, 'mj': 1.5}
+
+    def build(self, mode_first: bool):
+        atoms = [AtomicStructure.from_species(species='40Ca+', term_symbols=['S1/2', 'D5/2'], name=f'ion{i}',
+                                              quantum_numbers=[self.QN_G, self.QN_E]) for i in range(2)]
+        mode = MotionalMode.from_frequency(self.MODE_FREQUENCY, self.FOCK_DIMENSION, name='mode')
+        basis = StandardBasis([mode, *atoms] if mode_first else [*atoms, mode])
+        g = next(level for level in atoms[0].energy_levels if level.term_symbol == 'S1/2')
+        e = next(level for level in atoms[0].energy_levels if level.term_symbol == 'D5/2')
+        return atoms, mode, basis, g, e
+
+    def laser(self, rabi_rate, g, e, detuning):
+        """ Laser with |Omega| = rabi_rate on g -> e whose phase cancels the complex phase of Omega and adds -pi/2, so the
+            sideband raising element (Omega/2) e^{i phase} (i eta) equals that of _ms_hamiltonian, which gives MS(0, theta). """
+        polarization = Polarization(np.array([0., 0., 1.]), self.N_HAT)
+        def build(phase):
+            return Laser.gaussian_from_target_rabi_frequency(rabi_rate, g, e, 2, self.WAIST, self.N_HAT, polarization,
+                                                             detuning=detuning, phase=phase)
+        rabi = build(0.).rabi_frequency(g, e, 2)
+        self.assertAlmostEqual(abs(rabi) / rabi_rate, 1., places=10)
+        laser = build(-np.pi/2 - np.angle(rabi))
+        self.assertAlmostEqual(laser.frequency, e.energy - g.energy + detuning, delta=1e-9 * laser.frequency)
+        return laser
+
+    def gate(self, mode_first: bool, theta: float = THETA):
+        atoms, mode, basis, g, e = self.build(mode_first)
+        detuning, rabi_rate = _ms_detuning_and_rabi_rate(theta, ETA, TAU, LOOPS)
+        blue = self.laser(rabi_rate, g, e, +(self.MODE_FREQUENCY + detuning))
+        red = self.laser(rabi_rate, g, e, -(self.MODE_FREQUENCY + detuning))
+        etas = [[ETA], [ETA]]   # rows: atoms (target_atoms=None -> basis order), columns: [mode]
+        operators = (blue.build_blue_sideband_coupling_operators(basis, None, [mode], [g], [e], 2, etas)
+                     + red.build_red_sideband_coupling_operators(basis, None, [mode], [g], [e], 2, etas))
+        hamiltonian = Hamiltonian(basis, operators, [-state.energy for state in basis.states], sparse=False)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            gate = Gate.from_hamiltonian(basis, hamiltonian, TAU, [mode], [np.eye(self.FOCK_DIMENSION)[0]])
+        return atoms, gate
+
+    def test_same_rabi_rate_as_reference_test(self):
+        _, rabi_rate = _ms_detuning_and_rabi_rate(THETA, ETA, TAU, LOOPS)
+        reference = TestMSGateTracingOutMotion()
+        reference.setUp()
+        self.assertEqual(rabi_rate, reference.rabi_rate)
+
+    def test_small_angle_ms_gate_matches_ideal_for_any_basis_ordering(self):
+        """ After LOOPS loops the mode is disentangled and the traced-out gate is Unitary.MS(0, THETA), for either basis
+            ordering; MS(0, 0) and MS(0, 2 THETA) are clearly worse matches. """
+        for mode_first in (False, True):
+            with self.subTest(mode_first=mode_first):
+                atoms, gate = self.gate(mode_first)
+                self.assertTrue(gate.basis.is_qubit_basis)
+                fidelity = lambda theta: gate.compute_process_fidelity(
+                    Gate.from_unitary(gate.basis, Unitary.MS(0., theta), atoms).process_matrix)
+                self.assertGreater(fidelity(THETA), 0.9999)
+                for wrong_theta in [0., 2*THETA]:
+                    self.assertLess(fidelity(wrong_theta), 0.97)
+
+    def test_maximally_entangling_condition(self):
+        """ theta = pi/2 (eta Omega = delta / (2 sqrt(loops))) gives MS(0, pi/2). """
+        atoms, gate = self.gate(False, theta=np.pi/2)
+        ideal = Gate.from_unitary(gate.basis, Unitary.MS(0., np.pi/2), atoms).process_matrix
+        self.assertGreater(gate.compute_process_fidelity(ideal), 0.999)
 
 if __name__ == '__main__':
     unittest.main()

@@ -47,6 +47,27 @@ class TestState(unittest.TestCase):
             state_coefficients[n] = np.sqrt(np.exp(-1))/np.sqrt(math.factorial(n))  # |00>; n
         self.atomic_structure_coherent_state = State.from_coefficients(self.atomic_structure_motion_basis2, list(state_coefficients))
 
+    def test_project_out_levels_builds_reduced_basis(self):
+        """project_out_levels without new_basis builds the subspace basis and keeps the remaining amplitudes."""
+        atom = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'P1/2'], level_names=['S1/2,0,0', 'S1/2,1,0', 'P1/2,1,0'])
+        g0, g1, e = atom.energy_levels
+        basis = StandardBasis([atom])
+        wavefunction = np.array([0.6, 0.0, 0.8], dtype=complex)
+        projected = State.from_wavefunction(basis, wavefunction).project_out_levels([e])
+        self.assertEqual([state.components for state in projected.basis.states], [[g0], [g1]])
+        assert_array_close(projected.wavefunction, wavefunction[:2])
+
+    def test_project_to_qubit_subspace(self):
+        """project_to_qubit_subspace returns self in a qubit basis and projects out non-qubit levels otherwise."""
+        qubit_state = State.from_coefficients(self.basis, [1., 0., 0., 0.])
+        self.assertIs(qubit_state.project_to_qubit_subspace([]), qubit_state)
+
+        atom = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'P1/2'], level_names=['S1/2,0,0', 'S1/2,1,0', 'P1/2,1,0'])
+        basis = StandardBasis([atom])
+        projected = State.from_coefficients(basis, [1., 0., 0.]).project_to_qubit_subspace([atom.energy_levels[2]])
+        self.assertTrue(projected.basis.is_qubit_basis)
+        assert_array_close(projected.wavefunction, np.array([1., 0.]))
+
     def test_wavefunction_with_new_component(self):
         """Test adding new-DoF components at the end, in the middle, and for several DoFs at once."""
         spin_psi = np.array([0.6, 0.8j])

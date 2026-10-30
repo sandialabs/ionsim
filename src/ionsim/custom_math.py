@@ -8,7 +8,7 @@
 #***************************************************************************************************
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 from typing import Any, Callable
 from scipy.integrate import trapezoid as trapz
@@ -70,105 +70,114 @@ def matrix_AYB_multiply_to_superoperator(A: AnyMatrix | None, B: AnyMatrix | Non
     else:
         return result.toarray()
 
+def solve_ode(right_hand_side: Callable, initial_vector: Vector, duration: float, time_evals: Vector | None = None,
+              ode_solver: str = 'odeintz', jacobian: Callable | None = None, **solver_options):
+    """ Solve dy/dt = right_hand_side(t, y) for a flat complex vector y from t = 0 to t = duration. """
+    solvers = {'odeintz': OdeIntz, 'solve_ivp': SolveIvp, 'zvode': ZVODE}
+    if ode_solver not in solvers:
+        raise IonSimError(f'ODE solver {ode_solver} is not implemented. Available solvers: {sorted(solvers)}.')
+    return solvers[ode_solver](right_hand_side, initial_vector, duration, time_evals, jacobian, dict(solver_options)).solve()
+
+
 def solve_time_evolution_equation(interaction_function: Callable, initial_state_vector: Vector, duration: float,
-    time_evals: Vector | None = None, ode_solver: str = 'odeintz', **kwargs):
-    """Solve the time-dependent Schrodinger equation or the vectorized Lindblad master equation."""
-    #print(f'Solving ODE with {ode_solver}.')
-    if ode_solver == 'odeintz':
-        return OdeIntz(interaction_function, initial_state_vector, duration, time_evals, **kwargs).solve()
-    elif ode_solver == 'solve_ivp':
-        return SolveIvp(interaction_function, initial_state_vector, duration, time_evals, **kwargs).solve()
-    elif ode_solver == 'zvode':
-        return ZVODE(interaction_function, initial_state_vector, duration, time_evals, **kwargs).solve()
-    else:
-        raise IonSimError(f'ODE solver {ode_solver} is not implemented.')
+    time_evals: Vector | None = None, ode_solver: str = 'odeintz', **solver_options):
+    """ Solve dy/dt = -i A(t) y, the time-dependent Schrodinger equation (A = H) or the vectorized Lindblad master equation
+        (A = i L), with A(t) = interaction_function(t). See solve_ode for the solvers and solver_options. """
+    def right_hand_side(t, y):
+        return interaction_function(t).dot(-1j * y)
+
+    def jacobian(t, y):
+        matrix = interaction_function(t)
+        return -1j * (matrix.toarray() if sparse.issparse(matrix) else np.asarray(matrix))
+
+    return solve_ode(right_hand_side, initial_state_vector, duration, time_evals, ode_solver, jacobian=jacobian, **solver_options)
 
 
 @dataclass(frozen=True, eq=False)
 class OdeSolver(ABC):
-    """A numerical routine to solve an ordinarty differential equation (ODE)."""
-    # interaction_function: Callable
-    interaction_function: Callable
+    """A numerical routine to solve an ordinary differential equation dy/dt = right_hand_side(t, y)."""
+    right_hand_side: Callable
     initial_vector: Vector
     duration: float
     time_evals: Vector | None
+    jacobian: Callable | None = None
+    solver_options: dict = field(default_factory=dict)
+
+    @property
+    def y0(self) -> np.ndarray:
+        if self.initial_vector is None:
+            raise IonSimError("An initial vector is required to solve the ODE.")
+        return np.array(self.initial_vector, dtype='complex').ravel()
 
     @abstractmethod
     def solve(self):
         """Solves the ODE."""
 
+
 @dataclass(frozen=True, eq=False)
 class OdeIntz(OdeSolver):
-    """A complex-valued version of Python's odeint routine."""
+    """ A complex-valued version of scipy's odeint routine. odeint has no complex Jacobian support here, so the
+        jacobian is not used. Note: odeint starts the integration at time_evals[0]. """
     def solve(self):
         """Solves the ODE."""
-        def right_hand_side(t, y):
-            return self.interaction_function(t).dot(-1j * y)
+        options = dict(self.solver_options)
+        user_full_output = options.pop('full_output', False)
+        times = np.linspace(0, self.duration, 4) if self.time_evals is None else np.asarray(self.time_evals)
+
         def right_hand_side_flip_args(y, t):
-            return right_hand_side(t, y)
-        if self.time_evals is None:
-            times = np.linspace(0, self.duration, 4)
-        else:
-            times = self.time_evals
-        y0 = np.array(self.initial_vector, dtype='complex')
-        result = odeintz(right_hand_side_flip_args, y0, times)
+            return self.right_hand_side(t, y)
+
+        result, info = odeintz(right_hand_side_flip_args, self.y0, times, full_output=True, **options)
+        if info.get('message') != 'Integration successful.':
+            raise IonSimError(f"odeint integration failed: {info.get('message')} Consider passing solver options, e.g. a "
+                              f"larger mxstep (default 500 steps per output interval), more time_evals, or another ode_solver.")
+        if user_full_output:
+            return list(times), [y for y in result], info
         return list(times), [y for y in result]
+
 
 @dataclass(frozen=True, eq=False)
 class SolveIvp(OdeSolver):
-    """Python's solve_ivp routine."""
+    """ scipy's solve_ivp routine. Default method RK45 with rtol = 1e-3 and atol = 1e-6 (scipy defaults); pass e.g.
+        method='DOP853', rtol=1e-10 for accurate results. """
+    IMPLICIT_METHODS = ('Radau', 'BDF', 'LSODA')
+
     def solve(self):
         """Solves the ODE."""
-        def right_hand_side(t, y):
-            return self.interaction_function(t).dot(-1j * y)
-        y0 = np.array(self.initial_vector, dtype='complex')
-        result = solve_ivp(right_hand_side, (0, self.duration), y0, t_eval=self.time_evals)
+        options = dict(self.solver_options)
+        if self.jacobian is not None and options.get('method') in self.IMPLICIT_METHODS and 'jac' not in options:
+            options['jac'] = self.jacobian
+        result = solve_ivp(self.right_hand_side, (0, self.duration), self.y0, t_eval=self.time_evals, **options)
+        if not result.success:
+            raise IonSimError(f"solve_ivp integration failed: {result.message}")
         return list(result['t']), [result['y'][:, i] for i in range(len(result['t']))]
+
 
 @dataclass(frozen=True, eq=False)
 class ZVODE(OdeSolver):
-    """Python's zvode routine."""
-    nsteps: float = 1e5
-    atol: float = 1e-16
-    rtol: float = 1e-14
+    """ scipy's zvode routine (scipy.integrate.ode). The jacobian, when given, is used (with_jacobian=True). """
+    DEFAULT_OPTIONS = {'method': 'adams', 'atol': 1e-16, 'rtol': 1e-14, 'nsteps': 1e5}  # method='bdf' for stiff ODEs
 
     def solve(self):
         """Solves the ODE."""
         if self.time_evals is None:
-            num_steps = 3
-            time_evals = np.linspace(0., self.duration, num_steps)
+            time_evals = np.linspace(0., self.duration, 3)
         else:
-            time_evals = self.time_evals
-            num_steps = len(self.time_evals)
-            assert(self.time_evals[-1] == self.duration)
+            time_evals = np.asarray(self.time_evals)
+            if time_evals[-1] != self.duration:
+                raise IonSimError(f"The last of time_evals ({time_evals[-1]}) must equal the duration ({self.duration}) for zvode.")
+        options = {**self.DEFAULT_OPTIONS, **self.solver_options}
 
-        n_states = len(self.initial_vector)
-        hamiltonian = self.interaction_function
-        t_final = self.duration
-        initial_state = self.initial_vector
-
-        if initial_state is None:
-            initial_state = _np.zeros(n_states)
-            initial_state[0] = 1.
-
-        intermediate_states = [initial_state]
-        def schrodinger(t, y):
-            return  -1.0j * hamiltonian(t).dot(y)
-        def jacobian(t, y):
-            tempham = hamiltonian(t)
-            if sparse.issparse(tempham):
-                return -1.0j * tempham.todense()
-            else:
-                return -1.0j * tempham
-        r = ode(schrodinger, jacobian)
-        r.set_integrator('zvode', method='adams', with_jacobian=True, atol = self.atol, rtol = self.rtol, nsteps=self.nsteps) # use method='bdf' for stiff ode
-        r.set_initial_value(initial_state, 0)
-        for k, t in enumerate(time_evals[1:], start=1):
-            r.integrate(t)
-            intermediate_states += [r.y]
-            if not r.successful():
-                raise RuntimeError(f"Integration failed at t={t}")
-        return self.time_evals, intermediate_states
+        integrator = ode(self.right_hand_side, self.jacobian)
+        integrator.set_integrator('zvode', with_jacobian=self.jacobian is not None, **options)
+        integrator.set_initial_value(self.y0, time_evals[0])
+        intermediate_states = [self.y0]
+        for t in time_evals[1:]:
+            integrator.integrate(t)
+            if not integrator.successful():
+                raise IonSimError(f"zvode integration failed at t = {t} (return code {integrator.get_return_code()}).")
+            intermediate_states.append(integrator.y.copy())
+        return list(time_evals), intermediate_states
 
 # working version
 # @dataclass(frozen=True, eq=False)

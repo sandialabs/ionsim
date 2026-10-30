@@ -4,6 +4,10 @@
 # MacOS
 .DS_Store
 
+# AI Agent Scripts
+sandia-claudecode
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

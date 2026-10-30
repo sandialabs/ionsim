@@ -16,7 +16,7 @@ from icecream import ic
 
 from ionsim.basis import StandardBasis
 from ionsim.operator import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
-from ionsim.custom_types import Vector, Matrix, SparseMatrix, as_dense_matrix
+from ionsim.custom_types import Vector, Matrix, SparseMatrix 
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, SMALLEST_ENERGY_SCALE
 from ionsim.custom_math import solve_time_evolution_equation
 from ionsim.composite_operator import CompositeOperator
@@ -235,7 +235,9 @@ class Hamiltonian(CompositeOperator):
                             if all_same(self.coupling_modulation_functions):
                                 Ham = np.sum(Hints, axis=0)
                                 Rate = np.sum(Rates, axis=0)
-                                Hint = Ham * np.exp(-1j * Rate * t) * self.coupling_modulation_functions[0](t)
+                                Hint = Ham * np.exp(-1j * Rate * t)
+                                if self.coupling_modulation_functions and self.coupling_modulation_functions[0] is not None:
+                                    Hint = Hint * self.coupling_modulation_functions[0](t)
                             else:
                                 Hint = np.zeros((self.size, self.size), dtype='complex')
                                 for Ham, Rate, mod in zip(Hints, Rates, self.coupling_modulation_functions):
@@ -262,7 +264,10 @@ class Hamiltonian(CompositeOperator):
                         def _hamiltonian_function(t: float):
                             Hint = np.zeros((self.size, self.size), dtype='complex')
                             for Ham, Rate, mod in zip(Hints, Rates, self.coupling_modulation_functions):
-                                Hint += Ham * np.exp(-1j * Rate * t) * mod(t)
+                                if mod is not None:
+                                    Hint += Ham * np.exp(-1j * Rate * t) * mod(t)
+                                else:
+                                    Hint += Ham * np.exp(-1j * Rate * t) 
                             Hint += Hint.conj().T
 
                             H0_shift = np.zeros_like(Hint)
@@ -286,3 +291,12 @@ class Hamiltonian(CompositeOperator):
         end = time.perf_counter()
         #ic(f'Evolving wavefunction took {end-start} seconds.')
         return result
+
+    def adiabatically_eliminate(self, levels_to_eliminate: list, dissipator=None, **kwargs):
+        """ Adiabatically eliminate levels (e.g. far-detuned intermediate levels of a multi-photon transition).
+
+            Returns an AdiabaticEliminationResult with the effective Hamiltonian (and Dissipator, if one is given) on the
+            reduced product basis. See ionsim.adiabatic_eliminator.adiabatically_eliminate for the arguments and method.
+        """
+        from ionsim.adiabatic_eliminator import adiabatically_eliminate
+        return adiabatically_eliminate(self, levels_to_eliminate, dissipator, **kwargs)
