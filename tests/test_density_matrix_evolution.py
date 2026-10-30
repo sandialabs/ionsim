@@ -10,8 +10,10 @@
 """ Density-matrix evolution of the Lindblad master equation, and the ODE solver layer. """
 
 import unittest
+from unittest import mock
 
 import numpy as np
+from scipy.sparse import issparse
 
 from ionsim.basis import StandardBasis
 from ionsim.custom_math import solve_ode, solve_time_evolution_equation
@@ -146,6 +148,60 @@ class TestDensityMatrixEvolution(unittest.TestCase):
         default = Gate.from_lindbladian(basis, lindbladian, 0.1e-6, **ACCURATE)
         matrix_form = Gate.from_lindbladian(basis, lindbladian, 0.1e-6, representation='density_matrix', **ACCURATE)
         np.testing.assert_allclose(matrix_form.process_matrix, default.process_matrix, atol=1e-8)
+
+
+class TestPrecomputedSuperoperators(unittest.TestCase):
+    """ The dissipator superoperator is precomputed as S_0 + sum_w S_w e^{-iwt}, and the Lindbladian evaluates H(t) once. """
+
+    TIMES = (0., 3.7e-8, 1.9e-7, 4.4e-7)
+
+    def test_matches_per_step_construction(self):
+        for sparse in (False, True):
+            basis, hamiltonian, dissipator = build_model(sparse)
+            static, oscillating = dissipator.dissipator_superoperator_components
+            # only the GeneralOperator mixes rates (rate 0 for its diagonal element, 2 MHz for its couplings)
+            self.assertEqual(sorted(round(abs(w) / TPI / 1e6, 6) for w, *_ in oscillating), [2., 2.])
+            for t in self.TIMES:
+                with self.subTest(sparse=sparse, t=t):
+                    reference = sum(Dissipator.lindblad_matrix_to_superoperator(L(t)) for L in dissipator.lindblad_matrix_functions)
+                    D = dissipator.dissipator_matrix_function(t)
+                    self.assertEqual(issparse(D), sparse)
+                    reference = reference.toarray() if issparse(reference) else reference
+                    D = D.toarray() if issparse(D) else D
+                    np.testing.assert_allclose(D, reference, atol=1e-6 * np.max(np.abs(reference)))
+
+    def test_single_rate_operators_are_static(self):
+        basis, hamiltonian, dissipator = build_model()
+        single_rate = Dissipator(basis, dissipator.operators[:-2] + dissipator.operators[-1:], dissipator.rotating_frame_energies)
+        static, oscillating = single_rate.dissipator_superoperator_components
+        self.assertEqual(oscillating, [])
+        np.testing.assert_allclose(single_rate.dissipator_matrix_function(2.3e-7), static)
+
+    def test_no_construction_per_evaluation(self):
+        """ After the first evaluation, evaluating the Lindbladian builds no superoperators and evaluates H(t) once. """
+        basis, hamiltonian, dissipator = build_model()
+        lindbladian = Lindbladian(hamiltonian, dissipator)
+        lindbladian.matrix_function(0.)
+        calls = {'pair': 0, 'H': 0}
+        hamiltonian_function = hamiltonian.hamiltonian_function
+
+        def counted_hamiltonian(t):
+            calls['H'] += 1
+            return hamiltonian_function(t)
+
+        original_pair = Dissipator.lindblad_pair_to_superoperator
+
+        def counted_pair(*args):
+            calls['pair'] += 1
+            return original_pair(*args)
+
+        fresh = Lindbladian(hamiltonian, dissipator)
+        with mock.patch.dict(hamiltonian.__dict__, {'hamiltonian_function': counted_hamiltonian}), \
+             mock.patch.object(Dissipator, 'lindblad_pair_to_superoperator', staticmethod(counted_pair)):
+            for t in self.TIMES:
+                fresh.matrix_function(t)
+        self.assertEqual(calls['pair'], 0)
+        self.assertEqual(calls['H'], len(self.TIMES))
 
 
 class TestSolverLayer(unittest.TestCase):

@@ -55,6 +55,26 @@ class LindbladOperatorParts:
         np.add.at(L, (self.rows, self.columns), data)
         return L
 
+    def rate_groups(self) -> list[tuple[float, csr_matrix]]:
+        """ L(t) = sum_g e^{-i R_g t} L_g: the elements grouped by (floating-point equal) rate R_g, each group as a sparse
+            static matrix L_g. The diagonal (static) part belongs to the group with rate 0. """
+        groups = []  # [rate, rows, columns, values]
+        if self.static is not None:
+            static = csr_matrix(self.static, dtype=complex).tocoo()
+            if static.nnz:
+                groups.append([0., list(static.row), list(static.col), list(static.data)])
+        scale = max(1., float(np.max(np.abs(self.rates)))) if self.rates.size else 1.
+        tolerance = 1e-12 * scale
+        for row, column, value, rate in zip(self.rows, self.columns, self.values, self.rates):
+            for group in groups:
+                if abs(group[0] - rate) <= tolerance:
+                    group[1].append(row); group[2].append(column); group[3].append(value)
+                    break
+            else:
+                groups.append([float(rate), [row], [column], [value]])
+        return [(rate, csr_matrix((values, (rows, columns)), shape=(self.size, self.size), dtype=complex))
+                for rate, rows, columns, values in groups]
+
     @cached_property
     def common_rate(self) -> float | None:
         """ The single rate R if L(t) = e^{-iRt} L(0) (all elements share one rate; diagonal elements have rate 0), else None.
@@ -98,14 +118,23 @@ class Dissipator(CompositeOperator):
             rho A --> (A^{T} kron I) y  
             A rho B --> (B^{T} kron A) y 
         """
-        LdaggerL = np.conj(L_matrix.T) @ L_matrix # L^† L: 
+        return Dissipator.lindblad_pair_to_superoperator(L_matrix, L_matrix)
 
-        superoperator = matrix_AYB_multiply_to_superoperator(A = LdaggerL, B = None) 
-        superoperator += matrix_AYB_multiply_to_superoperator(A = None, B = LdaggerL) 
+    @staticmethod
+    def lindblad_pair_to_superoperator(L_a: AnyMatrix, L_b: AnyMatrix) -> AnyMatrix:
+        """ Superoperator (column-stacked, N^2 x N^2) of rho -> L_a rho L_b^dagger - 1/2 { L_b^dagger L_a, rho }.
+
+            With L_a = L_b = L this is the dissipator of L. For L(t) = sum_g e^{-i R_g t} L_g, the dissipator of L(t) is
+            sum_{a, b} e^{-i (R_a - R_b) t} lindblad_pair_to_superoperator(L_a, L_b).
+        """
+        LbdaggerLa = L_b.conj().T @ L_a
+
+        superoperator = matrix_AYB_multiply_to_superoperator(A = LbdaggerLa, B = None)
+        superoperator += matrix_AYB_multiply_to_superoperator(A = None, B = LbdaggerLa)
         superoperator *= -0.5
-    
-        superoperator += matrix_AYB_multiply_to_superoperator(L_matrix, np.conjugate(L_matrix.T)) 
-        return superoperator 
+
+        superoperator += matrix_AYB_multiply_to_superoperator(L_a, L_b.conj().T)
+        return superoperator
 
     @cached_property
     def lindblad_matrix_functions(self) -> list[Callable]:
@@ -168,18 +197,57 @@ class Dissipator(CompositeOperator):
 
             Returns the sum of the dissipators: D(t) = sum_i d_i (t) 
         """
-        # Transform to dissipator form for superoperator matrix-vector multiplication.  
+        # The superoperators are precomputed (dissipator_superoperator_components): D(t) = S_0 + sum_w S_w e^{-i w t}.
+        static, oscillating = self.dissipator_superoperator_components
+
         def _dissipator_matrix_function(t: float):
             if self.sparse:
-                d_matrix = csr_matrix(([0], ([0], [0])), shape=(self.size**2, self.size**2), dtype='complex') 
-            else:
-                d_matrix = np.zeros((self.size**2, self.size**2), dtype=complex)
-
-            for L_i in self.lindblad_matrix_functions:
-                d_matrix += self.lindblad_matrix_to_superoperator(L_i(t))
+                d_matrix = static.copy()
+                for rate, rows, columns, data in oscillating:
+                    d_matrix = d_matrix + csr_matrix((data * np.exp(-1j * rate * t), (rows, columns)), shape=static.shape)
+                return d_matrix
+            d_matrix = static.copy()
+            for rate, rows, columns, data in oscillating:
+                d_matrix[rows, columns] += data * np.exp(-1j * rate * t)
             return d_matrix
 
-        return _dissipator_matrix_function 
+        return _dissipator_matrix_function
+
+    @cached_property
+    def dissipator_superoperator_components(self) -> tuple:
+        """ The dissipator superoperator D(t) = S_0 + sum_w S_w e^{-i w t}, computed once.
+
+            Each Lindblad operator L(t) = sum_g e^{-i R_g t} L_g (LindbladOperatorParts.rate_groups) contributes
+            e^{-i (R_a - R_b) t} lindblad_pair_to_superoperator(L_a, L_b) for every pair of its rate groups. Pairs with
+            equal rates (e.g. every operator with a single rate, such as one decay path) give the static part S_0; only
+            operators mixing rates in the frame give oscillating parts S_w, w = R_a - R_b.
+
+            Returns (S_0, [(w, rows, columns, data), ...]): S_0 dense or sparse as self.sparse, each S_w in coordinate
+            form with unique (rows, columns).
+        """
+        n2 = self.size**2
+        static = csr_matrix((n2, n2), dtype=complex)
+        oscillating = {}  # w -> accumulated sparse S_w
+        all_rates = [rate for parts in self.lindblad_operator_parts for rate in parts.rates]
+        tolerance = 1e-12 * max([1.] + [abs(rate) for rate in all_rates])
+        for parts in self.lindblad_operator_parts:
+            groups = parts.rate_groups()
+            for rate_a, L_a in groups:
+                for rate_b, L_b in groups:
+                    superoperator = csr_matrix(self.lindblad_pair_to_superoperator(L_a, L_b), dtype=complex)
+                    w = rate_a - rate_b
+                    if abs(w) <= tolerance:
+                        static = static + superoperator
+                        continue
+                    key = next((existing for existing in oscillating if abs(existing - w) <= tolerance), w)
+                    oscillating[key] = oscillating[key] + superoperator if key in oscillating else superoperator
+        components = []
+        for w, superoperator in oscillating.items():
+            superoperator = superoperator.tocoo()
+            superoperator.sum_duplicates()
+            components.append((w, superoperator.row, superoperator.col, superoperator.data))
+        static = static.tocsr() if self.sparse else static.toarray()
+        return static, components
 
 
 @dataclass(frozen=True, eq=False)
@@ -363,10 +431,12 @@ class Lindbladian:
     def matrix_function(self) -> Callable:
         """ Lindbladian matrix function L(t), corresponding to an N^2 x N^2 superoperator at time t. """
         if self.hamiltonian:
-            super_ham = lambda t: -1j*(
-                  matrix_AYB_multiply_to_superoperator(A = self.hamiltonian.hamiltonian_function(t), B = None) 
-                - matrix_AYB_multiply_to_superoperator(A = None, B = self.hamiltonian.hamiltonian_function(t))
-                )
+            hamiltonian_function = self.hamiltonian.hamiltonian_function
+
+            def super_ham(t: float):
+                H = hamiltonian_function(t)  # evaluated once for both sides of the commutator
+                return -1j * (matrix_AYB_multiply_to_superoperator(A = H, B = None)
+                              - matrix_AYB_multiply_to_superoperator(A = None, B = H))
         else:
             super_ham = lambda t: 0. 
 
