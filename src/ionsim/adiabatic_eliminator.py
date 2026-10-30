@@ -335,11 +335,10 @@ def adiabatically_eliminate(hamiltonian: Hamiltonian, levels_to_eliminate: list[
         if lindblad_operators:
             effective_dissipator = Dissipator(reduced_basis, lindblad_operators, reduced_frame, dissipator.sparse)
 
-    return AdiabaticEliminationResult(
-        hamiltonian=effective_hamiltonian, dissipator=effective_dissipator, reduced_basis=reduced_basis,
-        kept_states=[basis.states[i] for i in P_in_reduced_order], eliminated_states=[basis.states[i] for i in Q],
-        light_shifts=light_shifts, max_perturbation_ratio=float(max_ratio),
-        dropped_oscillating_shifts=dropped, dropped_fast_terms=dropped_fast, scattering_operators=scattering_operators)
+    return AdiabaticEliminationResult(hamiltonian=effective_hamiltonian, dissipator=effective_dissipator, reduced_basis=reduced_basis,
+                kept_states=[basis.states[i] for i in P_in_reduced_order], eliminated_states=[basis.states[i] for i in Q],
+                light_shifts=light_shifts, max_perturbation_ratio=float(max_ratio), dropped_oscillating_shifts=dropped, 
+                dropped_fast_terms=dropped_fast, scattering_operators=scattering_operators)
 
 
 # ---------------------------------------------------------------------------------------------------------------
