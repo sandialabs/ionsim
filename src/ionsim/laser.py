@@ -682,8 +682,12 @@ class Laser():
         raising_matrix = np.asarray(raising_matrix, dtype=complex)
         if np.any(np.abs(np.diag(raising_matrix)) > 0.):
             raise IonSimError("Light-atom couplings must be off-diagonal.")
-        # Same threshold as CouplingOperator.from_matrix, so the orientation is decided by the elements it keeps.
-        rows, columns = np.nonzero(np.abs(raising_matrix) > SMALLEST_ENERGY_SCALE)
+        # Light-atom couplings are energies (rad/s): drop elements below SMALLEST_ENERGY_SCALE here, so that the operator
+        # holds exactly the elements whose orientation is checked below. (The generic Operator constructors keep every
+        # nonzero element, e.g. for dimensionless POVM effects.) Every kept raising element must lie in one triangle,
+        # since a CouplingOperator has a single oscillation rate.
+        raising_matrix = np.where(np.abs(raising_matrix) > SMALLEST_ENERGY_SCALE, raising_matrix, 0.)
+        rows, columns = np.nonzero(raising_matrix)
         if rows.size == 0:
             return None
         ground_first = rows > columns  # raising element below the diagonal: the ground state has the smaller basis index

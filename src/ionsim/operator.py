@@ -23,6 +23,13 @@ from ionsim.config import SMALLEST_ENERGY_SCALE, NUMERICAL_EQUIVALENCE_THRESHOLD
 
 # ------- Contains classes for Operators and Operator Elements -------- 
 
+def _sum_sparse(matrices: list, size: int) -> csr_matrix:
+    """ Sum of sparse matrices; an empty (all-zero) size x size matrix when the operator has no elements. """
+    if not matrices:
+        return csr_matrix((size, size), dtype=complex)
+    return np.sum(matrices)
+
+
 # ---- Classes for operator elements ----  
 @dataclass(frozen=True, eq=False)
 class OperatorElement(ABC): 
@@ -145,18 +152,18 @@ class Operator(ABC):
         """ Builds and return list of Couplings from the matrix representation of a static operator acting on some DoFs in the basis. """
         rows, columns = coupling_matrix.nonzero()
         indices_list = [(row, column) for row, column in zip(rows, columns)]
-        #included_indices = []
         couplings = []
         for row, column in indices_list:
             assert row != column, 'Input error: Input should be a purely off-diagonal matrix.' 
             row_state, column_state = basis.states[row], basis.states[column]
             #if (column,row) not in included_indices:
 
-            # Only include coupling if its stength is above the threshold energy scale 
-            #if np.abs(coupling_matrix[row, column]) > SMALLEST_ENERGY_SCALE: 
-            coupling = Coupling(row_state = row_state, column_state = column_state, strength = coupling_matrix[row, column], oscillation_rate = rate[row, column])
-            couplings.append(coupling)
-            #included_indices.append((row, column))
+            # Keep every nonzero element: no energy threshold here, since operators need not be energies (e.g. POVM
+            # effects). Builders of energy operators (e.g. the Laser coupling builders) apply SMALLEST_ENERGY_SCALE themselves.
+            if coupling_matrix[row, column] != 0:
+                coupling = Coupling(row_state = row_state, column_state = column_state, strength = coupling_matrix[row, column], oscillation_rate = rate[row, column])
+                couplings.append(coupling)
+
             if column == row:
                 raise IonSimError('Diagonal elements of oscillating (coupling) operators are not currently allowed.')
 
@@ -193,9 +200,10 @@ class Operator(ABC):
         # Assumes diagonal elements sorted order matches the sorted order of basis states in basis. 
         matrix_elements = []
         for i, value in enumerate(diagonal_elements):
-            #if np.abs(value) > SMALLEST_ENERGY_SCALE : 
-            matrix_element = EnergyShift.from_state(basis.states[i], value)
-            matrix_elements.append(matrix_element)
+            # Keep every nonzero element (no energy threshold: e.g. a POVM effect diag(1 - p, p) with small p).
+            if value != 0:
+                matrix_element = EnergyShift.from_state(basis.states[i], value)
+                matrix_elements.append(matrix_element)
               
         return matrix_elements 
  
@@ -300,7 +308,7 @@ class CouplingOperator(Operator):
             row = self.basis.states.index(coupling.row_state)
             column = self.basis.states.index(coupling.column_state)
             matrices.append(csr_matrix(([coupling.oscillation_rate], ([row], [column])), shape=(size, size)))
-        return np.sum(matrices)
+        return _sum_sparse(matrices, size)
 
     @property
     def static_matrix(self):
@@ -312,7 +320,7 @@ class CouplingOperator(Operator):
             row = self.basis.states.index(coupling.row_state)
             column = self.basis.states.index(coupling.column_state)
             matrices.append(csr_matrix(([coupling.strength], ([row], [column])), shape=(size, size)))
-        return np.sum(matrices)
+        return _sum_sparse(matrices, size)
 
 
 @dataclass(frozen=True, eq=False)   
@@ -407,6 +415,6 @@ class GeneralOperator(Operator): # is there a better name? We avoid "DenseOperat
             row = self.basis.states.index(element.row_state)
             column = self.basis.states.index(element.column_state)
             matrices.append(csr_matrix(([element.strength], ([row], [column])), shape=(size, size)))
-        return np.sum(matrices)
+        return _sum_sparse(matrices, size)
 
 
