@@ -169,13 +169,14 @@ class State:
         rhos = [self.basis.compute_density_matrix_from_wavefunction(psi) for psi in psis]
         return [State(self.basis, rho, psi) for rho, psi in zip(rhos, psis)]
 
+
     def propagate_using_master_equation(self, lindbladian: Lindbladian, duration: float,
             time_evals: Vector | None = None, **kwargs):
         """
             Propagate the state by solving the time-dependent Lindblad master equation.
             This builds and returns a new state in the same basis as the initial state.
         """
-
+        # TODO: add option to propagate using the density matrix representation instead of supervector  
         times, supervectors = lindbladian.evolve_supervector(self.supervector, duration, time_evals, **kwargs)
         if time_evals is None:
             density_matrix = self.basis.compute_density_matrix_from_supervector(supervectors[-1])
