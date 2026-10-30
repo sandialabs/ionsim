@@ -255,7 +255,7 @@ class State:
     def project_to_qubit_subspace(self, non_qubit_levels: list[AtomicInternalEnergyLevel]):
         """ Projects the state onto the qubit subspace """
         # Return self if already in qubit subspace
-        if self.basis.is_qubit_basis():
+        if self.basis.is_qubit_basis:
             return self
         else:
             return self.project_out_levels(non_qubit_levels)
@@ -264,7 +264,7 @@ class State:
         """ Project state into a subspace without the requested levels. Returns the projected state """ 
         # Create basis as subspace of the current state's basis  
         if new_basis is None:
-            new_basis = build_subspace_basis_from_levels_to_project(levels)
+            new_basis = self.basis.build_subspace_basis_from_levels_to_project(levels)
 
         # Get indices to project out by finding where the levels are in the basis
         projection_indices = [] 

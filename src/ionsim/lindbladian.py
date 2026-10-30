@@ -22,7 +22,7 @@ from ionsim.ionsim_error import IonSimError
 from ionsim.composite_operator import CompositeOperator
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, SinkLevel
-from ionsim.atomic_internal_energy_level import compute_multipole_amplitude
+from ionsim.atomic_internal_energy_level import compute_multipole_amplitude, reduced_dipole_matrix_element, _orbital_reduction_factor
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
 
@@ -136,7 +136,7 @@ class DissipatorSpontaneousEmission(Dissipator):
     def from_atomic_structure_data(cls, basis: StandardBasis, ground_levels: list[AtomicInternalEnergyLevel],
                                    excited_levels: list[AtomicInternalEnergyLevel], frame_energies: list[float] | None = None,
                                    sparse: bool = False, select_dofs: list[AtomicStructure] | None = None, decay_to_sink: bool = False, 
-                                   multipole_orders: dict[tuple[str, str], int] | None = None):
+                                   multipole_orders: dict[tuple[str, str], int] | None = None, coherent_channels: bool = False):
         """Build the spontaneous-emission dissipator for decay from excited_levels to ground_levels.
 
         One Lindblad operator sqrt(Gamma_{e->g,q}) |g><e| is created per decay path (excited level e, ground level g,
@@ -172,6 +172,20 @@ class DissipatorSpontaneousEmission(Dissipator):
         same polarization are dropped. This is accurate when those transition frequencies differ by much more than
         the decay rate, but not for nearly degenerate excited sublevels (e.g. Zeeman sublevels at very low field).
 
+        coherent_channels=True instead builds one operator per decay channel (DOF, ground manifold, multipole order k,
+        emitted polarization q), summing the signed amplitudes of every (e, g) path of that channel:
+
+            L_{k,q} = sum_{e, g} sign(<J_g||T^(k)||J_e>) <g| T^(k)_q |e> sqrt( (branching ratio) / (lifetime of e) (2 J_e + 1) / (2 J_g + 1) ) |g><e|
+
+        Each element has the same magnitude as the corresponding secular operator, so sum_{k,q} L^dagger L has the same
+        diagonal (the decay rates). The relative signs keep the interference between paths that emit the same photon,
+        which the secular operators drop. This is what adiabatic elimination of far-detuned excited states needs:
+        scattered photons are then all near the laser frequency, so paths through different excited sublevels and
+        fine-structure manifolds interfere (Raman and Rayleigh scattering). The sign of <J_g||T^(k)||J_e> is that of the
+        (tabulated or derived) reduced dipole element for E1, and of the LS orbital reduction factor for E2.
+        In a frame, each element keeps its own rotating-frame phase, so the coherent operators are also exact (no secular
+        approximation) for direct simulation, at the cost of fast oscillating terms. Decay to the sink stays per path.
+
         Args:
             basis: The system basis.
             ground_levels: Levels that excited levels may decay to. Matched to each DOF's levels by name.
@@ -184,6 +198,8 @@ class DissipatorSpontaneousEmission(Dissipator):
                 ground_levels may be empty (all decay goes to the sink).
             multipole_orders: Optional {(excited term symbol, ground term symbol): 1 or 2} overriding the parity-based
                 multipole order of a decay channel, e.g. {('[3/2]1/2', 'D3/2'): 1}.
+            coherent_channels: One operator per (ground manifold, k, q) channel with signed amplitudes (see above)
+                instead of one per path.
 
         """
         if frame_energies is None:
@@ -220,21 +236,42 @@ class DissipatorSpontaneousEmission(Dissipator):
                 lowering_matrix[to_index, from_index] = np.sqrt(rate)
                 lindblad_operators.append(CouplingOperator.from_matrix(basis, basis.enlarge_matrix(lowering_matrix, [dof]), 0.))
 
+            channels = {}  # (ground term symbol, k, q) -> coherent lowering matrix of this DOF
             for e_level in excited:
-                rates = cls._decay_rates(e_level, ground, require_paths=not decay_to_sink, multipole_orders=multipole_orders)
-                for g_level, rate in rates:
-                    add_decay(level_index[g_level.name], level_index[e_level.name], rate)
+                amplitudes = cls._decay_amplitudes(e_level, ground, require_paths=not decay_to_sink, multipole_orders=multipole_orders)
+                rates = [(g_level, abs(amplitude)**2) for g_level, _, _, amplitude in amplitudes]
+                if coherent_channels:
+                    for g_level, k, q, amplitude in amplitudes:
+                        matrix = channels.setdefault((g_level.term_symbol, k, q), np.zeros((dimension, dimension)))
+                        matrix[level_index[g_level.name], level_index[e_level.name]] += amplitude
+                else:
+                    for g_level, rate in rates:
+                        add_decay(level_index[g_level.name], level_index[e_level.name], rate)
                 if decay_to_sink:
                     remaining = 1. / e_level.lifetime - sum(rate for _, rate in rates)
                     if remaining > NUMERICAL_EQUIVALENCE_THRESHOLD / e_level.lifetime:
                         add_decay(sinks[0], level_index[e_level.name], remaining)
+            for matrix in channels.values():
+                if np.any(np.abs(matrix) > 0.):
+                    lindblad_operators.append(CouplingOperator.from_matrix(basis, basis.enlarge_matrix(matrix, [dof]), 0.))
 
         return cls(basis, lindblad_operators, frame_energies, sparse)
 
-    @staticmethod
-    def _decay_rates(e_level: AtomicInternalEnergyLevel, ground_levels: list[AtomicInternalEnergyLevel],
+    @classmethod
+    def _decay_rates(cls, e_level: AtomicInternalEnergyLevel, ground_levels: list[AtomicInternalEnergyLevel],
                      require_paths: bool = True, multipole_orders: dict[tuple[str, str], int] | None = None) -> list[tuple]:
         """ Decay rates (1/s) from e_level to each ground level, one entry per (ground level, polarization q) path.
+
+            Raises if there are no paths and require_paths is True.
+        """
+        return [(g_level, abs(amplitude)**2) for g_level, _, _, amplitude
+                in cls._decay_amplitudes(e_level, ground_levels, require_paths, multipole_orders)]
+
+    @staticmethod
+    def _decay_amplitudes(e_level: AtomicInternalEnergyLevel, ground_levels: list[AtomicInternalEnergyLevel],
+                          require_paths: bool = True, multipole_orders: dict[tuple[str, str], int] | None = None) -> list[tuple]:
+        """ Signed decay amplitudes (1/sqrt(s)) from e_level, one entry (ground level, k, q, amplitude) per path, with
+            |amplitude|^2 the partial decay rate of that path (see from_atomic_structure_data).
 
             Raises if there are no paths and require_paths is True.
         """
@@ -248,11 +285,13 @@ class DissipatorSpontaneousEmission(Dissipator):
         for g_level in ground_levels:
             k = _decay_multipole_order(e_level, g_level, multipole_orders)
             orders[g_level.term_symbol] = k
+            sign = _reduced_element_sign(g_level, e_level, k)
             for q in range(-k, k + 1):
                 amplitude = compute_multipole_amplitude(g_level, e_level, k, q)
                 if abs(amplitude) > NUMERICAL_EQUIVALENCE_THRESHOLD:
-                    fraction = abs(amplitude)**2 * (2*e_level.j + 1) / (2*g_level.j + 1)
-                    paths.setdefault(g_level.term_symbol, []).append((g_level, fraction))
+                    # signed amplitude in units of sqrt(lifetime / branching ratio); its square is the old 'fraction'
+                    unit_amplitude = sign * amplitude * np.sqrt((2*e_level.j + 1) / (2*g_level.j + 1))
+                    paths.setdefault(g_level.term_symbol, []).append((g_level, k, q, unit_amplitude))
 
         branching_ratios = e_level.branching_ratios
         if branching_ratios is not None:
@@ -272,19 +311,36 @@ class DissipatorSpontaneousEmission(Dissipator):
         rates = []
         for term_symbol, manifold_paths in paths.items():
             branching_ratio = branching_ratios.get(term_symbol, 0.)
-            for g_level, fraction in manifold_paths:
+            for g_level, k, q, unit_amplitude in manifold_paths:
                 if branching_ratio == 0.:
                     continue
                 if e_level.energy <= g_level.energy:
                     raise IonSimError(f"Excited level {e_level.name} (energy {e_level.energy}) must be higher in energy than "
                                       f"ground level {g_level.name} (energy {g_level.energy}) to decay to it.")
-                rates.append((g_level, branching_ratio / lifetime * fraction))
+                rates.append((g_level, k, q, np.sqrt(branching_ratio / lifetime) * unit_amplitude))
 
         if not rates and require_paths:
             raise IonSimError(f"No decay paths from excited level {e_level.name} to the given ground levels. Allowed "
                               f"ground manifolds: {sorted(paths)}; branching_ratios keys: "
                               f"{sorted(e_level.branching_ratios) if e_level.branching_ratios else None}.")
         return rates
+
+
+def _reduced_element_sign(g_level: AtomicInternalEnergyLevel, e_level: AtomicInternalEnergyLevel, k: int) -> float:
+    """ Sign of <J_g||T^(k)||J_e>: that of the tabulated or derived reduced dipole element for E1, otherwise of the LS
+        orbital reduction factor; +1 if neither is available or the factor vanishes. """
+    if k == 1:
+        try:
+            element = reduced_dipole_matrix_element(g_level, e_level)
+        except IonSimError:
+            element = None
+        if element is not None and element != 0.:
+            return float(np.sign(element))
+    if hasattr(g_level, 'l') and hasattr(e_level, 'l'):
+        factor = float(_orbital_reduction_factor(g_level, e_level, k))
+        if factor != 0.:
+            return float(np.sign(factor))
+    return 1.
 
 
 def _parity_of_ls_coupled_level(level: AtomicInternalEnergyLevel) -> int | None:

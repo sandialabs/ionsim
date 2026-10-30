@@ -479,6 +479,10 @@ def reduced_dipole_matrix_element(ground_level: AtomicInternalEnergyLevel, excit
             Gamma * branching_ratio = omega_0^3 / (3 pi eps0 hbar c^3) (2J + 1)/(2J' + 1) |<J||er||J'>|^2
 
         Note: Tables in the Edmonds convention (line strength S = |<J||d||J'>|^2) are larger by sqrt(2J + 1), J the lower level; divide by it before entering them in a config file.
+
+        A tabulated value (reduced_dipole_matrix_elements of the excited level, keyed by the ground term symbol) is used
+        when present. Otherwise the element is derived from the excited level's lifetime and branching ratio by inverting
+        the relation above (see derived_reduced_dipole_matrix_element), and None is returned only if that is not possible.
     """
     elements = excited_level.reduced_dipole_matrix_elements
     if elements and ground_level.term_symbol in elements:
@@ -488,7 +492,57 @@ def reduced_dipole_matrix_element(ground_level: AtomicInternalEnergyLevel, excit
         raise IonSimError(f"A reduced dipole matrix element for {ground_level.term_symbol} -> {excited_level.term_symbol} is stored "
                           f"on the lower manifold {ground_level.term_symbol}. As for branching_ratios, store it on the upper "
                           f"manifold ({excited_level.term_symbol}), keyed by the lower manifold's term symbol.")
-    return None
+    return derived_reduced_dipole_matrix_element(ground_level, excited_level)
+
+
+def derived_reduced_dipole_matrix_element(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel) -> float | None:
+    """ E1 reduced matrix element <J_ground || e r || J_excited> / (e a0) (Steck convention) derived from the excited
+        level's lifetime and branching ratio into the ground manifold, or None if they are not available.
+
+            |<J||er||J'>| = sqrt( (branching_ratio / lifetime) 3 pi eps0 hbar c^3 (2J' + 1) / (omega_0^3 (2J + 1)) ) / (e a0)
+
+        with omega_0 the difference of the manifolds' fine-structure energies. Conventions follow the config data:
+            - branching_ratios is keyed by the ground term symbol; a level without branching_ratios is taken to decay only
+              to this ground manifold (as in DissipatorSpontaneousEmission). A ground manifold missing from
+              branching_ratios is not a decay channel, and None is returned.
+            - The decay must be E1, i.e. the parity (-1)^L changes; levels without L (e.g. j1l2 coupling) are assumed E1,
+              as in DissipatorSpontaneousEmission. None is returned for a parity-conserving (E2) decay.
+            - The excited manifold must lie above the ground manifold (None otherwise).
+            - Sign: the sign of the LS orbital reduction factor <J||r||J'>/<L||r||L'> (Steck Eq. 36), so that elements derived
+              for different fine-structure manifolds keep the same relative signs as the orbital-units (6j) amplitudes. The
+              sign is +1 when that factor is unavailable (non-LS levels) or vanishes (spin-forbidden lines in pure LS).
+    """
+    lifetime = getattr(excited_level, 'lifetime', None)
+    if not isinstance(lifetime, (int, float)) or lifetime <= 0:
+        return None
+    branching_ratios = getattr(excited_level, 'branching_ratios', None)
+    if branching_ratios is None:
+        branching_ratio = 1.
+    elif ground_level.term_symbol in branching_ratios:
+        branching_ratio = float(branching_ratios[ground_level.term_symbol])
+    else:
+        return None
+    if branching_ratio <= 0.:
+        return None
+
+    has_l = hasattr(ground_level, 'l') and hasattr(excited_level, 'l')
+    if has_l and (int(round(ground_level.l)) - int(round(excited_level.l))) % 2 == 0:
+        return None  # parity-conserving: not an E1 decay
+
+    omega_0 = excited_level.fine_energy - ground_level.fine_energy
+    if omega_0 <= 0.:
+        return None  # not a decay of the 'excited' level into the 'ground' level
+    j, jp = float(ground_level.j), float(excited_level.j)
+    magnitude_SI = np.sqrt(branching_ratio / lifetime * 3. * np.pi * const.epsilon_0 * const.hbar * const.c**3
+                           * (2. * jp + 1.) / (omega_0**3 * (2. * j + 1.)))
+    magnitude = magnitude_SI / (const.e * const.value('Bohr radius'))
+
+    sign = 1.
+    if has_l:
+        orbital_factor = float(_orbital_reduction_factor(ground_level, excited_level, 1))
+        if abs(orbital_factor) > 0.:
+            sign = np.sign(orbital_factor)
+    return float(sign * magnitude)
 
 
 def compute_rabi_frequency_between_atomic_levels(ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel,

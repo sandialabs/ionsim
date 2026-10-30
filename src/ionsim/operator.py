@@ -249,7 +249,10 @@ class EnergyShiftOperator(Operator):
     @property
     def static_vector(self):
         """The vector representation of a static energy shift (diagonal) operator."""
-        v = np.zeros(len(self.basis.states))
+        # Complex only if needed: Hamiltonian energy shifts are real, but diagonal Lindblad-operator elements (e.g. effective
+        # Rayleigh-scattering operators) carry relative phases.
+        is_complex = any(np.iscomplexobj(shift.strength) and np.imag(shift.strength) != 0. for shift in self.energy_shifts)
+        v = np.zeros(len(self.basis.states), dtype=complex if is_complex else float)
         for energy_shift in self.energy_shifts:
             state_indx = self.basis.states.index(energy_shift.row_state)
             # Insert strength at appropriate index to match basis.states sorted order  
