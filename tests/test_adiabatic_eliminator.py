@@ -270,6 +270,35 @@ class TestYb355(unittest.TestCase):
             self.assertAlmostEqual(np.mean(result.light_shifts) / shift, 1., delta=1e-4)
             self.assertAlmostEqual(np.mean([result.scattering_rate(i) for i in range(4)]) / scatter, 1., delta=1e-4)
 
+    def test_counter_rotating_light_shift(self):
+        """ With counter-rotating terms the scalar shift is sum_J Omega_J^2 / 12 [1/Delta_J - 1/(omega + omega_J)]. At 355 nm
+            the P1/2 and P3/2 rotating-wave terms nearly cancel, so the counter-rotating terms change the shift by a large
+            factor. Scattering stays at the rotating-wave level: counter-rotating paths are dropped and reported. """
+        operators = self.laser.build_carrier_coupling_operators(self.basis, [self.atom], self.ground, self.excited, 1,
+                                                                include_counter_rotating=True)
+        H = Hamiltonian(self.basis, operators, self.frame)
+        D = DissipatorSpontaneousEmission.from_atomic_structure_data(self.basis, self.ground, self.excited, self.frame, coherent_channels=True)
+        result = H.adiabatically_eliminate(self.excited, D, rwa_rate_cutoff=TPI * 1e13)
+        self.assertGreater(len(result.dropped_fast_terms), 0)  # co x counter-rotating cross terms near 2 omega
+        E0 = self.laser.peak_electric_field_magnitude
+        s = self.ground[0]
+        rotating_wave = counter = 0.
+        for J in ('P1/2', 'P3/2'):
+            e = next(l for l in self.excited if l.term_symbol == J)
+            rabi = E0 * const.e * const.value('Bohr radius') * reduced_dipole_matrix_element(s, e) / const.hbar
+            omega_J = e.fine_energy - s.fine_energy
+            rotating_wave += rabi**2 / 12. / (self.frequency - omega_J)
+            counter -= rabi**2 / 12. / (self.frequency + omega_J)
+        self.assertAlmostEqual(np.mean(result.light_shifts) / (rotating_wave + counter), 1., delta=1e-4)
+        self.assertAlmostEqual(np.mean(self.results[True].light_shifts) / rotating_wave, 1., delta=1e-4)
+        self.assertGreater(rotating_wave / (rotating_wave + counter), 2.)  # the rotating-wave shift is >2x too large here
+        # scattering is unchanged (rotating-wave level); the dropped counter-rotating paths are a small incoherent rate
+        rwa = self.results[True]
+        for i in range(4):
+            self.assertAlmostEqual(result.scattering_rate(i) / rwa.scattering_rate(i), 1., places=10)
+        self.assertGreater(result.dropped_counter_rotating_scattering_rate, 0.)
+        self.assertLess(result.dropped_counter_rotating_scattering_rate, 1e-2 * sum(rwa.scattering_rate(i) for i in range(4)))
+
     def test_coherent_channels_suppress_rayleigh_dephasing(self):
         """ The total scattering rate does not depend on the decay-channel representation, but the Rayleigh/Raman split
             does: with coherent channels the elastic amplitudes of the clock states are nearly equal and the elastic

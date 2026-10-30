@@ -35,6 +35,13 @@
     photons of the same frequency and are added coherently (one effective operator per group); groups at different rates
     are distinguishable and kept as separate operators. Rate differences below rate_tolerance are treated as equal.
 
+    Counter-rotating drive terms (Laser builders with include_counter_rotating=True) are ordinary drive terms here: they
+    add their second-order contributions to light shifts and two-photon couplings (Bloch-Siegert-type corrections, e.g.
+    -|Omega~|^2 / (4 (omega + omega_0)) per path). Scattering stays at the rotating-wave level: a path excited by a
+    counter-rotating term would emit a photon of negative frequency in the Lindblad emission model, so it is dropped (and
+    its rate reported). The counter-rotating Kramers-Heisenberg scattering amplitude, a relative correction of order
+    Delta / (omega + omega_0) per path, is therefore not included.
+
     Decay among kept states (e.g. of a kept excited level) is passed through, split into operators of equal total rate
     (the secular approximation between distinguishable photon frequencies).
 
@@ -76,6 +83,8 @@ class AdiabaticEliminationResult:
         max_perturbation_ratio: max |v / D| over all eliminated couplings; the expansion parameter.
         dropped_oscillating_shifts: (reduced state, amplitude a, rate w) for diagonal terms a e^{-iwt} + c.c. that were
             dropped (oscillating_shifts='drop').
+        dropped_counter_rotating_scattering_rate: summed |amplitude|^2 (1/s) of scattering paths excited by counter-rotating
+            drive terms (negative photon frequency), which are dropped; see the module notes on counter-rotating terms.
         dropped_fast_terms: (reduced state, reduced state, amplitude, rate) for terms above rwa_rate_cutoff (upper
             triangle; each term also has its Hermitian conjugate).
         scattering_operators: effective jump-operator matrices on the reduced basis (one per photon-frequency group), each
@@ -91,6 +100,7 @@ class AdiabaticEliminationResult:
     dropped_oscillating_shifts: list[tuple] = field(default_factory=list)
     dropped_fast_terms: list[tuple] = field(default_factory=list)
     scattering_operators: list[tuple[np.ndarray, float]] = field(default_factory=list)
+    dropped_counter_rotating_scattering_rate: float = 0.
 
     def _index(self, state: EnergyEigenstate | int) -> int:
         if isinstance(state, (int, np.integer)):
@@ -315,13 +325,25 @@ def adiabatically_eliminate(hamiltonian: Hamiltonian, levels_to_eliminate: list[
     # ---- Effective Lindblad operators ----
     effective_dissipator = None
     scattering_operators = []
+    dropped_counter_rotating_rate = 0.
     if dissipator is not None:
+        state_energies = np.array([state.energy for state in basis.states])
         lindblad_operators = []
         for channel, passthrough in zip(lindblad_channels, passthrough_lindblad):
             elements = []  # (g, p) reduced indices, amplitude, total rate
             for g, q, lam, r in channel:
                 for p, v, w in directed.get(q, []):
-                    elements.append((reduced_index[g], reduced_index[p], lam * v / denominator(p, w, q), r + w))
+                    amplitude = lam * v / denominator(p, w, q)
+                    # Frequency of the scattered photon, independent of the frame: the total rate r + w carries the
+                    # frame energies f_g - f_p instead of the transition energy E_p - E_g.
+                    photon_frequency = (r + w) - (frame[g] - frame[p]) + (state_energies[p] - state_energies[g])
+                    if photon_frequency < 0.:
+                        # Excitation by a counter-rotating drive term followed by emission: the Lindblad (rotating-wave)
+                        # emission model has no such process (the counter-rotating Kramers-Heisenberg term, emission
+                        # before absorption, is outside it), so these paths are dropped and their incoherent rate reported.
+                        dropped_counter_rotating_rate += abs(amplitude)**2
+                        continue
+                    elements.append((reduced_index[g], reduced_index[p], amplitude, r + w))
             for group in _group_elements_by_rate(elements, rate_tolerance):
                 matrix, rate = _group_matrix(group, len(P))
                 if np.max(np.abs(matrix)) < SMALLEST_ENERGY_SCALE:
@@ -335,10 +357,12 @@ def adiabatically_eliminate(hamiltonian: Hamiltonian, levels_to_eliminate: list[
         if lindblad_operators:
             effective_dissipator = Dissipator(reduced_basis, lindblad_operators, reduced_frame, dissipator.sparse)
 
-    return AdiabaticEliminationResult(hamiltonian=effective_hamiltonian, dissipator=effective_dissipator, reduced_basis=reduced_basis,
-                kept_states=[basis.states[i] for i in P_in_reduced_order], eliminated_states=[basis.states[i] for i in Q],
-                light_shifts=light_shifts, max_perturbation_ratio=float(max_ratio), dropped_oscillating_shifts=dropped, 
-                dropped_fast_terms=dropped_fast, scattering_operators=scattering_operators)
+    return AdiabaticEliminationResult(
+        hamiltonian=effective_hamiltonian, dissipator=effective_dissipator, reduced_basis=reduced_basis,
+        kept_states=[basis.states[i] for i in P_in_reduced_order], eliminated_states=[basis.states[i] for i in Q],
+        light_shifts=light_shifts, max_perturbation_ratio=float(max_ratio),
+        dropped_oscillating_shifts=dropped, dropped_fast_terms=dropped_fast, scattering_operators=scattering_operators,
+        dropped_counter_rotating_scattering_rate=float(dropped_counter_rotating_rate))
 
 
 # ---------------------------------------------------------------------------------------------------------------
