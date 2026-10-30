@@ -275,7 +275,6 @@ class _GstProblem:
             self.sequence_structures.setdefault(tuple(circ.expanded_gates), (tuple(circ.fiducial_prep_gates),
                                                 tuple(circ.germ_gates), circ.germ_power, tuple(circ.fiducial_measurement_gates)))
 
-
         # Gates displaced by circuit-level noise (GateSetModel.set_circuit_noise), among the gates of these circuits
         self.noisy_gates = set(gate_set_model.circuit_noise_gates) & self.gate_set
         self.nll_history = []
