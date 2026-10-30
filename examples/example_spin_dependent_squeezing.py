@@ -18,14 +18,12 @@ def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi
         H(t) = hbar Omega_x sigma_x a_i exp(-i Delta t) + h.c. + hbar Omega_y sigma_y a_j exp(-i n Delta t + phi)  + h.c. 
 
         - currently sets the first MS phase to zero, accepts input for second MS phase as phi 
+        - etas: Lamb-Dicke matrix of shape (1, len(modes)) for the target ion (row 0) and modes (columns, in the order of
+          modes), e.g. from IonChain.lamb_dicke_parameters_for_dofs([targetIon], modes, wavevector)
     ''' 
     # Hamiltonian: H = -eta * Omega/2 sum_{k} [-i sigma_+,k exp(iphi) + i sigma_-,k exp(-iphi)] (a e^i delta t + a† e^{-i delta t} )
     # Hamiltonian: H = -eta * Omega J_y (a e^i delta t + a† e^{-i delta t} ) # for phi = 0; Jy = 1/2 (sigma_y,1 + sigma_y,2)
     motional_basis = ism.StandardBasis([*modes])
-
-    DOFs = basis.degrees_of_freedom
-
-    target_ion_index = DOFs.index(targetIon)
 
     operators = []
 
@@ -41,8 +39,8 @@ def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi
     lower_motion = motional_basis.enlarge_matrix(ism.Fock.lowering(fock_dimension), [modes[index_mode_j]])
 
     # Extract Lamb-Dicke parameter for mode i and j, ion k
-    eta_ki = etas[target_ion_index, index_mode_i]
-    eta_kj = etas[target_ion_index, index_mode_j]
+    eta_ki = etas[0, index_mode_i]
+    eta_kj = etas[0, index_mode_j]
 
     # spin phase = ( phi_R + phi_B )/ 2 
     #   -------------------
@@ -79,8 +77,8 @@ def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi
         spectator_lower_motion = motional_basis.enlarge_matrix(ism.Fock.lowering(fock_dimension), [mode])
 
         # Extract Lamb-Dicke parameter 
-        eta_ki = etas[target_ion_index, mode_index]
-        eta_kj = etas[target_ion_index, mode_index]
+        eta_ki = etas[0, mode_index]
+        eta_kj = etas[0, mode_index]
 
         x_prefactor = 1j*rabi_rate_x * 0.5 * eta_ki * np.exp(1j*phase_x)
     
@@ -300,8 +298,9 @@ def main():
         return magnitude*(0.42 - 0.5*np.cos(TPI * t /duration) + 0.08 * np.cos(2.*TPI*t/duration))
 
     # Retrieve lamb dicke parameters 
-    lamb_dicke_parameters = trap_analysis.get_radial_lamb_dicke_parameters(wavevector, branch_dir) # matrix of ion, mode 
-    eta = lamb_dicke_parameters[target_ion_index,target_mode_index]
+    # Rows: [target_ion]; columns: modes (in list order). The trap maps each DOF to its ion/mode, including reindexing. 
+    lamb_dicke_parameters = trap_analysis.lamb_dicke_parameters_for_dofs([target_ion], modes, wavevector)
+    eta = lamb_dicke_parameters[0, target_mode_index]
     print(f" - |eta| for target ion, target mode: {np.abs(eta)}\n")
     print(f" - Sideband rabi rate (eta*Omega): {np.abs(eta) * rabi_rate / 1E3 / TPI} [kHz]\n")
     print('\n\n')

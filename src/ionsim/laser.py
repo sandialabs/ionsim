@@ -29,6 +29,7 @@ from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRES
 from ionsim.ionsim_error import IonSimError
 from ionsim.operator import Operator, CouplingOperator
 from ionsim.named_operators import Fock
+from ionsim.trapped_ion_mode_analysis import TrappedIonCrystal
 
 ## Vector helper operations
 def _unit_vector(vec: Vector) -> Vector:
@@ -452,7 +453,7 @@ class Laser():
 
     def build_red_sideband_coupling_operators(self, basis: Basis, target_atoms: list[AtomicStructure] | None, target_modes: list[MotionalMode],
                                               ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel],
-                                              multipole_order: int, lamb_dicke_parameters: float | dict, frequency_shift: float = 0.,
+                                              multipole_order: int, lamb_dicke_parameters: Matrix | float, frequency_shift: float = 0.,
                                               debye_waller: bool = False) -> list[CouplingOperator]:
         """ First red-sideband couplings |g, n> <-> |e, n-1> (absorption removes one phonon); resonant at
             omega = omega_0 - omega_mode. See build_sideband_coupling_operators for the arguments. """
@@ -461,7 +462,7 @@ class Laser():
 
     def build_blue_sideband_coupling_operators(self, basis: Basis, target_atoms: list[AtomicStructure] | None, target_modes: list[MotionalMode],
                                                ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel],
-                                               multipole_order: int, lamb_dicke_parameters: float | dict, frequency_shift: float = 0.,
+                                               multipole_order: int, lamb_dicke_parameters: Matrix | float, frequency_shift: float = 0.,
                                                debye_waller: bool = False) -> list[CouplingOperator]:
         """ First blue-sideband couplings |g, n> <-> |e, n+1> (absorption adds one phonon); resonant at
             omega = omega_0 + omega_mode. See build_sideband_coupling_operators for the arguments. """
@@ -470,19 +471,18 @@ class Laser():
 
     def build_sideband_coupling_operators(self, sideband: str, basis: Basis, target_atoms: list[AtomicStructure] | None, target_modes: list[MotionalMode],
                                           ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, 
-                                          lamb_dicke_parameters: float | dict, frequency_shift: float = 0., debye_waller: bool = False) -> list[CouplingOperator]:
+                                          lamb_dicke_parameters: Matrix | float, frequency_shift: float = 0., debye_waller: bool = False) -> list[CouplingOperator]:
         """ First red ('red') or blue ('blue') sideband couplings of the requested levels with each requested motional mode.
 
             The absorption element of atom j and mode k is (Omega/2) e^{i phi} (i eta_jk) |e><g| (x) a_k (red) or a_k^dag
             (blue), where Omega e^{i phi} is the carrier Rabi frequency of the same transition (E1 or E2). 
 
-            target_atoms: addressed AtomicStructure DOFs; all of the basis if None. Levels are matched by name (as for the carrier).
-            lamb_dicke_parameters: signed eta_jk, either one float for every (atom, mode) pair or a dict keyed by
-                (atom, mode) DOF objects. Every requested pair must have an entry; an entry of 0 skips that pair. The sign
-                (the atom's normal-mode amplitude relative to k) sets the relative phase of different atoms' sideband
-                couplings, e.g. for stretch modes. See lamb_dicke_parameter() to compute eta from a mode vector.
+            target_atoms: addressed AtomicStructure DOFs; all of the basis (in basis order) if None. Levels are matched by
+                name (as for the carrier).
             target_modes: the MotionalMode DOFs to couple (required, non-empty). Each must be in the basis; a sideband
                 operator is built for every (target atom, target mode) pair.
+            lamb_dicke_parameters: signed Lamb-Dicke float or matrix eta[i, j] for target_atoms[i] and target_modes[j], shape
+                (len(target_atoms), len(target_modes)). 
             frequency_shift: rad/s added to the laser frequency, as for the carrier.
             debye_waller: if True, use the exact Delta n = +/-1 matrix elements of exp(i eta (a + a^dag)) for this mode,
                 eta e^{-eta^2/2} L_n^1(eta^2) / sqrt(n+1) instead of eta sqrt(n+1) (Fock.debye_waller_lowering).
@@ -507,24 +507,48 @@ class Laser():
                                                                         frequency_shift, motional_matrix))
         return coupling_operators
 
-    # TODO: replace with functionality from trap 
-    def lamb_dicke_parameter(self, mode_frequency: float, atomic_mass: float, mode_participation_vector: Vector) -> float:
-        """ Signed Lamb-Dicke parameter eta = (k . b) sqrt(hbar / (2 m omega_mode)) of this laser for one atom and one mode.
+    def build_red_sideband_coupling_operators_from_trap(self, basis: Basis, target_atoms: list[AtomicStructure] | None,
+                                                        target_modes: list[MotionalMode], ground_levels: list[AtomicInternalEnergyLevel],
+                                                        excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int,
+                                                        ion_trap: TrappedIonCrystal, frequency_shift: float = 0.,
+                                                        debye_waller: bool = False) -> list[CouplingOperator]:
+        """ Red-sideband couplings with Lamb-Dicke parameters from a trapped-ion mode analysis.
+            See build_sideband_coupling_operators_from_trap. """
+        return self.build_sideband_coupling_operators_from_trap('red', basis, target_atoms, target_modes, ground_levels, excited_levels,
+                                                                multipole_order, ion_trap, frequency_shift, debye_waller)
 
-            mode_frequency: rad/s.  
-            atomic_mass: daltons 
-            mode_participation_vector: the atom's 3-component normal-mode participation vector b (the atom's entries of the normalized
-                mode eigenvector, e.g. z_hat / sqrt(N) for the axial center-of-mass mode of N identical ions).
-            Uses this laser's wavevector, i.e. a single-photon transition. For a two-photon (Raman) transition the
-            relevant wavevector is the difference k1 - k2 of the two beams, which a single Laser does not describe.
+    def build_blue_sideband_coupling_operators_from_trap(self, basis: Basis, target_atoms: list[AtomicStructure] | None,
+                                                         target_modes: list[MotionalMode], ground_levels: list[AtomicInternalEnergyLevel],
+                                                         excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int,
+                                                         ion_trap: TrappedIonCrystal, frequency_shift: float = 0.,
+                                                         debye_waller: bool = False) -> list[CouplingOperator]:
+        """ Blue-sideband couplings with Lamb-Dicke parameters from a trapped-ion mode analysis.
+            See build_sideband_coupling_operators_from_trap. """
+        return self.build_sideband_coupling_operators_from_trap('blue', basis, target_atoms, target_modes, ground_levels, excited_levels,
+                                                                multipole_order, ion_trap, frequency_shift, debye_waller)
+
+    def build_sideband_coupling_operators_from_trap(self, sideband: str, basis: Basis, target_atoms: list[AtomicStructure] | None,
+                                                    target_modes: list[MotionalMode], ground_levels: list[AtomicInternalEnergyLevel],
+                                                    excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int,
+                                                    ion_trap: TrappedIonCrystal, frequency_shift: float = 0.,
+                                                    debye_waller: bool = False) -> list[CouplingOperator]:
+        """ Sideband couplings with the Lamb-Dicke matrix computed by the trapped-ion mode analysis ion_trap (e.g. an IonChain) 
+                for this laser's lab-frame wavevector.
+
+            The target atoms must be linked to ion_trap (built with TrappedIonCrystal.from_atomic_structure_basis, or
+            registered with register_atomic_structures) and the target modes built by its build_mode_DOFs (or IonChain
+            build_mode_DOFs_from_branch). The trap maps each DOF to its ion and mode, including any ion reindexing.
+            Uses this laser's own wavevector, i.e. a single-photon transition.
         """
-        mode_participation_vector = np.asarray(mode_participation_vector, dtype=float)
-        if mode_participation_vector.shape != (3,):
-            raise IonSimError(f"mode_participation_vector must have 3 components, got shape {mode_participation_vector.shape}.")
-        if mode_frequency <= 0. or atomic_mass <= 0.:
-            raise IonSimError("mode_frequency and atomic_mass must be positive.")
-        mass = atomic_mass * const.value('atomic mass constant')
-        return float(np.dot(self.wavevector, mode_participation_vector) * np.sqrt(const.hbar / (2. * mass * mode_frequency)))
+        if sideband not in self.SIDEBANDS:
+            raise IonSimError(f"sideband must be one of {self.SIDEBANDS}, got '{sideband}'.")
+        if not isinstance(ion_trap, TrappedIonCrystal):
+            raise IonSimError(f"ion_trap must be a TrappedIonCrystal (e.g. an IonChain), got {type(ion_trap).__name__}.")
+        target_atoms = self._parse_atomic_input(basis, target_atoms)
+        target_modes = self._parse_motional_mode_input(basis, target_modes)
+        lamb_dicke_parameters = ion_trap.lamb_dicke_parameters_for_dofs(target_atoms, target_modes, self.wavevector)
+        return self.build_sideband_coupling_operators(sideband, basis, target_atoms, target_modes, ground_levels, excited_levels,
+                                                      multipole_order, lamb_dicke_parameters, frequency_shift, debye_waller)
 
     # ---- helpers for the builders ----
     @staticmethod
@@ -553,7 +577,6 @@ class Laser():
         if len({id(mode) for mode in target_modes}) != len(target_modes):
             raise IonSimError("target_modes contains the same mode more than once, which would double its sideband couplings.")
         modes_from_basis = [] if not basis.motional_basis else basis.motional_basis.degrees_of_freedom
-        #basis_modes = [dof for dof in basis.degrees_of_freedom if isinstance(dof, MotionalMode)]
         for mode in target_modes:
             if not any(mode is dof for dof in modes_from_basis):
                 raise ValueError(f"Motional mode {mode.name or mode} has not been included in the basis degrees of freedom.")
@@ -563,19 +586,31 @@ class Laser():
         return list(target_modes)
 
     @staticmethod
-    def _lamb_dicke_table(lamb_dicke_parameters: float | dict, atom_dofs: list[AtomicStructure], mode_dofs: list[MotionalMode]) -> dict:
-        """ {(atom, mode): eta} for every requested pair, from one float or a dict keyed by (atom, mode) DOF objects. """
+    def _lamb_dicke_table(lamb_dicke_parameters: Matrix | float, atom_dofs: list[AtomicStructure], mode_dofs: list[MotionalMode]) -> dict:
+        """ {(atom, mode): eta} from the Lamb-Dicke matrix eta[i, j] for atom_dofs[i] and mode_dofs[j]
+            (shape (len(atom_dofs), len(mode_dofs))). A scalar is accepted only for one atom and one mode. """
         if isinstance(lamb_dicke_parameters, dict):
-            # DOFs are frozen dataclasses with eq=False, so dict keys compare by identity.
-            missing = [(atom.name or str(i), mode.name or str(k)) for i, atom in enumerate(atom_dofs) for k, mode in enumerate(mode_dofs)
-                       if (atom, mode) not in lamb_dicke_parameters]
-            if missing:
-                raise IonSimError(f"lamb_dicke_parameters has no entry for (atom, mode) pairs {missing}; give every pair "
-                                  f"(use 0. to skip a pair).")
-            return {(atom, mode): float(lamb_dicke_parameters[(atom, mode)]) for atom in atom_dofs for mode in mode_dofs}
-        if np.ndim(lamb_dicke_parameters) != 0 or np.iscomplexobj(lamb_dicke_parameters):
-            raise IonSimError("lamb_dicke_parameters must be a real float or a dict keyed by (atom, mode).")
-        return {(atom, mode): float(lamb_dicke_parameters) for atom in atom_dofs for mode in mode_dofs}
+            raise IonSimError("lamb_dicke_parameters must be a matrix eta[i, j] for (target_atoms[i], target_modes[j]), not a dict.")
+        etas = np.asarray(lamb_dicke_parameters)
+        if etas.dtype.kind not in 'biufc':
+            raise IonSimError(f"lamb_dicke_parameters must be numeric, got dtype {etas.dtype}.")
+        expected_shape = (len(atom_dofs), len(mode_dofs))
+        if etas.ndim == 0:
+            if expected_shape != (1, 1):
+                raise IonSimError(f"A scalar Lamb-Dicke parameter is only accepted for one target atom and one target mode. Give a "
+                                  f"matrix of shape {expected_shape}: rows follow target_atoms, columns follow target_modes.")
+            etas = etas.reshape(1, 1)
+        if etas.shape != expected_shape:
+            raise IonSimError(f"lamb_dicke_parameters has shape {etas.shape}, expected {expected_shape}: rows follow target_atoms "
+                              f"({len(atom_dofs)}) and columns follow target_modes ({len(mode_dofs)}).")
+        if np.iscomplexobj(etas):
+            if np.any(np.abs(np.imag(etas)) > NUMERICAL_EQUIVALENCE_THRESHOLD * max(np.max(np.abs(etas)), 1.)):
+                raise IonSimError("Lamb-Dicke parameters must be real (fix the phases of degenerate modes first).")
+            etas = np.real(etas)
+        etas = etas.astype(float)
+        if not np.all(np.isfinite(etas)):
+            raise IonSimError("Lamb-Dicke parameters must be finite.")
+        return {(atom, mode): float(etas[i, j]) for i, atom in enumerate(atom_dofs) for j, mode in enumerate(mode_dofs)}
 
     @staticmethod
     def _sideband_motional_matrix(sideband: str, mode: MotionalMode, eta: float, debye_waller: bool) -> Matrix:

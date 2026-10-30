@@ -385,6 +385,77 @@ class TestModeAnalysisPhysics(unittest.TestCase):
         np.testing.assert_allclose(wz, TPI * 0.3e6, rtol=1e-6)
 
 
+class TestDOFLinking(unittest.TestCase):
+    """Atom and mode DOFs recorded by the crystal, and Lamb-Dicke parameters looked up for given DOFs."""
+    TRAP = (3. * TPI * 1e6, 3.2 * TPI * 1e6, 0.5 * TPI * 1e6)   # rad/s; radial >> axial, so the ions form a chain
+    K = TPI / 729e-9 * np.array([0.3, 0.2, 0.9]) / np.linalg.norm([0.3, 0.2, 0.9])   # arbitrary lab-frame wavevector
+
+    def atoms(self, n=3):
+        from ionsim.degree_of_freedom import AtomicStructure
+        return [AtomicStructure.from_species('40Ca+', term_symbols=['S1/2'], name=f'ion{i}') for i in range(n)]
+
+    def test_ion_index_of_follows_reindexing(self):
+        """With 'distance' reindexing the center ion is stored first, so stored order != DOF order; ion_index_of maps each
+        DOF to its stored row, and its Lamb-Dicke parameters equal those of the same ion in an unreindexed crystal."""
+        from ionsim.basis import StandardBasis
+        atoms = self.atoms()
+        crystal = TrappedIonCrystal.from_atomic_structure_basis(StandardBasis(atoms), *self.TRAP, reindexing_strategy='distance')
+        crystal.solve_ion_trap_equilibrium()
+        self.assertFalse(np.array_equal(crystal.ion_indices, np.arange(3)))
+        for p, atom in enumerate(atoms):
+            self.assertEqual(crystal.ion_indices[crystal.ion_index_of(atom)], p)
+        unpermuted = TrappedIonCrystal.from_atomic_structure_basis(StandardBasis(self.atoms()), *self.TRAP, reindexing_strategy='none')
+        unpermuted.solve_ion_trap_equilibrium()
+        np.testing.assert_array_equal(unpermuted.ion_indices, np.arange(3))
+        modes = crystal.build_mode_DOFs(list(range(9)), 2)
+        eta = crystal.lamb_dicke_parameters_for_dofs(atoms, modes, self.K)               # rows: DOF order
+        reference = unpermuted.calculate_lamb_dicke_parameters(self.K)                    # rows: input order
+        self.assertEqual(eta.shape, (3, 9))
+        for j in range(9):   # each mode's overall sign is a phase convention, so compare up to one sign per mode
+            sign = np.sign(eta[np.argmax(np.abs(eta[:, j])), j] * reference[np.argmax(np.abs(eta[:, j])), j])
+            np.testing.assert_allclose(eta[:, j], sign * reference[:, j], rtol=1e-8, atol=1e-12)
+
+    def test_lookup_follows_requested_order(self):
+        from ionsim.basis import StandardBasis
+        atoms = self.atoms()
+        chain = IonChain.from_atomic_structure_basis(StandardBasis(atoms), *self.TRAP)
+        modes = chain.build_mode_DOFs_from_branch('z', [0, 1, 2], 3)
+        full = chain.calculate_lamb_dicke_parameters(self.K)
+        atom_order, mode_order = [atoms[2], atoms[0]], [modes[1], modes[2], modes[0]]
+        eta = chain.lamb_dicke_parameters_for_dofs(atom_order, mode_order, self.K)
+        expected = full[np.ix_([chain.ion_index_of(a) for a in atom_order], [chain.mode_index_of(m) for m in mode_order])]
+        np.testing.assert_array_equal(eta, expected)
+        self.assertEqual([m.name for m in modes], ['z0', 'z1', 'z2'])
+        self.assertEqual([chain.mode_index_of(m) for m in modes], [6, 7, 8])  # branch_sorted: x, y, z blocks of 3
+        self.assertEqual([m.name for m in chain.build_mode_DOFs([4], 2)], ['mode 4'])
+
+    def test_errors(self):
+        from ionsim.basis import StandardBasis
+        from ionsim.degree_of_freedom import MotionalMode
+        atoms = self.atoms(2)
+        chain = IonChain.from_atomic_structure_basis(StandardBasis(atoms), *self.TRAP)
+        stranger_atom = self.atoms(1)[0]
+        stranger_mode = MotionalMode.from_frequency(TPI * 1e6, 3)
+        with self.subTest('atom not linked'), self.assertRaises(IonSimError):
+            chain.ion_index_of(stranger_atom)
+        with self.subTest('mode not built by this crystal'), self.assertRaises(IonSimError):
+            chain.mode_index_of(stranger_mode)
+        with self.subTest('crystal without linked atoms'), self.assertRaises(IonSimError):
+            IonChain.from_species('40Ca+', 2, *self.TRAP).ion_index_of(atoms[0])
+        with self.subTest('register after construction from masses'):
+            crystal = IonChain.from_species('40Ca+', 2, *self.TRAP)
+            crystal.register_atomic_structures(atoms)
+            self.assertEqual(sorted(crystal.ion_index_of(a) for a in atoms), [0, 1])
+        with self.subTest('mass mismatch'), self.assertRaises(IonSimError):
+            IonChain.from_species('171Yb+', 2, *self.TRAP).register_atomic_structures(atoms)
+        with self.subTest('wrong number of atoms'), self.assertRaises(IonSimError):
+            chain.register_atomic_structures(atoms[:1])
+        with self.subTest('duplicate atom'), self.assertRaises(IonSimError):
+            chain.register_atomic_structures([atoms[0], atoms[0]])
+        with self.subTest('mode index out of range'), self.assertRaises(ValueError):
+            chain.build_mode_DOFs([6], 2)
+
+
 if __name__ == '__main__':
     # Run the unit tests
     unittest.main()

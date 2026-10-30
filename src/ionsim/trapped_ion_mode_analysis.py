@@ -114,6 +114,12 @@ class TrappedIonCrystal:
         # Original index of each stored ion (updated by reindexing)
         self.ion_indices = np.arange(self.num_ions)
 
+        # IonSim DOFs linked to this crystal: the AtomicStructure of each ion in the user-supplied order (see
+        # register_atomic_structures) and the global mode index of each MotionalMode built by build_mode_DOFs, keyed by
+        # the DOF object (DOFs compare by identity). Used to look up Lamb-Dicke parameters for given DOFs.
+        self._atomic_structures: list[AtomicStructure] | None = None
+        self._mode_dof_indices: dict[MotionalMode, int] = {}
+
         # Dimensionless parameters are fixed by the reference ion and never rescaled by reindexing
         self.set_up_dimensionless_parameters(self.reference_charge, self.reference_mass, self.omega_z[0])
 
@@ -820,7 +826,9 @@ class TrappedIonCrystal:
                 raise IonSimError("Atomic structure basis should only contain AtomicStructure objects. No motional modes should be included.")
         atomic_masses = [dof.atomic_mass for dof in dofs]
         atomic_charges = [dof.atomic_charge for dof in dofs]
-        return cls(len(dofs), omega_x, omega_y, omega_z, atomic_masses, atomic_charges, **kwargs)
+        crystal = cls(len(dofs), omega_x, omega_y, omega_z, atomic_masses, atomic_charges, **kwargs)
+        crystal.register_atomic_structures(dofs)
+        return crystal
 
     # ------------------------------------------------------------------------------------------------
     # IonSim DOFs and per-mode access
@@ -836,17 +844,79 @@ class TrappedIonCrystal:
             raise ValueError(f"Fock dimensions must be positive integers. Received {fock_dimensions}")
         return dims.astype(int)
 
-    def build_mode_DOFs(self, mode_indices: list[int], fock_dimensions: Vector | int) -> list[MotionalMode]:
+    def build_mode_DOFs(self, mode_indices: list[int], fock_dimensions: Vector | int,
+                        names: list[str] | None = None) -> list[MotionalMode]:
         """ Builds and returns a list of IonSim Motional Degrees of Freedom, with frequencies in rad/s.
 
             - mode_indices: global mode indices (0 to 3N - 1, in the stored mode order)
             - fock_dimensions: one Fock dimension per mode, or a single value applied to all modes
+            - names: optional DOF names, one per mode; defaults to 'mode <global index>'
+
+            Each returned DOF is recorded with its global mode index (mode_index_of), so Lamb-Dicke parameters can be
+            looked up for it (lamb_dicke_parameters_for_dofs).
         """
         self._ensure_mode_analysis_run()
         fock_dimensions = self._parse_fock_dimensions_input_dimensions(fock_dimensions, len(mode_indices))
+        if names is None:
+            names = [f'mode {mode_index}' for mode_index in mode_indices]
+        elif len(names) != len(mode_indices):
+            raise ValueError(f"Received {len(names)} names for {len(mode_indices)} modes")
         frequencies = self.normal_mode_frequencies
-        return [MotionalMode.from_frequency(frequencies[mode_index], int(fock_dim))
-                for mode_index, fock_dim in zip(mode_indices, fock_dimensions)]
+        modes = []
+        for mode_index, fock_dim, name in zip(mode_indices, fock_dimensions, names):
+            if not 0 <= mode_index < 3 * self.num_ions:
+                raise ValueError(f"Mode index must be between 0 and {3 * self.num_ions - 1}, received {mode_index}")
+            mode = MotionalMode.from_frequency(frequencies[mode_index], int(fock_dim), name=name)
+            self._mode_dof_indices[mode] = int(mode_index)
+            modes.append(mode)
+        return modes
+
+    def register_atomic_structures(self, atoms: list[AtomicStructure]):
+        """ Links AtomicStructure DOFs to the ions: atoms[p] is ion p in the user-supplied order (the order of the masses and
+            charges given to the constructor). Called by from_atomic_structure_basis; call it directly for a crystal built
+            from masses and charges. Each atom's mass and charge must match its ion.
+        """
+        atoms = list(atoms)
+        if len(atoms) != self.num_ions:
+            raise IonSimError(f"Expected {self.num_ions} AtomicStructure DOFs (one per ion), received {len(atoms)}.")
+        if len({id(atom) for atom in atoms}) != len(atoms):
+            raise IonSimError("Each ion needs its own AtomicStructure DOF; the same DOF object was given more than once.")
+        for p, atom in enumerate(atoms):
+            if not isinstance(atom, AtomicStructure):
+                raise IonSimError(f"Expected AtomicStructure DOFs, received {type(atom).__name__} for ion {p}.")
+            if not (np.isclose(atom.atomic_mass, self._input_atomic_masses_amu[p], rtol=1e-12, atol=0.)
+                    and np.isclose(atom.atomic_charge, self._input_atomic_charges[p], rtol=1e-12, atol=0.)):
+                raise IonSimError(f"AtomicStructure {atom.name or p} (mass {atom.atomic_mass} amu, charge {atom.atomic_charge}) does "
+                                  f"not match ion {p} (mass {self._input_atomic_masses_amu[p]} amu, charge {self._input_atomic_charges[p]}).")
+        self._atomic_structures = atoms
+
+    def ion_index_of(self, atom: AtomicStructure) -> int:
+        """ Stored ion index (row of the Lamb-Dicke matrix) of the ion represented by an AtomicStructure DOF, accounting
+            for any reindexing after the equilibrium solve. """
+        if self._atomic_structures is None:
+            raise IonSimError("No AtomicStructure DOFs are linked to this crystal. Build it with from_atomic_structure_basis "
+                              "or call register_atomic_structures.")
+        positions = [p for p, registered in enumerate(self._atomic_structures) if registered is atom]
+        if not positions:
+            raise IonSimError(f"AtomicStructure {getattr(atom, 'name', None) or atom} is not linked to this crystal. DOFs are "
+                              f"matched by identity; a DOF rebuilt by a basis projection is a new object.")
+        self._ensure_mode_analysis_run()
+        return int(np.flatnonzero(self.ion_indices == positions[0])[0])
+
+    def mode_index_of(self, mode: MotionalMode) -> int:
+        """ Global mode index (column of the Lamb-Dicke matrix) of a MotionalMode DOF built by build_mode_DOFs. """
+        if not isinstance(mode, MotionalMode) or mode not in self._mode_dof_indices:
+            raise IonSimError(f"Motional mode {getattr(mode, 'name', None) or mode} was not built by this crystal's build_mode_DOFs. "
+                              f"DOFs are matched by identity; a DOF rebuilt by a basis projection is a new object.")
+        return self._mode_dof_indices[mode]
+
+    def lamb_dicke_parameters_for_dofs(self, atoms: list[AtomicStructure], modes: list[MotionalMode], wavevector: Vector) -> Matrix:
+        """ Lamb-Dicke parameters eta[i, j] for ion atoms[i] and mode modes[j], shape (len(atoms), len(modes)), for a
+            lab-frame wavevector k [1/m]. Rows and columns follow the given DOF order (the convention of the target_atoms
+            and target_modes arguments of the Laser sideband builders), with reindexing handled by ion_index_of. """
+        rows = [self.ion_index_of(atom) for atom in atoms]
+        columns = [self.mode_index_of(mode) for mode in modes]
+        return self.calculate_lamb_dicke_parameters(wavevector)[np.ix_(rows, columns)]
 
     def _ensure_mode_analysis_run(self):
         """Ensure that mode analysis has ran. If not, run it automatically."""
@@ -864,7 +934,6 @@ class TrappedIonCrystal:
     def get_lamb_dicke_parameters_for_mode(self, mode_index: int, wavevector: Vector) -> Vector:
         """ Return Lamb-Dicke parameters for a specific mode by its index.
 
-                - mode_index: Index of the mode of interest
                 - wavevector: lab-frame wavevector k as a 3-element array (kx, ky, kz) in 1/m
 
                 Returns an array of shape (num_ions,) where result[ion] gives the LD parameter for that ion.
@@ -1015,8 +1084,7 @@ class IonChain(TrappedIonCrystal):
             Parameters:
                 wavevector : lab-frame k = (kx, ky, kz) as a 3-element array in units of 1/m
 
-            Returns:
-                Dictionary with keys 'x', 'y', 'z'. Each value is a 2D array of shape (num_ions, num_modes_per_branch)
+            Returns a dictionary with keys 'x', 'y', 'z'. Each value is a 2D array of shape (num_ions, num_modes_per_branch)
                 representing eta[ion_index, mode_index] for the modes of that branch.
         """
         total_ld_params = self.calculate_lamb_dicke_parameters(wavevector)
@@ -1031,7 +1099,7 @@ class IonChain(TrappedIonCrystal):
             - ex] branch = 'x', mode_indices = [0,1] (tilt and COM), fock_dimensions = 6
         """
         global_indices = [self._global_mode_index(branch, idx) for idx in mode_indices]
-        return self.build_mode_DOFs(global_indices, fock_dimensions)
+        return self.build_mode_DOFs(global_indices, fock_dimensions, names=[f'{branch}{idx}' for idx in mode_indices])
 
     def calculate_lamb_dicke_parameters_full(self, wavevector: Vector) -> Matrix:
         """ Calculate full Lamb-Dicke parameter matrix from a lab-frame laser wavevector k = (kx, ky, kz)

@@ -28,6 +28,7 @@ from ionsim.atomic_internal_energy_level import (LSFineLevel, compute_coupling_a
 from ionsim.ionsim_error import IonSimError
 from ionsim.named_operators import Unitary
 from ionsim.noise import Noise
+from ionsim.trapped_ion_mode_analysis import IonChain
 
 class TestProcess(unittest.TestCase):
 
@@ -578,7 +579,7 @@ class TestLaserSidebandCouplings(unittest.TestCase):
                 power = reference_power * (sideband_rabi / self.ETA / rabi_per_reference)**2   # Omega scales as sqrt(P)
                 blue = self.laser(omega_0 + self.MODE_FREQUENCY + delta, power)
                 red = self.laser(omega_0 - self.MODE_FREQUENCY - delta, power)
-                etas = {(atom, mode): self.ETA for atom in atoms}
+                etas = [[self.ETA], [self.ETA]]   # rows: atoms (target_atoms=None -> basis order), columns: [mode]
                 operators = (blue.build_blue_sideband_coupling_operators(basis, None, [mode], [g], [e], 2, etas)
                              + red.build_red_sideband_coupling_operators(basis, None, [mode], [g], [e], 2, etas))
                 initial = next(i for i, state in enumerate(basis.states)                       # |g, g, n=0>
@@ -592,16 +593,6 @@ class TestLaserSidebandCouplings(unittest.TestCase):
                 bell_fidelity = 0.5 * (rho[gg, gg] + rho[ee, ee]).real + abs(rho[gg, ee])   # best phase theta
                 self.assertGreater(bell_fidelity, 1. - 1e-4)
                 self.assertGreater(np.trace(rho @ rho).real, 1. - 1e-4)                 # mode disentangled
-
-    def test_lamb_dicke_parameter(self):
-        laser = self.laser(2. * np.pi * const.c / 729e-9)
-        mass = 39.96259087  # daltons, 40Ca
-        expected = laser.wavevector[0] * np.sqrt(const.hbar / (2. * mass * const.value('atomic mass constant') * self.MODE_FREQUENCY))
-        self.assertAlmostEqual(laser.lamb_dicke_parameter(self.MODE_FREQUENCY, mass, [1., 0., 0.]), expected, places=14)
-        self.assertAlmostEqual(expected, 0.0969, places=4)  # 729 nm, 1 MHz, k along the mode
-        self.assertAlmostEqual(laser.lamb_dicke_parameter(self.MODE_FREQUENCY, mass, [-1. / np.sqrt(2.), 0., 0.]),
-                               -expected / np.sqrt(2.), places=14)
-        self.assertAlmostEqual(laser.lamb_dicke_parameter(self.MODE_FREQUENCY, mass, [0., 0., 1.]), 0., places=14)
 
     def test_coupling_operator_from_raising_matrix(self):
         """The helper returns one operator whose rate sign follows the triangle of the raising elements, None when every
@@ -660,12 +651,144 @@ class TestLaserSidebandCouplings(unittest.TestCase):
             laser.build_red_sideband_coupling_operators(no_mode_basis, [atom], [other_mode], [g], [e], 2, self.ETA)
         with self.subTest('mode not in basis'), self.assertRaises(ValueError):
             laser.build_red_sideband_coupling_operators(basis, [atom], [other_mode], [g], [e], 2, self.ETA)
-        with self.subTest('missing (atom, mode) entry'), self.assertRaises(IonSimError):
-            laser.build_red_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, {})
+        for case, etas in (('wrong shape', [[self.ETA, self.ETA]]), ('empty', []), ('complex', [[0.1j]]),
+                           ('not finite', [[np.nan]]), ('dict no longer accepted', {(atom, mode): self.ETA})):
+            with self.subTest(case), self.assertRaises(IonSimError):
+                laser.build_red_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, etas)
         with self.subTest('unknown sideband'), self.assertRaises(IonSimError):
             laser.build_sideband_coupling_operators('green', basis, [atom], [mode], [g], [e], 2, self.ETA)
         with self.subTest('eta = 0 skips the pair'):
-            self.assertEqual(laser.build_blue_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, {(atom, mode): 0.}), [])
+            self.assertEqual(laser.build_blue_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, [[0.]]), [])
+        with self.subTest('1x1 matrix equals scalar'):
+            as_matrix, as_scalar = (laser.build_blue_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, eta)
+                                    for eta in ([[self.ETA]], self.ETA))
+            self.assertEqual(coupling_elements(basis, as_matrix), coupling_elements(basis, as_scalar))
+
+    def test_matrix_rows_follow_target_atoms(self):
+        """eta[i, j] belongs to (target_atoms[i], target_modes[j]): a stretch-like sign pattern [[a], [-a]] gives atom 1 the
+        opposite sideband phase of atom 0, and reordering target_atoms together with the rows gives the same operators."""
+        atoms, mode, basis, g, e = self.build(n_atoms=2)
+        laser = self.laser(e.energy - g.energy + self.MODE_FREQUENCY)
+        a = self.ETA
+        def single(atom, eta):
+            return coupling_elements(basis, laser.build_blue_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, eta))
+        stretch = coupling_elements(basis, laser.build_blue_sideband_coupling_operators(basis, atoms, [mode], [g], [e], 2, [[a], [-a]]))
+        expected = single(atoms[0], a)
+        for key, value in single(atoms[1], -a).items():
+            expected[key] = expected.get(key, 0.) + value
+        self.assertEqual(set(stretch), set(expected))
+        for key in expected:
+            self.assertAlmostEqual(abs(stretch[key] - expected[key]), 0., delta=1e-12 * abs(expected[key]))
+        self.assertTrue(all(abs(single(atoms[1], -a)[key] + single(atoms[1], a)[key]) < 1e-12 * abs(single(atoms[1], a)[key])
+                            for key in single(atoms[1], a)))   # the sign really flips atom 1's elements
+        reordered = coupling_elements(basis, laser.build_blue_sideband_coupling_operators(basis, atoms[::-1], [mode], [g], [e], 2,
+                                                                                          [[-a], [a]]))
+        self.assertEqual(set(reordered), set(stretch))
+        for key in stretch:
+            self.assertAlmostEqual(abs(reordered[key] - stretch[key]), 0., delta=1e-12 * abs(stretch[key]))
+        with self.assertRaises(IonSimError):   # a scalar is ambiguous for two atoms
+            laser.build_blue_sideband_coupling_operators(basis, atoms, [mode], [g], [e], 2, a)
+
+
+def coupling_elements(basis, operators) -> dict:
+    """{(row index, column index): summed strength} over all couplings of the operators."""
+    elements = {}
+    for operator in operators:
+        for coupling in operator.couplings:
+            key = (basis.states.index(coupling.row_state), basis.states.index(coupling.column_state))
+            elements[key] = elements.get(key, 0.) + coupling.strength
+    return elements
+
+
+class TestLaserSidebandsFromTrap(unittest.TestCase):
+    """Sideband couplings with Lamb-Dicke parameters from an IonChain (40Ca+ S1/2 -> D5/2, 729 nm, E2)."""
+    TPI = 2. * np.pi
+    TRAP = (3. * TPI * 1e6, 3.2 * TPI * 1e6, 0.8 * TPI * 1e6)   # rad/s; radial >> axial: a chain along z
+    QN_G, QN_E = {'n': 4, 'l': 0, 'mj': 0.5}, {'n': 3, 'l': 2, 'j': 2.5, 'mj': 1.5}
+    FOCK_DIMENSION = 5
+
+    def setup_chain(self, n_ions, n_hat, fock_dimension=None):
+        atoms = [AtomicStructure.from_species(species='40Ca+', term_symbols=['S1/2', 'D5/2'], name=f'ion{i}',
+                                              quantum_numbers=[self.QN_G, self.QN_E]) for i in range(n_ions)]
+        chain = IonChain.from_atomic_structure_basis(StandardBasis(atoms), *self.TRAP)
+        modes = chain.build_mode_DOFs_from_branch('z', list(range(n_ions)), fock_dimension or self.FOCK_DIMENSION)
+        basis = StandardBasis([*atoms, *modes])
+        g = next(level for level in atoms[0].energy_levels if level.term_symbol == 'S1/2')
+        e = next(level for level in atoms[0].energy_levels if level.term_symbol == 'D5/2')
+        n_hat = np.asarray(n_hat, dtype=float) / np.linalg.norm(n_hat)
+        polarization = Polarization(np.array([0., 1., 0.]), n_hat)   # y: drives Delta m = +1 (E2) for k in the xz plane
+        laser = Laser.gaussian_from_frequency(e.energy - g.energy, 1e-3, 10e-6, n_hat, polarization, 0.)
+        return atoms, chain, modes, basis, g, e, laser
+
+    @staticmethod
+    def mode_frequency(mode):
+        return mode.energy_levels[1].energy - mode.energy_levels[0].energy
+
+    def test_from_trap_equals_matrix_path(self):
+        """from_trap builds exactly the operators of the matrix path with eta = ion_trap.lamb_dicke_parameters_for_dofs,
+        for any target order, and the trap's eta has a nonzero, opposite-sign stretch-mode pair."""
+        atoms, chain, modes, basis, g, e, laser = self.setup_chain(2, [1., 0., 1.])
+        for target_atoms, target_modes in ((atoms, modes), (atoms[::-1], modes[::-1]), (None, [modes[1]])):
+            for sideband in ('red', 'blue'):
+                with self.subTest(sideband=sideband, atoms=None if target_atoms is None else [a.name for a in target_atoms],
+                                  modes=[m.name for m in target_modes]):
+                    rows = atoms if target_atoms is None else target_atoms
+                    eta = chain.lamb_dicke_parameters_for_dofs(rows, target_modes, laser.wavevector)
+                    from_trap = laser.build_sideband_coupling_operators_from_trap(sideband, basis, target_atoms, target_modes,
+                                                                                  [g], [e], 2, chain)
+                    from_matrix = laser.build_sideband_coupling_operators(sideband, basis, target_atoms, target_modes,
+                                                                          [g], [e], 2, eta)
+                    self.assertEqual(coupling_elements(basis, from_trap), coupling_elements(basis, from_matrix))
+                    self.assertTrue(from_trap)
+        named = (laser.build_red_sideband_coupling_operators_from_trap(basis, atoms, modes, [g], [e], 2, chain),
+                 laser.build_blue_sideband_coupling_operators_from_trap(basis, atoms, modes, [g], [e], 2, chain))
+        for sideband, operators in zip(('red', 'blue'), named):
+            generic = laser.build_sideband_coupling_operators_from_trap(sideband, basis, atoms, modes, [g], [e], 2, chain)
+            self.assertEqual(coupling_elements(basis, operators), coupling_elements(basis, generic))
+        stretch = chain.lamb_dicke_parameters_for_dofs(atoms, [modes[1]], laser.wavevector)[:, 0]
+        self.assertGreater(abs(stretch[0]), 1e-3)
+        self.assertAlmostEqual(stretch[0] / stretch[1], -1., places=8)
+
+    def test_single_ion_blue_sideband_pi_pulse(self):
+        """One ion, k along the axial mode: |eta| = k sqrt(hbar / 2 m omega_z) (compute_reference_single_ion_lamb_dicke_factors),
+        and the from_trap blue sideband moves |g, 0> to |e, 1> in pi / (|eta| Omega)."""
+        (atom,), chain, (mode,), basis, g, e, carrier_laser = self.setup_chain(1, [0., 0., 1.])
+        reference_eta = chain.compute_reference_single_ion_lamb_dicke_factors(np.linalg.norm(carrier_laser.wavevector))[2]
+        self.assertAlmostEqual(self.mode_frequency(mode), self.TRAP[2], delta=1e-6 * self.TRAP[2])
+        n_hat = np.array([0., 0., 1.])
+        laser = Laser.gaussian_from_frequency(carrier_laser.frequency + self.mode_frequency(mode), 1e-3, 10e-6, n_hat,
+                                              Polarization(_perpendicular_basis(n_hat)[0], n_hat), 0.)
+        eta = chain.lamb_dicke_parameters_for_dofs([atom], [mode], laser.wavevector)[0, 0]
+        self.assertAlmostEqual(abs(eta) / reference_eta, 1., places=6)
+        rabi = 2. * abs(laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 2)[0].couplings[0].strength)
+        operators = laser.build_blue_sideband_coupling_operators_from_trap(basis, [atom], [mode], [g], [e], 2, chain)
+        index = lambda level, n: next(i for i, state in enumerate(basis.states) if level in state.components
+                                      and any(getattr(c, 'fock_number', None) == n for c in state.components))
+        hamiltonian = Hamiltonian(basis, operators, [-state.energy for state in basis.states])
+        psi0 = np.zeros(len(basis.states), dtype=complex)
+        psi0[index(g, 0)] = 1.
+        duration = np.pi / (abs(reference_eta) * rabi)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            _, psis = hamiltonian.evolve_wavefunction(psi0, duration, np.linspace(0., duration, 2001))
+        self.assertAlmostEqual(np.linalg.norm(psis[-1]), 1., delta=1e-5)
+        self.assertGreater(abs(psis[-1][index(e, 1)])**2, 1. - 1e-5)
+
+    def test_errors(self):
+        atoms, chain, modes, basis, g, e, laser = self.setup_chain(2, [1., 0., 1.])
+        other_atoms, other_chain, other_modes, *_ = self.setup_chain(2, [1., 0., 1.])
+        build = lambda target_atoms, target_modes, ion_trap: laser.build_blue_sideband_coupling_operators_from_trap(
+            basis, target_atoms, target_modes, [g], [e], 2, ion_trap)
+        with self.subTest('ion_trap is not a TrappedIonCrystal'), self.assertRaises(IonSimError):
+            build(atoms, modes, chain.calculate_lamb_dicke_parameters(laser.wavevector))
+        with self.subTest('mode not built by this trap'), self.assertRaises(IonSimError):
+            laser.build_blue_sideband_coupling_operators_from_trap(StandardBasis([*atoms, *other_modes]), atoms, other_modes,
+                                                                   [g], [e], 2, chain)
+        with self.subTest('atom not linked to this trap'), self.assertRaises(IonSimError):
+            laser.build_blue_sideband_coupling_operators_from_trap(StandardBasis([*other_atoms, *modes]), other_atoms, modes,
+                                                                   [g], [e], 2, chain)
+        with self.subTest('unknown sideband'), self.assertRaises(IonSimError):
+            laser.build_sideband_coupling_operators_from_trap('green', basis, atoms, modes, [g], [e], 2, chain)
 
 
 class TestLaserTargetRabiFrequency(unittest.TestCase):
