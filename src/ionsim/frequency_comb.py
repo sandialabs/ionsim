@@ -162,7 +162,7 @@ class CombRamanResult:
         return float(self.fourth_order_shifts[self._index(upper)] - self.fourth_order_shifts[self._index(lower)])
 
 
-def _absorption_elements(laser: Laser, ground_levels, excited_levels, atomic_levels) -> np.ndarray:
+def _couplings(laser: Laser, ground_levels, excited_levels, atomic_levels) -> np.ndarray:
     """ v[e, s] = (Omega_es / 2) e^{i phase}: the absorption element <e| H |s> of the laser (IonSim convention) """
     v = np.zeros((len(excited_levels), len(ground_levels)), dtype=complex)
     for i, e in enumerate(excited_levels):
@@ -178,7 +178,7 @@ def comb_raman_couplings(ground_levels: list[AtomicInternalEnergyLevel], excited
                          resonance_tolerance: float = TPI * 1e5, rate_tolerance: float = TPI * 1.,
                          coupling_cutoff: float = 1e-12, keep_harmonics: list | None = None) -> CombRamanResult:
     """ Tooth-summed two-photon couplings between ground levels for every ordered pair of beams and every harmonic, and the
-        fourth-order light shift of the off-resonant ones (module docstring).
+        fourth-order light shift of the off-resonant ones. 
 
         Args:
             ground_levels, excited_levels: levels of one atom (e.g. all S1/2 and all P1/2, P3/2 sublevels); excited levels
@@ -194,8 +194,6 @@ def comb_raman_couplings(ground_levels: list[AtomicInternalEnergyLevel], excited
             rate_tolerance: rad/s; rates closer than this are combined before the effective Hamiltonian is taken.
             coupling_cutoff: terms with |coupling| < coupling_cutoff x (largest coupling) are dropped.
             keep_harmonics: optional list of (alpha, beta, l) whose coupling matrices are stored in harmonic_couplings.
-        Returns:
-            CombRamanResult.
     """
     if not beams:
         raise IonSimError("Give at least one beam (FrequencyComb or Laser).")
@@ -214,7 +212,7 @@ def comb_raman_couplings(ground_levels: list[AtomicInternalEnergyLevel], excited
     for i, e in enumerate(excited_levels):
         manifolds.setdefault(e.term_symbol, []).append(i)
     E_manifold = {J: excited_levels[idx[0]].fine_energy for J, idx in manifolds.items()}
-    v = [_absorption_elements(laser, ground_levels, excited_levels, atomic_levels) for laser in lasers]
+    v = [_couplings(laser, ground_levels, excited_levels, atomic_levels) for laser in lasers]
     # M_J[alpha, beta][s', s] = sum_{e in J} conj(v_beta[e, s']) v_alpha[e, s]
     M = {(a, b, J): np.conj(v[b][idx]).T @ v[a][idx] for a in range(len(beams)) for b in range(len(beams))
          for J, idx in manifolds.items()}
