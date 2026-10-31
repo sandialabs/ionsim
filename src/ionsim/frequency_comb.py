@@ -28,12 +28,16 @@
     bare ground-state energies E_s, at rate
         R = (w_alpha - w_beta) + l 2 pi f_rep - (E_s' - E_s).
     One (or a few) of these terms is resonant (|R| small): the Raman drive. All others are off-resonant two-photon couplings;
-    at second order in them (ionsim.effective_hamiltonian) they shift the levels by sum |<s'|H|s>|^2 / R: the fourth-order
+    at second order in them (time averaging, ionsim.time_averaging) they shift the levels by sum |<s'|H|s>|^2 / R: the fourth-order
     light shift (Lee et al. Eqs. (6)-(10); Yale et al. Eq. (14)). Same-beam, same-harmonic terms (alpha = beta, l = 0) are
     ordinary second-order light shifts and are reported separately.
 
     A continuous-wave beam is passed as its Laser (one tooth at its frequency), so CW tones, combs, or both can be combined;
     two CW tones reproduce the second-order Raman coupling of ionsim.adiabatic_eliminator (rotating-wave, P hyperfine aside).
+
+    Entry point: raman_effective_model(basis, levels_to_eliminate, beams) returns a RamanEffectiveModel whose .hamiltonian
+    is an ordinary IonSim Hamiltonian on the ground levels (Raman drive couplings plus second- and fourth-order light shifts),
+    with the diagnostics alongside, as Hamiltonian.adiabatically_eliminate does for one drive frequency per transition.
 """
 
 from __future__ import annotations
@@ -44,9 +48,14 @@ import numpy as np
 from scipy.signal import correlate
 
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
-from ionsim.effective_hamiltonian import effective_hamiltonian
+from ionsim.time_averaging import time_averaged_hamiltonian
 from ionsim.ionsim_error import IonSimError
 from ionsim.laser import Laser
+from ionsim.basis import StandardBasis
+from ionsim.degree_of_freedom import AtomicStructure
+from ionsim.hamiltonian import Hamiltonian
+from ionsim.operator import Coupling, CouplingOperator, EnergyShiftOperator
+from ionsim.config import SMALLEST_ENERGY_SCALE
 
 TPI = 2. * np.pi
 
@@ -122,20 +131,30 @@ def frequency_comb_overlap(beam_a: Beam, beam_b: Beam, harmonics) -> np.ndarray:
 
 
 @dataclass(frozen=True, eq=False)
-class CombRamanResult:
-    """ Result of comb_raman_couplings, on the ground levels (in the order given).
+class RamanEffectiveModel:
+    """ Result of raman_effective_model: the effective Hamiltonian of the ground levels driven by Raman beams (CW tones
+        and/or frequency combs), with the diagnostics of its construction (as AdiabaticEliminationResult for
+        adiabatically_eliminate).
 
-        fourth_order_hamiltonian: static effective Hamiltonian of all off-resonant two-photon terms (rad/s, n x n).
-        fourth_order_shifts: its diagonal (rad/s).
-        second_order_shifts: static light shifts from same-beam, same-harmonic terms (alpha = beta, l = 0), diagonal (rad/s).
-        resonant_terms: [(alpha, beta, l, row, column, amplitude, rate)] for |rate| <= resonance_tolerance: the drive
-            (alpha, beta: indices of the absorbing and emitting beams; l: harmonic).
+        hamiltonian: Hamiltonian on reduced_basis, in the requested rotating frame, holding the resonant two-photon (Raman)
+            couplings, the second-order light shifts (if included) and the fourth-order light shifts.
+        reduced_basis: basis of the ground levels (the levels that were not eliminated).
+        ground_levels: the atomic levels of reduced_basis, in its order.
+        second_order_shifts: static light shifts of same-beam, same-harmonic terms (alpha = beta, l = 0), diagonal (rad/s).
+        fourth_order_hamiltonian: static time-averaged Hamiltonian of every off-resonant two-photon term (rad/s, n x n);
+            fourth_order_shifts is its diagonal.
+        resonant_terms: [(alpha, beta, l, row, column, amplitude, rate)] with |rate| <= resonance_tolerance: the drive
+            (alpha, beta: indices of the absorbing and emitting beams; l: harmonic; rate in the interaction picture of the
+            bare ground energies).
         max_perturbation_ratio: max |coupling| / |rate| of the off-resonant terms (the expansion parameter).
         n_terms: number of off-resonant element terms included.
+        harmonic_couplings: {(alpha, beta, l): (coupling matrix, rate matrix)} for the requested keep_harmonics.
     """
+    hamiltonian: object
+    reduced_basis: object
     ground_levels: list
-    fourth_order_hamiltonian: np.ndarray
     second_order_shifts: np.ndarray
+    fourth_order_hamiltonian: np.ndarray
     resonant_terms: list
     max_perturbation_ratio: float
     n_terms: int
@@ -162,7 +181,7 @@ class CombRamanResult:
         return float(self.fourth_order_shifts[self._index(upper)] - self.fourth_order_shifts[self._index(lower)])
 
 
-def _couplings(laser: Laser, ground_levels, excited_levels, atomic_levels) -> np.ndarray:
+def _absorption_elements(laser: Laser, ground_levels, excited_levels, atomic_levels) -> np.ndarray:
     """ v[e, s] = (Omega_es / 2) e^{i phase}: the absorption element <e| H |s> of the laser (IonSim convention) """
     v = np.zeros((len(excited_levels), len(ground_levels)), dtype=complex)
     for i, e in enumerate(excited_levels):
@@ -173,12 +192,12 @@ def _couplings(laser: Laser, ground_levels, excited_levels, atomic_levels) -> np
     return v
 
 
-def comb_raman_couplings(ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel],
-                         beams: list[Beam], atomic_levels: list[AtomicInternalEnergyLevel] | None = None,
-                         resonance_tolerance: float = TPI * 1e5, rate_tolerance: float = TPI * 1.,
-                         coupling_cutoff: float = 1e-12, keep_harmonics: list | None = None) -> CombRamanResult:
+def _two_photon_couplings(ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel],
+                          beams: list[Beam], atomic_levels: list[AtomicInternalEnergyLevel] | None = None,
+                          resonance_tolerance: float = TPI * 1e5, rate_tolerance: float = TPI * 1.,
+                          coupling_cutoff: float = 1e-12, keep_harmonics: list | None = None) -> dict:
     """ Tooth-summed two-photon couplings between ground levels for every ordered pair of beams and every harmonic, and the
-        fourth-order light shift of the off-resonant ones. 
+        fourth-order light shift of the off-resonant ones (module docstring).
 
         Args:
             ground_levels, excited_levels: levels of one atom (e.g. all S1/2 and all P1/2, P3/2 sublevels); excited levels
@@ -194,6 +213,8 @@ def comb_raman_couplings(ground_levels: list[AtomicInternalEnergyLevel], excited
             rate_tolerance: rad/s; rates closer than this are combined before the effective Hamiltonian is taken.
             coupling_cutoff: terms with |coupling| < coupling_cutoff x (largest coupling) are dropped.
             keep_harmonics: optional list of (alpha, beta, l) whose coupling matrices are stored in harmonic_couplings.
+        Returns:
+            dict of the RamanEffectiveModel diagnostics (see raman_effective_model, which wraps this).
     """
     if not beams:
         raise IonSimError("Give at least one beam (FrequencyComb or Laser).")
@@ -212,7 +233,7 @@ def comb_raman_couplings(ground_levels: list[AtomicInternalEnergyLevel], excited
     for i, e in enumerate(excited_levels):
         manifolds.setdefault(e.term_symbol, []).append(i)
     E_manifold = {J: excited_levels[idx[0]].fine_energy for J, idx in manifolds.items()}
-    v = [_couplings(laser, ground_levels, excited_levels, atomic_levels) for laser in lasers]
+    v = [_absorption_elements(laser, ground_levels, excited_levels, atomic_levels) for laser in lasers]
     # M_J[alpha, beta][s', s] = sum_{e in J} conj(v_beta[e, s']) v_alpha[e, s]
     M = {(a, b, J): np.conj(v[b][idx]).T @ v[a][idx] for a in range(len(beams)) for b in range(len(beams))
          for J, idx in manifolds.items()}
@@ -292,7 +313,91 @@ def comb_raman_couplings(ground_levels: list[AtomicInternalEnergyLevel], excited
             g = position[int(key_of[k])]
             matrices[g, u_rows[k], u_cols[k]] += summed[k]
             group_rates[g] = u_rates[k]
-        H += effective_hamiltonian(matrices, group_rates, rate_tolerance=rate_tolerance).hamiltonian
-    return CombRamanResult(ground_levels=list(ground_levels), fourth_order_hamiltonian=0.5 * (H + H.conj().T),
-                           second_order_shifts=second_order, resonant_terms=resonant, max_perturbation_ratio=ratio,
-                           n_terms=int(len(summed)), harmonic_couplings=stored)
+        H += time_averaged_hamiltonian(matrices, group_rates, rate_tolerance=rate_tolerance).hamiltonian
+    return dict(fourth_order_hamiltonian=0.5 * (H + H.conj().T), second_order_shifts=second_order, resonant_terms=resonant,
+                max_perturbation_ratio=ratio, n_terms=int(len(summed)), harmonic_couplings=stored)
+
+
+def raman_effective_model(basis: StandardBasis, levels_to_eliminate: list, beams: list[Beam],
+                          rotating_frame_energies: list[float] | None = None, include_second_order: bool = True,
+                          resonance_tolerance: float = TPI * 1e5, rate_tolerance: float = TPI * 1.,
+                          coupling_cutoff: float = 1e-12, keep_harmonics: list | None = None) -> RamanEffectiveModel:
+    """ Effective Hamiltonian of the ground levels of an atom driven by Raman beams (CW tones and/or frequency combs), with
+        the excited levels eliminated at second order and every off-resonant two-photon term time averaged (module
+        docstring). The analogue of Hamiltonian.adiabatically_eliminate for many drive frequencies.
+
+        Args:
+            basis: StandardBasis of a single AtomicStructure (e.g. 171Yb+ with S1/2, P1/2 and P3/2).
+            levels_to_eliminate: the excited levels (matched by name), e.g. all P1/2 and P3/2 sublevels; their
+                fine-structure manifolds (term symbols) set the detunings. The other levels are kept.
+            beams: FrequencyComb objects (pulsed) and/or Lasers (continuous wave); combs share one repetition rate.
+            rotating_frame_energies: frame of the reduced basis (rad/s, one per kept level); default the interaction
+                picture of the bare energies, -E.
+            include_second_order: include the second-order light shifts in the Hamiltonian (they are always reported in
+                second_order_shifts). These neglect the P-state hyperfine structure and counter-rotating terms; to use the
+                adiabatic eliminator's for a CW-equivalent pair of tones instead, set False and add them yourself.
+            resonance_tolerance: rad/s; two-photon terms within this of resonance are kept as couplings (the Raman drive),
+                all others are time averaged.
+            rate_tolerance: rad/s; off-resonant rates closer than this are combined (they interfere) before averaging.
+            coupling_cutoff: off-resonant terms with |coupling| < coupling_cutoff x (largest coupling) are dropped.
+            keep_harmonics: optional list of (alpha, beta, l) whose coupling matrices are stored in harmonic_couplings.
+        Returns:
+            RamanEffectiveModel; simulate with e.g. Lindbladian(model.hamiltonian, None) or Gate.from_lindbladian. Same-beam,
+            same-harmonic off-diagonal terms (e.g. a single beam's own vector light-shift coupling between hyperfine
+            levels, rate ~ the hyperfine splitting) are not included.
+    """
+    atoms = [dof for dof in basis.degrees_of_freedom if isinstance(dof, AtomicStructure)]
+    if len(atoms) != 1 or len(basis.degrees_of_freedom) != 1:
+        raise NotImplementedError("raman_effective_model supports a basis of a single AtomicStructure (no motional modes "
+                                  "or other atoms yet).")
+    atom = atoms[0]
+    names = {level.name for level in levels_to_eliminate}
+    excited = [level for level in atom.energy_levels if level.name in names]
+    missing = sorted(names - {level.name for level in excited})
+    if missing:
+        raise IonSimError(f"Levels {missing} are not levels of the atom in the basis.")
+    reduced_basis = basis.build_subspace_basis_from_levels_to_project(excited)
+    by_name = {level.name: level for level in atom.energy_levels}
+    ground = [by_name[state.components[0].name] for state in reduced_basis.states]
+    n = len(ground)
+    terms = _two_photon_couplings(ground, excited, beams, atom.energy_levels, resonance_tolerance=resonance_tolerance,
+                                  rate_tolerance=rate_tolerance, coupling_cutoff=coupling_cutoff, keep_harmonics=keep_harmonics)
+    E = np.array([level.energy for level in ground])
+    frame = -E if rotating_frame_energies is None else np.asarray(rotating_frame_energies, dtype=float)
+    if len(frame) != n:
+        raise IonSimError(f"rotating_frame_energies must have one entry per kept level ({n}), got {len(frame)}.")
+    states = reduced_basis.states
+
+    operators = []
+    H4 = terms['fourth_order_hamiltonian']
+    shifts = np.real(np.diag(H4)) + (terms['second_order_shifts'] if include_second_order else 0.)
+    if np.any(np.abs(shifts) > SMALLEST_ENERGY_SCALE):
+        operators.append(EnergyShiftOperator.from_vector(reduced_basis, shifts))
+    # Off-diagonal time-averaged terms are static in the interaction picture of the bare energies: lab rate E_r - E_c
+    for r in range(n):
+        for c in range(r + 1, n):
+            if abs(H4[r, c]) > SMALLEST_ENERGY_SCALE:
+                operators.append(CouplingOperator(reduced_basis, [Coupling(row_state=states[r], column_state=states[c],
+                                                  strength=complex(H4[r, c]), oscillation_rate=float(E[r] - E[c]))]))
+    # Resonant (drive) terms, one orientation of each Hermitian pair (row < column), at their lab rates
+    # R + (E_row - E_column); terms of equal rate on the same element add coherently. One CouplingOperator per rate.
+    drive = {}
+    for _, _, _, r, c, amplitude, rate in terms['resonant_terms']:
+        if r < c:
+            lab_rate = rate + (E[r] - E[c])
+            key = (r, c, int(np.round(lab_rate / rate_tolerance)))
+            total, _ = drive.get(key, (0j, lab_rate))
+            drive[key] = (total + amplitude, lab_rate)
+    by_rate = {}
+    for (r, c, rate_key), (amplitude, lab_rate) in drive.items():
+        if abs(amplitude) > SMALLEST_ENERGY_SCALE:
+            by_rate.setdefault(rate_key, []).append(Coupling(row_state=states[r], column_state=states[c],
+                                                             strength=complex(amplitude), oscillation_rate=float(lab_rate)))
+    for couplings in by_rate.values():
+        operators.append(CouplingOperator(reduced_basis, couplings))
+
+    hamiltonian = Hamiltonian(reduced_basis, operators, list(frame))
+    return RamanEffectiveModel(hamiltonian=hamiltonian, reduced_basis=reduced_basis, ground_levels=ground,
+                               second_order_shifts=terms['second_order_shifts'], fourth_order_hamiltonian=H4,
+                               resonant_terms=terms['resonant_terms'], max_perturbation_ratio=terms['max_perturbation_ratio'],
+                               n_terms=terms['n_terms'], harmonic_couplings=terms['harmonic_couplings'])

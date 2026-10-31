@@ -16,7 +16,7 @@ from scipy import constants as const
 from ionsim.atomic_internal_energy_level import reduced_dipole_matrix_element
 from ionsim.basis import StandardBasis
 from ionsim.degree_of_freedom import AtomicStructure
-from ionsim.frequency_comb import FrequencyComb, comb_raman_couplings, frequency_comb_overlap
+from ionsim.frequency_comb import FrequencyComb, frequency_comb_overlap, raman_effective_model
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.ionsim_error import IonSimError
 from ionsim.laser import Laser, Polarization
@@ -32,6 +32,7 @@ class TestFrequencyComb(unittest.TestCase):
         cls.atom = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'P1/2', 'P3/2'], magnetic_field=5.)
         cls.ground = [l for l in cls.atom.energy_levels if l.term_symbol == 'S1/2']
         cls.excited = [l for l in cls.atom.energy_levels if l.term_symbol != 'S1/2']
+        cls.basis = StandardBasis([cls.atom])
         cls.names = [g.name for g in cls.ground]
         cls.i00, cls.i10 = cls.names.index('S1/2,0,0'), cls.names.index('S1/2,1,0')
         cls.omega_q = cls.ground[cls.i10].energy - cls.ground[cls.i00].energy
@@ -51,16 +52,15 @@ class TestFrequencyComb(unittest.TestCase):
             with self.assertRaises(IonSimError):
                 FrequencyComb(laser, *bad)
         with self.assertRaises(IonSimError):
-            comb_raman_couplings(self.ground, self.excited, [comb.laser.frequency])
+            raman_effective_model(self.basis, self.excited, [comb.laser.frequency])
 
     def test_cw_limit_matches_adiabatic_elimination(self):
-        """ Two CW tones (Lasers; lin-perp-lin, along B, at the two-photon resonance): the resonant Raman element equals
-            IonSim's rotating-wave adiabatic elimination (which also includes the P hyperfine structure, ~2e-4 here) """
+        """ Two CW tones (Lasers; lin-perp-lin, along B, at the two-photon resonance), in the same rotating frame: the
+            model's Hamiltonian matches IonSim's rotating-wave adiabatic elimination (drive element to the ~2e-4 effect of
+            the P hyperfine structure, which only the eliminator includes; diagonal to 1e-3 of the light shifts) """
         A = Laser.gaussian_from_wavelength(355e-9, 20e-3, 20e-6, Z, Polarization.linear(Z, 0., ref_axis=X), 0.3)
         B = Laser.gaussian_from_frequency(A.frequency - self.omega_q, 20e-3, 20e-6, Z, Polarization.linear(Z, np.pi / 2, ref_axis=X), 0.)
-        result = comb_raman_couplings(self.ground, self.excited, [A, B],
-                                      atomic_levels=self.atom.energy_levels)
-        basis = StandardBasis([self.atom])
+        basis = self.basis
         frame = []
         for state in basis.states:
             level = state.components[0]
@@ -71,10 +71,17 @@ class TestFrequencyComb(unittest.TestCase):
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
             eliminated = Hamiltonian(basis, operators, frame).adiabatically_eliminate(self.excited, rwa_rate_cutoff=TPI * 1e9)
-        H = np.asarray(eliminated.hamiltonian.hamiltonian_function(0.))
+        kept = [basis.states.index(state) for state in eliminated.kept_states]
+        result = raman_effective_model(basis, self.excited, [A, B], rotating_frame_energies=[frame[i] for i in kept])
+        self.assertEqual([s.name for s in result.reduced_basis.states], [s.name for s in eliminated.reduced_basis.states])
         drive = result.resonant_coupling(self.i10, self.i00)
+        for t in (0., 2.3e-7):
+            H = np.asarray(eliminated.hamiltonian.hamiltonian_function(t))
+            M = np.asarray(result.hamiltonian.hamiltonian_function(t))
+            self.assertAlmostEqual(abs(M[self.i10, self.i00]) / abs(H[self.i10, self.i00]), 1., delta=5e-4)
+            self.assertAlmostEqual(np.angle(M[self.i10, self.i00]), np.angle(H[self.i10, self.i00]), places=6)
+            np.testing.assert_allclose(np.real(np.diag(M)), np.real(np.diag(H)), atol=1e-3 * np.abs(eliminated.light_shifts).max())
         self.assertAlmostEqual(abs(drive) / abs(H[self.i10, self.i00]), 1., delta=5e-4)
-        self.assertAlmostEqual(np.angle(drive), np.angle(H[self.i10, self.i00]), places=6)
         # second-order differential shift: the closed form -omega_q sum_arms sum_J Omega_J^2 / (12 Delta_J^2)
         s = self.ground[0]
         expected = 0.
@@ -92,8 +99,8 @@ class TestFrequencyComb(unittest.TestCase):
         B = Laser.gaussian_from_wavelength(355e-9, 20e-3, 20e-6, Z, pol_b, 0.)
         A = Laser.gaussian_from_frequency(B.frequency + self.omega_q, 20e-3, 20e-6, Z, pol_a, 0.)
         comb = FrequencyComb(B, 120.125e6, 3.9e-12)
-        mixed = comb_raman_couplings(self.ground, self.excited, [A, comb], atomic_levels=self.atom.energy_levels)
-        cw = comb_raman_couplings(self.ground, self.excited, [A, B], atomic_levels=self.atom.energy_levels)
+        mixed = raman_effective_model(self.basis, self.excited, [A, comb])
+        cw = raman_effective_model(self.basis, self.excited, [A, B])
         w0 = comb.tooth_weights[comb.tooth_indices == 0][0]
         ratio = mixed.resonant_coupling(self.i10, self.i00) / cw.resonant_coupling(self.i10, self.i00)
         self.assertAlmostEqual(ratio.real / w0, 1., delta=1e-3)      # per-tooth detunings differ by ~1e-4 only
@@ -101,8 +108,7 @@ class TestFrequencyComb(unittest.TestCase):
 
     def lee_shifts(self, k, polarization, f_rep):
         laser = Laser.gaussian_from_wavelength(355e-9, 20e-3, 3e-6, k, polarization, 0.)
-        return comb_raman_couplings(self.ground, self.excited, [FrequencyComb(laser, f_rep, 14e-12)],
-                                    atomic_levels=self.atom.energy_levels)
+        return raman_effective_model(self.basis, self.excited, [FrequencyComb(laser, f_rep, 14e-12)])
 
     def test_lee_et_al_benchmark(self):
         """ A. C. Lee et al., PRA 94, 042308 (2016): one comb, 20 mW at a 3 um waist, 14 ps pulses. The paper's 247 kHz
@@ -119,6 +125,9 @@ class TestFrequencyComb(unittest.TestCase):
         self.assertLess(abs(shifts[self.names.index('S1/2,1,1')]), 1e-3 * abs(shifts[self.i00]))
         self.assertLess(abs(beta.fourth_order_shifts[self.i10]), 1e-3 * abs(beta.fourth_order_shifts[self.i00]))
         self.assertLess(sigma.max_perturbation_ratio, 0.1)
+        # the model's Hamiltonian (interaction picture by default: H0 = 0) holds the second- and fourth-order shifts
+        np.testing.assert_allclose(np.real(np.diag(np.asarray(sigma.hamiltonian.hamiltonian_function(0.)))),
+                                   sigma.second_order_shifts + sigma.fourth_order_shifts, rtol=1e-12)
 
     def test_against_lee_closed_form(self):
         """ The tooth sum over all harmonics reproduces Lee et al.'s Eqs. (8)-(10) for sigma+- (with this atom's reduced

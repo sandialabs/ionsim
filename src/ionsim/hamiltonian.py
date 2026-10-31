@@ -300,3 +300,13 @@ class Hamiltonian(CompositeOperator):
         """
         from ionsim.adiabatic_eliminator import adiabatically_eliminate
         return adiabatically_eliminate(self, levels_to_eliminate, dissipator, **kwargs)
+
+    def time_average(self, rate_cutoff: float, **kwargs):
+        """ A new Hamiltonian in which every coupling oscillating faster than rate_cutoff (rad/s, in the interaction picture
+            of this Hamiltonian's static diagonal) is replaced by its static second-order effect (James' time-averaged
+            Hamiltonian, e.g. AC Stark and Bloch-Siegert shifts); slower terms are kept unchanged.
+            See ionsim.time_averaging.time_average_hamiltonian for the options (rate_tolerance, validity_threshold,
+            return_result).
+        """
+        from ionsim.time_averaging import time_average_hamiltonian
+        return time_average_hamiltonian(self, rate_cutoff, **kwargs)
