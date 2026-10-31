@@ -62,7 +62,7 @@ levels:
     coupling_scheme: 'ls'
     fine_energy: 911.1361335e+12 # Hz
     hyperfine_A: 0.8754e+9 # Hz
-    lifetime: 6.30e-9 # 8.12e-9 # seconds
+    lifetime: 6.30e-9 
     branching_ratios: {'S1/2': 0.998, 'D3/2': 0.002}
     n: 6
     s: 0.5
