@@ -29,6 +29,8 @@ from .process import Gate, Circuit
 from .noise import Noise
 from .zeeman_solver import ZeemanHyperfineSolver
 from .laser import Laser, Polarization 
+from .time_averaging import time_averaged_hamiltonian, TimeAverageResult
+from .frequency_comb import FrequencyComb, frequency_comb_overlap, raman_effective_model, RamanEffectiveModel
 from .composite_operator import CompositeOperator
 from .lindbladian import Dissipator, DissipatorSpontaneousEmission, Lindbladian 
 from .trapped_ion_mode_analysis import TrappedIonCrystal, IonChain
