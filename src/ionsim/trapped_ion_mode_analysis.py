@@ -13,8 +13,14 @@ from ionsim.ionsim_error import IonSimError
 # https://arxiv.org/abs/quant-ph/9702053
 
 # Trap types whose per-species secular frequencies are derived from the reference ion's frequencies
-RF_PAUL_TRAP_TYPES = ('linear', 'surface')
-TRAP_TYPES = RF_PAUL_TRAP_TYPES + ('custom',)
+class RFPaulTrapTypes(Enum):
+    linear = auto()
+    surface = auto()
+
+class TrapTypes(Enum):
+    linear = auto()
+    surface = auto()
+    custom = auto()
 
 # Relative tolerance used to decide which eigenvector components are "tied" for largest magnitude
 _GAUGE_TIE_RTOL = 1e-6
@@ -75,15 +81,13 @@ class TrappedIonCrystal:
         # Store configuration strategies
         self.mode_organization = mode_organization
         self.reindexing_strategy = reindexing_strategy
-        self.trap_type = trap_type
+        self.trap_type = TrapType(trap_type)
 
         # Validate configuration
         if mode_organization not in ['frequency_only', 'branch_sorted']:
             raise ValueError(f"Invalid mode_organization: {mode_organization}. Must be 'frequency_only' or 'branch_sorted'")
         if reindexing_strategy not in ['distance', 'z_axis', 'none']:
             raise ValueError(f"Invalid reindexing_strategy: {reindexing_strategy}. Must be 'distance', 'z_axis', or 'none'")
-        if trap_type not in TRAP_TYPES:
-            raise ValueError(f"Invalid trap_type: {trap_type}. Must be one of {TRAP_TYPES}")
 
         # Keep a copy of the user inputs (original ion order) so the configuration can be rebuilt
         self._input_atomic_masses_amu = self.convert_to_array(atomic_masses).astype(float)
@@ -210,15 +214,17 @@ class TrappedIonCrystal:
                                   f"(secular frequency^2 = {w2[unstable]}).")
         return np.sqrt(wx2), np.sqrt(wy2), np.sqrt(wz2)
 
-    def trap_is_stable(self):
+    def _check_trap_is_stable(self):
         # Checks that all trap frequencies are positive
-        return np.all(self.omega_z > 0) and np.all(self.omega_y > 0) and np.all(self.omega_x > 0)
+        for freq in ('omega_z', 'omega_y', 'omega_x'):
+            if not np.all(getattr(self, freq) > 0):
+                raise IonSimError(f"{freq} trap frequency must be positive, got {getattr(self, freq)}")
 
     def convert_to_array(self, x: float | int | list | NDArray) -> NDArray:
         """ Converts a scalar to a length-num_ions vector or returns the vector """
         if np.ndim(x) == 0:
             return np.ones(self.num_ions) * x
-        return np.array(x)
+        return np.asarray(x)
 
     # ------------------------------------------------------------------------------------------------
     # Frames
@@ -543,9 +549,7 @@ class TrappedIonCrystal:
     def potential_coulomb(self, positions: Vector) -> Vector:
         """ Computes Coulomb potential, takes in a flattened (1D) array of all position coordinates """
         r = self.ion_coordinates_from_flattened(positions)
-        dr = []
-        for coord in r:
-            dr.append(coord[:, np.newaxis] - coord)
+        dr = [coord[:, np.newaxis] - coord for coord in r]
 
         rsep = np.sqrt(dr[0]**2 + dr[1]**2 + dr[2]**2).astype(np.float64)
         qq = (self.q * self.q[:, np.newaxis]).astype(np.float64)
@@ -831,7 +835,7 @@ class TrappedIonCrystal:
         if dims.size == 1:
             dims = np.full(num_modes, dims.item())
         elif dims.size != num_modes:
-            raise ValueError(f"Received {dims.size} Fock dimensions for {num_modes} modes")
+            raise IonSimError(f"Received {dims.size} Fock dimensions for {num_modes} modes")
         if not np.all(np.equal(np.mod(dims, 1), 0)) or np.any(dims < 1):
             raise ValueError(f"Fock dimensions must be positive integers. Received {fock_dimensions}")
         return dims.astype(int)
@@ -987,7 +991,7 @@ class IonChain(TrappedIonCrystal):
                 - mode_index_in_branch: Index of the mode within the specified branch (0 to num_ions-1),
                     in ascending frequency
         """
-        properties = super().get_mode_properties(self._global_mode_index(branch, mode_index_in_branch))
+        properties = self.get_mode_properties(self._global_mode_index(branch, mode_index_in_branch))
         properties['branch'] = branch
         properties['mode_index_in_branch'] = mode_index_in_branch
         return properties
@@ -1004,7 +1008,7 @@ class IonChain(TrappedIonCrystal):
             Returns:
                 Array of Lamb-Dicke parameters for each ion in the specified mode
         """
-        return super().get_lamb_dicke_parameters_for_mode(self._global_mode_index(branch, mode_index_in_branch), wavevector)
+        return self.get_lamb_dicke_parameters_for_mode(self._global_mode_index(branch, mode_index_in_branch), wavevector)
 
     def calculate_lamb_dicke_parameters_by_branch(self, wavevector: Vector) -> dict:
         """ Calculate Lamb-Dicke parameters for all ions and modes, organized by branch.
@@ -1099,7 +1103,7 @@ class IonChain(TrappedIonCrystal):
 
         result = root_scalar(separation_error, bracket=bounds, method='bisect')
         if not result.converged:
-            raise ValueError("Root finding did not converge. Try adjusting the bounds or check the function behavior.")
+            raise IonSimError("Root finding did not converge. Try adjusting the bounds or check the function behavior.")
 
         return 2 * np.pi * result.root
 
