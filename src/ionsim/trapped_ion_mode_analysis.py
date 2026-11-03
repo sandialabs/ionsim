@@ -3,7 +3,7 @@ from numpy.typing import NDArray
 import scipy.constants as const
 import warnings
 import scipy.optimize as opt
-from enum import Enum
+from enum import Enum, StrEnum, auto
 
 from ionsim.custom_types import Matrix, Vector
 from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
