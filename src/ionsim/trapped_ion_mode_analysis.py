@@ -914,18 +914,13 @@ class TrappedIonCrystal:
         return self.calculate_lamb_dicke_parameters(wavevector)[:, mode_index]
 
     def get_mode_properties(self, mode_index: int) -> dict:
-        """Get comprehensive properties for a specific mode. Returns a dictionary containing:
-                - 'frequency': Mode frequency in rad/s
-                - 'frequency_MHz': Mode frequency in MHz (convenience)
-                - 'participation_factors': Array of shape (3, num_ions) (trap frame)
-                - 'mode_index': the global mode index
-        """
+        """Get comprehensive properties for a specific mode. Returns a dictionary containing. """
         self._ensure_mode_analysis_run()
         frequency = self.eigvals[mode_index] * self.trap_freq_scale
         return {
-            'frequency': frequency,  # rad/s
+            'frequency_angular': frequency,  # rad/s
             'frequency_MHz': frequency / (2 * np.pi * 1e6),  # MHz
-            'participation_factors': self.get_mode_participation_factors_for_mode(mode_index),
+            'participation_factors': self.get_mode_participation_factors_for_mode(mode_index), # shape (3, num ions) in trap frame
             'mode_index': mode_index
         }
 
