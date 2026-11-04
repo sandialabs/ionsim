@@ -194,6 +194,7 @@ def main():
     thermal_state_IC = False 
     reverse_phases = False 
     beam_counter_propagating = True
+    modulate_amplitude = True 
 
     num_ions = 2
 
@@ -268,7 +269,6 @@ def main():
     duration = 60 * 1E-6 
     print(f" - Gate duration: {duration*1E6:.3f} [µs]\n")
 
-    modulate_amplitude = True 
     print(f" - Estimated number of loops: {duration * detuning / TPI}\n")
 
     detuning_red = detuning
