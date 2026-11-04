@@ -593,8 +593,7 @@ class TrappedIonCrystal:
         rsep = np.sqrt(dr[0]**2 + dr[1]**2 + dr[2]**2).astype(np.float64)
         qq = (self.q * self.q[:, np.newaxis]).astype(np.float64)
         with np.errstate(divide='ignore'):
-            V_Coulomb = np.sum( np.where(rsep != 0., qq / rsep, 0) ) / 2 # divide by 2 to avoid double counting
-        V_Coulomb *= .5
+            V_Coulomb = np.sum( np.where(rsep != 0., qq / rsep, 0) ) * 0.25
         return V_Coulomb
 
     def potential_energy(self, positions: Vector) -> Vector:
