@@ -1072,7 +1072,6 @@ class IonChain(TrappedIonCrystal):
             - branch specifies the direction: BranchType (or "x", "y", "z")
             - mode_indices corresponds to a mode's index within a branch (instead of the entire set of 3N modes for N ions)
             - Applies each fock dimension to each mode, or applies the same fock dimension to all the modes
-            - e.g. branch = 'x', mode_indices = [0,1] (tilt and COM), fock_dimensions = 6
         """
         global_indices = [self._global_mode_index(branch, idx) for idx in mode_indices]
         return self.build_mode_DOFs(global_indices, fock_dimensions)
