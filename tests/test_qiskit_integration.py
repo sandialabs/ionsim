@@ -21,21 +21,12 @@ class QiskitIntegrationTester(unittest.TestCase):
         """Set up the necessary objects for testing."""
         self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        self.spin_c = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2','P1/2'], level_names=['S1/2,0,0', 'S1/2,1,0','P1/2,1,-1'])
         self.basis = StandardBasis([self.spin_a, self.spin_b])
-
-        # self.Sx = Gate.from_unitary(self.basis, Unitary.sqrtX, [self.spin_a])
 
         xs = np.linspace(-np.pi, np.pi, 21)
         self.phi_noise = Noise.from_named_pdf('phi', 'gaussian', {'standard_deviation': np.pi/10}, xs)
-        # self.noisy_phi_gate = Gate.from_unitary_function(
-        #     self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.phi_noise,
-        # )
 
         self.theta_noise = Noise.from_named_pdf('theta', 'gaussian', {'standard_deviation': np.pi/10}, xs)
-        # self.noisy_theta_gate = Gate.from_unitary_function(
-        #     self.basis, Unitary.R, {'phi': 0, 'theta': np.pi/2}, [self.spin_a], self.theta_noise,
-        # )
 
     def test_circuit(self):
         # Create a qiskit circuit
@@ -95,3 +86,7 @@ class QiskitIntegrationTester(unittest.TestCase):
         fidelity1 = circ1.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
 
         self.assertEqual(fidelity0, fidelity1)
+
+
+if __name__ == '__main__':
+    unittest.main()

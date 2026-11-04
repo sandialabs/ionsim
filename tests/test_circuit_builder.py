@@ -15,17 +15,8 @@ class TestCircuitBuilder(unittest.TestCase):
     def setUp(self):
         self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
-        self.spin_c = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2','P1/2'], level_names=['S1/2,0,0', 'S1/2,1,0','P1/2,1,-1'])
         self.dofs = [self.spin_a, self.spin_b]
         self.basis = StandardBasis(self.dofs)
-
-    def _iter_qubits(self, count):
-        if count == 1:
-            return [[0], [1]]
-        elif count == 2:
-            return [[0, 1], [1, 0]]
-        else:
-            raise ValueError(f"Unsupported count {count}")
 
     def test_gates(self):
         """Test the gates produced by the circuit builder match their Unitaries."""
@@ -83,3 +74,7 @@ class TestCircuitBuilder(unittest.TestCase):
         act_gate = circuit.gates[0]
 
         np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
+
+
+if __name__ == '__main__':
+    unittest.main()
