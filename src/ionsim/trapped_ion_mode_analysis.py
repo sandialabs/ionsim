@@ -916,10 +916,10 @@ class TrappedIonCrystal:
     def get_mode_properties(self, mode_index: int) -> dict:
         """Get comprehensive properties for a specific mode. Returns a dictionary containing. """
         self._ensure_mode_analysis_run()
-        frequency = self.eigvals[mode_index] * self.trap_freq_scale
+        frequency_angular = self.eigvals[mode_index] * self.trap_freq_scale
         return {
-            'frequency_angular': frequency,  # rad/s
-            'frequency_MHz': frequency / (2 * np.pi * 1e6),  # MHz
+            'frequency_angular': frequency_angular,  # rad/s
+            'frequency_MHz': frequency_angular / (2 * np.pi * 1e6),  # MHz
             'participation_factors': self.get_mode_participation_factors_for_mode(mode_index), # shape (3, num ions) in trap frame
             'mode_index': mode_index
         }
