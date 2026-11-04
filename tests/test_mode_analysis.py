@@ -373,7 +373,7 @@ class TestModeAnalysisPhysics(unittest.TestCase):
         self.assertEqual([len(m.energy_levels) for m in branch_modes], [3, 5])
         np.testing.assert_allclose(branch_modes[1].energy_levels[1].energy - branch_modes[1].energy_levels[0].energy,
                                    chain.get_radial_mode_frequencies('x')[2], rtol=1e-12)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(IonSimError):
             chain.build_mode_DOFs([0, 1, 2], [3, 4])
         with self.assertRaises(ValueError):
             chain.build_mode_DOFs_from_branch('w', [0], 3)
