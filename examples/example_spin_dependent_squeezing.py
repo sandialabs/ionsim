@@ -10,7 +10,7 @@ from scipy.special import factorial
 
 TPI = 2*np.pi
 
-def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi_rate_x, rabi_rate_y, omega_x_red, omega_x_blue, omega_y_red, omega_y_blue, targetIon: ism.AtomicStructure, 
+def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi_rate_x, rabi_rate_y, omega_x_red, omega_x_blue, omega_y_red, omega_y_blue,  target_ion_index: int, 
                         index_mode_i:int, index_mode_j:int, phi:float, sparse=False, mod=None): 
     ''' Applies 4-tone MS-like gate to a single ion "k" to produce a spin-dependent motional operation. 
         Consists of 2 sidebands (red and blue) on mode i and another 2 sidebands (red and blue) on mode j:  
@@ -24,8 +24,7 @@ def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi
     motional_basis = ism.StandardBasis([*modes])
 
     DOFs = basis.degrees_of_freedom
-
-    target_ion_index = DOFs.index(targetIon)
+    targetIon = DOFs[target_ion_index]
 
     operators = []
 
@@ -144,9 +143,10 @@ def dephasing_dissipator(basis, qubit_basis, modes, dephasing_rates: list[float]
     return ism.Dissipator(basis, lindblad_operators, frame_energies)
 
 
-def carrier_hamiltonian(basis, target_ion, rabi_rate: float, phase: float, omega_carrier: float, sparse: bool=False, mod=None):
+def carrier_hamiltonian(basis, target_ion_index, rabi_rate: float, phase: float, omega_carrier: float, sparse: bool=False, mod=None):
     """ Hamiltonian for carrier spin pulse: (hbar * Omega/2) * sigma_phi e^iphi + h.c. """ 
     prefactor = rabi_rate * 0.5 * np.exp(-1j*phase)
+    target_ion = basis.degrees_of_freedom[target_ion_index]
     operator_raising = basis.enlarge_matrix(prefactor * ism.Pauli.plus, [target_ion])
 
     operators = [ism.CouplingOperator.from_matrix(basis, operator_raising, omega_carrier, modulation_function=mod)] 
@@ -188,7 +188,7 @@ def main():
 
     print(f"\n --- Simulation of spin-dependent squeezing by 4-tone sideband protocol --- ")
     
-    include_spectator_mode = False 
+    include_spectator_mode = False
     include_dissipation = False 
     do_reverse_process = False 
     thermal_state_IC = False 
@@ -320,12 +320,12 @@ def main():
     ## Create Hamiltonians: 
     squeezing_phase = 0.
     squeezing_hamiltonian = four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, lamb_dicke_parameters, x_rabi_rate, y_rabi_rate, omega_r_mode_i, omega_b_mode_i, omega_r_mode_j, 
-                                                    omega_b_mode_j, target_ion, mode_i_index, mode_j_index, squeezing_phase, mod=mod_function)
+                                                    omega_b_mode_j, target_ion_index, mode_i_index, mode_j_index, squeezing_phase, mod=mod_function)
 
     reverse_squeezing_hamiltonian = four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, lamb_dicke_parameters, x_rabi_rate, y_rabi_rate, omega_r_mode_i, omega_b_mode_i, omega_r_mode_j, omega_b_mode_j, 
-                                                        target_ion, mode_i_index, mode_j_index, squeezing_phase + np.pi, mod=mod_function) 
+                                                        target_ion_index, mode_i_index, mode_j_index, squeezing_phase + np.pi, mod=mod_function) 
 
-    pi_pulse_hamiltonian = carrier_hamiltonian(basis, target_ion, rabi_rate, 0., np.abs(omega_qubit), False, None)  
+    pi_pulse_hamiltonian = carrier_hamiltonian(basis, target_ion_index, rabi_rate, 0., np.abs(omega_qubit), False, None)  
     mode_dephasing_rates = [1./10e-3, 1/10e-3] # 
     if include_dissipation : 
         # Create dissipator and then full Lindbladian: 
