@@ -976,7 +976,7 @@ class IonChain(TrappedIonCrystal):
         s = self._branch_slice(BranchType.Z)
         return self.eigvals[s], self.eigvecs[:, s]
 
-    def get_radial_modes(self, direction: BranchType | str = BranchType.X) -> tuple:
+    def get_radial_modes(self, direction: BranchType | str) -> tuple:
         """ Returns eigenvalues, eigenvectors for the radial normal modes in the specified direction.
                 - direction : BranchType.X or BranchType.Y (or 'x' / 'y') for the radial direction """
         direction = self._radial_branch(direction)
