@@ -31,7 +31,8 @@ class TrapType(StrEnum):
 
 
 class ModeOrganization(StrEnum):
-    """ Order of the stored normal modes: ascending frequency, or grouped by branch (x, y, z), each ascending. """
+    """ Order of the stored normal modes: ascending frequency, or grouped by branch (radial0, radial1, axial),
+        each in ascending frequency. """
     FREQUENCY_ONLY = 'frequency_only'
     BRANCH_SORTED = 'branch_sorted'
 
@@ -50,18 +51,19 @@ class FrameType(StrEnum):
 
 
 class BranchType(StrEnum):
-    """ Mode branch of a linear chain, labeled by the principal axis of the motion. """
-    #RADIAL0 = 'radial0'
-    #RADIAL1 = 'radial1'
-    #AXIAL = 'axial'
-    X = 'x'
-    Y = 'y'
-    Z = 'z'
+    """ Mode branch of a linear chain, labeled by the trap principal axis along which the ions move. """
+    RADIAL0 = 'radial0' # first radial principal axis 
+    RADIAL1 = 'radial1' # second radial principal axis 
+    AXIAL = 'axial' # along the chain's axis 
 
     @property
     def axis(self) -> int:
         """ Index of the principal axis (0, 1, 2 for radial0, radial1, axial). """
         return list(BranchType).index(self)
+
+    @property
+    def is_radial(self) -> bool:
+        return self is not BranchType.AXIAL
 
 # Relative tolerance used to decide which eigenvector components are "tied" for largest magnitude
 _GAUGE_TIE_RTOL = 1e-6
@@ -752,12 +754,13 @@ class TrappedIonCrystal:
         for direction in range(3):
             count = np.sum(classifier == direction)
             if count != N_modes // 3:
-                raise IonSimError(f"BranchType classification error: direction {direction} has {count} modes, expected "
-                                  f"{N_modes // 3}. BranchType sorting requires a linear chain along z.")
+                raise IonSimError(f"Branch classification error: branch '{list(BranchType)[direction]}' has {count} "
+                                  f"modes, expected {N_modes // 3}. Branch sorting requires a linear chain along the "
+                                  f"axial principal axis.")
         return classifier
 
     def sort_by_branch(self, evals, evecs):
-        """ Sorts the eigenvalues, eigenvectors by mode branch (radial x, radial y, axial (z)).
+        """ Sorts the eigenvalues, eigenvectors by mode branch (radial0, radial1, axial), see BranchType.
             Only makes sense for linear chain configurations where Hessian is block diagonal. """
         classifier = self._xyz_classify_modes(evecs)
         # within each branch, sort by frequency
@@ -933,7 +936,9 @@ class IonChain(TrappedIonCrystal):
     """ Subclass for setting up and analyzing linear (1D) ion chains.
 
         In a linear ion chain, ions are aligned along the z principal axis (axial direction), with no
-        displacement in the x and y directions (radial directions).
+        displacement in the radial directions). Modes are grouped into the branches
+        BranchType.RADIAL0, BranchType.RADIAL1, and BranchType.AXIAL; wherever a branch is expected,
+        the strings 'radial0', 'radial1', 'axial' are also accepted.
 
         This class accomplishes:
             1. Enforce linear chain configuration
@@ -953,7 +958,7 @@ class IonChain(TrappedIonCrystal):
                          dc_radial_split=dc_radial_split, principal_axes=principal_axes)
 
     def _initial_chain_axis(self) -> int:
-        return BranchType.Z.axis  # always seed a chain along the axial (z) direction
+        return BranchType.AXIAL.axis  # always seed a chain along the axial direction
 
     def _global_mode_index(self, branch: BranchType | str, mode_index_in_branch: int) -> int:
         branch = BranchType(branch)
@@ -968,32 +973,33 @@ class IonChain(TrappedIonCrystal):
     @staticmethod
     def _radial_branch(direction: BranchType | str) -> BranchType:
         direction = BranchType(direction)
-        if direction is BranchType.Z:
-            raise ValueError("Radial direction must be 'x' or 'y'")
+        if not direction.is_radial:
+            raise ValueError(f"Radial direction must be '{BranchType.RADIAL0}' or '{BranchType.RADIAL1}'. "
+                             f"Received '{direction}'")
         return direction
 
     def get_axial_modes(self) -> tuple:
         """ Returns eigenvalues, eigenvectors for the axial normal modes """
         self._ensure_mode_analysis_run()
-        s = self._branch_slice(BranchType.Z)
+        s = self._branch_slice(BranchType.AXIAL)
         return self.eigvals[s], self.eigvecs[:, s]
 
     def get_radial_modes(self, direction: BranchType | str) -> tuple:
         """ Returns eigenvalues, eigenvectors for the radial normal modes in the specified direction.
-                - direction : BranchType.X or BranchType.Y (or 'x' / 'y') for the radial direction """
+                - direction : BranchType.RADIAL0 or BranchType.RADIAL1 (or 'radial0' / 'radial1') """
         direction = self._radial_branch(direction)
         self._ensure_mode_analysis_run()
         s = self._branch_slice(direction)
         return self.eigvals[s], self.eigvecs[:, s]
 
     def get_axial_ion_positions(self):
-        """ Returns an array of ion axial positions along the z-axis (meters, ascending). """
+        """ Returns an array of ion axial positions along the axial direction (meters, ascending). """
         self._ensure_mode_analysis_run()
         x, y, z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
         return np.sort(z * self.characteristic_parameters['length'])
 
     def get_ion_spacing(self):
-        """ Returns an array of ion spacings between consecutive ions along the z-axis. """
+        """ Returns an array of ion spacings between consecutive ions along axial direction. """
         return np.diff(self.get_axial_ion_positions())
 
     def get_center_of_mass_position(self) -> tuple:
@@ -1011,24 +1017,26 @@ class IonChain(TrappedIonCrystal):
         axial_eigvals, _ = self.get_axial_modes()
         return axial_eigvals * self.trap_freq_scale
 
-    def get_radial_mode_frequencies(self, direction: BranchType | str = BranchType.X):
-        """ Returns the frequencies of the radial modes in rad/s for the specified direction ('x' or 'y'). """
+    def get_radial_mode_frequencies(self, direction: BranchType | str = BranchType.RADIAL0):
+        """ Returns the frequencies of the radial modes in rad/s for the specified direction
+            (BranchType.RADIAL0 / BranchType.RADIAL1, or 'radial0' / 'radial1'). """
         radial_eigvals, _ = self.get_radial_modes(direction)
         return radial_eigvals * self.trap_freq_scale
 
     def get_mode_participation_factors_by_branch(self):
-        """ Returns a dictionary of mode participation factors organized by branch (x, y, z).
+        """ Returns a dictionary of mode participation factors organized by branch (radial0, radial1, axial).
 
-            Output dictionary keyed by BranchType (the keys also match 'x', 'y', 'z') containing the participation
-            factors along that branch's direction. Each value is a 2D array of shape (num_ions, num_modes_per_branch)
+            Output dictionary keyed by BranchType (the keys also match 'radial0', 'radial1', 'axial') containing the
+            participation factors along that branch's principal axis. Each value is a 2D array of shape
+            (num_ions, num_modes_per_branch)
         """
         mode_pf = self.calculate_mode_participation_factors()
         return {branch: mode_pf[branch.axis, :, self._branch_slice(branch)] for branch in BranchType}
 
     def get_mode_properties_by_branch(self, branch: BranchType | str, mode_index_in_branch: int) -> dict:
-        """ Returns a dictionary containing properties (freq, participations) for a specific mode within a branch (x, y, or z).
+        """ Returns a dictionary containing properties (freq, participations) for a specific mode within a branch.
 
-                - branch: BranchType (or 'x', 'y', 'z') for the mode branch
+                - branch: BranchType (or 'radial0', 'radial1', 'axial') for the mode branch
                 - mode_index_in_branch: Index of the mode within the specified branch (0 to num_ions-1),
                     in ascending frequency
         """
@@ -1043,7 +1051,7 @@ class IonChain(TrappedIonCrystal):
         """Get Lamb-Dicke parameters for a specific mode within a branch.
 
             Parameters:
-                branch: BranchType (or 'x', 'y', 'z') for the mode branch
+                branch: BranchType (or 'radial0', 'radial1', 'axial') for the mode branch
                 mode_index_in_branch: Index of the mode within the specified branch
                 wavevector: lab-frame wavevector k as a 3-element array (1/m)
 
@@ -1062,7 +1070,7 @@ class IonChain(TrappedIonCrystal):
                 wavevector : lab-frame k = (kx, ky, kz) as a 3-element array in units of 1/m
 
             Returns:
-                Dictionary keyed by BranchType (the keys also match 'x', 'y', 'z'). Each value is a 2D array of shape
+                Dictionary keyed by BranchType (the keys also match 'radial0', 'radial1', 'axial'). Each value is a 2D array of shape
                 (num_ions, num_modes_per_branch) representing eta[ion_index, mode_index] for the modes of that branch.
         """
         total_ld_params = self.calculate_lamb_dicke_parameters(wavevector)
@@ -1071,7 +1079,7 @@ class IonChain(TrappedIonCrystal):
     def build_mode_DOFs_from_branch(self, branch: BranchType | str, mode_indices: list[int], fock_dimensions: Vector | int) -> list[MotionalMode]:
         """ Builds and returns a list of IonSim Motional Degrees of Freedom.
 
-            - branch specifies the direction: BranchType (or "x", "y", "z")
+            - branch specifies the direction: BranchType (or 'radial0', 'radial1', 'axial')
             - mode_indices corresponds to a mode's index within a branch (instead of the entire set of 3N modes for N ions)
             - Applies each fock dimension to each mode, or applies the same fock dimension to all the modes
         """
@@ -1092,10 +1100,11 @@ class IonChain(TrappedIonCrystal):
 
             Returns: Lamb-Dicke parameters for axial modes, NDArray of shape (num_ions, num_axial_modes)
         """
-        return self.calculate_lamb_dicke_parameters_by_branch(wavevector)[BranchType.Z]
+        return self.calculate_lamb_dicke_parameters_by_branch(wavevector)[BranchType.AXIAL]
 
     def get_radial_lamb_dicke_parameters(self, wavevector: Vector, direction: BranchType | str) -> Matrix:
-        """ Get Lamb-Dicke parameters for radial modes in a specified direction (BranchType.X / BranchType.Y, or 'x' / 'y').
+        """ Get Lamb-Dicke parameters for radial modes in a specified direction
+            (BranchType.RADIAL0 / BranchType.RADIAL1, or 'radial0' / 'radial1').
 
             Returns: Lamb-Dicke parameters for radial modes, array of shape (num_ions, num_radial_modes)
         """
@@ -1160,16 +1169,16 @@ class IonChain(TrappedIonCrystal):
 
         spacing = self.get_ion_spacing()
         z_coordinates = self.get_axial_ion_positions()
-        print(f"Ion axial coordinates (z-axis): {z_coordinates*1e6} µm")
-        print(f"Ion spacing (z-axis): {spacing*1e6} µm")
+        print(f"Ion axial coordinates (axial): {z_coordinates*1e6} µm")
+        print(f"Ion spacing (axial): {spacing*1e6} µm")
 
         com_x, com_y, com_z = self.get_center_of_mass_position()
         print(f"Center of mass position: ({com_x*1e6:.2f} µm, {com_y*1e6:.2f} µm, {com_z*1e6:.2f} µm)")
 
         axial_freqs = self.get_axial_mode_frequencies()
-        radial_x_freqs = self.get_radial_mode_frequencies('x')
-        radial_y_freqs = self.get_radial_mode_frequencies('y')
+        radial0_freqs = self.get_radial_mode_frequencies(BranchType.RADIAL0)
+        radial1_freqs = self.get_radial_mode_frequencies(BranchType.RADIAL1)
 
         print(f"\nAxial mode frequencies: {axial_freqs/(2*np.pi)/1e6} MHz")
-        print(f"Radial X mode frequencies: {radial_x_freqs/(2*np.pi)/1e6} MHz")
-        print(f"Radial Y mode frequencies: {radial_y_freqs/(2*np.pi)/1e6} MHz")
+        print(f"Radial 0 mode frequencies: {radial0_freqs/(2*np.pi)/1e6} MHz")
+        print(f"Radial 1 mode frequencies: {radial1_freqs/(2*np.pi)/1e6} MHz")

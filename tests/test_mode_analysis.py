@@ -2,7 +2,7 @@ import unittest
 import numpy as np
 import scipy.constants as const
 from scipy.linalg import eigh
-from ionsim.trapped_ion_mode_analysis import TrappedIonCrystal, IonChain
+from ionsim.trapped_ion_mode_analysis import TrappedIonCrystal, IonChain, BranchType
 from ionsim.ionsim_error import IonSimError
 from ionsim.testing import assert_array_close
 
@@ -114,8 +114,8 @@ class TestModeAnalysis(unittest.TestCase):
 
         # Test that we can get axial and radial modes
         axial_eigvals, axial_eigvecs = chain.get_axial_modes()
-        radial_x_eigvals, radial_x_eigvecs = chain.get_radial_modes('x')
-        radial_y_eigvals, radial_y_eigvecs = chain.get_radial_modes('y')
+        radial_x_eigvals, radial_x_eigvecs = chain.get_radial_modes('radial0')
+        radial_y_eigvals, radial_y_eigvecs = chain.get_radial_modes('radial1')
 
         # Verify shapes
         self.assertEqual(axial_eigvals.shape, (num_ions,))
@@ -136,8 +136,8 @@ class TestModeAnalysis(unittest.TestCase):
 
         # Test that we can get mode frequencies
         axial_freqs = chain.get_axial_mode_frequencies()
-        radial_x_freqs = chain.get_radial_mode_frequencies('x')
-        radial_y_freqs = chain.get_radial_mode_frequencies('y')
+        radial_x_freqs = chain.get_radial_mode_frequencies('radial0')
+        radial_y_freqs = chain.get_radial_mode_frequencies('radial1')
 
         self.assertEqual(axial_freqs.shape, (num_ions,))
         self.assertEqual(radial_x_freqs.shape, (num_ions,))
@@ -145,9 +145,9 @@ class TestModeAnalysis(unittest.TestCase):
 
         # Test mode participation factors by branch
         mode_pf_by_branch = chain.get_mode_participation_factors_by_branch()
-        self.assertIn('x', mode_pf_by_branch)
-        self.assertIn('y', mode_pf_by_branch)
-        self.assertIn('z', mode_pf_by_branch)
+        self.assertIn('radial0', mode_pf_by_branch)
+        self.assertIn('radial1', mode_pf_by_branch)
+        self.assertIn('axial', mode_pf_by_branch)
 
         # Test that frequencies are positive
         self.assertTrue(np.all(axial_freqs > 0))
@@ -165,28 +165,28 @@ class TestModeAnalysis(unittest.TestCase):
 
         # Test branch-organized Lamb-Dicke parameters
         ld_by_branch = chain.calculate_lamb_dicke_parameters_by_branch(wavevector)
-        self.assertIn('x', ld_by_branch)
-        self.assertIn('y', ld_by_branch)
-        self.assertIn('z', ld_by_branch)
-        self.assertEqual(ld_by_branch['x'].shape, (num_ions, num_ions))
-        self.assertEqual(ld_by_branch['y'].shape, (num_ions, num_ions))
-        self.assertEqual(ld_by_branch['z'].shape, (num_ions, num_ions))
+        self.assertIn('radial0', ld_by_branch)
+        self.assertIn('radial1', ld_by_branch)
+        self.assertIn('axial', ld_by_branch)
+        self.assertEqual(ld_by_branch['radial0'].shape, (num_ions, num_ions))
+        self.assertEqual(ld_by_branch['radial1'].shape, (num_ions, num_ions))
+        self.assertEqual(ld_by_branch['axial'].shape, (num_ions, num_ions))
 
         # Test axial Lamb-Dicke parameters
         axial_ld = chain.get_axial_lamb_dicke_parameters(wavevector)
         self.assertEqual(axial_ld.shape, (num_ions, num_ions))
 
         # Test radial Lamb-Dicke parameters
-        radial_x_ld = chain.get_radial_lamb_dicke_parameters(wavevector, 'x')
-        radial_y_ld = chain.get_radial_lamb_dicke_parameters(wavevector, 'y')
+        radial_x_ld = chain.get_radial_lamb_dicke_parameters(wavevector, 'radial0')
+        radial_y_ld = chain.get_radial_lamb_dicke_parameters(wavevector, 'radial1')
         self.assertEqual(radial_x_ld.shape, (num_ions, num_ions))
         self.assertEqual(radial_y_ld.shape, (num_ions, num_ions))
 
         # Verify that branch-organized LD params match the corresponding parts of full matrix
         n_modes_per_branch = num_ions
-        np.testing.assert_array_almost_equal(ld_by_branch['x'], full_ld_params[:, :n_modes_per_branch])
-        np.testing.assert_array_almost_equal(ld_by_branch['y'], full_ld_params[:, n_modes_per_branch:2*n_modes_per_branch])
-        np.testing.assert_array_almost_equal(ld_by_branch['z'], full_ld_params[:, 2*n_modes_per_branch:3*n_modes_per_branch])
+        np.testing.assert_array_almost_equal(ld_by_branch['radial0'], full_ld_params[:, :n_modes_per_branch])
+        np.testing.assert_array_almost_equal(ld_by_branch['radial1'], full_ld_params[:, n_modes_per_branch:2*n_modes_per_branch])
+        np.testing.assert_array_almost_equal(ld_by_branch['axial'], full_ld_params[:, 2*n_modes_per_branch:3*n_modes_per_branch])
 
         # Test that Lamb-Dicke parameters are related to mode participation factors: eta = k . r_zpf
         mode_pf = chain.calculate_mode_participation_factors()
@@ -369,14 +369,41 @@ class TestModeAnalysisPhysics(unittest.TestCase):
         for mode, frequency in zip(modes, chain.normal_mode_frequencies):
             self.assertEqual(len(mode.energy_levels), 4)
             np.testing.assert_allclose(mode.energy_levels[1].energy - mode.energy_levels[0].energy, frequency, rtol=1e-12)
-        branch_modes = chain.build_mode_DOFs_from_branch('x', [0, 2], [3, 5])
+        branch_modes = chain.build_mode_DOFs_from_branch('radial0', [0, 2], [3, 5])
         self.assertEqual([len(m.energy_levels) for m in branch_modes], [3, 5])
         np.testing.assert_allclose(branch_modes[1].energy_levels[1].energy - branch_modes[1].energy_levels[0].energy,
-                                   chain.get_radial_mode_frequencies('x')[2], rtol=1e-12)
+                                   chain.get_radial_mode_frequencies('radial0')[2], rtol=1e-12)
         with self.assertRaises(IonSimError):
             chain.build_mode_DOFs([0, 1, 2], [3, 4])
         with self.assertRaises(ValueError):
             chain.build_mode_DOFs_from_branch('w', [0], 3)
+
+    def test_branch_types(self):
+        """ radial0 / radial1 / axial map to the x / y / z principal axes; strings and members are interchangeable. """
+        wx, wy, wz = TPI * 3e6, TPI * 3.3e6, TPI * 0.6e6
+        chain = IonChain(3, wx, wy, wz, YB_MASS, 1)
+        self.assertEqual([branch.axis for branch in BranchType], [0, 1, 2])
+        self.assertEqual([branch.is_radial for branch in BranchType], [True, True, False])
+
+        # The highest mode of each branch is the COM mode, at the trap frequency along that principal axis
+        np.testing.assert_allclose(chain.get_radial_mode_frequencies(BranchType.RADIAL0)[-1], wx, rtol=1e-9)
+        np.testing.assert_allclose(chain.get_radial_mode_frequencies('radial1')[-1], wy, rtol=1e-9)
+        np.testing.assert_allclose(chain.get_axial_mode_frequencies()[0], wz, rtol=1e-9)
+
+        # Each branch's modes move the ions only along its own principal axis
+        participation = chain.get_mode_participation_factors_by_branch()
+        full = chain.calculate_mode_participation_factors()
+        for branch in BranchType:
+            self.assertIs(participation[branch], participation[str(branch)])
+            modes = chain._branch_slice(branch)
+            other_axes = [axis for axis in range(3) if axis != branch.axis]
+            np.testing.assert_allclose(full[other_axes][:, :, modes], 0, atol=1e-12 * np.max(np.abs(full)))
+
+        self.assertEqual(chain.get_mode_properties_by_branch('axial', 0)['branch'], BranchType.AXIAL)
+        with self.assertRaises(ValueError):
+            chain.get_radial_modes('axial')
+        with self.assertRaises(ValueError):
+            chain.get_radial_modes('x')  # the old labels are no longer accepted
 
     def test_find_axial_frequency_for_separation(self):
         chain = IonChain(2, TPI * 3e6, TPI * 3.3e6, TPI * 0.3e6, [YB_MASS, BA_MASS], 1)

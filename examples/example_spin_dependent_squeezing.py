@@ -225,7 +225,7 @@ def main():
     COM_mode_index = 1 
 
     fock_dimension = 10
-    branch_dir = 'x'
+    branch_dir = 'radial0'
     qubit_basis = ism.StandardBasis([target_ion]) # Now reset the spin basis to just include the target ion 
     modes = trap_analysis.build_mode_DOFs_from_branch(branch_dir, [tilt_mode_index, COM_mode_index], fock_dimension)
     if include_spectator_mode:
@@ -244,7 +244,7 @@ def main():
     mode_i_index = target_mode_index
     mode_j_index = target_mode_index
 
-    radial_x_tilt_mode_properties = trap_analysis.get_mode_properties_by_branch('x', tilt_mode_index)
+    radial_x_tilt_mode_properties = trap_analysis.get_mode_properties_by_branch(branch_dir, tilt_mode_index)
     mode_i_freq = radial_x_tilt_mode_properties['frequency'] 
     mode_j_freq = mode_i_freq 
 
