@@ -148,7 +148,6 @@ def carrier_hamiltonian(basis, target_ion, rabi_rate: float, phase: float, omega
     """ Hamiltonian for carrier spin pulse: (hbar * Omega/2) * sigma_phi e^iphi + h.c. """ 
     prefactor = rabi_rate * 0.5 * np.exp(-1j*phase)
     operator_raising = basis.enlarge_matrix(prefactor * ism.Pauli.plus, [target_ion])
-    #raise_spin_k = qubit_basis.enlarge_matrix(ism.Pauli.plus, [target_ion])
 
     operators = [ism.CouplingOperator.from_matrix(basis, operator_raising, omega_carrier, modulation_function=mod)] 
     interaction_frame_energies = [-state.energy for state in basis.states]
@@ -169,7 +168,6 @@ def squeezed_ground_state_coefficients(r_value, phi, fock_dimension):
     norm = 1./np.sqrt(np.cosh(r_value))
     for n in range(fock_dimension//2):
         wave_function[2*n] = np.exp(1j * n * phi) * np.tanh(r_value)**n 
-        #wave_function[2*n] *= norm * np.sqrt(factorial(2 * n))
         wave_function[2*n] *= norm * np.sqrt(factorial(2 * n))/(2**n) 
         wave_function[2*n] /= (factorial(n))
     return wave_function 
@@ -212,8 +210,8 @@ def main():
 
     # Use mode analysis to get motional mode information 
     omega_x = 2.1 * TPI * 1E6 # MHz -> rad/s  
-    omega_y = 2.6 * TPI * 1E6 # ""  
-    omega_z = 0.50 * TPI * 1E6 # ""  
+    omega_y = 2.6 * TPI * 1E6 # MHz -> rad/s    
+    omega_z = 0.50 * TPI * 1E6 # MHz -> rad/s    
     trap_analysis = ism.IonChain.from_atomic_structure_basis(qubit_basis, omega_x, omega_y, omega_z) 
     trap_analysis.solve_ion_trap_equilibrium()
     print()
@@ -223,8 +221,6 @@ def main():
 
     # Truncate the Hilbert space to a single qubit with the two nearby motional modes 
     # Choose to do oprerations on the radial x tilt mode; option to include the COM as a spectator mode  
-    #print(trap_analysis.get_mode_properties_by_branch('x', 0))
-    #print(trap_analysis.get_mode_properties_by_branch('x', 1))
     tilt_mode_index = 0 
     COM_mode_index = 1 
 
@@ -350,7 +346,6 @@ def main():
     nbars = [0.1, 0.5]
 
     IC_fock_pops = [thermal_state_populations(nbar, fock_dimension) for nbar in nbars] # populations  
-    #fock_populations_target_mode_IC = thermal_state(nbar)
     if thermal_state_IC:
         print(f"\n--- Starting with thermal ground state ---\n")
         print(f"Target mode initial populations for nbar = {nbars[0]}, : {IC_fock_pops[0]}")
