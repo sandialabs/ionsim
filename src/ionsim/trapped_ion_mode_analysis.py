@@ -51,14 +51,16 @@ class FrameType(StrEnum):
 
 class BranchType(StrEnum):
     """ Mode branch of a linear chain, labeled by the principal axis of the motion. """
-    # TODO: Change to axial, radial keywords after getting more input 
+    #RADIAL0 = 'radial0'
+    #RADIAL1 = 'radial1'
+    #AXIAL = 'axial'
     X = 'x'
     Y = 'y'
     Z = 'z'
 
     @property
     def axis(self) -> int:
-        """ Index of the principal axis (0, 1, 2 for x, y, z). """
+        """ Index of the principal axis (0, 1, 2 for radial0, radial1, axial). """
         return list(BranchType).index(self)
 
 # Relative tolerance used to decide which eigenvector components are "tied" for largest magnitude
