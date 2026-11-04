@@ -572,9 +572,6 @@ class TrappedIonCrystal:
         residual = np.max(np.abs(self.force(u)))
         if residual > 1e-9:
             warnings.warn(f"Equilibrium solve may not have converged: max |dU/du| = {residual:.2e} (dimensionless)")
-
-        # Get potential energy at equilibrium positions
-        self.p0 = self.potential_energy(u)
         return u
 
     def potential_trap(self, positions: Vector) -> Vector:
