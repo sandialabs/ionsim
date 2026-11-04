@@ -218,8 +218,6 @@ def main():
     print()
     trap_analysis.print_chain_summary()
 
-    print(trap_analysis.characteristic_parameters)
-
     # Truncate the Hilbert space to a single qubit with the two nearby motional modes 
     # Choose to do oprerations on the radial x tilt mode; option to include the COM as a spectator mode  
     tilt_mode_index = 0 

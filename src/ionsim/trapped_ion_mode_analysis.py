@@ -319,11 +319,10 @@ class TrappedIonCrystal:
         self.trap_frequencies_ND = [self.wx, self.wy, self.wz]
 
         # Compute characteristic length, time, velocity, and energy scales and store in a dictionary
-        self.characteristic_parameters = {}
-        self.characteristic_parameters['length'] = characteristic_length(self.charge_scale, self.mass_scale, self.trap_freq_scale)
-        self.characteristic_parameters['time'] = 1 / self.trap_freq_scale # characteristic time
-        self.characteristic_parameters['velocity'] = self.characteristic_parameters['length'] * self.trap_freq_scale  # characteristic velocity
-        self.characteristic_parameters['energy'] = 0.5 * self.mass_scale * self.characteristic_parameters['velocity'] ** 2  # characteristic energy
+        self.characteristic_length = characteristic_length(self.charge_scale, self.mass_scale, self.trap_freq_scale)
+        self.characteristic_time = 1 / self.trap_freq_scale # characteristic time
+        self.characteristic_velocity = self.characteristic_length * self.trap_freq_scale  # characteristic velocity
+        self.characteristic_energy = 0.5 * self.mass_scale * self.characteristic_velocity ** 2  # characteristic energy
 
     # ------------------------------------------------------------------------------------------------
     # Eigenvector utilities and checks
@@ -839,7 +838,7 @@ class TrappedIonCrystal:
             positions = self.trap_to_lab_frame(positions.reshape(3, self.num_ions)).reshape(-1)
         if dimensionless:
             return positions
-        return positions * self.characteristic_parameters['length']
+        return positions * self.characteristic_length
 
     # ------------------------------------------------------------------------------------------------
     # Constructors
@@ -996,7 +995,7 @@ class IonChain(TrappedIonCrystal):
         """ Returns an array of ion axial positions along the axial direction (meters, ascending). """
         self._ensure_mode_analysis_run()
         x, y, z = self._ion_coordinates_from_flattened(self.equilibrium_positions)
-        return np.sort(z * self.characteristic_parameters['length'])
+        return np.sort(z * self.characteristic_length)
 
     def get_ion_spacing(self):
         """ Returns an array of ion spacings between consecutive ions along axial direction. """
@@ -1005,7 +1004,7 @@ class IonChain(TrappedIonCrystal):
     def get_center_of_mass_position(self) -> tuple:
         """ Get the center of mass position of the ion chain (trap frame, meters). """
         self._ensure_mode_analysis_run()
-        x, y, z = self._ion_coordinates_from_flattened(self.equilibrium_positions * self.characteristic_parameters['length'])
+        x, y, z = self._ion_coordinates_from_flattened(self.equilibrium_positions * self.characteristic_length)
         total_mass = np.sum(self.atomic_masses)
         com_x = np.sum(x * self.atomic_masses) / total_mass
         com_y = np.sum(y * self.atomic_masses) / total_mass
@@ -1115,7 +1114,7 @@ class IonChain(TrappedIonCrystal):
         """ Calculate the separation between the two central ions in the chain. Returns: Distance between the two central ions in meters """
         self._ensure_mode_analysis_run()
         x, y, z = self._ion_coordinates_from_flattened(self.equilibrium_positions)
-        z_dimensionful = z * self.characteristic_parameters['length']
+        z_dimensionful = z * self.characteristic_length
         central_ions = np.argsort(np.abs(z_dimensionful))[:2]
         return np.abs(z_dimensionful[central_ions[0]] - z_dimensionful[central_ions[1]])
 
