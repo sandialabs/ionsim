@@ -87,8 +87,6 @@ class TestModeAnalysis(unittest.TestCase):
         # Test functionality of mode analysis for computing Lamb-Dicke parameters as compared to a reference
         # Compute Lamb-Dicke parameters for all test cases
         for case, mode_analyzer, reference_values in zip(self.test_cases, self.mode_analyzers.values(), self.references.values()):
-            # Solve the ion-trap equilibrium problem
-            mode_analyzer.solve_ion_trap_equilibrium()
             # Compute and store Lamb-Dicke parameters:
             computed_Lamb_Dicke_parameters = case['wavenumber'] * mode_analyzer.calculate_mode_participation_factors()
             # With the phase convention (largest component real and positive, ties -> lowest index), the
@@ -109,19 +107,10 @@ class TestModeAnalysis(unittest.TestCase):
 
         # Create and analyze the linear chain
         chain = IonChain(num_ions, omega_x, omega_y, omega_z, atomic_mass, atomic_charge)
-        chain.solve_ion_trap_equilibrium()
-        #chain.print_chain_summary()
-
-        # Test that we can get axial and radial modes
-        axial_eigvals, axial_eigvecs = chain.get_axial_modes()
-        radial_x_eigvals, radial_x_eigvecs = chain.get_radial_modes('radial0')
-        radial_y_eigvals, radial_y_eigvecs = chain.get_radial_modes('radial1')
 
         # Verify shapes
-        self.assertEqual(axial_eigvals.shape, (num_ions,))
-        self.assertEqual(axial_eigvecs.shape, (6*num_ions, num_ions))
-        self.assertEqual(radial_x_eigvals.shape, (num_ions,))
-        self.assertEqual(radial_x_eigvecs.shape, (6*num_ions, num_ions))
+ #        self.assertEqual(axial_eigvecs.shape, (6*num_ions, num_ions))
+ #        self.assertEqual(radial_x_eigvals.shape, (num_ions,))
 
         # Test that we can get ion spacing
         spacing = chain.get_ion_spacing()
@@ -202,14 +191,15 @@ K_355 = TPI / 355e-9
 
 def reference_lamb_dicke(crystal, wavevector_trap):
     """ Independent reference: generalized symmetric eigenproblem K b = w^2 M b (mass-weighted, real). """
-    K = crystal.hessian(crystal.equilibrium_positions)
-    M = np.diag(np.tile(crystal.m, 3))
+    system = crystal._system  # uses the internal Hessian and dimensionless scales
+    K = system.hessian(system.equilibrium_positions)
+    M = np.diag(np.tile(system.m, 3))
     w2, B = eigh(K, M)
     w = np.sqrt(w2)
-    zpf = np.sqrt(const.hbar / (2 * crystal.mass_scale * crystal.trap_freq_scale * w))[np.newaxis, :] * B
-    N = crystal.num_ions
+    zpf = np.sqrt(const.hbar / (2 * system.mass_scale * system.trap_freq_scale * w))[np.newaxis, :] * B
+    N = system.num_ions
     eta = sum(wavevector_trap[d] * zpf[d * N:(d + 1) * N, :] for d in range(3))
-    return w * crystal.trap_freq_scale, eta
+    return w * system.trap_freq_scale, eta
 
 
 def rotation_matrix(axis, angle):
@@ -229,7 +219,6 @@ class TestModeAnalysisPhysics(unittest.TestCase):
             IonChain(2, TPI * 8e6, TPI * 9e6, TPI * 2e6, [BE_MASS, MG_MASS], 1),
         ]
         for crystal in cases:
-            crystal.solve_ion_trap_equilibrium()
             w_ref, eta_ref = reference_lamb_dicke(crystal, k)
             order = np.argsort(crystal.normal_mode_frequencies)
             np.testing.assert_allclose(crystal.normal_mode_frequencies[order], w_ref, rtol=1e-10)
@@ -302,7 +291,6 @@ class TestModeAnalysisPhysics(unittest.TestCase):
         # Choosing the other species as the reference gives back the same trap
         swapped = IonChain(2, crystal.omega_x[1], crystal.omega_y[1], crystal.omega_z[1], [BA_MASS, YB_MASS], 1)
         np.testing.assert_allclose([swapped.omega_x[1], swapped.omega_y[1], swapped.omega_z[1]], [wx, wy, wz], rtol=1e-12)
-        swapped.solve_ion_trap_equilibrium()
         np.testing.assert_allclose(np.sort(swapped.normal_mode_frequencies), np.sort(crystal.normal_mode_frequencies), rtol=1e-9)
 
         # Asymmetric DC split must satisfy Laplace, and 'surface' uses the same scaling laws
@@ -330,8 +318,8 @@ class TestModeAnalysisPhysics(unittest.TestCase):
         mixed = TrappedIonCrystal(3, TPI * 3e6, TPI * 3.3e6, wz, [40., 40., 40.], [1, 2, 1])
         u = np.array([0.1, -0.2, 0.05, 0.3, 0.0, -0.1, -1.2, 0.1, 1.4])
         h = 1e-6
-        numerical = np.array([(mixed.force(u + h * e) - mixed.force(u - h * e)) / (2 * h) for e in np.eye(9)]).T
-        np.testing.assert_allclose(mixed.hessian(u), numerical, rtol=1e-6, atol=1e-8)
+        numerical = np.array([(mixed._system.force(u + h * e) - mixed._system.force(u - h * e)) / (2 * h) for e in np.eye(9)]).T
+        np.testing.assert_allclose(mixed._system.hessian(u), numerical, rtol=1e-6, atol=1e-8)
 
         with self.assertRaises(IonSimError):
             IonChain(2, TPI * 3e6, TPI * 3.3e6, wz, 40., 0)
@@ -341,26 +329,56 @@ class TestModeAnalysisPhysics(unittest.TestCase):
     def test_reindexing_consistency(self):
         """ All per-ion arrays are permuted together and the physics does not depend on the strategy. """
         masses = [BA_MASS, YB_MASS, YB_MASS]
-        results = {}
+        k = K_355 * np.array([1., 1., 1.]) / np.sqrt(3)
+        # reference in the user-supplied ion order
+        reference = TrappedIonCrystal(3, TPI * 3e6, TPI * 3.3e6, TPI * 0.6e6, masses, 1, reindexing_strategy='none')
+        np.testing.assert_array_equal(reference.ion_indices, [0, 1, 2])
+        reference_eta = reference.calculate_lamb_dicke_parameters(k)
         for strategy in ('none', 'distance', 'z_axis'):
             crystal = TrappedIonCrystal(3, TPI * 3e6, TPI * 3.3e6, TPI * 0.6e6, masses, 1, reindexing_strategy=strategy)
-            crystal.solve_ion_trap_equilibrium()
             np.testing.assert_allclose(crystal.atomic_masses / const.u, np.array(masses)[crystal.ion_indices])
             # each stored ion keeps the frequencies of its species
-            reference = TrappedIonCrystal(3, TPI * 3e6, TPI * 3.3e6, TPI * 0.6e6, masses, 1)
             np.testing.assert_allclose(crystal.omega_x, reference.omega_x[crystal.ion_indices])
-            np.testing.assert_allclose(crystal.wz, reference.wz[crystal.ion_indices])
-            results[strategy] = np.sort(crystal.normal_mode_frequencies)
-        np.testing.assert_allclose(results['distance'], results['none'], rtol=1e-10)
-        np.testing.assert_allclose(results['z_axis'], results['none'], rtol=1e-10)
+            np.testing.assert_allclose(crystal._system.wz, reference._system.wz[crystal.ion_indices])
+            # the physics does not depend on the strategy, and the modes follow the reindexed ions
+            np.testing.assert_allclose(crystal.normal_mode_frequencies, reference.normal_mode_frequencies, rtol=1e-10)
+            np.testing.assert_allclose(np.abs(crystal.calculate_lamb_dicke_parameters(k)),
+                                       np.abs(reference_eta[crystal.ion_indices]), rtol=1e-8, atol=1e-14)
 
         # IonChain: the user-supplied order is the order along +z, deterministically
         for order in ([BE_MASS, MG_MASS, BE_MASS], [MG_MASS, BE_MASS, BE_MASS]):
             chain = IonChain(3, TPI * 8e6, TPI * 9e6, TPI * 1e6, order, 1)
-            chain.solve_ion_trap_equilibrium()
             np.testing.assert_allclose(chain.atomic_masses / const.u, order)
             np.testing.assert_array_equal(chain.ion_indices, [0, 1, 2])
             self.assertTrue(np.all(np.diff(chain.return_equilibrium_positions(True)[6:]) > 0))
+
+    def test_construction_solves_and_results_are_read_only(self):
+        """ The constructor solves the problem; results cannot be modified and solver internals are not public. """
+        crystal = TrappedIonCrystal(2, TPI * 3e6, TPI * 3.3e6, TPI * 0.6e6, [YB_MASS, BA_MASS], 1,
+                                    reindexing_strategy='none')
+        self.assertEqual(crystal.normal_mode_frequencies.shape, (6,))
+        for name in ('solve_ion_trap_equilibrium', 'reindex_ions', 'reindex_ions_by_z', 'hessian', 'eigvecs',
+                     '_ensure_mode_analysis_run'):
+            self.assertFalse(hasattr(crystal, name), name)
+
+        # Returned result arrays are copies
+        participation = crystal.calculate_mode_participation_factors()
+        participation[:] = 0
+        self.assertGreater(np.max(np.abs(crystal.calculate_mode_participation_factors())), 0)
+
+        # positions_guess (dimensionless, user ion order) selects the configuration: put ion 0 at positive z
+        guess = np.array([0, 0, 0, 0, 0.5, -0.5])
+        flipped = TrappedIonCrystal(2, TPI * 3e6, TPI * 3.3e6, TPI * 0.6e6, [YB_MASS, BA_MASS], 1,
+                                    reindexing_strategy='none', positions_guess=guess)
+        self.assertGreater(flipped.return_equilibrium_positions(True)[4], 0)
+        self.assertLess(crystal.return_equilibrium_positions(True)[4], 0)
+        np.testing.assert_allclose(flipped.normal_mode_frequencies, crystal.normal_mode_frequencies, rtol=1e-10)
+        with self.assertRaises(ValueError):
+            TrappedIonCrystal(2, TPI * 3e6, TPI * 3.3e6, TPI * 0.6e6, YB_MASS, 1, positions_guess=np.zeros(4))
+
+        # A chain beyond the zigzag transition fails at construction
+        with self.assertRaises(IonSimError):
+            IonChain(6, TPI * 1.0e6, TPI * 1.1e6, TPI * 0.8e6, YB_MASS, 1)
 
     def test_build_mode_dofs(self):
         chain = IonChain(3, TPI * 3e6, TPI * 3.3e6, TPI * 0.6e6, YB_MASS, 1)
@@ -400,10 +418,6 @@ class TestModeAnalysisPhysics(unittest.TestCase):
             np.testing.assert_allclose(full[other_axes][:, :, modes], 0, atol=1e-12 * np.max(np.abs(full)))
 
         self.assertEqual(chain.get_mode_properties_by_branch('axial', 0)['branch'], BranchType.AXIAL)
-        with self.assertRaises(ValueError):
-            chain.get_radial_modes('axial')
-        with self.assertRaises(ValueError):
-            chain.get_radial_modes('x')  # the old labels are no longer accepted
 
     def test_find_axial_frequency_for_separation(self):
         chain = IonChain(2, TPI * 3e6, TPI * 3.3e6, TPI * 0.3e6, [YB_MASS, BA_MASS], 1)

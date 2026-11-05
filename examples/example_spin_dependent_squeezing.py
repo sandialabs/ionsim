@@ -214,7 +214,6 @@ def main():
     omega_y = 2.6 * TPI * 1E6 # MHz -> rad/s    
     omega_z = 0.50 * TPI * 1E6 # MHz -> rad/s    
     trap_analysis = ism.IonChain.from_atomic_structure_basis(qubit_basis, omega_x, omega_y, omega_z) 
-    trap_analysis.solve_ion_trap_equilibrium()
     print()
     trap_analysis.print_chain_summary()
 
@@ -244,7 +243,7 @@ def main():
     mode_j_index = target_mode_index
 
     radial_x_tilt_mode_properties = trap_analysis.get_mode_properties_by_branch(branch_dir, tilt_mode_index)
-    mode_i_freq = radial_x_tilt_mode_properties['frequency'] 
+    mode_i_freq = radial_x_tilt_mode_properties['frequency_angular'] 
     mode_j_freq = mode_i_freq 
 
     print(f" - Tilt mode frequency: {mode_i_freq/TPI/1E6} [MHz]\n\n")
