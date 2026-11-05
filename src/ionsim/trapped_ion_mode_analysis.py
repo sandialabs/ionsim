@@ -1099,18 +1099,6 @@ class IonChain(TrappedIonCrystal):
         _, _, z = self._system.ion_coordinates_from_flattened(self._system.equilibrium_positions)
         return z * self.characteristic_length
 
- #    def get_axial_modes(self) -> tuple:
- #        """ Returns dimensionless eigenvalues and 6N-component eigenvectors for the axial normal modes """
- #        s = self._branch_slice(BranchType.AXIAL)
- #        return self._system.eigvals[s].copy(), self._system.eigvecs[:, s].copy()
- #
- #    def get_radial_modes(self, direction: BranchType | str) -> tuple:
- #        """ Returns dimensionless eigenvalues and 6N-component eigenvectors for the radial normal modes in the
- #            specified direction.
- #                - direction : BranchType.RADIAL0 or BranchType.RADIAL1 (or 'radial0' / 'radial1') """
- #        s = self._branch_slice(self._radial_branch(direction))
- #        return self._system.eigvals[s].copy(), self._system.eigvecs[:, s].copy()
-
     def get_axial_ion_positions(self):
         """ Returns an array of ion axial positions along the axial direction (meters, ascending). """
         return np.sort(self._axial_positions())
