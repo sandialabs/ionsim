@@ -147,7 +147,7 @@ class _TrappedIonSystem:
         self.set_up_dimensionless_parameters(self.reference_charge, self.reference_mass, self.omega_z[0])
 
         # Run the central solve method to compute the equilibrium behavior of the ions in the trapping potentials 
-        self.normal_mode_frequencies, self.eigvecs = self.solve(positions_guess)
+        self.equilibrium_positions, self.normal_mode_frequencies, self.eigvecs, self.trap_frequencies_ND = self.solve(positions_guess)
 
         # Using solution results, compute derived quantities, e.g. participation factors 
         self.participation_factors = self.calculate_mode_participation_factors(self.normal_mode_frequencies/self.trap_freq_scale, self.eigvecs)
@@ -311,11 +311,12 @@ class _TrappedIonSystem:
             5. Computes the zero-point displacements (mode participation factors)
         """
         equilibrium_positions = self.solve_for_equilibrium_positions(positions_guess)
-        self.reindex_ions(equilibrium_positions)
+        # TODO: should we separate out the reindexing from this solve method? 
+        equilibrium_positions, trap_frequencies = self.reindex_ions_and_properties(equilibrium_positions)
 
         # Compute helper matrices for computing normal mode properties
         mass_matrix = self.build_mass_matrix(self.m)
-        E_matrix = self.build_E_matrix(equilibrium_positions, mass_matrix)
+        E_matrix = self.build_E_matrix(equilibrium_positions, mass_matrix, trap_frequencies)
         T_matrix = self.build_momentum_transform_matrix(mass_matrix)
         H_matrix = self.compute_H_matrix(T_matrix, E_matrix)
 
@@ -330,7 +331,7 @@ class _TrappedIonSystem:
 
         # Return mode frequencies, ion positions, eigenvectors 
         normal_mode_frequencies = eigvals * self.trap_freq_scale
-        return equilibrium_positions, normal_mode_frequencies, eigvecs 
+        return equilibrium_positions, normal_mode_frequencies, eigvecs, trap_frequencies 
 
     # ------------------------------------------------------------------------------------------------
     # Equilibrium
@@ -396,11 +397,11 @@ class _TrappedIonSystem:
             warnings.warn(f"Equilibrium solve may not have converged: max |dU/du| = {residual:.2e} (dimensionless)")
         return u
 
-    def potential_trap(self, positions: Vector) -> Vector:
+    def potential_trap(self, positions: Vector, trap_frequencies: Vector) -> Vector:
         """ Computes trapping potential, takes in a flattened (1D) array of all position coordinates """
         r = self.ion_coordinates_from_flattened(positions)
         V_trap = 0.
-        for coord, omega in zip(r, self.trap_frequencies_ND):
+        for coord, omega in zip(r, trap_frequencies):
             V_trap += 0.5 * np.sum((self.m * omega**2) * coord**2)
         return V_trap
 
@@ -419,11 +420,11 @@ class _TrappedIonSystem:
         """ Computes the potential energy of each ion in its coordinate basis """
         return self.potential_trap(positions) + self.potential_coulomb(positions)
 
-    def force_trap(self, positions: Vector):
+    def force_trap(self, positions: Vector, trap_frequencies: Vector):
         r = self.ion_coordinates_from_flattened(positions)
 
         F_r = []
-        for coord, omega in zip(r, self.trap_frequencies_ND):
+        for coord, omega in zip(r, trap_frequencies):
             F_r.append(self.m * omega**2 * coord)
 
         force_trap = np.hstack(F_r)
@@ -460,10 +461,10 @@ class _TrappedIonSystem:
         Force = self.force_coulomb(positions) + self.force_trap(positions)
         return Force
 
-    def hessian_trap(self, positions: Vector) -> Matrix:
+    def hessian_trap(self, positions: Vector, trap_frequencies: Vector) -> Matrix:
         """ Computes the Hessian of the trap  """
         H_rr = []
-        for i, omega in enumerate(self.trap_frequencies_ND):
+        for i, omega in enumerate(trap_frequencies):
             H_rr.append(np.diag(self.m * omega**2 * np.ones(self.num_ions)))
         zeros = np.zeros((self.num_ions, self.num_ions))
         H = np.block([[H_rr[0], zeros, zeros], [zeros, H_rr[1], zeros], [zeros, zeros, H_rr[2]]])
@@ -502,7 +503,7 @@ class _TrappedIonSystem:
     # ------------------------------------------------------------------------------------------------
     # Reindexing
     # ------------------------------------------------------------------------------------------------
-    def reindex_ions(self):
+    def reindex_ions_and_properties(self, equilibrium_positions: Vector, trap_frequencies: Vector):
         """ Re-indexes the ions according to self.reindexing_strategy. Called once, by solve, before the modes
             are computed:
 
@@ -513,24 +514,25 @@ class _TrappedIonSystem:
             Every per-ion array is permuted with the same permutation, and ion_indices tracks the original
             (user-supplied) index of each ion. Dimensionless scales are not changed.
         """
-        x, y, z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
+        x, y, z = self.ion_coordinates_from_flattened(equilibrium_positions)
         if self.reindexing_strategy is ReindexingStrategy.DISTANCE:
             idx = np.argsort(np.sqrt(x**2 + y**2 + z**2), kind='stable')
         elif self.reindexing_strategy is ReindexingStrategy.Z_AXIS:
             idx = np.argsort(z, kind='stable')
         else:  # ReindexingStrategy.NONE
             idx = np.arange(self.num_ions)
-        self.apply_ion_permutation(idx)
-
-    def apply_ion_permutation(self, idx: NDArray):
-        """ Permutes all per-ion quantities by idx (new index k <- old index idx[k]). """
+        # Permute all per-ion quantities by idx (new index k <- old index idx[k]). 
         idx = np.asarray(idx)
-        x, y, z = self.ion_coordinates_from_flattened(self.equilibrium_positions)
-        self.equilibrium_positions = np.hstack((x[idx], y[idx], z[idx]))
+        x, y, z = self.ion_coordinates_from_flattened(equilibrium_positions)
+        #self.equilibrium_positions = np.hstack((x[idx], y[idx], z[idx]))
+        permuted_positions = np.hstack((x[idx], y[idx], z[idx]))
+        # TODO: This needs to be changed to not do it by attribute; or maybe that is the simplest way to go 
         for name in ('atomic_masses', 'atomic_charges', 'charges', 'm', 'q',
                      'omega_x', 'omega_y', 'omega_z', 'wx', 'wy', 'wz', 'ion_indices'):
             setattr(self, name, getattr(self, name)[idx])
-        self.trap_frequencies_ND = [self.wx, self.wy, self.wz]
+        #self.trap_frequencies_ND = [self.wx, self.wy, self.wz]
+        permuted_trap_frequencies = [self.wx, self.wy, self.wz]
+        return permuted_positions, permuted_trap_frequencies
 
     # ------------------------------------------------------------------------------------------------
     # Normal modes
@@ -539,9 +541,9 @@ class _TrappedIonSystem:
         """ Builds a diagonal mass matrix representing the ions """
         return np.diag(np.tile(masses, 3))
 
-    def build_E_matrix(self, positions: Vector, mass_matrix: Matrix) -> Matrix:
+    def build_E_matrix(self, positions: Vector, mass_matrix: Matrix, trap_frequencies: Vector) -> Matrix:
         """ 6N x 6N energy matrix for N ions """
-        PE_matrix = self.hessian(positions)
+        PE_matrix = self.hessian(positions, trap_frequencies)
         KE_matrix = mass_matrix
         zeros = np.zeros((3*self.num_ions, 3*self.num_ions))
         E_matrix = np.block([[PE_matrix, zeros], [zeros, KE_matrix]])
