@@ -120,36 +120,8 @@ class QiskitIntegrationTester(unittest.TestCase):
 
         self.assertEqual(fidelity0, fidelity1)
 
-    def test_gate_map(self):
-        """Test explicitly mapping a qiskit gate to an IonSim gate."""
-
-        qc = qiskit.QuantumCircuit(1)
-        qc.sx(0)
-        qc.r(theta=np.pi/2, phi=0, qubit=0)
-
-        cb = CircuitBuilder.from_qiskit(qc)
-        cb.set_basis(self.basis)
-        cb.set_gate_noise('R', self.phi_noise)
-        cb.set_circuit_noise(self.theta_noise)
-        circ0 = cb.build()
-        fidelity0 = circ0.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
-
-        qc = qiskit.QuantumCircuit(1)
-        qc.h(0)
-        qc.r(theta=np.pi/2, phi=0, qubit=0)
-
-        # Map h to sqrtX just to make sure it matches when it normally should not with this circuit
-        cb = CircuitBuilder.from_qiskit(qc, gate_map={'h': ('sqrtX', ())})
-        cb.set_basis(self.basis)
-        cb.set_gate_noise('R', self.phi_noise)
-        cb.set_circuit_noise(self.theta_noise)
-        circ1 = cb.build()
-        fidelity1 = circ1.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
-
-        self.assertEqual(fidelity0, fidelity1)
-
-    def test_gate_map_parameters(self):
-        """Test explicitly mapping a qiskit gate to an IonSim gate with parameters."""
+    def test_alias_gate(self):
+        """Test renaming a qiskit gate with an alias."""
 
         qc = qiskit.QuantumCircuit(1)
         qc.sx(0)
@@ -164,17 +136,15 @@ class QiskitIntegrationTester(unittest.TestCase):
 
         qc = qiskit.QuantumCircuit(1)
         qc.sx(0)
-        # add a gate that we'll map to the r gate
-        qc.append(qiskit.circuit.Gate(name="unknown", num_qubits=1, params=[np.pi/2, 0]), [0])
+        qc.append(qiskit.circuit.Gate(name="rotate", num_qubits=1, params=[np.pi/2, 0]), [0])
 
-        cb = CircuitBuilder.from_qiskit(qc, gate_map={'unknown': ('R', ('theta', 'phi'))})
+        cb = CircuitBuilder.from_qiskit(qc)
         cb.set_basis(self.basis)
         cb.set_gate_noise('R', self.phi_noise)
         cb.set_circuit_noise(self.theta_noise)
+        cb.set_alias(to_name='R', from_name='rotate', parameter_map=('theta', 'phi'))
         circ1 = cb.build()
         fidelity1 = circ1.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
-
-        self.assertEqual(fidelity0, fidelity1)
 
 
 if __name__ == '__main__':

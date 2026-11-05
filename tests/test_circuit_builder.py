@@ -76,6 +76,23 @@ class TestCircuitBuilder(unittest.TestCase):
 
         np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
 
+    def test_gate_alias_keyword_params(self):
+        """Test a gate that is an alias to a built-in gate."""
+
+        builder = CircuitBuilder()
+        builder.set_basis(self.basis)
+        builder.set_alias(to_name='R', from_name='CustomGate',
+                          parameter_map={'alpha': 'theta', 'beta': 'phi'})
+        builder.gate('CustomGate', [1], alpha=np.pi/2, beta=0)
+        circuit = builder.build()
+
+        exp_gate = Gate.from_unitary_function(
+            self.basis, Unitary.R, {'theta': np.pi/2, 'phi': 0},
+            [self.basis.degrees_of_freedom[1]])
+        act_gate = circuit.gates[0]
+
+        np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
+
 
 if __name__ == '__main__':
     unittest.main()
