@@ -47,7 +47,7 @@ class CircuitBuilderBase:
             func, name, qubits, params = gate_tuple
             gate_func = self._gate_functions.get(name, func)
             if gate_func is None:
-                raise IonSimError(f"Not gate {name} defined and no default available")
+                raise IonSimError(f"No gate {name} defined and no default available")
             return gate_func(qubits, params, self._basis, self._gate_noise.get(name))
 
         gates = [make_gate(gate_tuple) for gate_tuple in self._gates]
