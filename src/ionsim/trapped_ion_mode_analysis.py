@@ -146,7 +146,11 @@ class _TrappedIonSystem:
         # Dimensionless parameters are fixed by the reference ion and never rescaled by reindexing
         self.set_up_dimensionless_parameters(self.reference_charge, self.reference_mass, self.omega_z[0])
 
-        self.solve(positions_guess)
+        # Run the central solve method to compute the equilibrium behavior of the ions in the trapping potentials 
+        self.normal_mode_frequencies, self.eigvecs = self.solve(positions_guess)
+
+        # Using solution results, compute derived quantities, e.g. participation factors 
+        self.participation_factors = self.calculate_mode_participation_factors(self.normal_mode_frequencies/self.trap_freq_scale, self.eigvecs)
 
     # ------------------------------------------------------------------------------------------------
     # Input validation and species handling
@@ -306,26 +310,27 @@ class _TrappedIonSystem:
             4. Performs validation checks
             5. Computes the zero-point displacements (mode participation factors)
         """
-        self.equilibrium_positions = self.solve_for_equilibrium_positions(positions_guess)
-        self.reindex_ions()
+        equilibrium_positions = self.solve_for_equilibrium_positions(positions_guess)
+        self.reindex_ions(equilibrium_positions)
 
         # Compute helper matrices for computing normal mode properties
         mass_matrix = self.build_mass_matrix(self.m)
-        E_matrix = self.build_E_matrix(self.equilibrium_positions, mass_matrix)
+        E_matrix = self.build_E_matrix(equilibrium_positions, mass_matrix)
         T_matrix = self.build_momentum_transform_matrix(mass_matrix)
         H_matrix = self.compute_H_matrix(T_matrix, E_matrix)
 
-        eigvals, self.eigvecs = self.calculate_normal_modes(H_matrix)
-        self.eigvecs_vel = self.get_eigenvectors_xv_coords(T_matrix, self.eigvecs)
+        eigvals, eigvecs = self.calculate_normal_modes(H_matrix)
+        self.eigvecs_vel = self.get_eigenvectors_xv_coords(T_matrix, eigvecs)
         self.check_for_zero_modes(eigvals)
-        S_matrix = self.get_canonical_transformation(H_matrix, self.eigvecs, eigvals)
+        S_matrix = self.get_canonical_transformation(H_matrix, eigvecs, eigvals)
 
         # Perform checks
         self.check_outer_relation(H_matrix)
         self.check_diagonalization(T_matrix, S_matrix, E_matrix, eigvals)
 
-        self.normal_mode_frequencies = eigvals * self.trap_freq_scale
-        self.participation_factors = self.calculate_mode_participation_factors(eigvals, self.eigvecs)
+        # Return mode frequencies, ion positions, eigenvectors 
+        normal_mode_frequencies = eigvals * self.trap_freq_scale
+        return equilibrium_positions, normal_mode_frequencies, eigvecs 
 
     # ------------------------------------------------------------------------------------------------
     # Equilibrium
