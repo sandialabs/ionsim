@@ -95,7 +95,6 @@ class IonSimCircuitBuilder:
         if obj is None:
             gate = (None, name, qubits, kwargs)
         else:
-            obj = getattr(Unitary, name)
             if callable(obj):
                 wrapped = GateFromUnitaryFunction(obj)
             else:
@@ -126,6 +125,9 @@ class IonSimCircuitBuilder:
 
     def CNOT(self, qubits):
         self.gate('CNOT', qubits)
+
+    def CZ(self, qubits):
+        self.gate('CZ', qubits)
 
     def MS(self, qubits, *, phi, theta):
         self.gate('MS', qubits, phi=phi, theta=theta)

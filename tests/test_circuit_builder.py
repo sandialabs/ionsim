@@ -32,6 +32,7 @@ class TestCircuitBuilder(unittest.TestCase):
             ('H', [0], {}, Gate.from_unitary(self.basis, Unitary.H, [self.dofs[0]])),
             ('R', [0], params, Gate.from_unitary_function(self.basis, Unitary.R, params, [self.dofs[0]])),
             ('CNOT', [0, 1], {}, Gate.from_unitary(self.basis, Unitary.CNOT, [self.dofs[0], self.dofs[1]])),
+            ('CZ', [0, 1], {}, Gate.from_unitary(self.basis, Unitary.CZ, [self.dofs[0], self.dofs[1]])),
             ('MS', [0, 1], params, Gate.from_unitary_function(self.basis, Unitary.MS, params, [self.dofs[0], self.dofs[1]])),
         ]
 

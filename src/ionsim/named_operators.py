@@ -162,6 +162,7 @@ class Unitary:
         [[1, 1],
          [1, -1]],
     )
+    CZ = np.diag([1, 1, 1, -1])
 
     @staticmethod
     def MS(phi: float, theta: float):

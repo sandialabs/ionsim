@@ -97,5 +97,6 @@ if HAS_QISKIT:
         'sx': ('sqrtX', Unitary.sqrtX, ()),
         'r': ('R', Unitary.R, ('theta', 'phi')),
         'cx': ('CNOT', Unitary.CNOT, ()),
+        'cz': ('CZ', Unitary.CZ, ()),
         'h': ('H', Unitary.H, ()),
     }
