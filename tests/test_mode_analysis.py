@@ -192,14 +192,14 @@ K_355 = TPI / 355e-9
 def reference_lamb_dicke(crystal, wavevector_trap):
     """ Independent reference: generalized symmetric eigenproblem K b = w^2 M b (mass-weighted, real). """
     system = crystal._system  # uses the internal Hessian and dimensionless scales
-    K = system.hessian(system.equilibrium_positions)
-    M = np.diag(np.tile(system.m, 3))
+    K = system.potential.hessian(system.equilibrium_positions)
+    M = np.diag(np.tile(system.potential.m, 3))
     w2, B = eigh(K, M)
     w = np.sqrt(w2)
-    zpf = np.sqrt(const.hbar / (2 * system.mass_scale * system.trap_freq_scale * w))[np.newaxis, :] * B
+    zpf = np.sqrt(const.hbar / (2 * system.scales.mass * system.scales.frequency * w))[np.newaxis, :] * B
     N = system.num_ions
     eta = sum(wavevector_trap[d] * zpf[d * N:(d + 1) * N, :] for d in range(3))
-    return w * system.trap_freq_scale, eta
+    return w * system.scales.frequency, eta
 
 
 def rotation_matrix(axis, angle):
@@ -318,8 +318,8 @@ class TestModeAnalysisPhysics(unittest.TestCase):
         mixed = TrappedIonCrystal(3, TPI * 3e6, TPI * 3.3e6, wz, [40., 40., 40.], [1, 2, 1])
         u = np.array([0.1, -0.2, 0.05, 0.3, 0.0, -0.1, -1.2, 0.1, 1.4])
         h = 1e-6
-        numerical = np.array([(mixed._system.force(u + h * e) - mixed._system.force(u - h * e)) / (2 * h) for e in np.eye(9)]).T
-        np.testing.assert_allclose(mixed._system.hessian(u), numerical, rtol=1e-6, atol=1e-8)
+        numerical = np.array([(mixed._system.potential.gradient(u + h * e) - mixed._system.potential.gradient(u - h * e)) / (2 * h) for e in np.eye(9)]).T
+        np.testing.assert_allclose(mixed._system.potential.hessian(u), numerical, rtol=1e-6, atol=1e-8)
 
         with self.assertRaises(IonSimError):
             IonChain(2, TPI * 3e6, TPI * 3.3e6, wz, 40., 0)
@@ -339,7 +339,7 @@ class TestModeAnalysisPhysics(unittest.TestCase):
             np.testing.assert_allclose(crystal.atomic_masses / const.u, np.array(masses)[crystal.ion_indices])
             # each stored ion keeps the frequencies of its species
             np.testing.assert_allclose(crystal.omega_x, reference.omega_x[crystal.ion_indices])
-            np.testing.assert_allclose(crystal._system.wz, reference._system.wz[crystal.ion_indices])
+            np.testing.assert_allclose(crystal.omega_z, reference.omega_z[crystal.ion_indices])
             # the physics does not depend on the strategy, and the modes follow the reindexed ions
             np.testing.assert_allclose(crystal.normal_mode_frequencies, reference.normal_mode_frequencies, rtol=1e-10)
             np.testing.assert_allclose(np.abs(crystal.calculate_lamb_dicke_parameters(k)),
@@ -351,6 +351,13 @@ class TestModeAnalysisPhysics(unittest.TestCase):
             np.testing.assert_allclose(chain.atomic_masses / const.u, order)
             np.testing.assert_array_equal(chain.ion_indices, [0, 1, 2])
             self.assertTrue(np.all(np.diff(chain.return_equilibrium_positions(True)[6:]) > 0))
+
+        # Ties keep the user-supplied order: the axial equilibrium depends only on the charges, so the two end
+        # ions of this chain are exactly equidistant from the center
+        for masses in ([BA_MASS, YB_MASS, YB_MASS], [YB_MASS, YB_MASS, BA_MASS]):
+            crystal = TrappedIonCrystal(3, TPI * 3e6, TPI * 3.3e6, TPI * 0.6e6, masses, [1, 2, 1],
+                                        reindexing_strategy='distance')
+            np.testing.assert_array_equal(crystal.ion_indices, [1, 0, 2])
 
     def test_construction_solves_and_results_are_read_only(self):
         """ The constructor solves the problem; results cannot be modified and solver internals are not public. """
