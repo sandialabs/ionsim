@@ -40,6 +40,9 @@ tutorials = [
 qiskit-integration = [
     "qiskit>=2.5",
 ]
+jaqalpaq-integration = [
+    "jaqalpaq",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
