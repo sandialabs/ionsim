@@ -10,6 +10,7 @@ from ionsim.basis import StandardBasis, Basis
 from ionsim.custom_types import Matrix
 from ionsim.ionsim_error import IonSimError
 from ionsim.qiskit_interface import QiskitCircuitBuilder
+from ionsim.jaqalpaq_interface import JaqalpaqCircuitBuilder
 
 
 class CircuitBuilderBase:
@@ -177,7 +178,8 @@ class IonSimCircuitBuilder:
         self.gate('MS', qubits, phi=phi, theta=theta)
 
 
-class CircuitBuilder(CircuitBuilderBase, IonSimCircuitBuilder, QiskitCircuitBuilder):
+class CircuitBuilder(
+        CircuitBuilderBase, IonSimCircuitBuilder, QiskitCircuitBuilder, JaqalpaqCircuitBuilder):
     pass
 
 
