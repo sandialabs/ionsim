@@ -248,8 +248,8 @@ class _TrappedIonSystem:
         self.principal_axes = self.standardize_principal_axes(principal_axes)
 
         masses, charge_states = self.standardize_ion_properties(num_ions, atomic_masses, atomic_charges)
-        trap_frequencies = self.calculate_species_trap_frequencies(omega_x, omega_y, omega_z, masses, charge_states,
-                                                                   self.trap_type, self.dc_radial_split)
+        trap_frequencies = self.calculate_species_trap_frequencies(omega_x, omega_y, omega_z, masses, charge_states, self.trap_type, self.dc_radial_split)
+
         # Ions in the user-supplied order; the first one is the reference ion
         placeholder_ion_indices = np.arange(num_ions)
         self.input_ions = _Ions(masses, charge_states, trap_frequencies, placeholder_ion_indices)
@@ -260,8 +260,7 @@ class _TrappedIonSystem:
         potential = _CoulombTrapPotential.from_ions(self.input_ions, self.scales)
         if positions_guess is None:
             axis = int(np.argmin(self.reference_trap_frequencies)) if initial_chain_axis is None else initial_chain_axis
-            positions_guess = self.initial_positions_guess(num_ions, axis,
-                                                           self.reference_trap_frequencies[axis] / self.scales.frequency)
+            positions_guess = self.initial_positions_guess(num_ions, axis, self.reference_trap_frequencies[axis] / self.scales.frequency)
 
         # Solve for equilibrium positions 
         default_solver_options = {'gtol': 1e-10, 'disp': False}
@@ -394,6 +393,7 @@ class _TrappedIonSystem:
         alternating = (-1.0) ** np.arange(num_ions)
         transverse_axes = [d for d in range(3) if d != axis]
         u0 = np.zeros((3, num_ions))
+        # The following was found to work well via heuristics
         u0[axis] = (np.arange(num_ions) - (num_ions - 1) / 2) * spacing
         u0[transverse_axes[0]] = 1e-3 * spacing * alternating
         u0[transverse_axes[1]] = 0.5e-3 * spacing * alternating
@@ -638,8 +638,7 @@ class TrappedIonCrystal:
         return cls(num_ions, omega_x, omega_y, omega_z, species_data['mass'], species_data['charge'], **kwargs)
 
     @classmethod
-    def from_atomic_structure_basis(cls, atomic_structure_basis: StandardBasis, omega_x: float, omega_y: float,
-                                    omega_z: float, **kwargs):
+    def from_atomic_structure_basis(cls, atomic_structure_basis: StandardBasis, omega_x: float, omega_y: float, omega_z: float, **kwargs):
         """ Build the mode analysis class from a basis of AtomicStructure degrees of freedom. The order of the DOFs
             sets the ion order (the first DOF is the reference ion). Additional keyword arguments are passed to the
             constructor. ion_indices maps stored ions back to the DOF order. """
@@ -1048,28 +1047,44 @@ class IonChain(TrappedIonCrystal):
 
         return 2 * np.pi * result.root
 
-    def print_chain_summary(self):
-        """ Print a summary of the linear ion chain configuration. """
-        wx0, wy0, wz0 = self.reference_trap_frequencies / (2 * np.pi * 1e6)
-        print()
-        print(f" ----- Linear Ion Chain Analysis Summary -----")
-        print(f"Number of ions: {self.num_ions}")
-        print(f"Trap type: {self.trap_type}")
-        print(f"Reference-ion trap frequencies: x={wx0:.2f} MHz, y={wy0:.2f} MHz, z={wz0:.2f} MHz")
-        print(f"Ion masses along +z: {np.round(self.atomic_masses / const.u, 3)} amu (original indices {self.ion_indices})")
+    def chain_summary(self):
+        """ Return a summary of the linear ion chain configuration. """
+        #print()
+        #print(f" ----- Linear Ion Chain Analysis Summary -----")
+        #print(f"Number of ions: {self.num_ions}")
+        #print(f"Trap type: {self.trap_type}")
+        #print(f"Reference-ion trap frequencies: x={wx0:.2f} MHz, y={wy0:.2f} MHz, z={wz0:.2f} MHz")
+        #print(f"Ion masses along +z: {np.round(self.atomic_masses / const.u, 3)} amu (original indices {self.ion_indices})")
 
+        #print(f"Ion axial coordinates (axial): {z_coordinates*1e6} µm")
+        #print(f"Ion spacing (axial): {spacing*1e6} µm")
+
+        #print(f"Center of mass position: ({com_x*1e6:.2f} µm, {com_y*1e6:.2f} µm, {com_z*1e6:.2f} µm)")
+
+        chain_summary = {}
+        chain_summary["Number of ions"] = self.num_ions 
+        chain_summary["Trap type"] = self.trap_type # or string rep?  
+        chain_summary["Ion masses amu"] = np.round(self.atomic_masses / const.u, 3)
+
+        wx0, wy0, wz0 = self.reference_trap_frequencies / (2 * np.pi * 1e6)
+        chain_summary["Reference ion-trap frequencies MHz"] = (wx0, wy0, wz0)
         spacing = self.get_ion_spacing()
         z_coordinates = self.get_axial_ion_positions()
-        print(f"Ion axial coordinates (axial): {z_coordinates*1e6} µm")
-        print(f"Ion spacing (axial): {spacing*1e6} µm")
+        chain_summary["Ion axial spacing microns"] = spacing * 1E6 
+        chain_summary["Ion coordinates microns"] = z_coordinates * 1E6 
 
         com_x, com_y, com_z = self.get_center_of_mass_position()
-        print(f"Center of mass position: ({com_x*1e6:.2f} µm, {com_y*1e6:.2f} µm, {com_z*1e6:.2f} µm)")
+        chain_summary["Center of mass positions microns"] = (com_x*1E6, com_y*1E6, com_z*1E6) 
 
         axial_freqs = self.get_axial_mode_frequencies()
         radial0_freqs = self.get_radial_mode_frequencies(BranchType.RADIAL0)
         radial1_freqs = self.get_radial_mode_frequencies(BranchType.RADIAL1)
 
-        print(f"\nAxial mode frequencies: {axial_freqs/(2*np.pi)/1e6} MHz")
-        print(f"Radial 0 mode frequencies: {radial0_freqs/(2*np.pi)/1e6} MHz")
-        print(f"Radial 1 mode frequencies: {radial1_freqs/(2*np.pi)/1e6} MHz")
+        chain_summary["Axial mode frequencies MHz"] = axial_freqs/(2. * np.pi)/1E6
+        chain_summary["Radial 0 mode frequencies MHz"] = radial0_freqs/(2. * np.pi)/1E6
+        chain_summary["Radial 1 mode frequencies MHz"] = radial1_freqs/(2. * np.pi)/1E6
+        #print(f"\nAxial mode frequencies: {axial_freqs/(2*np.pi)/1e6} MHz")
+        #print(f"Radial 0 mode frequencies: {radial0_freqs/(2*np.pi)/1e6} MHz")
+        #print(f"Radial 1 mode frequencies: {radial1_freqs/(2*np.pi)/1e6} MHz")
+        return chain_summary
+
