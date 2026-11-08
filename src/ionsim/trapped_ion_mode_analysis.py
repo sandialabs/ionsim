@@ -1048,26 +1048,12 @@ class IonChain(TrappedIonCrystal):
         return 2 * np.pi * result.root
 
     def chain_summary(self):
-        """ Return a summary of the linear ion chain configuration. """
-        #print()
-        #print(f" ----- Linear Ion Chain Analysis Summary -----")
-        #print(f"Number of ions: {self.num_ions}")
-        #print(f"Trap type: {self.trap_type}")
-        #print(f"Reference-ion trap frequencies: x={wx0:.2f} MHz, y={wy0:.2f} MHz, z={wz0:.2f} MHz")
-        #print(f"Ion masses along +z: {np.round(self.atomic_masses / const.u, 3)} amu (original indices {self.ion_indices})")
-
-        #print(f"Ion axial coordinates (axial): {z_coordinates*1e6} µm")
-        #print(f"Ion spacing (axial): {spacing*1e6} µm")
-
-        #print(f"Center of mass position: ({com_x*1e6:.2f} µm, {com_y*1e6:.2f} µm, {com_z*1e6:.2f} µm)")
-
+        """ Return a summary of the linear ion chain configuration in physical units. """
         chain_summary = {}
         chain_summary["Number of ions"] = self.num_ions 
         chain_summary["Trap type"] = self.trap_type # or string rep?  
         chain_summary["Ion masses amu"] = np.round(self.atomic_masses / const.u, 3)
 
-        wx0, wy0, wz0 = self.reference_trap_frequencies / (2 * np.pi * 1e6)
-        chain_summary["Reference ion-trap frequencies MHz"] = (wx0, wy0, wz0)
         spacing = self.get_ion_spacing()
         z_coordinates = self.get_axial_ion_positions()
         chain_summary["Ion axial spacing microns"] = spacing * 1E6 
@@ -1083,8 +1069,5 @@ class IonChain(TrappedIonCrystal):
         chain_summary["Axial mode frequencies MHz"] = axial_freqs/(2. * np.pi)/1E6
         chain_summary["Radial 0 mode frequencies MHz"] = radial0_freqs/(2. * np.pi)/1E6
         chain_summary["Radial 1 mode frequencies MHz"] = radial1_freqs/(2. * np.pi)/1E6
-        #print(f"\nAxial mode frequencies: {axial_freqs/(2*np.pi)/1e6} MHz")
-        #print(f"Radial 0 mode frequencies: {radial0_freqs/(2*np.pi)/1e6} MHz")
-        #print(f"Radial 1 mode frequencies: {radial1_freqs/(2*np.pi)/1e6} MHz")
-        return chain_summary
 
+        return chain_summary

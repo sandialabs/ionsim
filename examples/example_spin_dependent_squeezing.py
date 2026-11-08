@@ -214,8 +214,9 @@ def main():
     omega_y = 2.6 * TPI * 1E6 # MHz -> rad/s    
     omega_z = 0.50 * TPI * 1E6 # MHz -> rad/s    
     trap_analysis = ism.IonChain.from_atomic_structure_basis(qubit_basis, omega_x, omega_y, omega_z) 
-    print()
-    trap_analysis.print_chain_summary()
+    summary = trap_analysis.chain_summary()
+    print("\n")
+    print(summary)
 
     # Truncate the Hilbert space to a single qubit with the two nearby motional modes 
     # Choose to do oprerations on the radial x tilt mode; option to include the COM as a spectator mode  
