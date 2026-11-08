@@ -1047,7 +1047,7 @@ class IonChain(TrappedIonCrystal):
 
         return 2 * np.pi * result.root
 
-    def chain_summary(self):
+    def chain_summary(self) -> dict:
         """ Return a summary of the linear ion chain configuration in physical units. """
         chain_summary = {}
         chain_summary["Number of ions"] = self.num_ions 
