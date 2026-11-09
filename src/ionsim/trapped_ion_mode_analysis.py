@@ -18,22 +18,6 @@ from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, SMALLEST_ENERGY_SCALE
 # https://arxiv.org/abs/2007.12725
 # https://arxiv.org/abs/quant-ph/9702053
 
-
-class TrapType(StrEnum):
-    """ How the per-ion secular frequencies are obtained (see _TrappedIonSystem.calculate_species_trap_frequencies).
-
-        - LINEAR, SURFACE: RF Paul traps. Frequencies of other species are derived from the reference ion's.
-        - CUSTOM: per-ion frequencies are given directly.
-    """
-    LINEAR = 'linear'
-    SURFACE = 'surface'
-    CUSTOM = 'custom'
-
-    @property
-    def is_rf_paul_trap(self) -> bool:
-        return self in (TrapType.LINEAR, TrapType.SURFACE)
-
-
 class ModeOrganization(StrEnum):
     """ Order of the stored normal modes: ascending frequency, or grouped by branch (radial0, radial1, axial),
         each in ascending frequency. """
@@ -69,506 +53,27 @@ class BranchType(StrEnum):
     def is_radial(self) -> bool:
         return self is not BranchType.AXIAL
 
+
+class TrapType(StrEnum):
+    """ How the per-ion secular frequencies are obtained (see _TrappedIonSystem.calculate_species_trap_frequencies).
+
+        - LINEAR, SURFACE: RF Paul traps. Frequencies of other species are derived from the reference ion's.
+        - CUSTOM: per-ion frequencies are given directly.
+    """
+    LINEAR = 'linear'
+    SURFACE = 'surface'
+    CUSTOM = 'custom'
+
+    @property
+    def is_rf_paul_trap(self) -> bool:
+        return self in (TrapType.LINEAR, TrapType.SURFACE)
+
+
+
 # Relative tolerance used to decide which eigenvector components are "tied" for largest magnitude
 _GAUGE_TIE_RTOL = 1e-6
 # Relative size of imaginary parts below which gauge-fixed participation factors are returned as real
 _REAL_RTOL = 1e-9
-
-
-def characteristic_length(q: float, mass: float, omega: float) -> float:
-    """ Computes characteristic length in trapped ion system: Coulomb + harmonic oscillator physics.
-
-        l0 = (2 k_e q^2 / (m omega^2))^(1/3), which is the equilibrium separation of two identical ions
-        in a harmonic well of frequency omega.
-    """
-    k_e = 1 / (4 * np.pi * const.epsilon_0)  # Coulomb constant
-    l0 = ((k_e * q ** 2) / (.5 * mass * omega ** 2)) ** (1 / 3)
-    return l0
-
-def _standardize_fock_dimensions(fock_dimensions: Vector | int, num_modes: int) -> NDArray:
-    """ Broadcasts a single Fock dimension to num_modes modes, or checks that one is given per mode. """
-    dims = np.atleast_1d(np.asarray(fock_dimensions))
-    if dims.size == 1:
-        dims = np.full(num_modes, dims.item())
-    elif dims.size != num_modes:
-        raise IonSimError(f"Received {dims.size} Fock dimensions for {num_modes} modes")
-    if not np.all(np.equal(np.mod(dims, 1), 0)) or np.any(dims < 1):
-        raise IonSimError(f"Fock dimensions must be positive integers. Received {fock_dimensions}")
-    return dims.astype(int)
-
-
-def _enlarge_scalar_to_vector(x: float | Vector, num_ions: int, name: str) -> NDArray:
-    """ Broadcasts a scalar to a length-num_ions float array, or checks that an array has length num_ions. """
-    array = np.full(num_ions, x, dtype=float) if np.ndim(x) == 0 else np.asarray(x, dtype=float)
-    if array.shape != (num_ions,):
-        raise IonSimError(f"{name} must be a scalar or have length {num_ions}. Received {x}")
-    return array
-
-
-# ----------------------------------------------------------------------------------------------------
-# Internal data containers. Each is immutable: a new object is created rather than modifying one.
-# ----------------------------------------------------------------------------------------------------
-@dataclass(frozen=True)
-class _Ions:
-    """ Per-ion properties, all in the same ion order. """
-    masses: NDArray             # kg, shape (N,)
-    charge_states: NDArray      # units of e, shape (N,)
-    trap_frequencies: NDArray   # secular frequencies along the x, y, z principal axes [rad/s], shape (3, N)
-    original_indices: NDArray   # user-supplied index of each ion, shape (N,)
-
-    @property
-    def charges(self) -> NDArray:
-        """ Ion charges in Coulombs. """
-        return self.charge_states * const.e
-
-    def permuted(self, order: NDArray) -> _Ions:
-        """ The same ions in a new order: new index k <- current index order[k]. """
-        return _Ions(self.masses[order], self.charge_states[order], self.trap_frequencies[:, order],
-                     self.original_indices[order])
-
-
-@dataclass(frozen=True)
-class _DimensionlessScales:
-    """ Units of the dimensionless problem, set by the reference ion's mass, charge, and axial frequency. """
-    mass: float       # kg
-    charge: float     # C
-    frequency: float  # rad/s
-
-    @property
-    def length(self) -> float:
-        return characteristic_length(self.charge, self.mass, self.frequency)
-
-    @property
-    def time(self) -> float:
-        return 1 / self.frequency
-
-    @property
-    def velocity(self) -> float:
-        return self.length * self.frequency
-
-    @property
-    def energy(self) -> float:
-        return 0.5 * self.mass * self.velocity ** 2
-
-
-@dataclass(frozen=True)
-class _CoulombTrapPotential:
-    """ Dimensionless potential energy of N ions in a harmonic trap with Coulomb repulsion, in units of
-        mass * frequency^2 * length^2 of the _DimensionlessScales:
-
-            U(u) = sum_{d,i} 1/2 m_i w_{d,i}^2 r_{d,i}^2 + 1/2 sum_{i<j} q_i q_j / |r_i - r_j|
-
-        Positions u are flattened as [x_1..x_N, y_1..y_N, z_1..z_N] (trap frame, units of length).
-    """
-    m: NDArray  # masses, shape (N,)
-    q: NDArray  # charges, shape (N,)
-    w: NDArray  # trap frequencies felt by the ion, along x, y, z, shape (3, N)
-
-    @classmethod
-    def from_ions(cls, ions: _Ions, scales: _DimensionlessScales) -> _CoulombTrapPotential:
-        return cls(ions.masses / scales.mass, ions.charges / scales.charge, ions.trap_frequencies / scales.frequency)
-
-    @property
-    def num_ions(self) -> int:
-        return len(self.m)
-
-    def _separations(self, u: Vector) -> tuple[NDArray, NDArray, NDArray]:
-        """ Pairwise displacements dr[d, i, j] = r_{d,i} - r_{d,j}, distances |r_i - r_j|, and q_i q_j. """
-        r = u.reshape(3, self.num_ions)
-        dr = r[:, :, np.newaxis] - r[:, np.newaxis, :]
-        distances = np.sqrt(np.sum(dr ** 2, axis=0))
-        qq = self.q[:, np.newaxis] * self.q[np.newaxis, :]
-        return dr, distances, qq
-
-    def energy(self, u: Vector) -> float:
-        r = u.reshape(3, self.num_ions)
-        _, distances, qq = self._separations(u)
-        with np.errstate(divide='ignore'):
-            coulomb = 0.25 * np.sum(np.where(distances != 0., qq / distances, 0.))  # 1/2 * (sum over i != j) / 2
-        return 0.5 * np.sum(self.m * self.w ** 2 * r ** 2) + coulomb
-
-    def gradient(self, u: Vector) -> Vector:
-        """ dU/du, shape (3N,) """
-        r = u.reshape(3, self.num_ions)
-        dr, distances, qq = self._separations(u)
-        with np.errstate(divide='ignore'):
-            inverse_cubed = np.where(distances != 0., distances ** (-3), 0.)
-        coulomb = -0.5 * np.sum(dr * inverse_cubed * qq, axis=2)
-        return (self.m * self.w ** 2 * r + coulomb).reshape(-1)
-
-    def hessian(self, u: Vector) -> Matrix:
-        """ d^2U / du du, shape (3N, 3N). For the Coulomb part:
-
-            For i != j:  d^2 V / dr_{a,i} dr_{b,j} = q_i q_j (delta_ab r_ij^2 - 3 dr_a dr_b) / r_ij^5
-            For i == j:  d^2 V / dr_{a,i} dr_{b,i} = - sum_{j != i} (the i != j expression above)
-        """
-        N = self.num_ions
-        dr, distances, qq = self._separations(u)
-        with np.errstate(divide='ignore'):
-            inverse_fifth = np.where(distances != 0., distances ** (-5), 0.)
-        blocks = [[None] * 3 for _ in range(3)]
-        for a in range(3):
-            for b in range(3):
-                block = qq * ((a == b) * distances ** 2 - 3 * dr[a] * dr[b]) * inverse_fifth  # zero on the diagonal
-                np.fill_diagonal(block, -np.sum(block, axis=1))
-                blocks[a][b] = 0.5 * block  # consistent with the factor of 1/2 on the Coulomb energy
-        trap = np.diag((self.m * self.w ** 2).reshape(-1))
-        return np.block(blocks) + trap
-
-
-class _TrappedIonSystem:
-    """ Internal implementation of the trapped-ion equilibrium and normal-mode physics problem.
-
-        The constructor runs each step of the problem in order, passing results explicitly from one step to the
-        next (the static methods below have no side effects):
-
-            1. Standardize and validate inputs
-            2. Solve for the equilibrium positions with the ions in the user-supplied order.
-            3. Reindex the ions according to the reindexing strategy.
-            4. Solve for the normal modes at the equilibrium.
-            5. Compute the zero-point displacements and mode participation factors.
-
-        Everything here is in the trap (principal-axis) frame and, unless stated otherwise, in dimensionless units
-        set by the reference ion (the first ion in the user-supplied order). Only the results needed by the public
-        classes TrappedIonCrystal and IonChain are stored.
-    """
-    def __init__(self, num_ions: int, omega_x: float | Vector, omega_y: float | Vector, omega_z: float | Vector,
-                 atomic_masses: Vector | float, atomic_charges: Vector | float, mode_organization: ModeOrganization, 
-                 reindexing_strategy: ReindexingStrategy, trap_type: TrapType, dc_radial_split: tuple[float, float], 
-                 principal_axes: Matrix | None, initial_chain_axis: int | None = None, positions_guess: Vector | None = None, 
-                 solver_options: dict | None=None):
-        # 1. Inputs
-        if num_ions < 1:
-            raise IonSimError(f"num_ions must be positive. Received {num_ions}")
-        self.num_ions = num_ions
-        self.mode_organization = ModeOrganization(mode_organization)
-        self.reindexing_strategy = ReindexingStrategy(reindexing_strategy)
-        self.trap_type = TrapType(trap_type)
-        self.dc_radial_split = self.standardize_dc_radial_split(dc_radial_split)
-        self.principal_axes = self.standardize_principal_axes(principal_axes)
-
-        masses, charge_states = self.standardize_ion_properties(num_ions, atomic_masses, atomic_charges)
-        trap_frequencies = self.calculate_species_trap_frequencies(omega_x, omega_y, omega_z, masses, charge_states, self.trap_type, self.dc_radial_split)
-
-        # Ions in the user-supplied order; the first one is the reference ion
-        placeholder_ion_indices = np.arange(num_ions)
-        self.input_ions = _Ions(masses, charge_states, trap_frequencies, placeholder_ion_indices)
-        self.reference_trap_frequencies = trap_frequencies[:, 0].copy()
-        self.scales = _DimensionlessScales(mass=masses[0], charge=self.input_ions.charges[0], frequency=trap_frequencies[2, 0])
-
-        # 2. Equilibrium positions, ions in the user-supplied order
-        potential = _CoulombTrapPotential.from_ions(self.input_ions, self.scales)
-        if positions_guess is None:
-            axis = int(np.argmin(self.reference_trap_frequencies)) if initial_chain_axis is None else initial_chain_axis
-            positions_guess = self.initial_positions_guess(num_ions, axis, self.reference_trap_frequencies[axis] / self.scales.frequency)
-
-        # Solve for equilibrium positions 
-        default_solver_options = {'gtol': 1e-10, 'disp': False}
-        if solver_options is None:
-            solver_options = default_solver_options 
-        positions = self.solve_equilibrium_positions(potential, positions_guess, solver_options)
-
-        # 3. Reindexing
-        order = self.reindexing_order(positions, self.reindexing_strategy)
-        self.ions = self.input_ions.permuted(order)
-        self.potential = _CoulombTrapPotential.from_ions(self.ions, self.scales)
-        self.equilibrium_positions = positions.reshape(3, num_ions)[:, order].reshape(-1)
-
-        # 4. Compute normal mode frequencies -- eigenvalues and eigenvectors 
-        eigenvalues, eigenvectors = self.compute_normal_modes(self.potential.hessian(self.equilibrium_positions),
-                                                            self.potential.m, self.mode_organization)
-        self.normal_mode_frequencies = eigenvalues * self.scales.frequency
-
-        # 5. Compute participation factors via zero point displacements  
-        self.participation_factors = self.calculate_zero_point_displacements(eigenvalues, eigenvectors, self.scales)
-
-    # ------------------------------------------------------------------------------------------------
-    # 1. Inputs
-    # ------------------------------------------------------------------------------------------------
-    @staticmethod
-    def standardize_ion_properties(num_ions: int, atomic_masses: Vector | float, atomic_charges: Vector | float) -> tuple[NDArray, NDArray]:
-        """ Returns (masses in kg, charge states in units of e), each of length num_ions, after validation. """
-        masses_amu = _enlarge_scalar_to_vector(atomic_masses, num_ions, 'atomic_masses')
-        charge_states = _enlarge_scalar_to_vector(atomic_charges, num_ions, 'atomic_charges')
-        if np.any(masses_amu <= 0):
-            raise IonSimError(f"Atomic masses must be positive. Received {masses_amu} amu")
-        if np.any(charge_states == 0):
-            raise IonSimError(f"Ion charge states must be nonzero (neutral atoms cannot be trapped here). "
-                              f"Received {charge_states}")
-        if not (np.all(charge_states > 0) or np.all(charge_states < 0)):
-            raise IonSimError(f"All ions must have charges of the same sign. Received {charge_states}")
-        return masses_amu * const.u, charge_states
-
-    @staticmethod
-    def standardize_dc_radial_split(dc_radial_split) -> NDArray:
-        split = np.asarray(dc_radial_split, dtype=float)
-        if split.shape != (2,):
-            raise IonSimError(f"dc_radial_split must be a pair (s_x, s_y). Received {dc_radial_split}")
-        if not np.isclose(np.sum(split), 1.0, rtol=0, atol=1e-12):
-            raise IonSimError(f"dc_radial_split must satisfy s_x + s_y = 1 (Laplace's equation). Received {dc_radial_split}")
-        return split
-
-    @staticmethod
-    def standardize_principal_axes(principal_axes) -> Matrix:
-        """ Returns the 3x3 rotation matrix R whose rows are the unit trap axes in lab coordinates.
-            v_trap = R @ v_lab and v_lab = R.T @ v_trap.
-        """
-        if principal_axes is None: 
-            return np.eye(3)
-        R = np.array(principal_axes, dtype=float)
-        if R.shape != (3, 3):
-            raise IonSimError(f"principal_axes must be a 3x3 array (rows are the x, y, z trap axes). Received shape {R.shape}")
-        norms = np.linalg.norm(R, axis=1)
-        if np.any(norms == 0):
-            raise IonSimError("principal_axes rows must be nonzero vectors")
-        R = R / norms[:, np.newaxis]
-        if not np.allclose(R @ R.T, np.eye(3), rtol=0, atol=1e-9):
-            raise IonSimError(f"principal_axes rows must be mutually orthogonal. Received {principal_axes}")
-        if np.linalg.det(R) < 0:
-            raise IonSimError("principal_axes must form a right-handed set (x cross y = z)")
-        return R
-
-    @staticmethod
-    def calculate_species_trap_frequencies(omega_x, omega_y, omega_z, masses: Vector, charge_states: Vector,
-                                           trap_type: TrapType, dc_radial_split: Vector) -> NDArray:
-        """ Returns the secular trap frequencies of each ion along the trap principal axes, shape (3, N) [rad/s].
-
-            'custom': frequencies are used as given (scalars are broadcast to every ion).
-
-            'linear' / 'surface' (RF Paul traps, secular approximation, micromotion neglected): with the reference
-            ion (index 0; charge q0, mass m0) having secular frequencies (wx, wy, wz) and r_i = (q_i m0) / (q0 m_i),
-
-                axial (DC only):          w_{z,i}^2 = r_i wz^2
-                radial (RF pseudo + DC):  w_{x,i}^2 = r_i^2 (wx^2 + s_x wz^2) - s_x r_i wz^2   (same for y with s_y)
-
-            This follows from the DC spring constant scaling as q and the RF pseudopotential spring constant scaling
-            as q^2 / m, with the DC axial curvature defocusing the radial directions by s_x, s_y (s_x + s_y = 1).
-            RF and DC curvatures are assumed to share the same principal axes.
-        """
-        num_ions = len(masses)
-        if not trap_type.is_rf_paul_trap:
-            frequencies = np.array([_enlarge_scalar_to_vector(w, num_ions, f'omega_{label}')
-                                    for w, label in zip((omega_x, omega_y, omega_z), 'xyz')])
-            if not np.all(frequencies > 0):
-                raise IonSimError(f"Trap is unstable: all trap frequencies must be positive. Received {frequencies}")
-            return frequencies
-
-        for w, label in zip((omega_x, omega_y, omega_z), 'xyz'):
-            if np.ndim(w) != 0:
-                raise IonSimError(f"For trap_type '{trap_type}', omega_{label} must be a scalar (the reference ion's "
-                                 f"frequency). Use trap_type='custom' to specify per-ion frequencies.")
-            if isinstance(w, complex):
-                raise IonSimError(f"Secular frequencies should be real-valued and positive. Received {w}.")
-            if w <= 0:
-                raise IonSimError(f"Trap is unstable: omega_{label} must be positive. Received {w}")
-
-        s_x, s_y = dc_radial_split
-        r = (charge_states * masses[0]) / (charge_states[0] * masses)
-
-        rf_x0 = omega_x ** 2 + s_x * omega_z ** 2   # RF pseudopotential curvature of the reference ion (as w^2)
-        rf_y0 = omega_y ** 2 + s_y * omega_z ** 2
-        if rf_x0 <= 0 or rf_y0 <= 0:
-            raise IonSimError(f"Reference trap frequencies {rf_x0=}, {rf_y0=} are inconsistent with an RF Paul trap: the implied RF "
-                              "pseudopotential is not confining.")
-
-        frequencies_squared = np.array([r ** 2 * rf_x0 - s_x * r * omega_z ** 2,
-                                        r ** 2 * rf_y0 - s_y * r * omega_z ** 2,
-                                        r * omega_z ** 2])
-        for w2, label in zip(frequencies_squared, 'xyz'):
-            if np.any(w2 <= 0):
-                unstable = np.flatnonzero(w2 <= 0)
-                raise IonSimError(f"Ions {unstable.tolist()} are not confined along {label} for this trap "
-                                  f"(secular frequency^2 = {w2[unstable]}).")
-        return np.sqrt(frequencies_squared)
-
-    # ------------------------------------------------------------------------------------------------
-    # 2. Equilibrium positions
-    # ------------------------------------------------------------------------------------------------
-    @staticmethod
-    def initial_positions_guess(num_ions: int, axis: int, axis_frequency: float) -> Vector:
-        """ Deterministic dimensionless initial guess: a linear chain in the given ion order along `axis` (0, 1, 2
-            for x, y, z), plus a small transverse perturbation so that a zigzag/2D configuration can form if it is
-            energetically favored. axis_frequency is the reference ion's dimensionless frequency along `axis`. """
-        spacing = axis_frequency ** (-2 / 3)  # two-ion spacing in units of the characteristic length
-        alternating = (-1.0) ** np.arange(num_ions)
-        transverse_axes = [d for d in range(3) if d != axis]
-        u0 = np.zeros((3, num_ions))
-        # The following was found to work well via heuristics
-        u0[axis] = (np.arange(num_ions) - (num_ions - 1) / 2) * spacing
-        u0[transverse_axes[0]] = 1e-3 * spacing * alternating
-        u0[transverse_axes[1]] = 0.5e-3 * spacing * alternating
-        return u0.reshape(-1)
-
-    @staticmethod
-    def solve_equilibrium_positions(potential: _CoulombTrapPotential, positions_guess: Vector, solver_options: dict | None=None) -> Vector:
-        """ Minimizes the potential energy starting from positions_guess (dimensionless, flattened). Returns the
-            equilibrium positions in the same ion order. """
-        u0 = np.asarray(positions_guess, dtype=float)
-        if u0.shape != (3 * potential.num_ions,):
-            raise IonSimError(f"positions_guess must have shape ({3 * potential.num_ions},)")
-
-        # Minimize with BFGS, then polish with Newton steps on the analytic Hessian
-        u = opt.minimize(potential.energy, u0, method='BFGS', jac=potential.gradient, options=solver_options).x
-
-        max_attempts = 10
-        for _ in range(max_attempts):
-            gradient = potential.gradient(u)
-            if np.max(np.abs(gradient)) < NUMERICAL_EQUIVALENCE_THRESHOLD:
-                break
-            hessian = potential.hessian(u)
-            if np.min(np.linalg.eigvalsh(hessian)) <= 0:
-                break  # not at a minimum; compute_normal_modes reports it
-            u = u - np.linalg.solve(hessian, gradient)
-
-        residual = np.max(np.abs(potential.gradient(u)))
-        if residual > 1e-9:
-            warnings.warn(f"Equilibrium solve may not have converged: max |dU/du| = {residual:.2e} (dimensionless)")
-        return u
-
-    # ------------------------------------------------------------------------------------------------
-    # 3. Reindexing
-    # ------------------------------------------------------------------------------------------------
-    @staticmethod
-    def reindexing_order(positions: Vector, strategy: ReindexingStrategy) -> NDArray:
-        """ Returns the permutation (new index k <- current index order[k]) that reindexes the ions:
-
-            - 'distance': ascending distance from the trap center (index 0 is closest to the center)
-            - 'z_axis':   ascending z (axial) coordinate (index 0 is the most negative z)
-            - 'none':     keep the current order
-
-            Ties (keys equal to 1e-9 in dimensionless units, e.g. the two end ions of a symmetric chain under
-            'distance') keep the current order, so the result does not depend on rounding.
-        """
-        r = positions.reshape(3, -1)
-        if strategy is ReindexingStrategy.NONE:
-            return np.arange(r.shape[1])
-        key = np.linalg.norm(r, axis=0) if strategy is ReindexingStrategy.DISTANCE else r[2]
-        return np.argsort(np.round(key, decimals=9), kind='stable')
-
-    # ------------------------------------------------------------------------------------------------
-    # 4. Normal modes
-    # ------------------------------------------------------------------------------------------------
-    @staticmethod
-    def compute_normal_modes(hessian: Matrix, masses: NDArray, mode_organization: ModeOrganization) -> tuple[NDArray, NDArray]:
-        """ Normal modes of small oscillations about the equilibrium (dimensionless; no magnetic field).
-
-            With canonical coordinates X = (q, p), p = M dq/dt, the Hamiltonian is 1/2 X^T H X with
-            H = (K, 0; 0, M^-1), and Hamilton's equations are dX/dt = D X with D = J H, J = (0, I; -I, 0)
-            (eq. 1.67 of thesis). Modes evolve as u_n exp(-i w_n t), so u_n are eigenvectors of -D with
-            eigenvalue i w_n.
-
-            Returns (w, u): the 3N positive frequencies w_n and the 6N x 3N eigenvectors u_n, ordered by
-            mode_organization, normalized so that u_n^dagger H u_n = 1, and with the phase convention of
-            fix_eigenvector_phases.
-        """
-        num_coordinates = len(masses) * 3
-        mass_diagonal = np.tile(masses, 3)
-        zeros = np.zeros((num_coordinates, num_coordinates))
-        identity = np.eye(num_coordinates)
-        H = np.block([[hessian, zeros], [zeros, np.diag(1 / mass_diagonal)]])
-        J = np.block([[zeros, identity], [-identity, zeros]])
-
-        # u_n(t) = exp(-i w_n t) u_n(0), minus by convention; keep the positive-frequency half
-        eigenvalues, eigenvectors = np.linalg.eig(-J @ H)
-        order = np.argsort(eigenvalues.imag)[num_coordinates:]
-        frequencies, eigenvectors = eigenvalues.imag[order], eigenvectors[:, order]
-        if not np.all(frequencies > 0):
-            raise IonSimError("Found non-positive normal mode frequencies: the equilibrium found is not a stable "
-                              "minimum (e.g. a linear chain beyond the zigzag transition).")
-
-        if mode_organization is ModeOrganization.BRANCH_SORTED:
-            order = _TrappedIonSystem.branch_sorted_order(eigenvectors)
-            frequencies, eigenvectors = frequencies[order], eigenvectors[:, order]
-
-        norms = np.sqrt(np.real(np.einsum('in,ij,jn->n', eigenvectors.conj(), H, eigenvectors)))
-        eigenvectors = _TrappedIonSystem.fix_eigenvector_phases(eigenvectors / norms)
-
-        _TrappedIonSystem.check_normal_modes(H, frequencies, eigenvectors)
-        return frequencies, eigenvectors
-
-    @staticmethod
-    def branch_sorted_order(eigenvectors: Matrix) -> NDArray:
-        """ Permutation that groups modes (columns, assumed in ascending frequency) by the principal axis they
-            mostly move along: radial0 (x), radial1 (y), axial (z), keeping ascending frequency within each branch.
-            Only makes sense for a linear chain along the axial principal axis. """
-        num_coordinates, num_modes = eigenvectors.shape
-        num_ions = num_coordinates // 6
-        # amplitude of each mode along each axis, summing positions and momenta: shape (3, num_modes)
-        amplitudes = np.abs(eigenvectors).reshape(2, 3, num_ions, num_modes).sum(axis=(0, 2))
-        dominant_axis = np.argmax(amplitudes, axis=0)
-        for branch in BranchType:
-            count = np.sum(dominant_axis == branch.axis)
-            if count != num_ions:
-                raise IonSimError(f"Branch classification error: branch '{branch}' has {count} modes, expected "
-                                  f"{num_ions}. Branch sorting requires a linear chain along the axial principal axis.")
-        return np.concatenate([np.flatnonzero(dominant_axis == branch.axis) for branch in BranchType])
-
-    @staticmethod
-    def fix_eigenvector_phases(eigenvectors: Matrix) -> Matrix:
-        """ Removes the arbitrary per-mode phase returned by the eigensolver.
-
-            Each mode u_n (a column) is multiplied by exp(-i theta_n) such that its largest-magnitude position
-            component is real and positive. Ties (components within a relative 1e-6 of the largest magnitude, e.g.
-            COM or stretch modes of identical ions) are broken by the lowest coordinate index in the flattened
-            order [x_1..x_N, y_1..y_N, z_1..z_N].
-
-            Without magnetic fields the position part of a non-degenerate mode is real up to one phase, so after
-            this the position part (and hence the Lamb-Dicke parameters) is real, and the displacement operator is
-            r_{i,d} = sum_n r^{zpf}_{i,d,n} (a_n + a_n^dagger). Relative signs between ions within a mode are
-            physical; the overall sign of each mode is this convention. Degenerate subspaces are not treated.
-        """
-        position_part = eigenvectors[:eigenvectors.shape[0] // 2]
-        magnitudes = np.abs(position_part)
-        reference_rows = np.argmax(magnitudes >= (1 - _GAUGE_TIE_RTOL) * magnitudes.max(axis=0), axis=0)
-        reference_components = position_part[reference_rows, np.arange(position_part.shape[1])]
-        return eigenvectors * np.exp(-1j * np.angle(reference_components))
-
-    @staticmethod
-    def check_normal_modes(H: Matrix, frequencies: NDArray, eigenvectors: Matrix):
-        """ Warns if the H-normalized modes u_n (with their conjugates) are not complete, or if the canonical
-            transformation S = sqrt(2) [Re(u) sqrt(w), -Im(u) sqrt(w)] does not diagonalize H to diag(w, w). """
-        degenerate = _TrappedIonSystem.has_degenerate_modes(frequencies)
-        projector = eigenvectors @ eigenvectors.conj().T
-        completeness = projector + projector.conj()  # sum over u_n u_n^dagger and its conjugate (-w_n) partner
-        identity = np.eye(H.shape[0])
-        if not (np.allclose(H @ completeness, identity) and np.allclose(completeness @ H, identity)):
-            warnings.warn(f"Outer relation check failed (degenerate modes present: {degenerate})")
-
-        scaled = eigenvectors * np.sqrt(frequencies)
-        S = np.sqrt(2) * np.concatenate((np.real(scaled), -np.imag(scaled)), axis=1)
-        if not np.allclose(S.T @ H @ S, np.diag(np.tile(frequencies, 2))):
-            warnings.warn(f"Diagonalization check failed (degenerate modes present: {degenerate})")
-
-    @staticmethod
-    def has_degenerate_modes(frequencies: NDArray, atol: float = SMALLEST_ENERGY_SCALE) -> bool:
-        return bool(np.any(np.triu(np.isclose(frequencies[:, None], frequencies[None, :], atol=atol), k=1)))
-
-    # ------------------------------------------------------------------------------------------------
-    # 5. Zero-point displacements
-    # ------------------------------------------------------------------------------------------------
-    @staticmethod
-    def calculate_zero_point_displacements(frequencies: NDArray, eigenvectors: Matrix,
-                                           scales: _DimensionlessScales) -> Matrix:
-        """ Zero-point displacement amplitudes (mode participation factors) in meters, trap frame, shape (3, N, 3N):
-            result[d, i, n] is the zero-point displacement of ion i along principal axis d in mode n.
-
-            With u_n normalized so that u_n^dagger H u_n = 1, the dimensionful amplitude is
-            l0 * sqrt(hbar_ND * w_n) * u_n = sqrt(hbar / (2 m0 w0)) * sqrt(2 w_n) * u_n.
-
-            Real after phase fixing; complex (with a warning) if degenerate modes leave non-negligible imaginary parts.
-        """
-        num_ions = eigenvectors.shape[0] // 6
-        position_part = eigenvectors[:3 * num_ions]
-        zero_point_scale = np.sqrt(const.hbar / (2 * scales.mass * scales.frequency))
-        displacements = (zero_point_scale * np.sqrt(2 * frequencies) * position_part).reshape(3, num_ions, 3 * num_ions)
-
-        largest = np.max(np.abs(displacements))
-        if largest == 0 or np.max(np.abs(displacements.imag)) <= _REAL_RTOL * largest:
-            return displacements.real
-        warnings.warn("Mode participation factors are complex after phase fixing (degenerate modes present: "
-                      f"{_TrappedIonSystem.has_degenerate_modes(frequencies)}). Phases within degenerate subspaces "
-                      "are not fixed.")
-        return displacements
 
 
 class TrappedIonCrystal:
@@ -627,9 +132,6 @@ class TrappedIonCrystal:
                                          trap_type=trap_type, dc_radial_split=dc_radial_split, principal_axes=principal_axes, 
                                          initial_chain_axis=self._INITIAL_CHAIN_AXIS, positions_guess=positions_guess)
 
-    # ------------------------------------------------------------------------------------------------
-    # Constructors
-    # ------------------------------------------------------------------------------------------------
     @classmethod
     def from_species(cls, species_name: str, num_ions: int, omega_x: float, omega_y: float, omega_z: float, **kwargs):
         """Build the mode analysis class from a species name, corresponding to a system of N identical ions.
@@ -650,9 +152,6 @@ class TrappedIonCrystal:
         atomic_charges = [dof.atomic_charge for dof in dofs]
         return cls(len(dofs), omega_x, omega_y, omega_z, atomic_masses, atomic_charges, **kwargs)
 
-    # ------------------------------------------------------------------------------------------------
-    # Configuration and per-ion properties (read-only). Per-ion arrays are in the stored (reindexed) ion order.
-    # ------------------------------------------------------------------------------------------------
     @property
     def num_ions(self) -> int:
         return self._system.num_ions
@@ -739,9 +238,6 @@ class TrappedIonCrystal:
     def characteristic_energy(self) -> float:
         return self._system.scales.energy
 
-    # ------------------------------------------------------------------------------------------------
-    # Frames
-    # ------------------------------------------------------------------------------------------------
     def lab_to_trap_frame(self, vector: Vector) -> Vector:
         """ Rotates a lab-frame vector (or array of shape (3, ...)) into the trap principal-axis frame. """
         return np.tensordot(self._system.principal_axes, np.asarray(vector), axes=(1, 0))
@@ -756,9 +252,6 @@ class TrappedIonCrystal:
             raise ValueError(f"Wavevector must be a 3-element array (kx, ky, kz) in the lab frame. Received {wavevector}")
         return self.lab_to_trap_frame(k)
 
-    # ------------------------------------------------------------------------------------------------
-    # Results
-    # ------------------------------------------------------------------------------------------------
     @property
     def normal_mode_frequencies(self) -> Vector:
         """ Normal mode frequencies in rad/s, in the order of the stored modes. """
@@ -814,9 +307,6 @@ class TrappedIonCrystal:
         eta_x, eta_y, eta_z = wavenumber * np.sqrt(const.hbar / (2 * mass * trap_frequencies))
         return eta_x, eta_y, eta_z
 
-    # ------------------------------------------------------------------------------------------------
-    # IonSim DOFs and per-mode access
-    # ------------------------------------------------------------------------------------------------
     def build_mode_DOFs(self, mode_indices: list[int], fock_dimensions: Vector | int) -> list[MotionalMode]:
         """ Builds and returns a list of IonSim Motional Degrees of Freedom, with frequencies in rad/s.
 
@@ -1070,3 +560,482 @@ class IonChain(TrappedIonCrystal):
         chain_summary["Radial 1 mode frequencies MHz"] = radial1_freqs/(2. * np.pi)/1E6
 
         return chain_summary
+
+
+
+def characteristic_length(q: float, mass: float, omega: float) -> float:
+    """ Computes characteristic length in trapped ion system: Coulomb + harmonic oscillator physics.
+
+        l0 = (2 k_e q^2 / (m omega^2))^(1/3), which is the equilibrium separation of two identical ions
+        in a harmonic well of frequency omega.
+    """
+    k_e = 1 / (4 * np.pi * const.epsilon_0)  # Coulomb constant
+    l0 = ((k_e * q ** 2) / (.5 * mass * omega ** 2)) ** (1 / 3)
+    return l0
+
+def _standardize_fock_dimensions(fock_dimensions: Vector | int, num_modes: int) -> NDArray:
+    """ Broadcasts a single Fock dimension to num_modes modes, or checks that one is given per mode. """
+    dims = np.atleast_1d(np.asarray(fock_dimensions))
+    if dims.size == 1:
+        dims = np.full(num_modes, dims.item())
+    elif dims.size != num_modes:
+        raise IonSimError(f"Received {dims.size} Fock dimensions for {num_modes} modes")
+    if not np.all(np.equal(np.mod(dims, 1), 0)) or np.any(dims < 1):
+        raise IonSimError(f"Fock dimensions must be positive integers. Received {fock_dimensions}")
+    return dims.astype(int)
+
+
+def _enlarge_scalar_to_vector(x: float | Vector, num_ions: int, name: str) -> NDArray:
+    """ Broadcasts a scalar to a length-num_ions float array, or checks that an array has length num_ions. """
+    array = np.full(num_ions, x, dtype=float) if np.ndim(x) == 0 else np.asarray(x, dtype=float)
+    if array.shape != (num_ions,):
+        raise IonSimError(f"{name} must be a scalar or have length {num_ions}. Received {x}")
+    return array
+
+
+@dataclass(frozen=True)
+class _Ions:
+    """ Per-ion properties, all in the same ion order. """
+    masses: NDArray             # kg, shape (N,)
+    charge_states: NDArray      # units of e, shape (N,)
+    trap_frequencies: NDArray   # secular frequencies along the x, y, z principal axes [rad/s], shape (3, N)
+    original_indices: NDArray   # user-supplied index of each ion, shape (N,)
+
+    @property
+    def charges(self) -> NDArray:
+        """ Ion charges in Coulombs. """
+        return self.charge_states * const.e
+
+    def permuted(self, order: NDArray) -> _Ions:
+        """ The same ions in a new order: new index k <- current index order[k]. """
+        return _Ions(self.masses[order], self.charge_states[order], self.trap_frequencies[:, order],
+                     self.original_indices[order])
+
+
+@dataclass(frozen=True)
+class _DimensionlessScales:
+    """ Units of the dimensionless problem, set by the reference ion's mass, charge, and axial frequency. """
+    mass: float       # kg
+    charge: float     # C
+    frequency: float  # rad/s
+
+    @property
+    def length(self) -> float:
+        return characteristic_length(self.charge, self.mass, self.frequency)
+
+    @property
+    def time(self) -> float:
+        return 1 / self.frequency
+
+    @property
+    def velocity(self) -> float:
+        return self.length * self.frequency
+
+    @property
+    def energy(self) -> float:
+        return 0.5 * self.mass * self.velocity ** 2
+
+
+@dataclass(frozen=True)
+class _CoulombTrapPotential:
+    """ Dimensionless potential energy of N ions in a harmonic trap with Coulomb repulsion, in units of
+        mass * frequency^2 * length^2 of the _DimensionlessScales:
+
+            U(u) = sum_{d,i} 1/2 m_i w_{d,i}^2 r_{d,i}^2 + 1/2 sum_{i<j} q_i q_j / |r_i - r_j|
+
+        Positions u are flattened as [x_1..x_N, y_1..y_N, z_1..z_N] (trap frame, units of length).
+    """
+    m: NDArray  # masses, shape (N,)
+    q: NDArray  # charges, shape (N,)
+    w: NDArray  # trap frequencies felt by the ion, along x, y, z, shape (3, N)
+
+    @classmethod
+    def from_ions(cls, ions: _Ions, scales: _DimensionlessScales) -> _CoulombTrapPotential:
+        return cls(ions.masses / scales.mass, ions.charges / scales.charge, ions.trap_frequencies / scales.frequency)
+
+    @property
+    def num_ions(self) -> int:
+        return len(self.m)
+
+    def _separations(self, u: Vector) -> tuple[NDArray, NDArray, NDArray]:
+        """ Pairwise displacements dr[d, i, j] = r_{d,i} - r_{d,j}, distances |r_i - r_j|, and q_i q_j. """
+        r = u.reshape(3, self.num_ions)
+        dr = r[:, :, np.newaxis] - r[:, np.newaxis, :]
+        distances = np.sqrt(np.sum(dr ** 2, axis=0))
+        qq = self.q[:, np.newaxis] * self.q[np.newaxis, :]
+        return dr, distances, qq
+
+    def energy(self, u: Vector) -> float:
+        r = u.reshape(3, self.num_ions)
+        _, distances, qq = self._separations(u)
+        with np.errstate(divide='ignore'):
+            coulomb = 0.25 * np.sum(np.where(distances != 0., qq / distances, 0.))  # 1/2 * (sum over i != j) / 2
+        return 0.5 * np.sum(self.m * self.w ** 2 * r ** 2) + coulomb
+
+    def gradient(self, u: Vector) -> Vector:
+        """ dU/du, shape (3N,) """
+        r = u.reshape(3, self.num_ions)
+        dr, distances, qq = self._separations(u)
+        with np.errstate(divide='ignore'):
+            inverse_cubed = np.where(distances != 0., distances ** (-3), 0.)
+        coulomb = -0.5 * np.sum(dr * inverse_cubed * qq, axis=2)
+        return (self.m * self.w ** 2 * r + coulomb).reshape(-1)
+
+    def hessian(self, u: Vector) -> Matrix:
+        """ d^2U / du du, shape (3N, 3N). For the Coulomb part:
+
+            For i != j:  d^2 V / dr_{a,i} dr_{b,j} = q_i q_j (delta_ab r_ij^2 - 3 dr_a dr_b) / r_ij^5
+            For i == j:  d^2 V / dr_{a,i} dr_{b,i} = - sum_{j != i} (the i != j expression above)
+        """
+        N = self.num_ions
+        dr, distances, qq = self._separations(u)
+        with np.errstate(divide='ignore'):
+            inverse_fifth = np.where(distances != 0., distances ** (-5), 0.)
+        blocks = [[None] * 3 for _ in range(3)]
+        for a in range(3):
+            for b in range(3):
+                block = qq * ((a == b) * distances ** 2 - 3 * dr[a] * dr[b]) * inverse_fifth  # zero on the diagonal
+                np.fill_diagonal(block, -np.sum(block, axis=1))
+                blocks[a][b] = 0.5 * block  # consistent with the factor of 1/2 on the Coulomb energy
+        trap = np.diag((self.m * self.w ** 2).reshape(-1))
+        return np.block(blocks) + trap
+
+
+class _TrappedIonSystem:
+    """ Internal implementation of the trapped-ion equilibrium and normal-mode physics problem.
+
+        The constructor runs each step of the problem in order, passing results explicitly from one step to the
+        next (the static methods below have no side effects):
+
+            1. Standardize and validate inputs
+            2. Solve for the equilibrium positions with the ions in the user-supplied order.
+            3. Reindex the ions according to the reindexing strategy.
+            4. Solve for the normal modes at the equilibrium.
+            5. Compute the zero-point displacements and mode participation factors.
+
+        Everything here is in the trap (principal-axis) frame and, unless stated otherwise, in dimensionless units
+        set by the reference ion (the first ion in the user-supplied order). Only the results needed by the public
+        classes TrappedIonCrystal and IonChain are stored.
+    """
+    def __init__(self, num_ions: int, omega_x: float | Vector, omega_y: float | Vector, omega_z: float | Vector,
+                 atomic_masses: Vector | float, atomic_charges: Vector | float, mode_organization: ModeOrganization, 
+                 reindexing_strategy: ReindexingStrategy, trap_type: TrapType, dc_radial_split: tuple[float, float], 
+                 principal_axes: Matrix | None, initial_chain_axis: int | None = None, positions_guess: Vector | None = None, 
+                 solver_options: dict | None=None):
+        # 1. Inputs
+        if num_ions < 1:
+            raise IonSimError(f"num_ions must be positive. Received {num_ions}")
+        self.num_ions = num_ions
+        self.mode_organization = ModeOrganization(mode_organization)
+        self.reindexing_strategy = ReindexingStrategy(reindexing_strategy)
+        self.trap_type = TrapType(trap_type)
+        self.dc_radial_split = self.standardize_dc_radial_split(dc_radial_split)
+        self.principal_axes = self.standardize_principal_axes(principal_axes)
+
+        masses, charge_states = self.standardize_ion_properties(num_ions, atomic_masses, atomic_charges)
+        trap_frequencies = self.calculate_species_trap_frequencies(omega_x, omega_y, omega_z, masses, charge_states, self.trap_type, self.dc_radial_split)
+
+        # Ions in the user-supplied order; the first one is the reference ion
+        placeholder_ion_indices = np.arange(num_ions)
+        self.input_ions = _Ions(masses, charge_states, trap_frequencies, placeholder_ion_indices)
+        self.reference_trap_frequencies = trap_frequencies[:, 0].copy()
+        self.scales = _DimensionlessScales(mass=masses[0], charge=self.input_ions.charges[0], frequency=trap_frequencies[2, 0])
+
+        # 2. Equilibrium positions, ions in the user-supplied order
+        potential = _CoulombTrapPotential.from_ions(self.input_ions, self.scales)
+        if positions_guess is None:
+            axis = int(np.argmin(self.reference_trap_frequencies)) if initial_chain_axis is None else initial_chain_axis
+            positions_guess = self.initial_positions_guess(num_ions, axis, self.reference_trap_frequencies[axis] / self.scales.frequency)
+
+        # Solve for equilibrium positions 
+        default_solver_options = {'gtol': 1e-10, 'disp': False}
+        if solver_options is None:
+            solver_options = default_solver_options 
+        positions = self.solve_equilibrium_positions(potential, positions_guess, solver_options)
+
+        # 3. Reindexing
+        order = self.reindexing_order(positions, self.reindexing_strategy)
+        self.ions = self.input_ions.permuted(order)
+        self.potential = _CoulombTrapPotential.from_ions(self.ions, self.scales)
+        self.equilibrium_positions = positions.reshape(3, num_ions)[:, order].reshape(-1)
+
+        # 4. Compute normal mode frequencies -- eigenvalues and eigenvectors 
+        eigenvalues, eigenvectors = self.compute_normal_modes(self.potential.hessian(self.equilibrium_positions),
+                                                            self.potential.m, self.mode_organization)
+        self.normal_mode_frequencies = eigenvalues * self.scales.frequency
+
+        # 5. Compute participation factors via zero point displacements  
+        self.participation_factors = self.calculate_zero_point_displacements(eigenvalues, eigenvectors, self.scales)
+
+    @staticmethod
+    def standardize_ion_properties(num_ions: int, atomic_masses: Vector | float, atomic_charges: Vector | float) -> tuple[NDArray, NDArray]:
+        """ Returns (masses in kg, charge states in units of e), each of length num_ions, after validation. """
+        masses_amu = _enlarge_scalar_to_vector(atomic_masses, num_ions, 'atomic_masses')
+        charge_states = _enlarge_scalar_to_vector(atomic_charges, num_ions, 'atomic_charges')
+        if np.any(masses_amu <= 0):
+            raise IonSimError(f"Atomic masses must be positive. Received {masses_amu} amu")
+        if np.any(charge_states == 0):
+            raise IonSimError(f"Ion charge states must be nonzero (neutral atoms cannot be trapped here). "
+                              f"Received {charge_states}")
+        if not (np.all(charge_states > 0) or np.all(charge_states < 0)):
+            raise IonSimError(f"All ions must have charges of the same sign. Received {charge_states}")
+        return masses_amu * const.u, charge_states
+
+    @staticmethod
+    def standardize_dc_radial_split(dc_radial_split) -> NDArray:
+        split = np.asarray(dc_radial_split, dtype=float)
+        if split.shape != (2,):
+            raise IonSimError(f"dc_radial_split must be a pair (s_x, s_y). Received {dc_radial_split}")
+        if not np.isclose(np.sum(split), 1.0, rtol=0, atol=1e-12):
+            raise IonSimError(f"dc_radial_split must satisfy s_x + s_y = 1 (Laplace's equation). Received {dc_radial_split}")
+        return split
+
+    @staticmethod
+    def standardize_principal_axes(principal_axes) -> Matrix:
+        """ Returns the 3x3 rotation matrix R whose rows are the unit trap axes in lab coordinates.
+            v_trap = R @ v_lab and v_lab = R.T @ v_trap.
+        """
+        if principal_axes is None: 
+            return np.eye(3)
+        R = np.array(principal_axes, dtype=float)
+        if R.shape != (3, 3):
+            raise IonSimError(f"principal_axes must be a 3x3 array (rows are the x, y, z trap axes). Received shape {R.shape}")
+        norms = np.linalg.norm(R, axis=1)
+        if np.any(norms == 0):
+            raise IonSimError("principal_axes rows must be nonzero vectors")
+        R = R / norms[:, np.newaxis]
+        if not np.allclose(R @ R.T, np.eye(3), rtol=0, atol=1e-9):
+            raise IonSimError(f"principal_axes rows must be mutually orthogonal. Received {principal_axes}")
+        if np.linalg.det(R) < 0:
+            raise IonSimError("principal_axes must form a right-handed set (x cross y = z)")
+        return R
+
+    @staticmethod
+    def calculate_species_trap_frequencies(omega_x, omega_y, omega_z, masses: Vector, charge_states: Vector,
+                                           trap_type: TrapType, dc_radial_split: Vector) -> NDArray:
+        """ Returns the secular trap frequencies of each ion along the trap principal axes, shape (3, N) [rad/s].
+
+            'custom': frequencies are used as given (scalars are broadcast to every ion).
+
+            'linear' / 'surface' (RF Paul traps, secular approximation, micromotion neglected): with the reference
+            ion (index 0; charge q0, mass m0) having secular frequencies (wx, wy, wz) and r_i = (q_i m0) / (q0 m_i),
+
+                axial (DC only):          w_{z,i}^2 = r_i wz^2
+                radial (RF pseudo + DC):  w_{x,i}^2 = r_i^2 (wx^2 + s_x wz^2) - s_x r_i wz^2   (same for y with s_y)
+
+            This follows from the DC spring constant scaling as q and the RF pseudopotential spring constant scaling
+            as q^2 / m, with the DC axial curvature defocusing the radial directions by s_x, s_y (s_x + s_y = 1).
+            RF and DC curvatures are assumed to share the same principal axes.
+        """
+        num_ions = len(masses)
+        if not trap_type.is_rf_paul_trap:
+            frequencies = np.array([_enlarge_scalar_to_vector(w, num_ions, f'omega_{label}')
+                                    for w, label in zip((omega_x, omega_y, omega_z), 'xyz')])
+            if not np.all(frequencies > 0):
+                raise IonSimError(f"Trap is unstable: all trap frequencies must be positive. Received {frequencies}")
+            return frequencies
+
+        for w, label in zip((omega_x, omega_y, omega_z), 'xyz'):
+            if np.ndim(w) != 0:
+                raise IonSimError(f"For trap_type '{trap_type}', omega_{label} must be a scalar (the reference ion's "
+                                 f"frequency). Use trap_type='custom' to specify per-ion frequencies.")
+            if isinstance(w, complex):
+                raise IonSimError(f"Secular frequencies should be real-valued and positive. Received {w}.")
+            if w <= 0:
+                raise IonSimError(f"Trap is unstable: omega_{label} must be positive. Received {w}")
+
+        s_x, s_y = dc_radial_split
+        r = (charge_states * masses[0]) / (charge_states[0] * masses)
+
+        rf_x0 = omega_x ** 2 + s_x * omega_z ** 2   # RF pseudopotential curvature of the reference ion (as w^2)
+        rf_y0 = omega_y ** 2 + s_y * omega_z ** 2
+        if rf_x0 <= 0 or rf_y0 <= 0:
+            raise IonSimError(f"Reference trap frequencies {rf_x0=}, {rf_y0=} are inconsistent with an RF Paul trap: the implied RF "
+                              "pseudopotential is not confining.")
+
+        frequencies_squared = np.array([r ** 2 * rf_x0 - s_x * r * omega_z ** 2,
+                                        r ** 2 * rf_y0 - s_y * r * omega_z ** 2,
+                                        r * omega_z ** 2])
+        for w2, label in zip(frequencies_squared, 'xyz'):
+            if np.any(w2 <= 0):
+                unstable = np.flatnonzero(w2 <= 0)
+                raise IonSimError(f"Ions {unstable.tolist()} are not confined along {label} for this trap "
+                                  f"(secular frequency^2 = {w2[unstable]}).")
+        return np.sqrt(frequencies_squared)
+
+    @staticmethod
+    def initial_positions_guess(num_ions: int, axis: int, axis_frequency: float) -> Vector:
+        """ Deterministic dimensionless initial guess: a linear chain in the given ion order along `axis` (0, 1, 2
+            for x, y, z), plus a small transverse perturbation so that a zigzag/2D configuration can form if it is
+            energetically favored. axis_frequency is the reference ion's dimensionless frequency along `axis`. """
+        spacing = axis_frequency ** (-2 / 3)  # two-ion spacing in units of the characteristic length
+        alternating = (-1.0) ** np.arange(num_ions)
+        transverse_axes = [d for d in range(3) if d != axis]
+        u0 = np.zeros((3, num_ions))
+        # The following was found to work well via heuristics
+        u0[axis] = (np.arange(num_ions) - (num_ions - 1) / 2) * spacing
+        u0[transverse_axes[0]] = 1e-3 * spacing * alternating
+        u0[transverse_axes[1]] = 0.5e-3 * spacing * alternating
+        return u0.reshape(-1)
+
+    @staticmethod
+    def solve_equilibrium_positions(potential: _CoulombTrapPotential, positions_guess: Vector, solver_options: dict | None=None) -> Vector:
+        """ Minimizes the potential energy starting from positions_guess (dimensionless, flattened). Returns the
+            equilibrium positions in the same ion order. """
+        u0 = np.asarray(positions_guess, dtype=float)
+        if u0.shape != (3 * potential.num_ions,):
+            raise IonSimError(f"positions_guess must have shape ({3 * potential.num_ions},)")
+
+        # Minimize with BFGS, then polish with Newton steps on the analytic Hessian
+        u = opt.minimize(potential.energy, u0, method='BFGS', jac=potential.gradient, options=solver_options).x
+
+        max_attempts = 10
+        for _ in range(max_attempts):
+            gradient = potential.gradient(u)
+            if np.max(np.abs(gradient)) < NUMERICAL_EQUIVALENCE_THRESHOLD:
+                break
+            hessian = potential.hessian(u)
+            if np.min(np.linalg.eigvalsh(hessian)) <= 0:
+                break  # not at a minimum; compute_normal_modes reports it
+            u = u - np.linalg.solve(hessian, gradient)
+
+        residual = np.max(np.abs(potential.gradient(u)))
+        if residual > 1e-9:
+            warnings.warn(f"Equilibrium solve may not have converged: max |dU/du| = {residual:.2e} (dimensionless)")
+        return u
+
+    @staticmethod
+    def reindexing_order(positions: Vector, strategy: ReindexingStrategy) -> NDArray:
+        """ Returns the permutation (new index k <- current index order[k]) that reindexes the ions:
+
+            - 'distance': ascending distance from the trap center (index 0 is closest to the center)
+            - 'z_axis':   ascending z (axial) coordinate (index 0 is the most negative z)
+            - 'none':     keep the current order
+
+            Ties (keys equal to 1e-9 in dimensionless units, e.g. the two end ions of a symmetric chain under
+            'distance') keep the current order, so the result does not depend on rounding.
+        """
+        r = positions.reshape(3, -1)
+        if strategy is ReindexingStrategy.NONE:
+            return np.arange(r.shape[1])
+        key = np.linalg.norm(r, axis=0) if strategy is ReindexingStrategy.DISTANCE else r[2]
+        return np.argsort(np.round(key, decimals=9), kind='stable')
+
+    @staticmethod
+    def compute_normal_modes(hessian: Matrix, masses: NDArray, mode_organization: ModeOrganization) -> tuple[NDArray, NDArray]:
+        """ Normal modes of small oscillations about the equilibrium (dimensionless; no magnetic field).
+
+            With canonical coordinates X = (q, p), p = M dq/dt, the Hamiltonian is 1/2 X^T H X with
+            H = (K, 0; 0, M^-1), and Hamilton's equations are dX/dt = D X with D = J H, J = (0, I; -I, 0)
+            (eq. 1.67 of thesis). Modes evolve as u_n exp(-i w_n t), so u_n are eigenvectors of -D with
+            eigenvalue i w_n.
+
+            Returns (w, u): the 3N positive frequencies w_n and the 6N x 3N eigenvectors u_n, ordered by
+            mode_organization, normalized so that u_n^dagger H u_n = 1, and with the phase convention of
+            fix_eigenvector_phases.
+        """
+        num_coordinates = len(masses) * 3
+        mass_diagonal = np.tile(masses, 3)
+        zeros = np.zeros((num_coordinates, num_coordinates))
+        identity = np.eye(num_coordinates)
+        H = np.block([[hessian, zeros], [zeros, np.diag(1 / mass_diagonal)]])
+        J = np.block([[zeros, identity], [-identity, zeros]])
+
+        # u_n(t) = exp(-i w_n t) u_n(0), minus by convention; keep the positive-frequency half
+        eigenvalues, eigenvectors = np.linalg.eig(-J @ H)
+        order = np.argsort(eigenvalues.imag)[num_coordinates:]
+        frequencies, eigenvectors = eigenvalues.imag[order], eigenvectors[:, order]
+        if not np.all(frequencies > 0):
+            raise IonSimError("Found non-positive normal mode frequencies: the equilibrium found is not a stable "
+                              "minimum (e.g. a linear chain beyond the zigzag transition).")
+
+        if mode_organization is ModeOrganization.BRANCH_SORTED:
+            order = _TrappedIonSystem.branch_sorted_order(eigenvectors)
+            frequencies, eigenvectors = frequencies[order], eigenvectors[:, order]
+
+        norms = np.sqrt(np.real(np.einsum('in,ij,jn->n', eigenvectors.conj(), H, eigenvectors)))
+        eigenvectors = _TrappedIonSystem.fix_eigenvector_phases(eigenvectors / norms)
+
+        _TrappedIonSystem.check_normal_modes(H, frequencies, eigenvectors)
+        return frequencies, eigenvectors
+
+    @staticmethod
+    def branch_sorted_order(eigenvectors: Matrix) -> NDArray:
+        """ Permutation that groups modes (columns, assumed in ascending frequency) by the principal axis they
+            mostly move along: radial0 (x), radial1 (y), axial (z), keeping ascending frequency within each branch.
+            Only makes sense for a linear chain along the axial principal axis. """
+        num_coordinates, num_modes = eigenvectors.shape
+        num_ions = num_coordinates // 6
+        # amplitude of each mode along each axis, summing positions and momenta: shape (3, num_modes)
+        amplitudes = np.abs(eigenvectors).reshape(2, 3, num_ions, num_modes).sum(axis=(0, 2))
+        dominant_axis = np.argmax(amplitudes, axis=0)
+        for branch in BranchType:
+            count = np.sum(dominant_axis == branch.axis)
+            if count != num_ions:
+                raise IonSimError(f"Branch classification error: branch '{branch}' has {count} modes, expected "
+                                  f"{num_ions}. Branch sorting requires a linear chain along the axial principal axis.")
+        return np.concatenate([np.flatnonzero(dominant_axis == branch.axis) for branch in BranchType])
+
+    @staticmethod
+    def fix_eigenvector_phases(eigenvectors: Matrix) -> Matrix:
+        """ Removes the arbitrary per-mode phase returned by the eigensolver.
+
+            Each mode u_n (a column) is multiplied by exp(-i theta_n) such that its largest-magnitude position
+            component is real and positive. Ties (components within a relative 1e-6 of the largest magnitude, e.g.
+            COM or stretch modes of identical ions) are broken by the lowest coordinate index in the flattened
+            order [x_1..x_N, y_1..y_N, z_1..z_N].
+
+            Without magnetic fields the position part of a non-degenerate mode is real up to one phase, so after
+            this the position part (and hence the Lamb-Dicke parameters) is real, and the displacement operator is
+            r_{i,d} = sum_n r^{zpf}_{i,d,n} (a_n + a_n^dagger). Relative signs between ions within a mode are
+            physical; the overall sign of each mode is this convention. Degenerate subspaces are not treated.
+        """
+        position_part = eigenvectors[:eigenvectors.shape[0] // 2]
+        magnitudes = np.abs(position_part)
+        reference_rows = np.argmax(magnitudes >= (1 - _GAUGE_TIE_RTOL) * magnitudes.max(axis=0), axis=0)
+        reference_components = position_part[reference_rows, np.arange(position_part.shape[1])]
+        return eigenvectors * np.exp(-1j * np.angle(reference_components))
+
+    @staticmethod
+    def check_normal_modes(H: Matrix, frequencies: NDArray, eigenvectors: Matrix):
+        """ Warns if the H-normalized modes u_n (with their conjugates) are not complete, or if the canonical
+            transformation S = sqrt(2) [Re(u) sqrt(w), -Im(u) sqrt(w)] does not diagonalize H to diag(w, w). """
+        degenerate = _TrappedIonSystem.has_degenerate_modes(frequencies)
+        projector = eigenvectors @ eigenvectors.conj().T
+        completeness = projector + projector.conj()  # sum over u_n u_n^dagger and its conjugate (-w_n) partner
+        identity = np.eye(H.shape[0])
+        if not (np.allclose(H @ completeness, identity) and np.allclose(completeness @ H, identity)):
+            warnings.warn(f"Outer relation check failed (degenerate modes present: {degenerate})")
+
+        scaled = eigenvectors * np.sqrt(frequencies)
+        S = np.sqrt(2) * np.concatenate((np.real(scaled), -np.imag(scaled)), axis=1)
+        if not np.allclose(S.T @ H @ S, np.diag(np.tile(frequencies, 2))):
+            warnings.warn(f"Diagonalization check failed (degenerate modes present: {degenerate})")
+
+    @staticmethod
+    def has_degenerate_modes(frequencies: NDArray, atol: float = SMALLEST_ENERGY_SCALE) -> bool:
+        return bool(np.any(np.triu(np.isclose(frequencies[:, None], frequencies[None, :], atol=atol), k=1)))
+
+    @staticmethod
+    def calculate_zero_point_displacements(frequencies: NDArray, eigenvectors: Matrix,
+                                           scales: _DimensionlessScales) -> Matrix:
+        """ Zero-point displacement amplitudes (mode participation factors) in meters, trap frame, shape (3, N, 3N):
+            result[d, i, n] is the zero-point displacement of ion i along principal axis d in mode n.
+
+            With u_n normalized so that u_n^dagger H u_n = 1, the dimensionful amplitude is
+            l0 * sqrt(hbar_ND * w_n) * u_n = sqrt(hbar / (2 m0 w0)) * sqrt(2 w_n) * u_n.
+
+            Real after phase fixing; complex (with a warning) if degenerate modes leave non-negligible imaginary parts.
+        """
+        num_ions = eigenvectors.shape[0] // 6
+        position_part = eigenvectors[:3 * num_ions]
+        zero_point_scale = np.sqrt(const.hbar / (2 * scales.mass * scales.frequency))
+        displacements = (zero_point_scale * np.sqrt(2 * frequencies) * position_part).reshape(3, num_ions, 3 * num_ions)
+
+        largest = np.max(np.abs(displacements))
+        if largest == 0 or np.max(np.abs(displacements.imag)) <= _REAL_RTOL * largest:
+            return displacements.real
+        warnings.warn("Mode participation factors are complex after phase fixing (degenerate modes present: "
+                      f"{_TrappedIonSystem.has_degenerate_modes(frequencies)}). Phases within degenerate subspaces "
+                      "are not fixed.")
+        return displacements
