@@ -270,9 +270,9 @@ class TestModeAnalysisPhysics(unittest.TestCase):
         np.testing.assert_allclose(np.cross(positions, R[2]), 0, atol=1e-9)
         # Non-normalized but orthogonal rows are accepted
         IonChain(1, TPI * 3e6, TPI * 3.3e6, TPI * 0.6e6, YB_MASS, 1, principal_axes=2 * R)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(IonSimError):
             IonChain(1, TPI * 3e6, TPI * 3.3e6, TPI * 0.6e6, YB_MASS, 1, principal_axes=[[1, 0, 0], [1, 1, 0], [0, 0, 1]])
-        with self.assertRaises(ValueError):
+        with self.assertRaises(IonSimError):
             IonChain(1, TPI * 3e6, TPI * 3.3e6, TPI * 0.6e6, YB_MASS, 1, principal_axes=np.diag([1., 1., -1.]))
 
     def test_rf_paul_trap_species_scaling(self):
@@ -292,13 +292,13 @@ class TestModeAnalysisPhysics(unittest.TestCase):
         # Asymmetric DC split must satisfy Laplace, and 'surface' uses the same scaling laws
         surface = IonChain(2, wx, wy, wz, [YB_MASS, BA_MASS], 1, trap_type='surface', dc_radial_split=(0.8, 0.2))
         np.testing.assert_allclose(surface.omega_x[1], np.sqrt(r**2 * (wx**2 + 0.8 * wz**2) - 0.8 * r * wz**2), rtol=1e-12)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(IonSimError):
             IonChain(2, wx, wy, wz, YB_MASS, 1, dc_radial_split=(0.5, 0.6))
 
         # Custom per-ion frequencies are used as given
         custom = IonChain(2, [wx, 1.1 * wx], [wy, 1.1 * wy], [wz, 0.9 * wz], [YB_MASS, BA_MASS], 1, trap_type='custom')
         np.testing.assert_allclose(custom.omega_z, [wz, 0.9 * wz])
-        with self.assertRaises(ValueError):
+        with self.assertRaises(IonSimError):
             IonChain(2, [wx, wx], wy, wz, YB_MASS, 1)  # arrays require trap_type='custom'
 
     def test_charges(self):
@@ -376,7 +376,7 @@ class TestModeAnalysisPhysics(unittest.TestCase):
         self.assertGreater(flipped.return_equilibrium_positions(True)[4], 0)
         self.assertLess(crystal.return_equilibrium_positions(True)[4], 0)
         np.testing.assert_allclose(flipped.normal_mode_frequencies, crystal.normal_mode_frequencies, rtol=1e-10)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(IonSimError):
             TrappedIonCrystal(2, TPI * 3e6, TPI * 3.3e6, TPI * 0.6e6, YB_MASS, 1, positions_guess=np.zeros(4))
 
         # A chain beyond the zigzag transition fails at construction
