@@ -23,7 +23,7 @@ class JaqalpaqCircuitBuilder:
 
     @classmethod
     def from_jaqalpaq(cls, circ: Circuit, linearize_parallel_blocks=False, ignore_spam=False):
-        """Lazily copy gates from a Qiskit circuit into this circuit builder.
+        """Lazily copy gates from a Jaqal circuit into this circuit builder.
 
         Args:
             circ (Circuit): The circuit object to copy gates from
