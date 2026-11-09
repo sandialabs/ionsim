@@ -108,10 +108,6 @@ class TestModeAnalysis(unittest.TestCase):
         # Create and analyze the linear chain
         chain = IonChain(num_ions, omega_x, omega_y, omega_z, atomic_mass, atomic_charge)
 
-        # Verify shapes
- #        self.assertEqual(axial_eigvecs.shape, (6*num_ions, num_ions))
- #        self.assertEqual(radial_x_eigvals.shape, (num_ions,))
-
         # Test that we can get ion spacing
         spacing = chain.get_ion_spacing()
         self.assertEqual(spacing.shape, (num_ions-1,))
