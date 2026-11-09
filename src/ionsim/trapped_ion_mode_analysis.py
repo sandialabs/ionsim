@@ -101,7 +101,7 @@ def _enlarge_scalar_to_vector(x: float | Vector, num_ions: int, name: str) -> ND
     """ Broadcasts a scalar to a length-num_ions float array, or checks that an array has length num_ions. """
     array = np.full(num_ions, x, dtype=float) if np.ndim(x) == 0 else np.asarray(x, dtype=float)
     if array.shape != (num_ions,):
-        raise ValueError(f"{name} must be a scalar or have length {num_ions}. Received {x}")
+        raise IonSimError(f"{name} must be a scalar or have length {num_ions}. Received {x}")
     return array
 
 
@@ -303,9 +303,9 @@ class _TrappedIonSystem:
     def standardize_dc_radial_split(dc_radial_split) -> NDArray:
         split = np.asarray(dc_radial_split, dtype=float)
         if split.shape != (2,):
-            raise ValueError(f"dc_radial_split must be a pair (s_x, s_y). Received {dc_radial_split}")
+            raise IonSimError(f"dc_radial_split must be a pair (s_x, s_y). Received {dc_radial_split}")
         if not np.isclose(np.sum(split), 1.0, rtol=0, atol=1e-12):
-            raise ValueError(f"dc_radial_split must satisfy s_x + s_y = 1 (Laplace's equation). Received {dc_radial_split}")
+            raise IonSimError(f"dc_radial_split must satisfy s_x + s_y = 1 (Laplace's equation). Received {dc_radial_split}")
         return split
 
     @staticmethod
@@ -317,15 +317,15 @@ class _TrappedIonSystem:
             return np.eye(3)
         R = np.array(principal_axes, dtype=float)
         if R.shape != (3, 3):
-            raise ValueError(f"principal_axes must be a 3x3 array (rows are the x, y, z trap axes). Received shape {R.shape}")
+            raise IonSimError(f"principal_axes must be a 3x3 array (rows are the x, y, z trap axes). Received shape {R.shape}")
         norms = np.linalg.norm(R, axis=1)
         if np.any(norms == 0):
-            raise ValueError("principal_axes rows must be nonzero vectors")
+            raise IonSimError("principal_axes rows must be nonzero vectors")
         R = R / norms[:, np.newaxis]
         if not np.allclose(R @ R.T, np.eye(3), rtol=0, atol=1e-9):
-            raise ValueError(f"principal_axes rows must be mutually orthogonal. Received {principal_axes}")
+            raise IonSimError(f"principal_axes rows must be mutually orthogonal. Received {principal_axes}")
         if np.linalg.det(R) < 0:
-            raise ValueError("principal_axes must form a right-handed set (x cross y = z)")
+            raise IonSimError("principal_axes must form a right-handed set (x cross y = z)")
         return R
 
     @staticmethod
@@ -355,7 +355,7 @@ class _TrappedIonSystem:
 
         for w, label in zip((omega_x, omega_y, omega_z), 'xyz'):
             if np.ndim(w) != 0:
-                raise ValueError(f"For trap_type '{trap_type}', omega_{label} must be a scalar (the reference ion's "
+                raise IonSimError(f"For trap_type '{trap_type}', omega_{label} must be a scalar (the reference ion's "
                                  f"frequency). Use trap_type='custom' to specify per-ion frequencies.")
             if isinstance(w, complex):
                 raise IonSimError(f"Secular frequencies should be real-valued and positive. Received {w}.")
@@ -368,7 +368,7 @@ class _TrappedIonSystem:
         rf_x0 = omega_x ** 2 + s_x * omega_z ** 2   # RF pseudopotential curvature of the reference ion (as w^2)
         rf_y0 = omega_y ** 2 + s_y * omega_z ** 2
         if rf_x0 <= 0 or rf_y0 <= 0:
-            raise IonSimError("Reference trap frequencies are inconsistent with an RF Paul trap: the implied RF "
+            raise IonSimError(f"Reference trap frequencies {rf_x0=}, {rf_y0=} are inconsistent with an RF Paul trap: the implied RF "
                               "pseudopotential is not confining.")
 
         frequencies_squared = np.array([r ** 2 * rf_x0 - s_x * r * omega_z ** 2,
@@ -405,7 +405,7 @@ class _TrappedIonSystem:
             equilibrium positions in the same ion order. """
         u0 = np.asarray(positions_guess, dtype=float)
         if u0.shape != (3 * potential.num_ions,):
-            raise ValueError(f"positions_guess must have shape ({3 * potential.num_ions},)")
+            raise IonSimError(f"positions_guess must have shape ({3 * potential.num_ions},)")
 
         # Minimize with BFGS, then polish with Newton steps on the analytic Hessian
         u = opt.minimize(potential.energy, u0, method='BFGS', jac=potential.gradient, options=solver_options).x
@@ -848,7 +848,7 @@ class TrappedIonCrystal:
         return self.calculate_lamb_dicke_parameters(wavevector)[:, mode_index]
 
     def get_mode_properties(self, mode_index: int) -> dict:
-        """Get comprehensive properties for a specific mode. Returns a dictionary containing. """
+        """Get comprehensive properties for a specific mode. Returns a dictionary containing frequency_angular, frequency_MHZ, participation_factors, and mode_index. """
         frequency_angular = self._system.normal_mode_frequencies[mode_index]
         return {
             'frequency_angular': frequency_angular,  # rad/s
@@ -885,7 +885,7 @@ class IonChain(TrappedIonCrystal):
     def _global_mode_index(self, branch: BranchType | str, mode_index_in_branch: int) -> int:
         branch = BranchType(branch)
         if mode_index_in_branch < 0 or mode_index_in_branch >= self.num_ions:
-            raise ValueError(f"Mode index in branch must be between 0 and {self.num_ions-1}")
+            raise IonSimError(f"Mode index in branch must be between 0 and {self.num_ions-1}")
         return branch.axis * self.num_ions + mode_index_in_branch
 
     def _branch_slice(self, branch: BranchType | str) -> slice:
@@ -896,7 +896,7 @@ class IonChain(TrappedIonCrystal):
     def _radial_branch(direction: BranchType | str) -> BranchType:
         direction = BranchType(direction)
         if not direction.is_radial:
-            raise ValueError(f"Radial direction must be '{BranchType.RADIAL0}' or '{BranchType.RADIAL1}'. "
+            raise IonSimError(f"Radial direction must be '{BranchType.RADIAL0}' or '{BranchType.RADIAL1}'. "
                              f"Received '{direction}'")
         return direction
 
