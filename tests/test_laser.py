@@ -632,66 +632,85 @@ def coupling_elements(basis, operators) -> dict:
 
 
 class TestLaserSidebandsFromTrap(unittest.TestCase):
-    """Sideband couplings with Lamb-Dicke parameters from an IonChain (40Ca+ S1/2 -> D5/2, 729 nm, E2)."""
+    """Sideband couplings with Lamb-Dicke parameters from an IonChain (40Ca+ S1/2 -> D5/2, 729 nm, E2), with the trap ion
+    and mode of each target DOF given as indices (stored ion indices, global mode indices)."""
     TRAP = (3. * TPI * 1e6, 3.2 * TPI * 1e6, 0.8 * TPI * 1e6)   # rad/s; radial >> axial: a chain along z
     QN_G, QN_E = {'n': 4, 'l': 0, 'mj': 0.5}, {'n': 3, 'l': 2, 'j': 2.5, 'mj': 1.5}
     FOCK_DIMENSION = 5
 
     def setup_chain(self, n_ions, n_hat, fock_dimension=None):
-        atoms = [AtomicStructure.from_species(species='40Ca+', term_symbols=['S1/2', 'D5/2'], name=f'ion{i}',
-                                              quantum_numbers=[self.QN_G, self.QN_E]) for i in range(n_ions)]
-        chain = IonChain.from_atomic_structure_basis(StandardBasis(atoms), *self.TRAP)
-        modes = chain.build_mode_DOFs_from_branch('z', list(range(n_ions)), fock_dimension or self.FOCK_DIMENSION)
+        """Chain of n_ions 40Ca+ with its axial modes. Returns the atoms in stored (chain) order, i.e. atoms[k] is stored
+        ion k, so ion_indices = range(n_ions); and the axial modes with their global indices."""
+        input_atoms = [AtomicStructure.from_species(species='40Ca+', term_symbols=['S1/2', 'D5/2'], name=f'ion{i}',
+                                                    quantum_numbers=[self.QN_G, self.QN_E]) for i in range(n_ions)]
+        chain = IonChain.from_atomic_structure_basis(StandardBasis(input_atoms), *self.TRAP)
+        atoms = [input_atoms[p] for p in chain.ion_indices]                        # stored order
+        mode_indices = [chain.get_global_mode_index('axial', j) for j in range(n_ions)]
+        modes = chain.build_mode_DOFs(mode_indices, fock_dimension or self.FOCK_DIMENSION)
         basis = StandardBasis([*atoms, *modes])
         g = next(level for level in atoms[0].energy_levels if level.term_symbol == 'S1/2')
         e = next(level for level in atoms[0].energy_levels if level.term_symbol == 'D5/2')
         n_hat = np.asarray(n_hat, dtype=float) / np.linalg.norm(n_hat)
         polarization = Polarization(np.array([0., 1., 0.]), n_hat)   # y: drives Delta m = +1 (E2) for k in the xz plane
         laser = Laser.gaussian_from_frequency(e.energy - g.energy, 1e-3, 10e-6, n_hat, polarization, 0.)
-        return atoms, chain, modes, basis, g, e, laser
+        return atoms, chain, modes, mode_indices, basis, g, e, laser
 
     @staticmethod
     def mode_frequency(mode):
         return mode.energy_levels[1].energy - mode.energy_levels[0].energy
 
     def test_from_trap_equals_matrix_path(self):
-        """from_trap builds exactly the operators of the matrix path with eta = ion_trap.lamb_dicke_parameters_for_dofs,
-        for any target order, and the trap's eta has a nonzero, opposite-sign stretch-mode pair."""
-        atoms, chain, modes, basis, g, e, laser = self.setup_chain(2, [1., 0., 1.])
-        for target_atoms, target_modes in ((atoms, modes), (atoms[::-1], modes[::-1]), (None, [modes[1]])):
+        """from_trap builds exactly the operators of the matrix path with
+        eta = ion_trap.get_lamb_dicke_parameters_for_ions_and_modes(ion_indices, mode_indices, k), for any target order;
+        the red/blue methods equal the generic one; the stretch mode has opposite-sign eta on the two ions."""
+        atoms, chain, modes, mode_indices, basis, g, e, laser = self.setup_chain(2, [1., 0., 1.])
+        cases = (([0, 1], [0, 1]), ([1, 0], [1, 0]), ([1], [0, 1]), (None, [1]))   # (target ions, target modes) by position
+        for ion_positions, mode_positions in cases:
+            target_atoms = None if ion_positions is None else [atoms[k] for k in ion_positions]
+            ion_indices = [0, 1] if ion_positions is None else ion_positions          # None -> basis order = stored order
+            target_modes = [modes[j] for j in mode_positions]
+            target_mode_indices = [mode_indices[j] for j in mode_positions]
             for sideband in ('red', 'blue'):
-                with self.subTest(sideband=sideband, atoms=None if target_atoms is None else [a.name for a in target_atoms],
-                                  modes=[m.name for m in target_modes]):
-                    rows = atoms if target_atoms is None else target_atoms
-                    eta = chain.lamb_dicke_parameters_for_dofs(rows, target_modes, laser.wavevector)
-                    from_trap = laser.build_sideband_coupling_operators_from_trap(sideband, basis, target_atoms, target_modes,
-                                                                                  [g], [e], 2, chain)
-                    from_matrix = laser.build_sideband_coupling_operators(sideband, basis, target_atoms, target_modes,
-                                                                          [g], [e], 2, eta)
-                    self.assertEqual(coupling_elements(basis, from_trap), coupling_elements(basis, from_matrix))
+                with self.subTest(sideband=sideband, ions=ion_positions, modes=mode_positions):
+                    eta = chain.get_lamb_dicke_parameters_for_ions_and_modes(ion_indices, target_mode_indices, laser.wavevector)
+                    from_trap = laser.build_sideband_coupling_operators_from_trap(sideband, basis, target_atoms, target_modes, [g], [e], 2,
+                                                                                  chain, ion_indices, target_mode_indices)
+                    from_matrix = laser.build_sideband_coupling_operators(sideband, basis, target_atoms, target_modes, [g], [e], 2, eta)
                     self.assertTrue(from_trap)
-        named = (laser.build_red_sideband_coupling_operators_from_trap(basis, atoms, modes, [g], [e], 2, chain),
-                 laser.build_blue_sideband_coupling_operators_from_trap(basis, atoms, modes, [g], [e], 2, chain))
-        for sideband, operators in zip(('red', 'blue'), named):
-            generic = laser.build_sideband_coupling_operators_from_trap(sideband, basis, atoms, modes, [g], [e], 2, chain)
-            self.assertEqual(coupling_elements(basis, operators), coupling_elements(basis, generic))
-        stretch = chain.lamb_dicke_parameters_for_dofs(atoms, [modes[1]], laser.wavevector)[:, 0]
+                    self.assertEqual(coupling_elements(basis, from_trap), coupling_elements(basis, from_matrix))
+        for sideband, build in (('red', laser.build_red_sideband_coupling_operators_from_trap),
+                                ('blue', laser.build_blue_sideband_coupling_operators_from_trap)):
+            generic = laser.build_sideband_coupling_operators_from_trap(sideband, basis, atoms, modes, [g], [e], 2, chain, [0, 1], mode_indices)
+            self.assertEqual(coupling_elements(basis, build(basis, atoms, modes, [g], [e], 2, chain, [0, 1], mode_indices)),
+                             coupling_elements(basis, generic))
+        stretch = chain.get_lamb_dicke_parameters_for_ions_and_modes([0, 1], [mode_indices[1]], laser.wavevector)[:, 0]
         self.assertGreater(abs(stretch[0]), 1e-3)
         self.assertAlmostEqual(stretch[0] / stretch[1], -1., places=8)
+
+    def test_swapped_ion_indices_flip_stretch_phase(self):
+        """Giving the two identical ions the wrong stored indices is not detectable by the consistency checks, but it changes
+        the physics: on the stretch mode each ion gets the other's (opposite-sign) eta."""
+        atoms, chain, modes, mode_indices, basis, g, e, laser = self.setup_chain(2, [1., 0., 1.])
+        build = lambda ion_indices: coupling_elements(basis, laser.build_blue_sideband_coupling_operators_from_trap(
+            basis, atoms, [modes[1]], [g], [e], 2, chain, ion_indices, [mode_indices[1]]))
+        right, swapped = build([0, 1]), build([1, 0])
+        self.assertEqual(set(right), set(swapped))
+        for key in right:
+            self.assertAlmostEqual(abs(right[key] + swapped[key]), 0., delta=1e-12 * abs(right[key]))
 
     def test_single_ion_blue_sideband_pi_pulse(self):
         """One ion, k along the axial mode: |eta| = k sqrt(hbar / 2 m omega_z) (compute_reference_single_ion_lamb_dicke_factors),
         and the from_trap blue sideband moves |g, 0> to |e, 1> in pi / (|eta| Omega)."""
-        (atom,), chain, (mode,), basis, g, e, carrier_laser = self.setup_chain(1, [0., 0., 1.])
+        (atom,), chain, (mode,), (mode_index,), basis, g, e, carrier_laser = self.setup_chain(1, [0., 0., 1.])
         reference_eta = chain.compute_reference_single_ion_lamb_dicke_factors(np.linalg.norm(carrier_laser.wavevector))[2]
         self.assertAlmostEqual(self.mode_frequency(mode), self.TRAP[2], delta=1e-6 * self.TRAP[2])
         n_hat = np.array([0., 0., 1.])
         laser = Laser.gaussian_from_frequency(carrier_laser.frequency + self.mode_frequency(mode), 1e-3, 10e-6, n_hat,
                                               Polarization(_perpendicular_basis(n_hat)[0], n_hat), 0.)
-        eta = chain.lamb_dicke_parameters_for_dofs([atom], [mode], laser.wavevector)[0, 0]
+        eta = chain.get_lamb_dicke_parameters_for_ions_and_modes([0], [mode_index], laser.wavevector)[0, 0]
         self.assertAlmostEqual(abs(eta) / reference_eta, 1., places=6)
         rabi = 2. * abs(laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 2)[0].couplings[0].strength)
-        operators = laser.build_blue_sideband_coupling_operators_from_trap(basis, [atom], [mode], [g], [e], 2, chain)
+        operators = laser.build_blue_sideband_coupling_operators_from_trap(basis, [atom], [mode], [g], [e], 2, chain, [0], [mode_index])
         index = lambda level, n: next(i for i, state in enumerate(basis.states) if level in state.components
                                       and any(getattr(c, 'fock_number', None) == n for c in state.components))
         hamiltonian = Hamiltonian(basis, operators, [-state.energy for state in basis.states])
@@ -705,20 +724,31 @@ class TestLaserSidebandsFromTrap(unittest.TestCase):
         self.assertGreater(abs(psis[-1][index(e, 1)])**2, 1. - 1e-5)
 
     def test_errors(self):
-        atoms, chain, modes, basis, g, e, laser = self.setup_chain(2, [1., 0., 1.])
-        other_atoms, other_chain, other_modes, *_ = self.setup_chain(2, [1., 0., 1.])
-        build = lambda target_atoms, target_modes, ion_trap: laser.build_blue_sideband_coupling_operators_from_trap(
-            basis, target_atoms, target_modes, [g], [e], 2, ion_trap)
+        atoms, chain, modes, mode_indices, basis, g, e, laser = self.setup_chain(2, [1., 0., 1.])
+        def build(ion_indices=(0, 1), target_mode_indices=None, ion_trap=chain, target_basis=basis, target_atoms=atoms, target_modes=modes):
+            return laser.build_blue_sideband_coupling_operators_from_trap(
+                target_basis, target_atoms, target_modes, [g], [e], 2, ion_trap, list(ion_indices),
+                mode_indices if target_mode_indices is None else target_mode_indices)
         with self.subTest('ion_trap is not a TrappedIonCrystal'), self.assertRaises(IonSimError):
-            build(atoms, modes, chain.calculate_lamb_dicke_parameters(laser.wavevector))
-        with self.subTest('mode not built by this trap'), self.assertRaises(IonSimError):
-            laser.build_blue_sideband_coupling_operators_from_trap(StandardBasis([*atoms, *other_modes]), atoms, other_modes,
-                                                                   [g], [e], 2, chain)
-        with self.subTest('atom not linked to this trap'), self.assertRaises(IonSimError):
-            laser.build_blue_sideband_coupling_operators_from_trap(StandardBasis([*other_atoms, *modes]), other_atoms, modes,
-                                                                   [g], [e], 2, chain)
+            build(ion_trap=chain.calculate_lamb_dicke_parameters(laser.wavevector))
+        with self.subTest('one ion index per target atom'), self.assertRaises(IonSimError):
+            build(ion_indices=[0])
+        with self.subTest('one mode index per target mode'), self.assertRaises(IonSimError):
+            build(target_mode_indices=mode_indices[:1])
+        with self.subTest('ion index out of range'), self.assertRaises(IonSimError):
+            build(ion_indices=[0, 2])
+        with self.subTest('mode index out of range'), self.assertRaises(IonSimError):
+            build(target_mode_indices=[mode_indices[0], chain.num_modes])
+        with self.subTest('non-integer index'), self.assertRaises(IonSimError):
+            build(ion_indices=[0., 1.])
+        with self.subTest('mode index of a different-frequency mode'), self.assertRaises(IonSimError):
+            build(target_mode_indices=mode_indices[::-1])                   # COM <-> stretch
+        with self.subTest('ion of a different species'), self.assertRaises(IonSimError):
+            yb_chain = IonChain.from_species('171Yb+', 2, *self.TRAP)      # Yb modes (frequencies match), Ca atoms
+            yb_modes = yb_chain.build_mode_DOFs(mode_indices, self.FOCK_DIMENSION)
+            build(ion_trap=yb_chain, target_basis=StandardBasis([*atoms, *yb_modes]), target_modes=yb_modes)
         with self.subTest('unknown sideband'), self.assertRaises(IonSimError):
-            laser.build_sideband_coupling_operators_from_trap('green', basis, atoms, modes, [g], [e], 2, chain)
+            laser.build_sideband_coupling_operators_from_trap('green', basis, atoms, modes, [g], [e], 2, chain, [0, 1], mode_indices)
 
 
 class TestLaserTargetRabiFrequency(unittest.TestCase):

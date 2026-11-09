@@ -304,7 +304,7 @@ class Laser():
     def rabi_frequency(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel,
                        multipole_order: int, counter_rotating: bool = False) -> complex:
         """ Rabi frequency Omega (rad/s) of |ground_level> -> |excited_level> driven by this laser at its peak field (beam
-            focus) with modulation amplitude 1, so that the coupling's absorption element is (Omega/2) e^{i phase} |e><g|.
+            focus) with modulation amplitude 1, so that the coupling's raising element is (Omega/2) e^{i phase} |e><g|.
 
             |Omega| is the Rabi rate. Its complex phase comes from the polarization and angular factors; the laser's static
             phase is not included. multipole_order: 1 (E1) or 2 (E2, which also depends on |k|). Units as for the coupling
@@ -330,7 +330,7 @@ class Laser():
     def _modulation_parts(self) -> tuple[Callable | None, Callable | None]:
         """ Validated (envelope, frequency_phase) callables from modulation_functions; either may be None.
 
-            envelope(t) = A(t) exp(i phi(t)) multiplies the |e><g| (absorption) element, like the static laser phase.
+            envelope(t) = A(t) exp(i phi(t)) multiplies the |e><g| (raising) element, like the static laser phase.
             frequency_phase(t) = exp(-i integral_0^t delta(t') dt') multiplies the coupling the same way as the laser
             frequency itself, i.e. as an offset delta(t) added to it.
         """
@@ -366,7 +366,7 @@ class Laser():
 
     @property
     def modulation_function(self) -> Callable | None:
-        """ The complex modulation factor f(t) of the |e><g| (absorption) part of a coupling built with the ground level
+        """ The complex modulation factor f(t) of the |e><g| (raising) part of a coupling built with the ground level
             first in the basis, or None if unmodulated. Coupling builders use _modulation_function_for_level_pair, which handles
             either level order.
 
@@ -485,7 +485,7 @@ class Laser():
                                               ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel],
                                               multipole_order: int, lamb_dicke_parameters: Matrix | float, frequency_shift: float = 0.,
                                               debye_waller: bool = False, include_counter_rotating: bool = False) -> list[CouplingOperator]:
-        """ First red-sideband couplings |g, n> <-> |e, n-1> (absorption removes one phonon); resonant at
+        """ First red-sideband couplings |g, n> <-> |e, n-1> (spin-raising + removes one phonon); resonant at
             omega = omega_0 - omega_mode. See build_sideband_coupling_operators for the arguments. """
         return self.build_sideband_coupling_operators('red', basis, target_atoms, target_modes, ground_levels, excited_levels, multipole_order,
                                                       lamb_dicke_parameters, frequency_shift, debye_waller, include_counter_rotating)
@@ -494,7 +494,7 @@ class Laser():
                                                ground_levels: list[AtomicInternalEnergyLevel], excited_levels: list[AtomicInternalEnergyLevel],
                                                multipole_order: int, lamb_dicke_parameters: Matrix | float, frequency_shift: float = 0.,
                                                debye_waller: bool = False, include_counter_rotating: bool = False) -> list[CouplingOperator]:
-        """ First blue-sideband couplings |g, n> <-> |e, n+1> (absorption adds one phonon); resonant at
+        """ First blue-sideband couplings |g, n> <-> |e, n+1> (spin-raising + adds one phonon); resonant at
             omega = omega_0 + omega_mode. See build_sideband_coupling_operators for the arguments. """
         return self.build_sideband_coupling_operators('blue', basis, target_atoms, target_modes, ground_levels, excited_levels, multipole_order,
                                                       lamb_dicke_parameters, frequency_shift, debye_waller, include_counter_rotating)
@@ -505,7 +505,7 @@ class Laser():
                                           include_counter_rotating: bool = False) -> list[CouplingOperator]:
         """ First red ('red') or blue ('blue') sideband couplings of the requested levels with each requested motional mode.
 
-            The absorption element of atom j and mode k is (Omega/2) e^{i phi} (i eta_jk) |e><g| (x) a_k (red) or a_k^dag
+            The coupling element of atom j and mode k is (Omega/2) e^{i phi} (i eta_jk) |e><g| (x) a_k (red) or a_k^dag
             (blue), where Omega e^{i phi} is the carrier Rabi frequency of the same transition (E1 or E2). 
 
             target_atoms: addressed AtomicStructure DOFs; all of the basis (in basis order) if None. Levels are matched by
@@ -546,35 +546,47 @@ class Laser():
     def build_red_sideband_coupling_operators_from_trap(self, basis: Basis, target_atoms: list[AtomicStructure] | None,
                                                         target_modes: list[MotionalMode], ground_levels: list[AtomicInternalEnergyLevel],
                                                         excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int,
-                                                        ion_trap: TrappedIonCrystal, frequency_shift: float = 0.,
-                                                        debye_waller: bool = False, include_counter_rotating: bool = False) -> list[CouplingOperator]:
+                                                        ion_trap: TrappedIonCrystal, ion_indices: list[int], mode_indices: list[int],
+                                                        frequency_shift: float = 0., debye_waller: bool = False,
+                                                        include_counter_rotating: bool = False) -> list[CouplingOperator]:
         """ Red-sideband couplings with Lamb-Dicke parameters from a trapped-ion mode analysis.
             See build_sideband_coupling_operators_from_trap. """
         return self.build_sideband_coupling_operators_from_trap('red', basis, target_atoms, target_modes, ground_levels, excited_levels,
-                                                                multipole_order, ion_trap, frequency_shift, debye_waller, include_counter_rotating)
+                                                                multipole_order, ion_trap, ion_indices, mode_indices, frequency_shift,
+                                                                debye_waller, include_counter_rotating)
 
     def build_blue_sideband_coupling_operators_from_trap(self, basis: Basis, target_atoms: list[AtomicStructure] | None,
                                                          target_modes: list[MotionalMode], ground_levels: list[AtomicInternalEnergyLevel],
                                                          excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int,
-                                                         ion_trap: TrappedIonCrystal, frequency_shift: float = 0.,
-                                                         debye_waller: bool = False, include_counter_rotating: bool = False) -> list[CouplingOperator]:
+                                                         ion_trap: TrappedIonCrystal, ion_indices: list[int], mode_indices: list[int],
+                                                         frequency_shift: float = 0., debye_waller: bool = False,
+                                                         include_counter_rotating: bool = False) -> list[CouplingOperator]:
         """ Blue-sideband couplings with Lamb-Dicke parameters from a trapped-ion mode analysis.
             See build_sideband_coupling_operators_from_trap. """
         return self.build_sideband_coupling_operators_from_trap('blue', basis, target_atoms, target_modes, ground_levels, excited_levels,
-                                                                multipole_order, ion_trap, frequency_shift, debye_waller, include_counter_rotating)
+                                                                multipole_order, ion_trap, ion_indices, mode_indices, frequency_shift,
+                                                                debye_waller, include_counter_rotating)
 
     def build_sideband_coupling_operators_from_trap(self, sideband: str, basis: Basis, target_atoms: list[AtomicStructure] | None,
                                                     target_modes: list[MotionalMode], ground_levels: list[AtomicInternalEnergyLevel],
                                                     excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int,
-                                                    ion_trap: TrappedIonCrystal, frequency_shift: float = 0.,
-                                                    debye_waller: bool = False, include_counter_rotating: bool = False) -> list[CouplingOperator]:
-        """ Sideband couplings with the Lamb-Dicke matrix computed by the trapped-ion mode analysis ion_trap (e.g. an IonChain) 
-                for this laser's lab-frame wavevector.
+                                                    ion_trap: TrappedIonCrystal, ion_indices: list[int], mode_indices: list[int],
+                                                    frequency_shift: float = 0., debye_waller: bool = False,
+                                                    include_counter_rotating: bool = False) -> list[CouplingOperator]:
+        """ Sideband couplings as in build_sideband_coupling_operators, with the Lamb-Dicke matrix computed by the
+            trapped-ion mode analysis ion_trap (e.g. an IonChain) for this laser's lab-frame wavevector:
+                eta = ion_trap.get_lamb_dicke_parameters_for_ions_and_modes(ion_indices, mode_indices, self.wavevector)
 
-            The target atoms must be linked to ion_trap (built with TrappedIonCrystal.from_atomic_structure_basis, or
-            registered with register_atomic_structures) and the target modes built by its build_mode_DOFs (or IonChain
-            build_mode_DOFs_from_branch). The trap maps each DOF to its ion and mode, including any ion reindexing.
-            Uses this laser's own wavevector, i.e. a single-photon transition.
+            ion_indices: the trap ion of each target atom, ion_indices[i] for target_atoms[i] (for target_atoms=None, the
+                atoms of the basis in basis order). Stored ion indices, i.e. rows of ion_trap.calculate_lamb_dicke_parameters;
+                ion_trap.ion_indices[k] is the user-supplied index (e.g. position in from_atomic_structure_basis) of stored
+                ion k. For an IonChain, stored ions are ordered along the chain axis.
+            mode_indices: the trap mode of each target mode, mode_indices[j] for target_modes[j]. Global mode indices 
+
+            As a consistency check, each target mode's frequency must match its trap mode's, and each target atom's mass
+            and charge its trap ion's; a mix-up between two identical ions cannot be detected. Uses this laser's own
+            wavevector, i.e. a single-photon transition; a two-photon (Raman) transition needs the difference wavevector
+            of its two beams, which a single Laser does not describe.
         """
         if sideband not in self.SIDEBANDS:
             raise IonSimError(f"sideband must be one of {self.SIDEBANDS}, got '{sideband}'.")
@@ -582,10 +594,39 @@ class Laser():
             raise IonSimError(f"ion_trap must be a TrappedIonCrystal (e.g. an IonChain), got {type(ion_trap).__name__}.")
         target_atoms = self._parse_atomic_input(basis, target_atoms)
         target_modes = self._parse_motional_mode_input(basis, target_modes)
-        lamb_dicke_parameters = ion_trap.lamb_dicke_parameters_for_dofs(target_atoms, target_modes, self.wavevector)
+        if len(ion_indices) != len(target_atoms):
+            raise IonSimError(f"Received {len(ion_indices)} ion_indices for {len(target_atoms)} target atoms; give one trap ion "
+                              f"index per target atom, in the same order.")
+        if len(mode_indices) != len(target_modes):
+            raise IonSimError(f"Received {len(mode_indices)} mode_indices for {len(target_modes)} target modes; give one trap mode "
+                              f"index per target mode, in the same order.")
+        lamb_dicke_parameters = ion_trap.get_lamb_dicke_parameters_for_ions_and_modes(ion_indices, mode_indices, self.wavevector)
+        self._check_targets_match_trap(target_atoms, target_modes, ion_trap, ion_indices, mode_indices)
         return self.build_sideband_coupling_operators(sideband, basis, target_atoms, target_modes, ground_levels, excited_levels,
                                                       multipole_order, lamb_dicke_parameters, frequency_shift, debye_waller,
                                                       include_counter_rotating)
+
+    @staticmethod
+    def _check_targets_match_trap(target_atoms: list[AtomicStructure], target_modes: list[MotionalMode], ion_trap: TrappedIonCrystal,
+                                  ion_indices: list[int], mode_indices: list[int], rtol: float = 1e-9):
+        """ Raises if a target mode's frequency differs from its trap mode's, or a target atom's mass or charge from its
+            trap ion's. """
+        trap_frequencies = ion_trap.normal_mode_frequencies
+        for mode, mode_index in zip(target_modes, mode_indices):
+            if len(mode.energy_levels) < 2:
+                continue
+            frequency = mode.energy_levels[1].energy - mode.energy_levels[0].energy
+            if not np.isclose(frequency, trap_frequencies[mode_index], rtol=rtol, atol=0.):
+                raise IonSimError(f"Target mode {mode.name or mode} has frequency {frequency / (2. * np.pi):.6g} Hz, but trap mode "
+                                  f"{mode_index} has {trap_frequencies[mode_index] / (2. * np.pi):.6g} Hz; check mode_indices.")
+        masses_amu = ion_trap.atomic_masses / const.value('atomic mass constant')
+        charges = ion_trap.atomic_charges
+        for atom, ion_index in zip(target_atoms, ion_indices):
+            if not (np.isclose(atom.atomic_mass, masses_amu[ion_index], rtol=rtol, atol=0.)
+                    and np.isclose(atom.atomic_charge, charges[ion_index], rtol=rtol, atol=0.)):
+                raise IonSimError(f"Target atom {atom.name or atom} (mass {atom.atomic_mass} amu, charge {atom.atomic_charge}) does not "
+                                  f"match trap ion {ion_index} (mass {masses_amu[ion_index]:.10g} amu, charge {charges[ion_index]}); "
+                                  f"check ion_indices.")
 
     # ---- helpers for the builders ----
     @staticmethod
