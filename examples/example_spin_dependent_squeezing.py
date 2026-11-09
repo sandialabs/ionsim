@@ -10,7 +10,7 @@ from scipy.special import factorial
 
 TPI = 2*np.pi
 
-def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi_rate_x, rabi_rate_y, omega_x_red, omega_x_blue, omega_y_red, omega_y_blue, targetIon: ism.AtomicStructure, 
+def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi_rate_x, rabi_rate_y, omega_x_red, omega_x_blue, omega_y_red, omega_y_blue,  target_ion_index: int, 
                         index_mode_i:int, index_mode_j:int, phi:float, sparse=False, mod=None): 
     ''' Applies 4-tone MS-like gate to a single ion "k" to produce a spin-dependent motional operation. 
         Consists of 2 sidebands (red and blue) on mode i and another 2 sidebands (red and blue) on mode j:  
@@ -18,12 +18,13 @@ def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi
         H(t) = hbar Omega_x sigma_x a_i exp(-i Delta t) + h.c. + hbar Omega_y sigma_y a_j exp(-i n Delta t + phi)  + h.c. 
 
         - currently sets the first MS phase to zero, accepts input for second MS phase as phi 
-        - etas: Lamb-Dicke matrix of shape (1, len(modes)) for the target ion (row 0) and modes (columns, in the order of
-          modes), e.g. from IonChain.lamb_dicke_parameters_for_dofs([targetIon], modes, wavevector)
     ''' 
     # Hamiltonian: H = -eta * Omega/2 sum_{k} [-i sigma_+,k exp(iphi) + i sigma_-,k exp(-iphi)] (a e^i delta t + a† e^{-i delta t} )
     # Hamiltonian: H = -eta * Omega J_y (a e^i delta t + a† e^{-i delta t} ) # for phi = 0; Jy = 1/2 (sigma_y,1 + sigma_y,2)
     motional_basis = ism.StandardBasis([*modes])
+
+    DOFs = basis.degrees_of_freedom
+    targetIon = DOFs[target_ion_index]
 
     operators = []
 
@@ -39,8 +40,8 @@ def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi
     lower_motion = motional_basis.enlarge_matrix(ism.Fock.lowering(fock_dimension), [modes[index_mode_j]])
 
     # Extract Lamb-Dicke parameter for mode i and j, ion k
-    eta_ki = etas[0, index_mode_i]
-    eta_kj = etas[0, index_mode_j]
+    eta_ki = etas[target_ion_index, index_mode_i]
+    eta_kj = etas[target_ion_index, index_mode_j]
 
     # spin phase = ( phi_R + phi_B )/ 2 
     #   -------------------
@@ -77,8 +78,8 @@ def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi
         spectator_lower_motion = motional_basis.enlarge_matrix(ism.Fock.lowering(fock_dimension), [mode])
 
         # Extract Lamb-Dicke parameter 
-        eta_ki = etas[0, mode_index]
-        eta_kj = etas[0, mode_index]
+        eta_ki = etas[target_ion_index, mode_index]
+        eta_kj = etas[target_ion_index, mode_index]
 
         x_prefactor = 1j*rabi_rate_x * 0.5 * eta_ki * np.exp(1j*phase_x)
     
@@ -142,11 +143,11 @@ def dephasing_dissipator(basis, qubit_basis, modes, dephasing_rates: list[float]
     return ism.Dissipator(basis, lindblad_operators, frame_energies)
 
 
-def carrier_hamiltonian(basis, target_ion, rabi_rate: float, phase: float, omega_carrier: float, sparse: bool=False, mod=None):
+def carrier_hamiltonian(basis, target_ion_index, rabi_rate: float, phase: float, omega_carrier: float, sparse: bool=False, mod=None):
     """ Hamiltonian for carrier spin pulse: (hbar * Omega/2) * sigma_phi e^iphi + h.c. """ 
     prefactor = rabi_rate * 0.5 * np.exp(-1j*phase)
+    target_ion = basis.degrees_of_freedom[target_ion_index]
     operator_raising = basis.enlarge_matrix(prefactor * ism.Pauli.plus, [target_ion])
-    #raise_spin_k = qubit_basis.enlarge_matrix(ism.Pauli.plus, [target_ion])
 
     operators = [ism.CouplingOperator.from_matrix(basis, operator_raising, omega_carrier, modulation_function=mod)] 
     interaction_frame_energies = [-state.energy for state in basis.states]
@@ -167,7 +168,6 @@ def squeezed_ground_state_coefficients(r_value, phi, fock_dimension):
     norm = 1./np.sqrt(np.cosh(r_value))
     for n in range(fock_dimension//2):
         wave_function[2*n] = np.exp(1j * n * phi) * np.tanh(r_value)**n 
-        #wave_function[2*n] *= norm * np.sqrt(factorial(2 * n))
         wave_function[2*n] *= norm * np.sqrt(factorial(2 * n))/(2**n) 
         wave_function[2*n] /= (factorial(n))
     return wave_function 
@@ -188,12 +188,13 @@ def main():
 
     print(f"\n --- Simulation of spin-dependent squeezing by 4-tone sideband protocol --- ")
     
-    include_spectator_mode = False 
+    include_spectator_mode = False
     include_dissipation = False 
     do_reverse_process = False 
     thermal_state_IC = False 
     reverse_phases = False 
     beam_counter_propagating = True
+    modulate_amplitude = True 
 
     num_ions = 2
 
@@ -210,24 +211,20 @@ def main():
 
     # Use mode analysis to get motional mode information 
     omega_x = 2.1 * TPI * 1E6 # MHz -> rad/s  
-    omega_y = 2.6 * TPI * 1E6 # ""  
-    omega_z = 0.50 * TPI * 1E6 # ""  
+    omega_y = 2.6 * TPI * 1E6 # MHz -> rad/s    
+    omega_z = 0.50 * TPI * 1E6 # MHz -> rad/s    
     trap_analysis = ism.IonChain.from_atomic_structure_basis(qubit_basis, omega_x, omega_y, omega_z) 
-    trap_analysis.solve_ion_trap_equilibrium()
-    print()
-    trap_analysis.print_chain_summary()
-
-    print(trap_analysis.characteristic_parameters)
+    summary = trap_analysis.chain_summary()
+    print("\n")
+    print(summary)
 
     # Truncate the Hilbert space to a single qubit with the two nearby motional modes 
     # Choose to do oprerations on the radial x tilt mode; option to include the COM as a spectator mode  
-    #print(trap_analysis.get_mode_properties_by_branch('x', 0))
-    #print(trap_analysis.get_mode_properties_by_branch('x', 1))
     tilt_mode_index = 0 
     COM_mode_index = 1 
 
     fock_dimension = 10
-    branch_dir = 'x'
+    branch_dir = 'radial0'
     qubit_basis = ism.StandardBasis([target_ion]) # Now reset the spin basis to just include the target ion 
     modes = trap_analysis.build_mode_DOFs_from_branch(branch_dir, [tilt_mode_index, COM_mode_index], fock_dimension)
     if include_spectator_mode:
@@ -246,8 +243,8 @@ def main():
     mode_i_index = target_mode_index
     mode_j_index = target_mode_index
 
-    radial_x_tilt_mode_properties = trap_analysis.get_mode_properties_by_branch('x', tilt_mode_index)
-    mode_i_freq = radial_x_tilt_mode_properties['frequency'] 
+    radial_x_tilt_mode_properties = trap_analysis.get_mode_properties_by_branch(branch_dir, tilt_mode_index)
+    mode_i_freq = radial_x_tilt_mode_properties['frequency_angular'] 
     mode_j_freq = mode_i_freq 
 
     print(f" - Tilt mode frequency: {mode_i_freq/TPI/1E6} [MHz]\n\n")
@@ -270,7 +267,6 @@ def main():
     duration = 60 * 1E-6 
     print(f" - Gate duration: {duration*1E6:.3f} [µs]\n")
 
-    modulate_amplitude = True 
     print(f" - Estimated number of loops: {duration * detuning / TPI}\n")
 
     detuning_red = detuning
@@ -298,9 +294,8 @@ def main():
         return magnitude*(0.42 - 0.5*np.cos(TPI * t /duration) + 0.08 * np.cos(2.*TPI*t/duration))
 
     # Retrieve lamb dicke parameters 
-    # Rows: [target_ion]; columns: modes (in list order). The trap maps each DOF to its ion/mode, including reindexing. 
-    lamb_dicke_parameters = trap_analysis.lamb_dicke_parameters_for_dofs([target_ion], modes, wavevector)
-    eta = lamb_dicke_parameters[0, target_mode_index]
+    lamb_dicke_parameters = trap_analysis.get_radial_lamb_dicke_parameters(wavevector, branch_dir) # matrix of ion, mode 
+    eta = lamb_dicke_parameters[target_ion_index,target_mode_index]
     print(f" - |eta| for target ion, target mode: {np.abs(eta)}\n")
     print(f" - Sideband rabi rate (eta*Omega): {np.abs(eta) * rabi_rate / 1E3 / TPI} [kHz]\n")
     print('\n\n')
@@ -323,12 +318,12 @@ def main():
     ## Create Hamiltonians: 
     squeezing_phase = 0.
     squeezing_hamiltonian = four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, lamb_dicke_parameters, x_rabi_rate, y_rabi_rate, omega_r_mode_i, omega_b_mode_i, omega_r_mode_j, 
-                                                    omega_b_mode_j, target_ion, mode_i_index, mode_j_index, squeezing_phase, mod=mod_function)
+                                                    omega_b_mode_j, target_ion_index, mode_i_index, mode_j_index, squeezing_phase, mod=mod_function)
 
     reverse_squeezing_hamiltonian = four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, lamb_dicke_parameters, x_rabi_rate, y_rabi_rate, omega_r_mode_i, omega_b_mode_i, omega_r_mode_j, omega_b_mode_j, 
-                                                        target_ion, mode_i_index, mode_j_index, squeezing_phase + np.pi, mod=mod_function) 
+                                                        target_ion_index, mode_i_index, mode_j_index, squeezing_phase + np.pi, mod=mod_function) 
 
-    pi_pulse_hamiltonian = carrier_hamiltonian(basis, target_ion, rabi_rate, 0., np.abs(omega_qubit), False, None)  
+    pi_pulse_hamiltonian = carrier_hamiltonian(basis, target_ion_index, rabi_rate, 0., np.abs(omega_qubit), False, None)  
     mode_dephasing_rates = [1./10e-3, 1/10e-3] # 
     if include_dissipation : 
         # Create dissipator and then full Lindbladian: 
@@ -349,7 +344,6 @@ def main():
     nbars = [0.1, 0.5]
 
     IC_fock_pops = [thermal_state_populations(nbar, fock_dimension) for nbar in nbars] # populations  
-    #fock_populations_target_mode_IC = thermal_state(nbar)
     if thermal_state_IC:
         print(f"\n--- Starting with thermal ground state ---\n")
         print(f"Target mode initial populations for nbar = {nbars[0]}, : {IC_fock_pops[0]}")

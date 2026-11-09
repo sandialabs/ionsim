@@ -37,6 +37,9 @@ requires-python = ">=3.10"
 tutorials = [
     "notebook",
 ]
+qiskit-integration = [
+    "qiskit>=2.5",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
