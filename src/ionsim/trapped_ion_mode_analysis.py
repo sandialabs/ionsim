@@ -1020,7 +1020,6 @@ class IonChain(TrappedIonCrystal):
                 - target_separation : float; Desired separation between central ions in meters
                 - bounds : tuple; (min_freq, max_freq) in Hz for the root finding algorithm
         """
-        from scipy.optimize import root_scalar
         if self.num_ions < 2:
             raise IonSimError("At least two ions are required to define a separation")
         if not self.trap_type.is_rf_paul_trap:
@@ -1041,7 +1040,7 @@ class IonChain(TrappedIonCrystal):
             )
             return temp_analysis.get_two_central_ion_separation() - target_separation
 
-        result = root_scalar(separation_error, bracket=bounds, method='bisect')
+        result = opt.root_scalar(separation_error, bracket=bounds, method='bisect')
         if not result.converged:
             raise IonSimError("Root finding did not converge. Try adjusting the bounds or check the function behavior.")
 
