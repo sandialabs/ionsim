@@ -93,7 +93,7 @@ def _standardize_fock_dimensions(fock_dimensions: Vector | int, num_modes: int) 
     elif dims.size != num_modes:
         raise IonSimError(f"Received {dims.size} Fock dimensions for {num_modes} modes")
     if not np.all(np.equal(np.mod(dims, 1), 0)) or np.any(dims < 1):
-        raise ValueError(f"Fock dimensions must be positive integers. Received {fock_dimensions}")
+        raise IonSimError(f"Fock dimensions must be positive integers. Received {fock_dimensions}")
     return dims.astype(int)
 
 
