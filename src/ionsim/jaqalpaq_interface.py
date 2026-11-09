@@ -1,3 +1,5 @@
+from __future__ import annotations  # Unknown types will not be errors in type declarations
+
 from ionsim.ionsim_error import IonSimError
 
 try:
@@ -11,6 +13,10 @@ if HAS_JAQALPAQ:
     from jaqalpaq.core import Circuit, NamedQubit
     from jaqalpaq.core.algorithm.visitor import Visitor
     from jaqalpaq.core.algorithm import expand_macros, expand_subcircuits, fill_in_let
+else:
+    class Visitor:
+        pass
+
 
 class JaqalpaqCircuitBuilder:
     """Mix-in to CircuitBuilder to add Jaqalpaq functionality."""

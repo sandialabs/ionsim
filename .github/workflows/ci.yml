@@ -8,8 +8,16 @@ on:
 
 jobs:
   test:
-    name: Unit tests
+    name: Unit tests (${{ matrix.install }})
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        install:
+          - "-e ."
+          - "-e .[qiskit-integration]"
+          - "-e .[jaqalpaq-integration]"
 
     steps:
       - name: Checkout
@@ -23,7 +31,7 @@ jobs:
       - name: Install package (editable)
         run: |
           python -m pip install -U pip
-          pip install -e .[qiskit-integration]
+          pip install ${{ matrix.install }}
           pip install coverage
 
       - name: Run unit tests with coverage
@@ -35,11 +43,11 @@ jobs:
       - name: Upload coverage HTML report
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-html
+          name: coverage-html-${{ matrix.install }}
           path: htmlcov/
 
       - name: Upload coverage XML
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-xml
+          name: coverage-xml-${{ matrix.install }}
           path: coverage.xml

@@ -1,3 +1,5 @@
+from __future__ import annotations  # Unknown types will not be errors in type declarations
+
 import numpy as np
 
 from ionsim.named_operators import Unitary

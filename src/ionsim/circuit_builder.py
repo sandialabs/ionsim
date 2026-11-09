@@ -1,5 +1,3 @@
-from __future__ import annotations  # Unknown types will not be errors in type declarations
-
 from typing import Callable
 
 import numpy as np
