@@ -30,5 +30,6 @@ from .noise import Noise
 from .zeeman_solver import ZeemanHyperfineSolver
 from .composite_operator import CompositeOperator
 from .lindbladian import Dissipator, DissipatorSpontaneousEmission, Lindbladian 
+from .trapped_ion_mode_analysis import TrappedIonCrystal, IonChain
 from .gate_interpolator import GateInterpolator 
 from .io import write_results_to_file, read_results_from_file, write_matrix, read_matrix 
