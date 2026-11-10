@@ -787,7 +787,7 @@ class Laser():
     def build_atom_laser_ge_coupling_matrix(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, 
                                             atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int,
                                             counter_rotating: bool = False) -> Matrix: 
-        """ Builds a coupling matrix representing a laser light-atom coupling within an ordered list of levels.
+        """ Builds a coupling matrix representing a laser light-atom coupling within an ordered list of ground (g) and excited (e) levels.
 
             counter_rotating: the counter-rotating term, (Omega~/2) e^{-i phase} |e><g| with Omega~ from the conjugate
             polarization (rabi_frequency(counter_rotating=True)). """
