@@ -287,13 +287,13 @@ class Laser():
             raise IonSimError(f"Propagation unit vector is not normalized! Norm = {np.linalg.norm(self.propagation_unit_vector)}")
 
         if np.abs(np.dot(self.polarization.vector, self.propagation_unit_vector)) > NUMERICAL_ERROR_THRESHOLD :
-            raise ValueError('Laser polarization is not perpendicular to k vector')
+            raise IonSimError('Laser polarization is not perpendicular to k vector')
 
         # Check frequency - wavelength relationship 
         #   Relative check: optical frequencies are ~1e15 rad/s, so an absolute tolerance would fail on floating-point roundoff.
         light_physics_deviation = np.abs(self.frequency - 2.*np.pi*const.c/self.wavelength) / self.frequency
         if light_physics_deviation > NUMERICAL_EQUIVALENCE_THRESHOLD: 
-            raise ValueError(f"Laser frequency and wavelength must satisfy speed of light in vacuum. This is violated with a deviation: {light_physics_deviation}")
+            raise IonSimError(f"Laser frequency and wavelength must satisfy speed of light in vacuum. This is violated with a deviation: {light_physics_deviation}")
 
     @classmethod
     def from_wavelength(cls, wavelength: float, propagation_vector: Vector, phase: float, polarization: Polarization, beam_profile: Callable,  
@@ -440,7 +440,7 @@ class Laser():
             (-i k instead of i k). See _field_polarization_and_wavenumber.
         """
         if ground_level is excited_level or ground_level.name == excited_level.name:
-            raise ValueError(f"Ground level and excited level should not be the same, got {ground_level.name}.")
+            raise IonSimError(f"Ground level and excited level should not be the same, got {ground_level.name}.")
         levels = [ground_level, excited_level]
         polarization, wavenumber = self._field_polarization_and_wavenumber(counter_rotating)
         if multipole_order == 1:
@@ -766,10 +766,10 @@ class Laser():
         if target_atoms is None:
             target_atoms = basis.atomic_structure_DOFs
         if not target_atoms:
-            raise ValueError("No atoms to address: the basis has no AtomicStructure degrees of freedom.")
+            raise IonSimError("No atoms to address: the basis has no AtomicStructure degrees of freedom.")
         for atom in target_atoms:
             if not any(atom is dof for dof in basis.atomic_structure_DOFs):
-                raise ValueError(f"Atom {atom.name or atom} has not been included in the basis degrees of freedom.")
+                raise IonSimError(f"Atom {atom.name or atom} has not been included in the basis degrees of freedom.")
         return list(target_atoms)
 
     @staticmethod
@@ -789,7 +789,7 @@ class Laser():
         modes_from_basis = [] if not basis.motional_basis else basis.motional_basis.degrees_of_freedom
         for mode in target_modes:
             if not any(mode is dof for dof in modes_from_basis):
-                raise ValueError(f"Motional mode {mode.name or mode} has not been included in the basis degrees of freedom.")
+                raise IonSimError(f"Motional mode {mode.name or mode} has not been included in the basis degrees of freedom.")
             fock_numbers = [level.fock_number for level in mode.energy_levels]
             if fock_numbers != list(range(len(fock_numbers))):
                 raise IonSimError(f"Sideband operators need the mode's levels to be Fock states 0, 1, ..., N-1 in order; got {fock_numbers}.")
@@ -880,14 +880,14 @@ class Laser():
         level_index = {level.name: index for index, level in enumerate(atomic_levels)}
         missing = [level.name for level in [*ground_levels, *excited_levels] if level.name not in level_index]
         if missing:
-            raise ValueError(f"Levels {missing} not found in the atomic structure {atom.name or ''} with levels {list(level_index)}.")
+            raise IonSimError(f"Levels {missing} not found in the atomic structure {atom.name or ''} with levels {list(level_index)}.")
 
         coupling_operators = []
         # Build coupling operator for each |g>, |e> pairing
         for ground_name in [level.name for level in ground_levels]:
             for excited_name in [level.name for level in excited_levels]:
                 if ground_name == excited_name:
-                    raise ValueError(f"Excited level {excited_name} matches the ground level {ground_name}.")
+                    raise IonSimError(f"Excited level {excited_name} matches the ground level {ground_name}.")
                 ground_index, excited_index = level_index[ground_name], level_index[excited_name]
                 ground_level, excited_level = atomic_levels[ground_index], atomic_levels[excited_index]
 
@@ -918,7 +918,7 @@ class Laser():
             polarization (rabi_frequency(counter_rotating=True)). """
         for level, role in ((ground_level, 'Ground'), (excited_level, 'Excited')):
             if level not in atomic_levels:
-                raise ValueError(f"{role} level {level.name} not found in the atomic structure {[l.name for l in atomic_levels]}.")
+                raise IonSimError(f"{role} level {level.name} not found in the atomic structure {[l.name for l in atomic_levels]}.")
         rabi_frequency = self.rabi_frequency(ground_level, excited_level, multipole_order, counter_rotating=counter_rotating)
         phase = -self.phase if counter_rotating else self.phase
 
@@ -933,7 +933,7 @@ class Laser():
         excited_index = atomic_levels.index(excited_level) 
         
         if ground_index == excited_index:
-            raise ValueError(f"Ground level and excited level should not be the same.")
+            raise IonSimError(f"Ground level and excited level should not be the same.")
     
         coupling_matrix[excited_index, ground_index] = 0.5 * rabi_frequency * np.exp(1j*phase) 
         coupling_matrix[ground_index, excited_index] = np.conj(coupling_matrix[excited_index,ground_index]) 

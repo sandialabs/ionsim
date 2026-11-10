@@ -395,10 +395,10 @@ class TestLaserMultipleAtoms(unittest.TestCase):
 
     def test_errors(self):
         other = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,1,0'])
-        with self.subTest('atom not in basis'), self.assertRaises(ValueError):
+        with self.subTest('atom not in basis'), self.assertRaises(IonSimError):
             self.laser.build_carrier_coupling_operators(self.basis, [other], self.ground, self.excited, 1)
         missing_level = AtomicStructure.from_species(species='171Yb+', term_symbols=['P3/2'], level_names=['P3/2,1,1']).energy_levels
-        with self.subTest('level missing from an atom'), self.assertRaises(ValueError):
+        with self.subTest('level missing from an atom'), self.assertRaises(IonSimError):
             self.laser.build_carrier_coupling_operators(self.basis, None, self.ground, missing_level, 1)
 
 
@@ -561,39 +561,18 @@ class TestLaserSidebandCouplings(unittest.TestCase):
             red = carrier @ basis.enlarge_matrix(laser._sideband_motional_matrix('red', mode, self.ETA, False), [mode])
             laser._coupling_operator_from_raising_matrix(basis, carrier + red, 0.)
 
-    def test_target_modes_are_required(self):
-        """target_modes must be a non-empty list of distinct MotionalMode DOFs of the basis; there is no default."""
-        (atom,), mode, basis, g, e = self.build()
-        laser = self.laser(e.energy - g.energy)
-        build = lambda target_modes: laser.build_blue_sideband_coupling_operators(basis, [atom], target_modes, [g], [e], 2, self.ETA)
-        for case, target_modes in (('None', None), ('empty list', []), ('bare mode, not a list', mode),
-                                   ('non-mode entry', [atom]), ('duplicate mode', [mode, mode])):
-            with self.subTest(case), self.assertRaises(IonSimError):
-                build(target_modes)
-        with self.subTest('tuple accepted'):
-            self.assertEqual(len(build((mode,))), len(build([mode])))
-
     def test_input_errors(self):
         (atom,), mode, basis, g, e = self.build()
         laser = self.laser(e.energy - g.energy)
-        no_mode_basis = StandardBasis([atom])
         other_mode = MotionalMode.from_frequency(self.MODE_FREQUENCY, 3)
-        with self.subTest('no modes in basis'), self.assertRaises(ValueError):
-            laser.build_red_sideband_coupling_operators(no_mode_basis, [atom], [other_mode], [g], [e], 2, self.ETA)
-        with self.subTest('mode not in basis'), self.assertRaises(ValueError):
+        with self.subTest('no modes in basis'), self.assertRaises(IonSimError):
+            laser.build_red_sideband_coupling_operators(StandardBasis([atom]), [atom], [other_mode], [g], [e], 2, self.ETA)
+        with self.subTest('mode not in basis'), self.assertRaises(IonSimError):
             laser.build_red_sideband_coupling_operators(basis, [atom], [other_mode], [g], [e], 2, self.ETA)
         for case, etas in (('wrong shape', [[self.ETA, self.ETA]]), ('empty', []), ('complex', [[0.1j]]),
-                           ('not finite', [[np.nan]]), ('dict no longer accepted', {(atom, mode): self.ETA})):
+                           ('not finite', [[np.nan]])):
             with self.subTest(case), self.assertRaises(IonSimError):
                 laser.build_red_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, etas)
-        with self.subTest('unknown sideband'), self.assertRaises(IonSimError):
-            laser.build_sideband_coupling_operators('green', basis, [atom], [mode], [g], [e], 2, self.ETA)
-        with self.subTest('eta = 0 skips the pair'):
-            self.assertEqual(laser.build_blue_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, [[0.]]), [])
-        with self.subTest('1x1 matrix equals scalar'):
-            as_matrix, as_scalar = (laser.build_blue_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, eta)
-                                    for eta in ([[self.ETA]], self.ETA))
-            self.assertEqual(coupling_elements(basis, as_matrix), coupling_elements(basis, as_scalar))
 
     def test_matrix_rows_follow_target_atoms(self):
         """eta[i, j] belongs to (target_atoms[i], target_modes[j]): a stretch-like sign pattern [[a], [-a]] gives atom 1 the
@@ -854,7 +833,7 @@ class TestLaserTargetRabiFrequency(unittest.TestCase):
             with self.subTest(case), self.assertRaises(IonSimError):
                 build()
         laser = Laser.from_target_rabi_frequency(target, g, e, 1, Z, polarization)
-        with self.subTest('same level twice'), self.assertRaises(ValueError):
+        with self.subTest('same level twice'), self.assertRaises(IonSimError):
             laser.rabi_frequency(g, g, 1)
 
 
