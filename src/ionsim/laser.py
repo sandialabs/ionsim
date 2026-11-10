@@ -65,6 +65,134 @@ def _perpendicular_basis(n_hat: Vector, ref_axis: Vector | None=None) -> tuple[V
     e2 = np.cross(n_hat, e1)
     return e1, e2
 
+def _spherical_basis_vectors(quantization_axis: Vector) -> dict[int, Vector]:
+    """ Spherical basis vectors eps +1, 0, -1. See eq. 7.188 from "Quantum and Atom Optics by Daniel Steck""" 
+    z = _unit_vector(quantization_axis)
+    x, y = _perpendicular_basis(z)
+    return {1: -(x + 1j*y)/np.sqrt(2.), 0: z.astype(complex), -1 : (x - 1j*y)/np.sqrt(2.)}
+
+def _project_spherical(v: Vector, quantization_axis: Vector) -> dict[int, complex]:
+    """ Spherical components v_+1, v_0, v_-1 of a lab-frame vector "v", relative to the 
+        quantization axis."""
+    v = np.asarray(v, dtype=complex)
+    sph_basis = _spherical_basis_vectors(quantization_axis) 
+    # np.vdot(a,b) = sum a*_i b_i 
+    # For components via spherical basis dot product, the e_q vectors need conjugation, therefore put in first arg: 
+    return {q: np.vdot(sph_basis[q], v) for q in (1, 0, -1)} 
+
+@dataclass(frozen=True, eq=False)
+class Polarization:
+    """ Complex Cartesian polarization (Jones) Vector in the lab frame. This is set to be perpendicular to a reference propagation direction (e.g. of a laser) """
+    vector: Vector # input polarization vector; normalized in post init 
+    n_hat: Vector  # propagation direction 
+
+    def __post_init__(self):
+        """ Check that polarization vector is perpendicular to propagation vector """  
+        normalized_n_hat = _unit_vector(self.n_hat) 
+
+        # Check that polarization components (vector) are orthogonal to propagation vector 
+        projection = np.dot(self.vector, normalized_n_hat)
+        if np.abs(projection) > 1E-9: 
+            raise ValueError(f"Polarization vector is not perpendicular to the reference propagation direction. Dot product = {projection}, should be zero.")
+
+        # Normalize the vector if is not normalized 
+        norm = np.sqrt(np.vdot(self.vector, self.vector).real)
+        # Check normalization is near 1 
+        if norm < 1E-9: 
+            raise ValueError("Cannot normalize a vector with norm near zero. Computed norm {norm}")
+
+        if np.abs(norm - 1.) > NUMERICAL_EQUIVALENCE_THRESHOLD: 
+            normalized_vector = self.vector / norm
+            object.__setattr__(self, "vector", normalized_vector)
+
+    def __repr__(self):
+        return f"Polarization(vector={self.vector}, n_hat={self.n_hat})" 
+
+    @classmethod
+    def linear(cls, propagation_direction: Vector, angle: float = 0., ref_axis: Vector | None=None):
+        """ Linear polarization at an angle (radians) from a reference direction in the perpendicular plane. """ 
+        e1, e2 = _perpendicular_basis(propagation_direction, ref_axis)
+        polarization_vector = np.cos(angle) * e1 + np.sin(angle) * e2
+        return cls(polarization_vector, propagation_direction)
+
+    @classmethod
+    def circular(cls, propagation_direction: Vector, handedness: str, ref_axis: Vector | None=None):
+        """ Circular polarization built in the (e1, e2) plane perpendicular to the laser propagation direction (n hat)
+
+            - handedness is specified by '+' or '-'
+            - eps_{+/-} = (e1 +/- ie2)/sqrt(2) 
+            - '+' <==> left-circular polarization; '-' <==> right-circular polarization
+            - looks at wave from behind. 
+
+            NOTE: Corresponding with atomic raising/lowering angular momentum operators depends on quantization axis. 
+
+        """
+        e1, e2 = _perpendicular_basis(propagation_direction, ref_axis)
+        if handedness == '+':
+            polarization_vector = (e1 + 1j * e2)/np.sqrt(2.)
+        elif handedness == '-':
+            polarization_vector = (e1 - 1j * e2)/np.sqrt(2.)
+        else:
+            raise IonSimError("Handedness must be specified either by a string, e.g. '+' or '-'.")
+
+        return cls(polarization_vector, propagation_direction)
+
+    @classmethod
+    def from_spherical(cls, epsilon_vector: Vector, propagation_direction: Vector, 
+                            quantization_axis: Vector = np.array([0., 0., 1.])):
+        """ Builds a Cartesian polarization vector from the specified spherical components (eps_+, eps_0, eps_-), which are 
+            relative to the specified quantization axis (defaulting to (0, 0, 1)). 
+
+            epsilon vector specified with 3 componenets: eps_+1, eps_0, eps_-1, 
+
+        """
+        # should the input vector be in a dictionary form? {+1: value, 0: value, -1: value}?
+        e_q = _spherical_basis_vectors(quantization_axis)
+        e_p1 = e_q[1]
+        e_0 = e_q[0]
+        e_m1 = e_q[-1]
+
+        polarization_vector = e_p1 * epsilon_vector[0] + e_0 * epsilon_vector[1] + e_m1 * epsilon_vector[2] 
+        return cls(polarization_vector, propagation_direction)
+
+    def dipole_components(self, quantization_axis: Vector = np.array([0., 0., 1.])) -> dict[int, complex]:
+        """ Spherical (dipole) components eps_q, keyed by q = +1, 0, -1, with polarization vector = sum_q eps_q e_q. """
+        e_q = _spherical_basis_vectors(quantization_axis)
+        eps_p1 = np.vdot(e_q[1], self.vector)
+        eps_0 = np.vdot(e_q[0], self.vector)
+        eps_m1 = np.vdot(e_q[-1], self.vector)
+        components = np.array([eps_p1, eps_0, eps_m1])
+        return dict(zip((1, 0, -1), components)) 
+
+    @staticmethod
+    def rank2_spherical_basis(quantization_axis: Vector = np.array([0., 0., 1.])) -> dict[int, Matrix]:
+        """ Orthonormal rank-2 spherical basis tensors E_q = sum_{m1, m2} <1 m1; 1 m2 | 2 q> e_m1 (x) e_m2, q = -2..2.
+
+            Built from the rank-1 spherical basis vectors e_m (Steck, eq. 7.188); orthonormal in the sense
+            sum_ij conj(E_q)_ij (E_q')_ij = delta_qq'.
+        """
+        e = _spherical_basis_vectors(quantization_axis)
+        tensors = {}
+        for q in range(-2, 3):
+            T = np.zeros((3, 3), dtype=complex)
+            for m1 in (-1, 0, 1):
+                m2 = q - m1
+                if abs(m2) <= 1:
+                    T += float(clebsch_gordan(1, 1, 2, m1, m2, q)) * np.outer(e[m1], e[m2])
+            tensors[q] = T
+        return tensors
+
+    def quadrupole_components(self, quantization_axis: Vector = np.array([0., 0., 1.])) -> dict[int, complex]:
+        """ Rank-2 polarization components C_q, q = -2..2, of the E2 geometry tensor eps (x) n_hat.
+
+            C_q = sum_ij conj(E_q)_ij eps_i n_j = sum_{m1, m2} <1 m1; 1 m2 | 2 q> eps_m1 n_m2, where eps_m and n_m are
+            the spherical components of the polarization and propagation unit vectors. For an E2 coupling these play
+            the role eps_q plays for E1: sum_ij eps_i n_j Q_ij = sum_q C_q Q_q for a symmetric traceless tensor Q.
+        """
+        n_hat = _unit_vector(self.n_hat)
+        tensors = self.rank2_spherical_basis(quantization_axis)
+        return {q: complex(np.einsum('ij,i,j->', np.conj(tensors[q]), self.vector, n_hat)) for q in range(-2, 3)}
+
 
 class BeamProfile(ABC):
     """ Beam profile represented by a spatial envelope as well as power, peak-field relationship"""
@@ -162,8 +290,7 @@ class Laser():
             raise ValueError('Laser polarization is not perpendicular to k vector')
 
         # Check frequency - wavelength relationship 
-        # TODO: Check necessary precision for this check to be meaningful 
-        # Relative check: optical frequencies are ~1e15 rad/s, so an absolute tolerance would fail on floating-point roundoff.
+        #   Relative check: optical frequencies are ~1e15 rad/s, so an absolute tolerance would fail on floating-point roundoff.
         light_physics_deviation = np.abs(self.frequency - 2.*np.pi*const.c/self.wavelength) / self.frequency
         if light_physics_deviation > NUMERICAL_EQUIVALENCE_THRESHOLD: 
             raise ValueError(f"Laser frequency and wavelength must satisfy speed of light in vacuum. This is violated with a deviation: {light_physics_deviation}")
@@ -175,13 +302,11 @@ class Laser():
         frequency = 2 * np.pi * const.c / wavelength  # rad/s 
         return cls(wavelength, propagation_vector, phase, frequency, polarization, beam_profile, power, modulation_functions)
 
-
     @classmethod
     def gaussian_from_wavelength(cls, wavelength: float, power: float, waist: float, propagation_vector: Vector, polarization: Polarization, 
                     phase: float, focus: Vector=np.zeros(3), modulation_functions: dict | None=None): 
         profile = GaussianBeam(waist, wavelength, focus)
         return cls.from_wavelength(wavelength, propagation_vector, phase, polarization, profile, power, modulation_functions) 
-
 
     @classmethod
     def from_frequency(cls, frequency: float, propagation_vector: Vector, phase: float, polarization: Polarization, beam_profile: Callable,  
@@ -289,7 +414,7 @@ class Laser():
     def wavevector(self):
         return self.propagation_unit_vector * np.pi * 2. / self.wavelength
         
-    ## Helper methods for calculations / AMO simulations  
+    # Helper methods for calculations / AMO simulations  
     def detuning_from_transition_frequency(self, transition_frequency: float) -> float:
         """ Computes detuning defined as laser_frequency - transition_frequency in rad/s of the laser from a transition frequency in rad/s """ 
         return self.frequency - transition_frequency
@@ -813,132 +938,3 @@ class Laser():
         coupling_matrix[excited_index, ground_index] = 0.5 * rabi_frequency * np.exp(1j*phase) 
         coupling_matrix[ground_index, excited_index] = np.conj(coupling_matrix[excited_index,ground_index]) 
         return coupling_matrix
-
-
-def _spherical_basis_vectors(quantization_axis: Vector) -> dict[int, Vector]:
-    """ Spherical basis vectors eps +1, 0, -1. See eq. 7.188 from "Quantum and Atom Optics by Daniel Steck""" 
-    z = _unit_vector(quantization_axis)
-    x, y = _perpendicular_basis(z)
-    return {1: -(x + 1j*y)/np.sqrt(2.), 0: z.astype(complex), -1 : (x - 1j*y)/np.sqrt(2.)}
-
-def _project_spherical(v: Vector, quantization_axis: Vector) -> dict[int, complex]:
-    """ Spherical components v_+1, v_0, v_-1 of a lab-frame vector "v", relative to the 
-        quantization axis."""
-    v = np.asarray(v, dtype=complex)
-    sph_basis = _spherical_basis_vectors(quantization_axis) 
-    # np.vdot(a,b) = sum a*_i b_i 
-    # For components via spherical basis dot product, the e_q vectors need conjugation, therefore put in first arg: 
-    return {q: np.vdot(sph_basis[q], v) for q in (1, 0, -1)} 
-
-@dataclass(frozen=True, eq=False)
-class Polarization:
-    """ Complex Cartesian polarization (Jones) Vector in the lab frame. This is set to be perpendicular to a reference propagation direction (e.g. of a laser) """
-    vector: Vector # input polarization vector; normalized in post init 
-    n_hat: Vector  # propagation direction 
-
-    def __post_init__(self):
-        """ Check that polarization vector is perpendicular to propagation vector """  
-        normalized_n_hat = _unit_vector(self.n_hat) 
-
-        # Check that polarization components (vector) are orthogonal to propagation vector 
-        projection = np.dot(self.vector, normalized_n_hat)
-        if np.abs(projection) > 1E-9: 
-            raise ValueError(f"Polarization vector is not perpendicular to the reference propagation direction. Dot product = {projection}, should be zero.")
-
-        # Normalize the vector if is not normalized 
-        norm = np.sqrt(np.vdot(self.vector, self.vector).real)
-        # Check normalization is near 1 
-        if norm < 1E-9: 
-            raise ValueError("Cannot normalize a vector with norm near zero. Computed norm {norm}")
-
-        if np.abs(norm - 1.) > NUMERICAL_EQUIVALENCE_THRESHOLD: 
-            normalized_vector = self.vector / norm
-            object.__setattr__(self, "vector", normalized_vector)
-
-    def __repr__(self):
-        return f"Polarization(vector={self.vector}, n_hat={self.n_hat})" 
-
-    @classmethod
-    def linear(cls, propagation_direction: Vector, angle: float = 0., ref_axis: Vector | None=None):
-        """ Linear polarization at an angle (radians) from a reference direction in the perpendicular plane. """ 
-        e1, e2 = _perpendicular_basis(propagation_direction, ref_axis)
-        polarization_vector = np.cos(angle) * e1 + np.sin(angle) * e2
-        return cls(polarization_vector, propagation_direction)
-
-    @classmethod
-    def circular(cls, propagation_direction: Vector, handedness: str, ref_axis: Vector | None=None):
-        """ Circular polarization built in the (e1, e2) plane perpendicular to the laser propagation direction (n hat)
-
-            - handedness is specified by '+' or '-'
-            - eps_{+/-} = (e1 +/- ie2)/sqrt(2) 
-            - '+' <==> left-circular polarization; '-' <==> right-circular polarization
-            - looks at wave from behind. 
-
-            NOTE: Corresponding with atomic raising/lowering angular momentum operators depends on quantization axis. 
-
-        """
-        e1, e2 = _perpendicular_basis(propagation_direction, ref_axis)
-        if handedness == '+':
-            polarization_vector = (e1 + 1j * e2)/np.sqrt(2.)
-        elif handedness == '-':
-            polarization_vector = (e1 - 1j * e2)/np.sqrt(2.)
-        else:
-            raise IonSimError("Handedness must be specified either by a string, e.g. '+' or '-'.")
-
-        return cls(polarization_vector, propagation_direction)
-
-    @classmethod
-    def from_spherical(cls, epsilon_vector: Vector, propagation_direction: Vector, 
-                            quantization_axis: Vector = np.array([0., 0., 1.])):
-        """ Builds a Cartesian polarization vector from the specified spherical components (eps_+, eps_0, eps_-), which are 
-            relative to the specified quantization axis (defaulting to (0, 0, 1)). 
-
-            epsilon vector specified with 3 componenets: eps_+1, eps_0, eps_-1, 
-
-        """
-        # should the input vector be in a dictionary form? {+1: value, 0: value, -1: value}?
-        e_q = _spherical_basis_vectors(quantization_axis)
-        e_p1 = e_q[1]
-        e_0 = e_q[0]
-        e_m1 = e_q[-1]
-
-        polarization_vector = e_p1 * epsilon_vector[0] + e_0 * epsilon_vector[1] + e_m1 * epsilon_vector[2] 
-        return cls(polarization_vector, propagation_direction)
-
-    def dipole_components(self, quantization_axis: Vector = np.array([0., 0., 1.])) -> dict[int, complex]:
-        """ Spherical (dipole) components eps_q, keyed by q = +1, 0, -1, with polarization vector = sum_q eps_q e_q. """
-        e_q = _spherical_basis_vectors(quantization_axis)
-        eps_p1 = np.vdot(e_q[1], self.vector)
-        eps_0 = np.vdot(e_q[0], self.vector)
-        eps_m1 = np.vdot(e_q[-1], self.vector)
-        components = np.array([eps_p1, eps_0, eps_m1])
-        return dict(zip((1, 0, -1), components)) 
-
-    @staticmethod
-    def rank2_spherical_basis(quantization_axis: Vector = np.array([0., 0., 1.])) -> dict[int, Matrix]:
-        """ Orthonormal rank-2 spherical basis tensors E_q = sum_{m1, m2} <1 m1; 1 m2 | 2 q> e_m1 (x) e_m2, q = -2..2.
-
-            Built from the rank-1 spherical basis vectors e_m (Steck, eq. 7.188); orthonormal in the sense
-            sum_ij conj(E_q)_ij (E_q')_ij = delta_qq'.
-        """
-        e = _spherical_basis_vectors(quantization_axis)
-        tensors = {}
-        for q in range(-2, 3):
-            T = np.zeros((3, 3), dtype=complex)
-            for m1 in (-1, 0, 1):
-                m2 = q - m1
-                if abs(m2) <= 1:
-                    T += float(clebsch_gordan(1, 1, 2, m1, m2, q)) * np.outer(e[m1], e[m2])
-            tensors[q] = T
-        return tensors
-
-    def quadrupole_components(self, quantization_axis: Vector = np.array([0., 0., 1.])) -> dict[int, complex]:
-        """ Rank-2 polarization components C_q, q = -2..2, of the E2 geometry tensor eps (x) n_hat.
-
-            C_q = sum_ij conj(E_q)_ij eps_i n_j = sum_{m1, m2} <1 m1; 1 m2 | 2 q> eps_m1 n_m2, where eps_m and n_m are
-            the spherical components of the polarization and propagation unit vectors. For an E2 coupling these play
-            the role eps_q plays for E1: sum_ij eps_i n_j Q_ij = sum_q C_q Q_q for a symmetric traceless tensor Q.
-        """
-        n_hat = _unit_vector(self.n_hat)
-        tensors = self.rank2_spherical_basis(quantization_axis)
-        return {q: complex(np.einsum('ij,i,j->', np.conj(tensors[q]), self.vector, n_hat)) for q in range(-2, 3)}
