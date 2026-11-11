@@ -23,6 +23,13 @@ class JaqalpaqIntegrationTester(unittest.TestCase):
         self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
         self.basis = StandardBasis([self.spin_a, self.spin_b])
 
+    def assertGatesEqual(self, gate0, gate1):
+        np.testing.assert_almost_equal(gate0.process_matrix, gate1.process_matrix)
+        # Test that both unitaries are None (in case of some custom
+        # gate) or they are the same
+        if gate0.unitary is not None and gate1.unitary is not None:
+            np.testing.assert_almost_equal(gate0.unitary, gate1.unitary)
+
     def test_simple_circuit(self):
         """Test creating a simple circuit with Jaqalpaq."""
         @circuit
@@ -36,7 +43,7 @@ class JaqalpaqIntegrationTester(unittest.TestCase):
         exp_gate = Gate.from_unitary(self.basis, Unitary.X, [self.spin_a])
         act_gate = circ.gates[0]
 
-        np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
+        self.assertGatesEqual(exp_gate, act_gate)
 
     def test_macro(self):
         """Test a circuit with a macro."""
@@ -59,11 +66,11 @@ class JaqalpaqIntegrationTester(unittest.TestCase):
 
         exp_gate = Gate.from_unitary(self.basis, Unitary.X, [self.spin_a])
         act_gate = circ.gates[0]
-        np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
+        self.assertGatesEqual(exp_gate, act_gate)
 
         exp_gate = Gate.from_unitary(self.basis, Unitary.sqrtX, [self.spin_a])
         act_gate = circ.gates[1]
-        np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
+        self.assertGatesEqual(exp_gate, act_gate)
 
     def test_let_statement(self):
         """Test a circuit with a let statement."""
@@ -79,7 +86,7 @@ class JaqalpaqIntegrationTester(unittest.TestCase):
         exp_gate = Gate.from_unitary(self.basis, Unitary.X, [self.spin_a])
         act_gate = circ.gates[0]
 
-        np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
+        self.assertGatesEqual(exp_gate, act_gate)
 
     def test_map_statement(self):
         """Test qubits that are remapped."""
@@ -95,7 +102,7 @@ class JaqalpaqIntegrationTester(unittest.TestCase):
         exp_gate = Gate.from_unitary(self.basis, Unitary.X, [self.spin_a])
         act_gate = circ.gates[0]
 
-        np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
+        self.assertGatesEqual(exp_gate, act_gate)
 
     def test_gate_with_parameters(self):
         """Test a gate with parameters."""
@@ -114,7 +121,7 @@ class JaqalpaqIntegrationTester(unittest.TestCase):
         exp_gate = Gate.from_unitary_function(self.basis, Unitary.R, params, [self.spin_a])
         act_gate = circ.gates[0]
 
-        np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
+        self.assertGatesEqual(exp_gate, act_gate)
 
     def test_subcircuit_block(self):
         """Test a circuit with subcircuits."""
@@ -130,7 +137,7 @@ class JaqalpaqIntegrationTester(unittest.TestCase):
         exp_gate = Gate.from_unitary(self.basis, Unitary.X, [self.spin_a])
         act_gate = circ.gates[0]
 
-        np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
+        self.assertGatesEqual(exp_gate, act_gate)
 
     def test_unknown_gate(self):
         """Test a circuit with a gate without a standard Ionsim mapping."""
@@ -152,7 +159,7 @@ class JaqalpaqIntegrationTester(unittest.TestCase):
         exp_gate = Gate.from_unitary(self.basis, Unitary.I, [self.spin_a])
         act_gate = circ.gates[0]
 
-        np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
+        self.assertGatesEqual(exp_gate, act_gate)
 
     def test_loop(self):
         """Test that loops are unrolled."""
@@ -168,7 +175,7 @@ class JaqalpaqIntegrationTester(unittest.TestCase):
         exp_gate = Gate.from_unitary(self.basis, Unitary.X, [self.spin_a])
         act_gate = circ.gates[0]
 
-        np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
+        self.assertGatesEqual(exp_gate, act_gate)
         self.assertEqual(4, len(circ.gates))
         
 
@@ -191,5 +198,5 @@ class JaqalpaqIntegrationTester(unittest.TestCase):
         exp_gate = Gate.from_unitary(self.basis, Unitary.X, [self.spin_a])
         act_gate = circ.gates[0]
 
-        np.testing.assert_almost_equal(exp_gate.process_matrix, act_gate.process_matrix)
+        self.assertGatesEqual(exp_gate, act_gate)
         self.assertEqual(2, len(circ.gates))
