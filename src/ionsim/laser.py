@@ -37,7 +37,7 @@ def _unit_vector(vec: Vector) -> Vector:
     v = np.asarray(vec)
     norm = np.linalg.norm(v)
     if norm < 1E-9:
-        raise ValueError("Cannot normalize a vector with norm near zero. Computed norm {norm}")
+        raise IonSimError(f"Cannot normalize a vector with norm near zero. Computed norm {norm}")
     return v/norm
 
 def _perpendicular_basis(n_hat: Vector, ref_axis: Vector | None=None) -> tuple[Vector, Vector]:
@@ -99,7 +99,7 @@ class Polarization:
         norm = np.sqrt(np.vdot(self.vector, self.vector).real)
         # Check normalization is near 1 
         if norm < 1E-9: 
-            raise ValueError("Cannot normalize a vector with norm near zero. Computed norm {norm}")
+            raise IonSimError(f"Cannot normalize a vector with norm near zero. Computed norm {norm}")
 
         if np.abs(norm - 1.) > NUMERICAL_EQUIVALENCE_THRESHOLD: 
             normalized_vector = self.vector / norm
@@ -270,7 +270,7 @@ class Laser():
     frequency: float
     polarization: Polarization 
     beam_profile: BeamProfile 
-    power: float
+    power: float | None
     modulation_functions: dict | None=None #e.g. {'phase': Callable, 'amplitude' : Callable, 'frequency' : Callable}
     MODULATION_KEYS = ('amplitude', 'phase', 'frequency')
 
@@ -278,7 +278,7 @@ class Laser():
         # Safety checks on propagation vector  
         if hasattr(self.propagation_vector, "__len__"):
             if len(self.propagation_vector) != 3: 
-                raise ValueError(f"Specify a 3-component vector for the beam pointing unit vector 'n hat'. Current input has {len(self.propagation_vector)} components.")
+                raise IonSimError(f"Specify a 3-component vector for the beam pointing unit vector 'n hat'. Current input has {len(self.propagation_vector)} components.")
         else:
             raise TypeError(f"Propagation vector must be a vector (numpy array), received a {type(self.propagation_vector)}.") 
         assert len(self.propagation_vector) == 3
@@ -379,11 +379,11 @@ class Laser():
         if target.ndim != 0 or np.iscomplexobj(target) or not np.isfinite(target) or target <= 0.:
             raise IonSimError(f"target_rabi_frequency must be a positive real number (rad/s), got {target_rabi_frequency}.")
         transition_frequency = excited_level.energy - ground_level.energy
-        if transition_frequency <= 0.:
+        if transition_frequency <= NUMERICAL_EQUIVALENCE_THRESHOLD:
             raise IonSimError(f"Excited level {excited_level.name} must be above ground level {ground_level.name}; "
                               f"transition frequency is {transition_frequency} rad/s.")
         frequency = transition_frequency + detuning
-        if frequency <= 0.:
+        if frequency <= NUMERICAL_EQUIVALENCE_THRESHOLD:
             raise IonSimError(f"Laser frequency (transition frequency + detuning) must be positive, got {frequency} rad/s.")
         unit_field_laser = cls.from_frequency(frequency, propagation_vector, 0., polarization,
                                               PlaneWave.from_peak_electric_field_magnitude(1.), None)
@@ -422,8 +422,8 @@ class Laser():
     def detuning_from_level_transition(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel) -> float:
         """ Computes detuning defined as laser_frequency - transition_frequency in rad/s of the laser from a transition frequency in rad/s """ 
         transition_frequency = excited_level.energy - ground_level.energy
-        if transition_frequency <= 0.:
-            raise IonSimError(f"Excited level is lower energy than ground level input. Transition frequency is negative or zero: {transition_frequency}")
+        if transition_frequency <= NUMERICAL_EQUIVALENCE_THRESHOLD:
+            raise IonSimError(f"Excited level is lower energy than ground level input. Transition frequency is negative or nearly zero: {transition_frequency}")
         return self.detuning_from_transition_frequency(transition_frequency)
 
     def rabi_frequency(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel,
@@ -776,7 +776,7 @@ class Laser():
     def _parse_motional_mode_input(basis: Basis, target_modes: list[MotionalMode]) -> list[MotionalMode]:
         """ Parses the target mode list input: a non-empty list of distinct MotionalMode DOFs of the basis,
             each with Fock levels 0, 1, ..., N-1 in order. """
-        if isinstance(target_modes, MotionalMode) or not isinstance(target_modes, (list, tuple)):
+        if not isinstance(target_modes, (list, tuple)):
             raise IonSimError(f"target_modes must be a list of MotionalMode DOFs, got {type(target_modes).__name__}; "
                               f"wrap a single mode in a list, e.g. [mode].")
         if not target_modes:
@@ -884,8 +884,8 @@ class Laser():
 
         coupling_operators = []
         # Build coupling operator for each |g>, |e> pairing
-        for ground_name in [level.name for level in ground_levels]:
-            for excited_name in [level.name for level in excited_levels]:
+        for ground_name in (level.name for level in ground_levels):
+            for excited_name in (level.name for level in excited_levels):
                 if ground_name == excited_name:
                     raise IonSimError(f"Excited level {excited_name} matches the ground level {ground_name}.")
                 ground_index, excited_index = level_index[ground_name], level_index[excited_name]

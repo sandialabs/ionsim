@@ -117,17 +117,6 @@ class TestDegreeOfFreedom(unittest.TestCase):
                     cg_coeffs[(ground_level.name, excited_level.name)][q] = compute_hyperfine_clebsch_gordan_coefficient(ground_level, excited_level, q, 1) 
                     self.assertAlmostEqual(cg_coeffs[(ground_level.name, excited_level.name)][q], 0., places=8)
 
- #        print(self.Yb_atom2.energy_levels[2].name)
- #        cg_coeffs = {}
- #        for ground_level in self.Yb_atom2.energy_levels[0:2]:
- #            for excited_level in self.Yb_atom2.energy_levels[2:]:
- #                cg_coeffs[(ground_level.name, excited_level.name)] = {} 
- #                for q in range(-2,3):
- #                    cg_coeffs[(ground_level.name, excited_level.name)][q] = compute_hyperfine_clebsch_gordan_coefficient(ground_level, excited_level, q, 2) 
- #                    print((ground_level.name, excited_level.name))
- #                    self.assertAlmostEqual(cg_coeffs[(ground_level.name, excited_level.name)][q], 0., places=8)
- #                    print(cg_coeffs[(ground_level.name, excited_level.name)][q])
-
     def test_Ca40_transition_amplitudes(self):
         """Test the energy levels of spin_c."""
         expected_levels_count = 2  # Based on the output for spin_c
