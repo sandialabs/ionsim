@@ -17,6 +17,21 @@ from ionsim.gate_set_model import GateSetModel, CIRCUIT_NOISE
 from ionsim.gst_circuit_parser import GstCircuit, GstGate, gst_gate_from_label
 
 
+def _scaled_pseudo_inverse(fisher_information: Matrix, theta: Vector, tolerance: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """ (pseudo-inverse of J = I s s^T, s, undetermined) for a Fisher information matrix I: J is I in units of each parameter's
+        magnitude, s_i = |theta_i| (1 where theta_i = 0); directions of J with eigenvalues below tolerance times the largest
+        count as undetermined, and a parameter with a component along them is flagged in the boolean vector undetermined. """
+    theta = np.asarray(theta, dtype=float)
+    scale = np.where(theta != 0., np.abs(theta), 1.)
+    scaled = np.asarray(fisher_information, dtype=float) * np.outer(scale, scale)
+    scaled = (scaled + scaled.T) / 2.
+    eigenvalues, eigenvectors = np.linalg.eigh(scaled)
+    determined = eigenvalues > tolerance * max(eigenvalues.max(), 1e-300)
+    pseudo_inverse = (eigenvectors[:, determined] / eigenvalues[determined]) @ eigenvectors[:, determined].T
+    undetermined = (eigenvectors[:, ~determined]**2).sum(axis=1) > 1e-6
+    return pseudo_inverse, scale, undetermined
+
+
 def cramer_rao_bounds(fisher_information: Matrix, theta: Vector, relative: bool=False, tolerance: float=1e-10) -> np.ndarray:
     """ Cramer-Rao bounds sqrt(diag(I^(-1))) on the standard deviations of the estimates of the parameters theta from a Fisher
         information matrix I (same parameter order); with relative=True, divided by |theta_i| (nan where theta_i = 0).
@@ -27,19 +42,74 @@ def cramer_rao_bounds(fisher_information: Matrix, theta: Vector, relative: bool=
         undetermined and gets nan; the others get sqrt(diag(J^+)) s, i.e. their bounds given the determined combinations.
     """
     theta = np.asarray(theta, dtype=float)
-    scale = np.where(theta != 0., np.abs(theta), 1.)
-    scaled = np.asarray(fisher_information, dtype=float) * np.outer(scale, scale)
-    scaled = (scaled + scaled.T) / 2.
-    eigenvalues, eigenvectors = np.linalg.eigh(scaled)
-    determined = eigenvalues > tolerance * max(eigenvalues.max(), 1e-300)
-    pseudo_inverse = (eigenvectors[:, determined] / eigenvalues[determined]) @ eigenvectors[:, determined].T
+    pseudo_inverse, scale, undetermined = _scaled_pseudo_inverse(fisher_information, theta, tolerance)
     bounds = np.sqrt(np.clip(np.diag(pseudo_inverse), 0., None)) * scale
-    undetermined = (eigenvectors[:, ~determined]**2).sum(axis=1) > 1e-6
     bounds[undetermined] = np.nan
     if relative:
         with np.errstate(divide='ignore', invalid='ignore'):
             bounds = np.where(theta != 0., bounds / np.abs(theta), np.nan)
     return bounds
+
+
+def information_shares(group_fisher_information: list[Matrix]) -> np.ndarray:
+    """ Diagonal information share s_ig = (I_g)_ii / I_ii of each group g of circuits (I_g: the group's Fisher information,
+        I = sum_g I_g) about each parameter i: the fraction of the information about theta_i that group g carries if every
+        other parameter were known (correlations ignored). Array (n_parameters, n_groups); nan where I_ii = 0. """
+    groups = np.array([np.asarray(f, dtype=float) for f in group_fisher_information])
+    diagonals = np.diagonal(groups, axis1=1, axis2=2).T                     # (n_parameters, n_groups)
+    total = diagonals.sum(axis=1, keepdims=True)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        return np.where(total > 0., diagonals / total, np.nan)
+
+
+def information_weights(group_fisher_information: list[Matrix], theta: Vector, tolerance: float=1e-10) -> np.ndarray:
+    """ Information weight of each group g of circuits for each parameter i, correlations with the other parameters included:
+
+            w_ig = [I^-1 I_g I^-1]_ii / [I^-1]_ii ,     I = sum_g I_g
+
+        To first order the estimate is theta_hat_i - theta_i = v_i^T sum_g S_g, with v_i = I^-1 e_i and S_g the score (gradient
+        of the log-likelihood) of group g's data, independent between groups with Cov(S_g) = I_g. So Var(theta_hat_i) =
+        sum_g v_i^T I_g v_i, and w_ig is the fraction of the variance of theta_hat_i due to the shot noise of group g's data:
+        0 <= w_ig <= 1, sum_g w_ig = 1. Equivalently, w_ig is group g's share of the information along u_i = v_i / [I^-1]_ii,
+        the change of theta_i by one unit with the other parameters compensating as well as possible (e_i minus its
+        I-orthogonal projection onto the other parameters' directions); u_i^T I u_i = 1/[I^-1]_ii is the effective information.
+
+        Unlike the diagonal share (information_shares), w does not depend on how the other parameters are defined (any
+        reparameterization that keeps theta_i). It does not flag groups that matter only by determining correlated parameters
+        precisely (their w can be ~0): information_dependences does. Array (n_parameters, n_groups); nan for parameters the
+        total information does not determine (see cramer_rao_bounds for theta and tolerance, used for the scaling).
+    """
+    groups = [np.asarray(f, dtype=float) for f in group_fisher_information]
+    pseudo_inverse, scale, undetermined = _scaled_pseudo_inverse(sum(groups), theta, tolerance)
+    outer = np.outer(scale, scale)
+    variances = np.diag(pseudo_inverse)
+    weights = np.array([np.diag(pseudo_inverse @ (f * outer) @ pseudo_inverse) for f in groups]).T
+    with np.errstate(divide='ignore', invalid='ignore'):
+        weights = weights / variances[:, None]
+    weights[undetermined] = np.nan
+    return weights
+
+
+def information_dependences(group_fisher_information: list[Matrix], theta: Vector, tolerance: float=1e-10) -> np.ndarray:
+    """ Dependence of each parameter i on each group g of circuits: the factor by which its Cramer-Rao bound grows when the
+        group is removed, every parameter estimated jointly,
+
+            D_ig = b_i(I - I_g) / b_i(I) = sqrt( J_i(I) / J_i(I - I_g) ),     J_i(I) = 1/[I^-1]_ii (effective information)
+
+        D_ig >= 1; inf where theta_i is determined by I but not without g; nan where I does not determine it. A group can be
+        essential (large D) while carrying little information about theta_i itself (small share and weight), by determining
+        parameters correlated with theta_i. Array (n_parameters, n_groups); theta and tolerance as in cramer_rao_bounds.
+    """
+    groups = [np.asarray(f, dtype=float) for f in group_fisher_information]
+    total = sum(groups)
+    full = cramer_rao_bounds(total, theta, tolerance=tolerance)
+    dependences = np.empty((len(full), len(groups)))
+    for g, f in enumerate(groups):
+        without = cramer_rao_bounds(total - f, theta, tolerance=tolerance)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            dependences[:, g] = np.where(np.isfinite(without), without / full, np.inf)
+    dependences[~np.isfinite(full)] = np.nan
+    return dependences
 
 
 class GSTCircuitPlanner:
@@ -671,6 +741,37 @@ class GSTCircuitPlanner:
         theta = self._require_gate_set_model().parse_theta(parameter_values)
         accumulated = np.cumsum(np.asarray(fisher_information_matrices, dtype=float), axis=0)
         return np.array([cramer_rao_bounds(fisher, theta, relative) for fisher in accumulated])
+
+    def compute_information_attribution(self, fisher_information_matrices: np.ndarray | dict, groups: list,
+                                        parameter_values: Vector | dict | None=None) -> dict:
+        """ Which groups of circuits (e.g. experiment types) determine which parameters: per parameter and group, the diagonal
+            information share, the information weight (fraction of the estimate's variance from the group, correlations
+            included) and the dependence (factor by which the parameter's Cramer-Rao bound grows without the group). See
+            information_shares, information_weights and information_dependences. All three are local (at parameter_values)
+            and independent of a common number of shots per circuit.
+
+            - fisher_information_matrices: per-circuit Fisher information, an array (n_circuits, n_parameters, n_parameters)
+                (compute_fisher_information_matrices) or a dictionary of matrices (compute_design_fisher_information).
+            - groups: a group label for each circuit, in the same order.
+            - parameter_values: as in compute_cramer_rao_bounds (scaling of the determinacy test).
+
+            Returns {'groups': labels in order of first appearance, 'parameter_names': ..., 'share', 'weight', 'dependence':
+            arrays (n_parameters, n_groups)}
+        """
+        gate_set_model = self._require_gate_set_model()
+        theta = gate_set_model.parse_theta(parameter_values)
+        if isinstance(fisher_information_matrices, dict):
+            fisher_information_matrices = list(fisher_information_matrices.values())
+        matrices = np.asarray(fisher_information_matrices, dtype=float)
+        groups = list(groups)
+        if len(groups) != len(matrices):
+            raise ValueError(f"{len(groups)} group labels for {len(matrices)} circuits")
+        labels = list(dict.fromkeys(groups))
+        group_information = [matrices[[k for k, g in enumerate(groups) if g == label]].sum(axis=0) for label in labels]
+        return {'groups': labels, 'parameter_names': list(gate_set_model.parameter_names),
+                'share': information_shares(group_information),
+                'weight': information_weights(group_information, theta),
+                'dependence': information_dependences(group_information, theta)}
 
     def write_circuit_design(self, filepath):
         """ Writes a design yaml file with circuit design information """

@@ -11,9 +11,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
 import yaml
 
-from ionsim.gst_circuit_planner import GSTCircuitPlanner
+from ionsim.gst_circuit_planner import (GSTCircuitPlanner, information_dependences, information_shares,
+                                         information_weights)
 
 X, Y, IDLE = 'Gxpi2:0', 'Gypi2:0', 'idle'
 
@@ -108,3 +110,50 @@ class TestDuplicateCircuits(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestInformationAttribution(unittest.TestCase):
+    """ information_shares, information_weights, information_dependences (module functions of gst_circuit_planner) """
+
+    def setUp(self):
+        rng = np.random.default_rng(3)
+        self.groups = []
+        for _ in range(4):                                  # four groups, each informing random combinations of 3 parameters
+            A = rng.standard_normal((2, 3))
+            self.groups.append(A.T @ A)
+        self.theta = np.array([0.5, 2., -1.])
+
+    def test_weights_partition_the_variance(self):
+        """ w >= 0, sum_g w_ig = 1, and sum_g v^T I_g v = [I^-1]_ii """
+        w = information_weights(self.groups, self.theta)
+        self.assertTrue(np.all(w >= -1e-12))
+        np.testing.assert_allclose(w.sum(axis=1), 1., rtol=1e-10)
+        C = np.linalg.inv(sum(self.groups))
+        np.testing.assert_allclose(w[:, 1], np.diag(C @ self.groups[1] @ C) / np.diag(C), rtol=1e-8)
+
+    def test_weights_do_not_depend_on_the_other_parameters_definition(self):
+        """ reparameterizing the other parameters (keeping theta_0) leaves w_0g unchanged; the diagonal share changes """
+        T = np.array([[1., 0., 0.], [0.7, 1., 0.3], [-0.4, 0.2, 1.]])    # theta = T phi with phi_0 = theta_0 (first row e_0)
+        transformed = [T.T @ f @ T for f in self.groups]                 # Fisher information about phi
+        phi = np.linalg.solve(T, self.theta)
+        np.testing.assert_allclose(information_weights(transformed, phi)[0], information_weights(self.groups, self.theta)[0],
+                                   rtol=1e-8)
+        self.assertFalse(np.allclose(information_shares(transformed)[0], information_shares(self.groups)[0]))
+
+    def test_uncorrelated_parameters(self):
+        """ with diagonal information the weight equals the share """
+        diagonal = [np.diag(np.diag(f)) for f in self.groups]
+        np.testing.assert_allclose(information_weights(diagonal, self.theta), information_shares(diagonal), rtol=1e-10)
+
+    def test_dependence(self):
+        """ D >= 1; D = inf for a group without which a parameter is not determined; nan for undetermined parameters """
+        D = information_dependences(self.groups, self.theta)
+        self.assertTrue(np.all(D >= 1. - 1e-10))
+        a = np.outer([1., 1., 0.], [1., 1., 0.])                         # group a: theta_0 + theta_1
+        b = np.diag([0., 1., 0.])                                         # group b: theta_1 alone; theta_2: never
+        D = information_dependences([a, b], self.theta)
+        self.assertTrue(np.isinf(D[0, 1]) and np.isinf(D[1, 1]) and np.isinf(D[0, 0]))
+        self.assertTrue(np.all(np.isnan(D[2])))
+        self.assertTrue(np.all(np.isnan(information_weights([a, b], self.theta)[2])))
+        # theta_0 = (theta_0 + theta_1) - theta_1: equal unit information in a and b, so half the variance from each
+        np.testing.assert_allclose(information_weights([a, b], self.theta)[0], [0.5, 0.5], rtol=1e-10)
