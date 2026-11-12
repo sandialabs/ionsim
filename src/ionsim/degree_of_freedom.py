@@ -80,7 +80,6 @@ class MotionalMode(DegreeOfFreedom):
 class AtomicStructure(DegreeOfFreedom):
     """An atomic structure object, containing atomic internal energy levels corresponding to angular momentum eigenstates."""
     energy_levels: list[AtomicInternalEnergyLevel | SinkLevel]
- #    # TODO: Take in quantization axis or magnetic field as a vector to set the quantization axis 
     atomic_mass: float 
     atomic_charge: int 
     name: str | None = None 
