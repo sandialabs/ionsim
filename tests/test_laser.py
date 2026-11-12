@@ -203,8 +203,10 @@ class TestPolarizationAndQuantizationAxis(unittest.TestCase):
         polarization = Polarization(np.array([0., 3., 4.j]), np.array([2., 0., 0.]))    # unnormalized inputs
         np.testing.assert_allclose(polarization.n_hat, X)
         np.testing.assert_allclose(polarization.jones_vector, np.array([0., 0.6, 0.8j]))
-        with self.assertRaises(ValueError):                                              # read-only
-            polarization.jones_vector[0] = 1.
+        polarization.jones_vector[0] = 1.                                                # edits a copy only
+        np.testing.assert_allclose(polarization.jones_vector, np.array([0., 0.6, 0.8j]))
+        with self.assertRaises(AttributeError):                                          # no setter
+            polarization.jones_vector = X
         with self.assertRaises(IonSimError):                                             # not transverse
             Polarization(np.array([1., 1., 0.]), X)
         with self.assertRaises(IonSimError):                    # laser and polarization disagree on the propagation direction

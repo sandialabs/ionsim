@@ -277,7 +277,6 @@ class GaussianBeam(BeamProfile):
         focus = np.zeros(3) if focus is None else np.array(focus, dtype=float)
         if focus.shape != (3,):
             raise IonSimError(f"Gaussian beam focus must be a 3-component position (m), got shape {focus.shape}.")
-        focus.setflags(write=False)
         self._waist, self._wavelength, self._focus = float(waist), float(wavelength), focus
 
     @property
@@ -293,7 +292,7 @@ class GaussianBeam(BeamProfile):
     @property
     def focus(self) -> Vector:
         """ Focus position [m]. """
-        return self._focus
+        return (self._focus).copy()
 
     def __repr__(self):
         return f"GaussianBeam(waist={self.waist}, wavelength={self.wavelength}, focus={self.focus})"
