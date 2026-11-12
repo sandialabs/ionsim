@@ -97,12 +97,12 @@ def _project_spherical(v: Vector, quantization_axis: Vector) -> dict[int, comple
 class Polarization:
     """ Complex Cartesian polarization (Jones) vector in the lab frame, perpendicular to a propagation direction (e.g. of a laser).
 
-        polarization_vector: complex 3-component vector 
+        polarization_vector: complex 3-component Jones vector in the lab frame (Cartesian coordinates); overall phase is kept and acts like the laser phase
         propagation_direction: real 3-component vector 
 
         Derived, normalized attributes:
             jones_vector: the unit complex polarization vector, sum_i |eps_i|^2 = 1
-            n_hat: the unit propagation direction
+            n_hat: the unit light propagation direction
     """
 
     def __init__(self, polarization_vector: Vector, propagation_direction: Vector):
@@ -138,7 +138,7 @@ class Polarization:
 
     @property
     def n_hat(self) -> Vector:
-        """ Unit propagation direction. """
+        """ Unit light propagation direction. """
         return (self._n_hat).copy()
 
     def __repr__(self):
