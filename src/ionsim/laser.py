@@ -925,7 +925,7 @@ class Laser():
             # carrier, or sideband with the atom before the mode in the basis: the atom's g/e level order decides;
             # sideband with the mode first: blue |g,n> -> |e,n+1> has the ground state first, red |g,n> -> |e,n-1> the excited.
         raising_matrix = np.asarray(raising_matrix, dtype=complex)
-        if np.any(np.abs(np.diag(raising_matrix)) > 0.):
+        if np.any(np.abs(np.diag(raising_matrix)) > NUMERICAL_EQUIVALENCE_THRESHOLD):
             raise IonSimError("Light-atom couplings must be off-diagonal.")
         # Same threshold as CouplingOperator.from_matrix, so the orientation is decided by the elements it keeps.
         rows, columns = np.nonzero(np.abs(raising_matrix) > SMALLEST_ENERGY_SCALE)
