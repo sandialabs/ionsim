@@ -786,11 +786,9 @@ class Laser():
             wavevector, i.e. a single-photon transition; a two-photon (Raman) transition needs the difference wavevector
             of its two beams, which a single Laser does not describe.
         """
-        sideband = self._parse_sideband(sideband)
+        target_atoms = self._parse_atomic_input(basis, target_atoms)
         if not isinstance(ion_trap, TrappedIonCrystal):
             raise IonSimError(f"ion_trap must be a TrappedIonCrystal (e.g. an IonChain), got {type(ion_trap).__name__}.")
-        target_atoms = self._parse_atomic_input(basis, target_atoms)
-        target_modes = self._parse_motional_mode_input(basis, target_modes)
         if len(ion_indices) != len(target_atoms):
             raise IonSimError(f"Received {len(ion_indices)} ion_indices for {len(target_atoms)} target atoms; give one trap ion "
                               f"index per target atom, in the same order.")
