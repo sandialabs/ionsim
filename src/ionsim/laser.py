@@ -767,17 +767,17 @@ class Laser():
     def build_sideband_coupling_operators_from_trap(self, sideband: SidebandType | str, basis: Basis, target_atoms: list[AtomicStructure] | None,
                                                     target_modes: list[MotionalMode], ground_levels: list[AtomicInternalEnergyLevel],
                                                     excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int,
-                                                    ion_trap: TrappedIonCrystal, ion_indices: list[int], mode_indices: list[int],
+                                                    ion_trap: TrappedIonCrystal, ion_indices_in_trap: list[int], mode_indices: list[int],
                                                     frequency_shift_angular: float = 0., debye_waller: bool = False,
                                                     include_counter_rotating: bool = False,
                                                     quantization_axis: Vector = Z_AXIS) -> list[CouplingOperator]:
         """ Sideband couplings as in build_sideband_coupling_operators, with the Lamb-Dicke matrix computed by the
             trapped-ion mode analysis ion_trap (e.g. an IonChain) for this laser's lab-frame wavevector:
-                eta = ion_trap.get_lamb_dicke_parameters_for_ions_and_modes(ion_indices, mode_indices, self.wavevector)
+                eta = ion_trap.get_lamb_dicke_parameters_for_ions_and_modes(ion_indices_in_trap, mode_indices, self.wavevector)
 
-            ion_indices: the trap ion of each target atom, ion_indices[i] for target_atoms[i] (for target_atoms=None, the
+            ion_indices_in_trap: the trap ion of each target atom, ion_indices_in_trap[i] for target_atoms[i] (for target_atoms=None, the
                 atoms of the basis in basis order). Stored ion indices, i.e. rows of ion_trap.calculate_lamb_dicke_parameters;
-                ion_trap.ion_indices[k] is the user-supplied index (e.g. position in from_atomic_structure_basis) of stored
+                ion_trap.ion_indices_in_trap[k] is the user-supplied index (e.g. position in from_atomic_structure_basis) of stored
                 ion k. For an IonChain, stored ions are ordered along the chain axis.
             mode_indices: the trap mode of each target mode, mode_indices[j] for target_modes[j]. Global mode indices 
 
@@ -789,21 +789,21 @@ class Laser():
         target_atoms = self._parse_atomic_input(basis, target_atoms)
         if not isinstance(ion_trap, TrappedIonCrystal):
             raise IonSimError(f"ion_trap must be a TrappedIonCrystal (e.g. an IonChain), got {type(ion_trap).__name__}.")
-        if len(ion_indices) != len(target_atoms):
-            raise IonSimError(f"Received {len(ion_indices)} ion_indices for {len(target_atoms)} target atoms; give one trap ion "
+        if len(ion_indices_in_trap) != len(target_atoms):
+            raise IonSimError(f"Received {len(ion_indices_in_trap)} ion_indices_in_trap for {len(target_atoms)} target atoms; give one trap ion "
                               f"index per target atom, in the same order.")
         if len(mode_indices) != len(target_modes):
             raise IonSimError(f"Received {len(mode_indices)} mode_indices for {len(target_modes)} target modes; give one trap mode "
                               f"index per target mode, in the same order.")
-        lamb_dicke_parameters = ion_trap.get_lamb_dicke_parameters_for_ions_and_modes(ion_indices, mode_indices, self.wavevector)
-        self._check_targets_match_trap(target_atoms, target_modes, ion_trap, ion_indices, mode_indices)
+        lamb_dicke_parameters = ion_trap.get_lamb_dicke_parameters_for_ions_and_modes(ion_indices_in_trap, mode_indices, self.wavevector)
+        self._check_targets_match_trap(target_atoms, target_modes, ion_trap, ion_indices_in_trap, mode_indices)
         return self.build_sideband_coupling_operators(sideband, basis, target_atoms, target_modes, ground_levels, excited_levels,
                                                       multipole_order, lamb_dicke_parameters, frequency_shift_angular, debye_waller,
                                                       include_counter_rotating, quantization_axis)
 
     @staticmethod
     def _check_targets_match_trap(target_atoms: list[AtomicStructure], target_modes: list[MotionalMode], ion_trap: TrappedIonCrystal,
-                                  ion_indices: list[int], mode_indices: list[int], rtol: float = 1e-9):
+                                  ion_indices_in_trap: list[int], mode_indices: list[int], rtol: float = 1e-9):
         """ Raises if a target mode's frequency differs from its trap mode's, or a target atom's mass or charge from its
             trap ion's. """
         trap_frequencies = ion_trap.normal_mode_frequencies
@@ -816,12 +816,12 @@ class Laser():
                                   f"{mode_index} has {trap_frequencies[mode_index] / (2. * np.pi):.6g} Hz; check mode_indices.")
         masses_amu = ion_trap.atomic_masses / const.value('atomic mass constant')
         charges = ion_trap.atomic_charges
-        for atom, ion_index in zip(target_atoms, ion_indices):
+        for atom, ion_index in zip(target_atoms, ion_indices_in_trap):
             if not (np.isclose(atom.atomic_mass, masses_amu[ion_index], rtol=rtol, atol=0.)
                     and np.isclose(atom.atomic_charge, charges[ion_index], rtol=rtol, atol=0.)):
                 raise IonSimError(f"Target atom {atom.name or atom} (mass {atom.atomic_mass} amu, charge {atom.atomic_charge}) does not "
                                   f"match trap ion {ion_index} (mass {masses_amu[ion_index]:.10g} amu, charge {charges[ion_index]}); "
-                                  f"check ion_indices.")
+                                  f"check ion_indices_in_trap.")
 
     # ---- helpers for the builders ----
     @staticmethod
