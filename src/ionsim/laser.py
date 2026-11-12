@@ -367,7 +367,7 @@ class Laser():
             raise IonSimError(f"Laser frequency and wavelength must satisfy speed of light in vacuum. This is violated with a deviation: {light_physics_deviation}")
 
     @classmethod
-    def from_wavelength(cls, wavelength: float, propagation_vector: Vector, phase: float, polarization: Polarization, beam_profile: Callable,  
+    def from_wavelength(cls, wavelength: float, propagation_vector: Vector, phase: float, polarization: Polarization, beam_profile: BeamProfile,  
                         power: float | None=None, modulation_functions: dict | None=None): 
         """ Constructs laser class from an input wavelength in meters """ 
         frequency = 2 * np.pi * const.c / wavelength  # rad/s 
@@ -380,7 +380,7 @@ class Laser():
         return cls.from_wavelength(wavelength, propagation_vector, phase, polarization, profile, power, modulation_functions) 
 
     @classmethod
-    def from_frequency(cls, frequency: float, propagation_vector: Vector, phase: float, polarization: Polarization, beam_profile: Callable,  
+    def from_frequency(cls, frequency: float, propagation_vector: Vector, phase: float, polarization: Polarization, beam_profile: BeamProfile,  
                         power: float | None=None, modulation_functions: dict | None=None): 
         """ Constructs laser class from an input frequency in rad/s """ 
         wavelength = 2. * np.pi * const.c / frequency   # meters 
