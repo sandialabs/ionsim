@@ -43,7 +43,7 @@ class SidebandType(StrEnum):
 
 ## Vector helper operations
 def _unit_vector(vec: Vector) -> Vector:
-    """ Returns a real unit vector of an input vector """ 
+    """ Returns a unit vector of an input vector """ 
     v = np.asarray(vec)
     norm = np.linalg.norm(v)
     if norm < NUMERICAL_ERROR_THRESHOLD:
