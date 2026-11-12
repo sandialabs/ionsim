@@ -403,11 +403,14 @@ class Laser():
 
     @classmethod
     def gaussian_from_frequency(cls, frequency_angular: float, power_W: float, waist_m: float, propagation_vector: Vector,
-                                polarization: Polarization, phase: float, focus_m: Vector = np.zeros(3),
+                                polarization: Polarization, phase: float, focus_m: Vector = None,
                                 amplitude_modulation_function: Callable | None = None,
                                 phase_modulation_function: Callable | None = None,
                                 frequency_modulation_function: Callable | None = None) -> Laser:
         """ Gaussian laser from its angular frequency [rad/s], power [W], waist [m] and focus position [m]. """
+        if focus_m is None: 
+            focus = np.zeros(3)
+
         wavelength_m = 2. * np.pi * const.c / frequency_angular   # m
         profile = GaussianBeam(waist_m, wavelength_m, focus_m)
         return cls.from_frequency(frequency_angular, propagation_vector, phase, polarization, profile, power_W,
