@@ -152,8 +152,6 @@ class TestMSGateFromLaserSidebands(unittest.TestCase):
         etas = [[ETA], [ETA]]   # rows: atoms (target_atoms=None -> basis order), columns: [mode]
         operators = (blue.build_sideband_coupling_operators('blue', basis, None, [mode], [g], [e], 2, etas)
                      + red.build_sideband_coupling_operators('red', basis, None, [mode], [g], [e], 2, etas))
-        #operators = (blue.build_sideband_coupling_operators(SidebandType.BLUE, basis, None, [mode], [g], [e], 2, etas)
-        #             + red.build_sideband_coupling_operators(SidebandType.RED, basis, None, [mode], [g], [e], 2, etas))
         hamiltonian = Hamiltonian(basis, operators, [-state.energy for state in basis.states], sparse=False)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
