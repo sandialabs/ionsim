@@ -349,7 +349,7 @@ class Laser():
             if len(self.propagation_vector) != 3: 
                 raise IonSimError(f"Specify a 3-component vector for the beam pointing unit vector 'n hat'. Current input has {len(self.propagation_vector)} components.")
         else:
-            raise TypeError(f"Propagation vector must be a vector (numpy array), received a {type(self.propagation_vector)}.") 
+            raise IonSimError(f"Propagation vector must be a vector (numpy array), received a {type(self.propagation_vector)}.") 
         assert len(self.propagation_vector) == 3
         
         if np.abs(np.linalg.norm(self.propagation_unit_vector) - 1.) > NUMERICAL_ERROR_THRESHOLD:
