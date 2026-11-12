@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from typing import Callable
+import numbers
 import warnings
 
 import numpy as np
@@ -672,9 +673,11 @@ class Laser():
     # ---------------------------------------------------------------------------------------------------------------
     # Coupling-operator builders
     #
-    # Light-atom interaction for atom j at equilibrium position 0 (Lamb-Dicke expansion of the field's spatial phase):
-    #     H_j = (Omega/2) e^{i phi} |e><g| exp(i sum_k eta_jk (a_k + a_k^dag)) e^{-i omega t} + h.c.
-    #         ~ (Omega/2) e^{i phi} |e><g| [ 1  +  i sum_k eta_jk a_k  +  i sum_k eta_jk a_k^dag ] e^{-i omega t} + h.c.
+    # Light-atom interaction for atom j at equilibrium position 0 (Lamb-Dicke expansion of the field's spatial phase), with
+    # the ion's displacement along k written in the mode operators as k.dr_j = sum_k (eta_jk a_k + eta_jk^* a_k^dag)
+    # (Hermitian; eta_jk complex in general, real for real mode vectors, where k.dr_j = sum_k eta_jk (a_k + a_k^dag)):
+    #     H_j = (Omega/2) e^{i phi} |e><g| exp(i sum_k (eta_jk a_k + eta_jk^* a_k^dag)) e^{-i omega t} + h.c.
+    #         ~ (Omega/2) e^{i phi} |e><g| [ 1  +  i sum_k eta_jk a_k  +  i sum_k eta_jk^* a_k^dag ] e^{-i omega t} + h.c.
     #                                       carrier   red sideband (n -> n-1)   blue sideband (n -> n+1)
     # Every term oscillates at the same laser frequency omega. In the interaction picture
     # (rotating_frame_energies = -E of each basis state, motional energies included) the frame supplies the transition
@@ -682,7 +685,7 @@ class Laser():
     # builders share the same oscillation-rate and modulation conventions (_carrier_sign, _modulation_function_for_level_pair).
     #
     # Counter-rotating terms (include_counter_rotating=True, opt-in). The real field also contributes
-    #     (Omega~/2) e^{-i phi} |e><g| exp(-i sum_k eta_jk (a_k + a_k^dag)) e^{+i omega t} + h.c.,
+    #     (Omega~/2) e^{-i phi} |e><g| exp(-i sum_k (eta_jk a_k + eta_jk^* a_k^dag)) e^{+i omega t} + h.c.,
     # with Omega~ the Rabi frequency for the conjugate polarization eps* (and -i k for E2; rabi_frequency(counter_rotating=True)).
     # Relative to the co-rotating coupling of the same pair: the stored element's oscillation rate and the Lamb-Dicke
     # parameters change sign, and the modulation function is the complex conjugate. Each counter-rotating coupling is a
@@ -718,27 +721,28 @@ class Laser():
     def build_sideband_coupling_operators(self, sideband: SidebandType | str, basis: Basis, target_atoms: list[AtomicStructure] | None,
                                           target_modes: list[MotionalMode], ground_levels: list[AtomicInternalEnergyLevel],
                                           excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int,
-                                          lamb_dicke_parameters: Matrix | float, frequency_shift_angular: float = 0., debye_waller: bool = False,
+                                          lamb_dicke_parameters: Matrix | complex, frequency_shift_angular: float = 0., debye_waller: bool = False,
                                           include_counter_rotating: bool = False, quantization_axis: Vector = Z_AXIS) -> list[CouplingOperator]:
         """ First red or blue sideband couplings of the requested levels with each requested motional mode.
 
             sideband: SidebandType.RED ('red'): |g, n> <-> |e, n-1>, resonant at omega = omega_0 - omega_mode;
                       SidebandType.BLUE ('blue'): |g, n> <-> |e, n+1>, resonant at omega = omega_0 + omega_mode.
 
-            The coupling element of atom j and mode k is (Omega/2) e^{i phi} (i eta_jk) |e><g| (x) a_k (red) or a_k^dag
-            (blue), where Omega e^{i phi} is the carrier Rabi frequency of the same transition (E1 or E2). 
+            The coupling element of atom j and mode k is (Omega/2) e^{i phi} (i eta_jk) |e><g| (x) a_k (red) or
+            (Omega/2) e^{i phi} (i eta_jk^*) |e><g| (x) a_k^dag (blue), where Omega e^{i phi} is the carrier Rabi frequency of
+            the same transition (E1 or E2) and eta_jk is the coefficient of a_k in k.dr_j = sum_k (eta_jk a_k + eta_jk^* a_k^dag).
 
             target_atoms: addressed AtomicStructure DOFs; all of the basis (in basis order) if None. Levels are matched by
                 name (as for the carrier).
             target_modes: the MotionalMode DOFs to couple (required, non-empty). Each must be in the basis; a sideband
                 operator is built for every (target atom, target mode) pair.
-            lamb_dicke_parameters: signed Lamb-Dicke float or matrix eta[i, j] for target_atoms[i] and target_modes[j], shape
-                (len(target_atoms), len(target_modes)). 
+            lamb_dicke_parameters: Lamb-Dicke number or matrix eta[i, j] for target_atoms[i] and target_modes[j], shape
+                (len(target_atoms), len(target_modes)); real (signed) or complex, the coefficient of a_k as above.
             frequency_shift_angular: rad/s added to the laser frequency, as for the carrier.
-            debye_waller: if True, use the exact Delta n = +/-1 matrix elements of exp(i eta (a + a^dag)) for this mode,
-                eta e^{-eta^2/2} L_n^1(eta^2) / sqrt(n+1) instead of eta sqrt(n+1) (Fock.debye_waller_lowering).
+            debye_waller: if True, use the exact Delta n = +/-1 matrix elements of exp(i (eta a + eta^* a^dag)) for this mode,
+                e^{-|eta|^2/2} L_n^1(|eta|^2) / sqrt(n+1) in place of sqrt(n+1) (Fock.debye_waller_lowering with |eta|).
             include_counter_rotating: also return the counter-rotating sideband couplings, (Omega~/2) e^{-i phi} (-i eta)
-                |e><g| (x) a_k (red) or a_k^dag (blue) at e^{+i omega t}. 
+                |e><g| (x) a_k (red) or (Omega~/2) e^{-i phi} (-i eta^*) |e><g| (x) a_k^dag (blue) at e^{+i omega t}. 
             quantization_axis: lab-frame quantization axis of the atoms, as for the carrier.
 
             The basis may order atoms and modes in any way: the kept (upper-triangle) element of each coupling and its
@@ -756,7 +760,7 @@ class Laser():
                     eta = etas[(atom, mode)]
                     if np.abs(eta) < NUMERICAL_EQUIVALENCE_THRESHOLD:
                         continue
-                    # The counter-rotating term carries the field's e^{-i k.r}: eta -> -eta.
+                    # The counter-rotating term carries the field's e^{-i k.r}: eta -> -eta (and so eta^* -> -eta^*).
                     signed_eta = -eta if counter_rotating else eta
                     motional_matrix = basis.enlarge_matrix(self._sideband_motional_matrix(sideband, mode, signed_eta, debye_waller), [mode])
                     coupling_operators.extend(self._atom_coupling_operators(basis, atom, ground_levels, excited_levels, multipole_order,
@@ -785,6 +789,8 @@ class Laser():
             and charge its trap ion's; a mix-up between two identical ions cannot be detected. Uses this laser's own
             wavevector, i.e. a single-photon transition; a two-photon (Raman) transition needs the difference wavevector
             of its two beams, which a single Laser does not describe.
+            With degenerate modes, the mode analysis may return complex Lamb-Dicke parameters from a degenerate subspace
+            it has not orthonormalized (it warns); these are passed through as given.
         """
         target_atoms = self._parse_atomic_input(basis, target_atoms)
         if not isinstance(ion_trap, TrappedIonCrystal):
@@ -873,39 +879,35 @@ class Laser():
         return list(target_modes)
 
     @staticmethod
-    def _lamb_dicke_table(lamb_dicke_parameters: Matrix | float, atom_dofs: list[AtomicStructure], mode_dofs: list[MotionalMode]) -> dict:
-        """ {(atom, mode): eta} from the Lamb-Dicke matrix eta[i, j] for atom_dofs[i] and mode_dofs[j]
-            (shape (len(atom_dofs), len(mode_dofs))). A scalar is accepted only for one atom and one mode. """
-        if isinstance(lamb_dicke_parameters, dict):
-            raise IonSimError("lamb_dicke_parameters must be a matrix eta[i, j] for (target_atoms[i], target_modes[j]), not a dict.")
-        etas = np.asarray(lamb_dicke_parameters)
-        if etas.dtype.kind not in 'biufc':
-            raise IonSimError(f"lamb_dicke_parameters must be numeric, got dtype {etas.dtype}.")
+    def _lamb_dicke_table(lamb_dicke_parameters: Matrix | complex, atom_dofs: list[AtomicStructure], mode_dofs: list[MotionalMode]) -> dict:
+        """ {(atom, mode): eta} from the Lamb-Dicke matrix eta[i, j] for atom_dofs[i] and mode_dofs[j], a numpy array of
+            shape (len(atom_dofs), len(mode_dofs)), real or complex. A number is accepted for one atom and one mode. """
         expected_shape = (len(atom_dofs), len(mode_dofs))
-        if etas.ndim == 0:
+        if isinstance(lamb_dicke_parameters, numbers.Number):
             if expected_shape != (1, 1):
                 raise IonSimError(f"A scalar Lamb-Dicke parameter is only accepted for one target atom and one target mode. Give a "
                                   f"matrix of shape {expected_shape}: rows follow target_atoms, columns follow target_modes.")
-            etas = etas.reshape(1, 1)
+            etas = np.array([[lamb_dicke_parameters]])
+        elif isinstance(lamb_dicke_parameters, np.ndarray):
+            etas = lamb_dicke_parameters
+        else:
+            raise IonSimError(f"lamb_dicke_parameters must be a number or a matrix (numpy array), got {type(lamb_dicke_parameters).__name__}.")
         if etas.shape != expected_shape:
             raise IonSimError(f"lamb_dicke_parameters has shape {etas.shape}, expected {expected_shape}: rows follow target_atoms "
                               f"({len(atom_dofs)}) and columns follow target_modes ({len(mode_dofs)}).")
-        if np.iscomplexobj(etas):
-            if np.any(np.abs(np.imag(etas)) > NUMERICAL_EQUIVALENCE_THRESHOLD * max(np.max(np.abs(etas)), 1.)):
-                raise IonSimError("Lamb-Dicke parameters must be real (fix the phases of degenerate modes first).")
-            etas = np.real(etas)
-        etas = etas.astype(float)
-        if not np.all(np.isfinite(etas)):
-            raise IonSimError("Lamb-Dicke parameters must be finite.")
-        return {(atom, mode): float(etas[i, j]) for i, atom in enumerate(atom_dofs) for j, mode in enumerate(mode_dofs)}
+        return {(atom, mode): complex(etas[i, j]) for i, atom in enumerate(atom_dofs) for j, mode in enumerate(mode_dofs)}
 
     @staticmethod
-    def _sideband_motional_matrix(sideband: SidebandType, mode: MotionalMode, eta: float, debye_waller: bool) -> Matrix:
-        """ i eta a (red) or i eta a^dag (blue) on one mode in its isolated Hilbert space """
+    def _sideband_motional_matrix(sideband: SidebandType, mode: MotionalMode, eta: complex, debye_waller: bool) -> Matrix:
+        """ i eta a (red) or i eta^* a^dag (blue) on one mode in its isolated Hilbert space: the Delta n = -1 / +1 parts of
+            exp(i (eta a + eta^* a^dag)) to first order in eta. With debye_waller, the exact Delta n = -/+1 matrix elements,
+            whose n-dependence depends only on |eta| (Fock.debye_waller_lowering), with the same prefactors i eta / i eta^*. """
         dimension = len(mode.energy_levels)
-        lowering = Fock.debye_waller_lowering(dimension, eta) if debye_waller else Fock.lowering(dimension)
-        motional = lowering if sideband == SidebandType.RED else lowering.conj().T
-        return 1j * eta * motional
+        lowering = Fock.debye_waller_lowering(dimension, abs(eta)) if debye_waller else Fock.lowering(dimension)
+        if sideband == SidebandType.RED:
+            return 1j * eta * lowering
+        assert sideband == SidebandType.BLUE
+        return 1j * np.conj(eta) * lowering.conj().T
 
     def _coupling_operator_from_raising_matrix(self, basis: Basis, raising_matrix: Matrix, frequency_shift_angular: float,
                                                counter_rotating: bool = False) -> CouplingOperator | None:

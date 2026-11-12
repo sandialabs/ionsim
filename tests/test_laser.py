@@ -7,6 +7,7 @@
 # http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE.md file in the root IonSim directory.
 #***************************************************************************************************
 
+import itertools
 import unittest
 import warnings
 
@@ -404,15 +405,15 @@ class TestLaserSidebandCouplings(unittest.TestCase):
                         self.assertGreater(abs(psi[state_index(basis, final_level, final_n)])**2, 1. - 1e-5)
 
     def test_sideband_matrix_elements(self):
-        """Raising elements are (carrier raising element) x i eta sqrt(n+1), on |e,n+1><g,n| (blue) and
-        |e,n><g,n+1| (red), and nothing else."""
+        """Raising elements are (carrier raising element) x i eta^* sqrt(n+1) on |e,n+1><g,n| (blue) and
+        (carrier raising element) x i eta sqrt(n+1) on |e,n><g,n+1| (red), and nothing else, for real and complex eta."""
         (atom,), mode, basis, g, e = self.build()
         laser = self.laser(e.energy - g.energy)
         carrier_raising = laser.build_atom_laser_ge_coupling_matrix(g, e, atom.energy_levels, 2)[
             atom.energy_levels.index(e), atom.energy_levels.index(g)]
-        for sideband, shift in (('blue', +1), ('red', -1)):
-            with self.subTest(sideband=sideband):
-                operators = laser.build_sideband_coupling_operators(sideband, basis, [atom], [mode], [g], [e], 2, self.ETA)
+        for (sideband, shift), eta in itertools.product((('blue', +1), ('red', -1)), (self.ETA, self.ETA * np.exp(0.7j))):
+            with self.subTest(sideband=sideband, eta=eta):
+                operators = laser.build_sideband_coupling_operators(sideband, basis, [atom], [mode], [g], [e], 2, eta)
                 raising = {}
                 for operator in operators:
                     for coupling in operator.couplings:
@@ -420,44 +421,70 @@ class TestLaserSidebandCouplings(unittest.TestCase):
                             n_e, n_g = (next(c.fock_number for c in s.components if hasattr(c, 'fock_number'))
                                         for s in (coupling.row_state, coupling.column_state))
                             raising[(n_g, n_e)] = coupling.strength
-                expected = {(n, n + shift): carrier_raising * 1j * self.ETA * np.sqrt(max(n, n + shift))
+                prefactor = 1j * (np.conj(eta) if sideband == 'blue' else eta)
+                expected = {(n, n + shift): carrier_raising * prefactor * np.sqrt(max(n, n + shift))
                             for n in range(self.FOCK_DIMENSION) if 0 <= n + shift < self.FOCK_DIMENSION}
                 self.assertEqual(set(raising), set(expected))
                 for key, value in expected.items():
                     self.assertAlmostEqual(abs(raising[key] / value - 1.), 0., places=12)
 
     def test_debye_waller_matrix_elements(self):
-        """debye_waller=True: blue element eta e^{-eta^2/2} L_n^1(eta^2) / sqrt(n+1) instead of eta sqrt(n+1)."""
-        eta = 0.3  # large enough for a visible correction
+        """debye_waller=True: blue element eta^* e^{-|eta|^2/2} L_n^1(|eta|^2) / sqrt(n+1) instead of eta^* sqrt(n+1), for real
+        and complex eta (the correction depends only on |eta|)."""
         (atom,), mode, basis, g, e = self.build()
         laser = self.laser(e.energy - g.energy)
         def by_n(operator):
             return {next(c.fock_number for c in coupling.column_state.components if hasattr(c, 'fock_number')): coupling.strength
                     for coupling in operator.couplings if e in coupling.row_state.components}
-        first_order, exact = (by_n(laser.build_sideband_coupling_operators(SidebandType.BLUE, basis, [atom], [mode], [g], [e], 2, eta,
-                                                                           debye_waller=dw)[0]) for dw in (False, True))
-        for n in range(self.FOCK_DIMENSION - 1):
-            expected_ratio = np.exp(-eta**2 / 2.) * genlaguerre(n, 1)(eta**2) / (n + 1)
-            self.assertAlmostEqual(abs(exact[n] / first_order[n] - expected_ratio), 0., places=12)
+        for eta in (0.3, 0.3 * np.exp(0.7j)):  # large enough for a visible correction
+            with self.subTest(eta=eta):
+                first_order, exact = (by_n(laser.build_sideband_coupling_operators(SidebandType.BLUE, basis, [atom], [mode], [g], [e], 2,
+                                                                                   eta, debye_waller=dw)[0]) for dw in (False, True))
+                for n in range(self.FOCK_DIMENSION - 1):
+                    expected_ratio = np.exp(-abs(eta)**2 / 2.) * genlaguerre(n, 1)(abs(eta)**2) / (n + 1)
+                    self.assertAlmostEqual(abs(exact[n] / first_order[n] - expected_ratio), 0., places=12)
+
+    def test_complex_eta_is_a_rephased_mode(self):
+        """eta = |eta| e^{i theta} is |eta| with the mode rephased (a -> a e^{-i theta}): starting from |g, 0>, the state under
+        eta is the state under |eta| with each Fock-n amplitude multiplied by e^{-i n theta}. Detuned red and blue tones
+        together (a spin-dependent force) spread the state over several Fock states, so this needs i eta on the red and
+        i eta^* on the blue sideband (here with the Debye-Waller elements, which depend on |eta|)."""
+        (atom,), mode, basis, g, e = self.build()
+        omega_0 = e.energy - g.energy
+        rabi = abs(self.laser(omega_0).rabi_frequency(g, e, 2))
+        delta = 2. * self.ETA * rabi                      # spin-dependent displacement of ~0.5 after half a loop
+        blue = self.laser(omega_0 + self.MODE_FREQUENCY + delta)
+        red = self.laser(omega_0 - self.MODE_FREQUENCY - delta)
+        theta = 0.7                                        # rad; arbitrary
+        def final_state(eta):
+            operators = [operator for laser, sideband in ((blue, 'blue'), (red, 'red'))
+                         for operator in laser.build_sideband_coupling_operators(sideband, basis, [atom], [mode], [g], [e], 2, eta,
+                                                                                 debye_waller=True)]
+            return evolve(self, basis, operators, state_index(basis, g, 0), np.pi / delta)
+        real, rotated = final_state(self.ETA), final_state(self.ETA * np.exp(1j * theta))
+        for level, n in itertools.product((g, e), range(self.FOCK_DIMENSION)):
+            index = state_index(basis, level, n)
+            self.assertAlmostEqual(abs(rotated[index] - real[index] * np.exp(-1j * n * theta)), 0., delta=1e-5)
+        self.assertGreater(sum(abs(real[state_index(basis, level, 2)])**2 for level in (g, e)), 1e-3)   # nontrivial
 
     def test_matrix_rows_follow_target_atoms(self):
         """eta[i, j] belongs to (target_atoms[i], target_modes[j]): a stretch-like sign pattern [[a], [-a]] gives atom 1 the
         opposite sideband phase of atom 0, and reordering target_atoms together with the rows gives the same operators.
-        A matrix of the wrong shape, or a scalar for two atoms, is rejected."""
+        A matrix of the wrong shape, a scalar for two atoms, or a non-array input is rejected."""
         atoms, mode, basis, g, e = self.build(n_atoms=2)
         laser = self.laser(e.energy - g.energy + self.MODE_FREQUENCY)
         a = self.ETA
         build = lambda target_atoms, eta: coupling_elements(basis, laser.build_sideband_coupling_operators(
             SidebandType.BLUE, basis, target_atoms, [mode], [g], [e], 2, eta))
-        stretch = build(atoms, [[a], [-a]])
+        stretch = build(atoms, np.array([[a], [-a]]))
         expected = build([atoms[0]], a)
         for key, value in build([atoms[1]], -a).items():
             expected[key] = expected.get(key, 0.) + value
-        for other in (expected, build(atoms[::-1], [[-a], [a]])):
+        for other in (expected, build(atoms[::-1], np.array([[-a], [a]]))):
             self.assertEqual(set(other), set(stretch))
             for key in stretch:
                 self.assertAlmostEqual(abs(other[key] - stretch[key]), 0., delta=1e-12 * abs(stretch[key]))
-        for bad_eta in (a, [[a, a]], [[a, a], [a, a]]):
+        for bad_eta in (a, np.array([[a, a]]), np.array([a, -a]), [[a], [-a]]):   # scalar for 2 atoms, wrong shapes, not an array
             with self.subTest(eta=bad_eta), self.assertRaises(IonSimError):
                 build(atoms, bad_eta)
 
