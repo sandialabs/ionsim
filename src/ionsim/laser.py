@@ -134,12 +134,12 @@ class Polarization:
     @property
     def jones_vector(self) -> Vector:
         """ Unit complex polarization (Jones) vector in the lab frame. """
-        return self._jones_vector
+        return (self._jones_vector).copy()
 
     @property
     def n_hat(self) -> Vector:
         """ Unit propagation direction. """
-        return self._n_hat
+        return (self._n_hat).copy()
 
     def __repr__(self):
         return f"Polarization(jones_vector={self.jones_vector}, n_hat={self.n_hat})"
