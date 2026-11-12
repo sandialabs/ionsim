@@ -119,7 +119,7 @@ class Polarization:
         if vector.shape != (3,):
             raise IonSimError(f"polarization_vector must be a 3-component vector, got shape {vector.shape}.")
         norm = np.sqrt(np.vdot(vector, vector).real)
-        if norm < NUMERICAL_EQUIVALENCE_THRESHOLD:  #NUMERICAL_ERROR_THRESHOLD:
+        if norm < NUMERICAL_ERROR_THRESHOLD:  
             raise IonSimError(f"Cannot normalize a polarization vector with norm near zero. Computed norm {norm}")
         jones_vector = vector / norm
 
