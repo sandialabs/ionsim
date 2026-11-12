@@ -16,7 +16,7 @@ from scipy.special import genlaguerre
 
 from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.basis import StandardBasis
-from ionsim.laser import Laser, Polarization, GaussianBeam, PlaneWave, _perpendicular_basis, _spherical_basis_vectors
+from ionsim.laser import Laser, Polarization, SidebandType, GaussianBeam, PlaneWave, _perpendicular_basis, _spherical_basis_vectors
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.atomic_internal_energy_level import (LSFineLevel, compute_coupling_amplitude_between_atomic_levels,
                                                  compute_multipole_amplitude, reduced_dipole_matrix_element)
@@ -82,7 +82,7 @@ class TestLaserConstructors(unittest.TestCase):
 
     def test_gaussian_from_frequency_matches_from_wavelength(self):
         frequency = 2 * np.pi * const.c / self.wavelength
-        pol = Polarization.linear(Z)
+        pol = Polarization.from_linear(Z)
         from_freq = Laser.gaussian_from_frequency(frequency, self.power, self.waist, Z, pol, 0.)
         from_wl = Laser.gaussian_from_wavelength(self.wavelength, self.power, self.waist, Z, pol, 0.)
         self.assertIsInstance(from_freq.beam_profile, GaussianBeam)
@@ -92,7 +92,7 @@ class TestLaserConstructors(unittest.TestCase):
 
     def test_peak_intensity(self):
         """Gaussian peak intensity I0 = 2 P / (pi w^2)."""
-        laser = Laser.gaussian_from_wavelength(self.wavelength, self.power, self.waist, Z, Polarization.linear(Z), 0.)
+        laser = Laser.gaussian_from_wavelength(self.wavelength, self.power, self.waist, Z, Polarization.from_linear(Z), 0.)
         self.assertAlmostEqual(laser.peak_intensity / (2 * self.power / (np.pi * self.waist**2)), 1., places=12)
 
     def test_peak_field_and_detuning(self):
@@ -100,7 +100,7 @@ class TestLaserConstructors(unittest.TestCase):
         because the F=3/2 hyperfine level lies above the fine-structure energy."""
         yb = AtomicStructure.from_species(species='171Yb', term_symbols=['S0', 'P1'], level_names=['S0,1/2,1/2', 'P1,3/2,3/2'])
         g, e = yb.energy_levels
-        laser = Laser.gaussian_from_wavelength(556e-9, 1e-3, 0.5e-3, Z, Polarization.linear(Z, angle=0.), np.pi)
+        laser = Laser.gaussian_from_wavelength(556e-9, 1e-3, 0.5e-3, Z, Polarization.from_linear(Z, angle=0.), np.pi)
         self.assertAlmostEqual(laser.peak_electric_field_magnitude * 1e-3, 1.3851612653205, places=10)
         self.assertAlmostEqual(laser.beam_profile.peak_electric_field_magnitude(1e-3) * 1e-3, 1.3851612653205, places=10)
         detuning = laser.detuning_from_level_transition(g, e)
@@ -171,10 +171,10 @@ class TestTransverseBasis(unittest.TestCase):
         np.testing.assert_allclose(e[-1], (X - 1j * Y) / np.sqrt(2), atol=1e-15)
 
     def test_polarizations_along_z(self):
-        np.testing.assert_allclose(Polarization.linear(Z, angle=0.).vector, X, atol=1e-15)
-        np.testing.assert_allclose(Polarization.linear(Z, angle=np.pi / 2).vector, Y, atol=1e-15)
+        np.testing.assert_allclose(Polarization.from_linear(Z, angle=0.).jones_vector, X, atol=1e-15)
+        np.testing.assert_allclose(Polarization.from_linear(Z, angle=np.pi / 2).jones_vector, Y, atol=1e-15)
         # (x + iy)/sqrt(2) = -e_{+1}: pure sigma+ for a z quantization axis.
-        components = Polarization.circular(Z, '+').dipole_components()
+        components = Polarization.from_circular(Z, '+').dipole_components()
         self.assertAlmostEqual(abs(components[1]), 1., places=12)
         self.assertAlmostEqual(abs(components[0]) + abs(components[-1]), 0., places=12)
 
@@ -189,10 +189,67 @@ class TestTransverseBasis(unittest.TestCase):
 
     def test_reference_axis(self):
         """With a reference axis, angle 0 polarizes along the axis's component perpendicular to propagation."""
-        polarization = Polarization.linear(Y, angle=0., ref_axis=np.array([1., 1., 0.]))
-        np.testing.assert_allclose(polarization.vector, X, atol=1e-15)
+        polarization = Polarization.from_linear(Y, angle=0., ref_axis=np.array([1., 1., 0.]))
+        np.testing.assert_allclose(polarization.jones_vector, X, atol=1e-15)
         with self.assertRaises(IonSimError):
             _perpendicular_basis(Y, ref_axis=Y)
+
+
+class TestPolarizationAndQuantizationAxis(unittest.TestCase):
+    """The Polarization class derives normalized attributes from its inputs; couplings depend on the quantization axis
+    only through the polarization's spherical components relative to it."""
+
+    def test_derived_attributes(self):
+        polarization = Polarization(np.array([0., 3., 4.j]), np.array([2., 0., 0.]))    # unnormalized inputs
+        np.testing.assert_allclose(polarization.n_hat, X)
+        np.testing.assert_allclose(polarization.jones_vector, np.array([0., 0.6, 0.8j]))
+        with self.assertRaises(ValueError):                                              # read-only
+            polarization.jones_vector[0] = 1.
+        with self.assertRaises(IonSimError):                                             # not transverse
+            Polarization(np.array([1., 1., 0.]), X)
+        with self.assertRaises(IonSimError):                    # laser and polarization disagree on the propagation direction
+            Laser.gaussian_from_wavelength(729e-9, 1e-3, 10e-6, Y, Polarization(Z, X), 0.)
+
+    def test_rotating_everything_preserves_rabi_frequencies(self):
+        """Rotating k, the polarization and the quantization axis together leaves every |Omega| unchanged (E1 and E2)."""
+        rotation = np.linalg.qr(np.random.default_rng(7).normal(size=(3, 3)))[0]   # arbitrary orthogonal matrix
+        rotation *= np.linalg.det(rotation)                                        # proper rotation
+        yb = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'P1/2'],
+                                          level_names=['S1/2,1,0', 'P1/2,1,-1', 'P1/2,0,0', 'P1/2,1,1'])
+        ca = AtomicStructure.from_species(species='40Ca+', term_symbols=['S1/2', 'D5/2'])
+        vector = np.array([0.3, 0.5 + 0.2j, -0.4j])                               # arbitrary elliptical polarization
+        for atom, order, wavelength, n_hat in ((yb, 1, 369.5e-9, Z), (ca, 2, 729e-9, np.array([1., 0., 1.]) / np.sqrt(2.))):
+            g = atom.energy_levels[0]
+            excited = [level for level in atom.energy_levels if level.term_symbol != g.term_symbol]
+            transverse = vector - np.dot(vector, n_hat) * n_hat
+            def rabis(r):
+                laser = Laser.gaussian_from_wavelength(wavelength, 1e-3, 10e-6, r @ n_hat, Polarization(r @ transverse, r @ n_hat), 0.)
+                return np.array([abs(laser.rabi_frequency(g, e, order, quantization_axis=r @ Z)) for e in excited])
+            with self.subTest(multipole_order=order):
+                reference, rotated = rabis(np.eye(3)), rabis(rotation)
+                self.assertGreater(np.count_nonzero(reference > 1e-6 * reference.max()), 1)
+                np.testing.assert_allclose(rotated, reference, rtol=1e-10, atol=1e-10 * reference.max())
+
+    def test_reversed_quantization_axis_swaps_sigma_plus_and_minus(self):
+        """sigma+ light along z is sigma- relative to a -z quantization axis: |F=1, mF=0> couples to mF' = -1 instead of +1,
+        in the carrier and sideband builders and the target-Rabi constructor."""
+        yb = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'P1/2'], level_names=['S1/2,1,0', 'P1/2,1,-1', 'P1/2,1,1'])
+        mode = MotionalMode.from_frequency(TPI * 1e6, 3)
+        basis = StandardBasis([yb, mode])
+        g, minus, plus = yb.energy_levels
+        sigma_plus = Polarization.from_circular(Z, '+')
+        laser = Laser.gaussian_from_wavelength(369.5e-9, 1e-3, 20e-6, Z, sigma_plus, 0.)
+        def coupled(operators):
+            return sorted({state.components[0].name for operator in operators for coupling in operator.couplings
+                           for state in (coupling.row_state, coupling.column_state) if state.components[0] is not g})
+        for axis, expected in ((Z, ['P1/2,1,1']), (-Z, ['P1/2,1,-1'])):
+            with self.subTest(quantization_axis=axis):
+                self.assertEqual(coupled(laser.build_carrier_coupling_operators(basis, [yb], [g], [minus, plus], 1, quantization_axis=axis)), expected)
+                self.assertEqual(coupled(laser.build_sideband_coupling_operators(SidebandType.RED, basis, [yb], [mode], [g], [minus, plus], 1, 0.1,
+                                                                                 quantization_axis=axis)), expected)
+        Laser.from_target_rabi_frequency(TPI * 1e6, g, minus, 1, Z, sigma_plus, quantization_axis=-Z)
+        with self.assertRaises(IonSimError):   # sigma+ relative to z does not drive mF = 0 -> -1
+            Laser.from_target_rabi_frequency(TPI * 1e6, g, minus, 1, Z, sigma_plus)
 
 
 class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
@@ -204,7 +261,7 @@ class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
     RABI = TPI * 1e6   # rad/s; arbitrary, far below the optical frequency
 
     def laser(self, g, e, detuning=0., **kwargs):
-        return Laser.from_target_rabi_frequency(self.RABI, g, e, 1, Z, Polarization.circular(Z, '+'), detuning=detuning, **kwargs)
+        return Laser.from_target_rabi_frequency(self.RABI, g, e, 1, Z, Polarization.from_circular(Z, '+'), detuning=detuning, **kwargs)
 
     def ground_population(self, laser, ground_first, duration, frequency_shift=0.):
         atom, g, e = Yb_s_to_p(ground_first)
@@ -276,7 +333,7 @@ class TestLaserMultipleAtoms(unittest.TestCase):
         self.atom_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'P1/2'], level_names=levels, name='b')
         self.basis = StandardBasis([self.atom_a, self.atom_b])
         wavelength = 369.5e-9; power = 1e-3; waist = 20e-6; phase = 0.
-        self.laser = Laser.gaussian_from_wavelength(wavelength, power, waist, Z, Polarization.circular(Z, '+'), phase)
+        self.laser = Laser.gaussian_from_wavelength(wavelength, power, waist, Z, Polarization.from_circular(Z, '+'), phase)
         # Levels taken from atom a only; sigma+ light couples |S1/2,1,0> to |P1/2,1,1> only.
         self.ground = self.atom_a.energy_levels[:1]
         self.excited = self.atom_a.energy_levels[1:]
@@ -334,8 +391,8 @@ class TestLaserSidebandCouplings(unittest.TestCase):
                     omega_0 = e.energy - g.energy
                     blue, red = self.laser(omega_0 + self.MODE_FREQUENCY), self.laser(omega_0 - self.MODE_FREQUENCY)
                     pi_time = np.pi / (self.ETA * abs(blue.rabi_frequency(g, e, 2)))
-                    blue_ops = blue.build_blue_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, self.ETA)
-                    red_ops = red.build_red_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, self.ETA)
+                    blue_ops = blue.build_sideband_coupling_operators(SidebandType.BLUE, basis, [atom], [mode], [g], [e], 2, self.ETA)
+                    red_ops = red.build_sideband_coupling_operators(SidebandType.RED, basis, [atom], [mode], [g], [e], 2, self.ETA)
                     for operators, (level, n), duration, (final_level, final_n) in (
                             (blue_ops, (g, 0), pi_time, (e, 1)),
                             (blue_ops, (g, 1), pi_time / np.sqrt(2.), (e, 2)),
@@ -375,8 +432,8 @@ class TestLaserSidebandCouplings(unittest.TestCase):
         def by_n(operator):
             return {next(c.fock_number for c in coupling.column_state.components if hasattr(c, 'fock_number')): coupling.strength
                     for coupling in operator.couplings if e in coupling.row_state.components}
-        first_order, exact = (by_n(laser.build_blue_sideband_coupling_operators(basis, [atom], [mode], [g], [e], 2, eta,
-                                                                                debye_waller=dw)[0]) for dw in (False, True))
+        first_order, exact = (by_n(laser.build_sideband_coupling_operators(SidebandType.BLUE, basis, [atom], [mode], [g], [e], 2, eta,
+                                                                           debye_waller=dw)[0]) for dw in (False, True))
         for n in range(self.FOCK_DIMENSION - 1):
             expected_ratio = np.exp(-eta**2 / 2.) * genlaguerre(n, 1)(eta**2) / (n + 1)
             self.assertAlmostEqual(abs(exact[n] / first_order[n] - expected_ratio), 0., places=12)
@@ -388,8 +445,8 @@ class TestLaserSidebandCouplings(unittest.TestCase):
         atoms, mode, basis, g, e = self.build(n_atoms=2)
         laser = self.laser(e.energy - g.energy + self.MODE_FREQUENCY)
         a = self.ETA
-        build = lambda target_atoms, eta: coupling_elements(basis, laser.build_blue_sideband_coupling_operators(
-            basis, target_atoms, [mode], [g], [e], 2, eta))
+        build = lambda target_atoms, eta: coupling_elements(basis, laser.build_sideband_coupling_operators(
+            SidebandType.BLUE, basis, target_atoms, [mode], [g], [e], 2, eta))
         stretch = build(atoms, [[a], [-a]])
         expected = build([atoms[0]], a)
         for key, value in build([atoms[1]], -a).items():
@@ -458,7 +515,7 @@ class TestLaserSidebandsFromTrap(unittest.TestCase):
         laser = Laser.gaussian_from_frequency(carrier_laser.frequency + mode_frequency, self.power, self.waist, Z, Polarization(X, Z), self.phase)
         eta = chain.get_lamb_dicke_parameters_for_ions_and_modes([0], [mode_index], laser.wavevector)[0, 0]
         self.assertAlmostEqual(abs(eta) / reference_eta, 1., places=6)
-        operators = laser.build_blue_sideband_coupling_operators_from_trap(basis, [atom], [mode], [g], [e], 2, chain, [0], [mode_index])
+        operators = laser.build_sideband_coupling_operators_from_trap(SidebandType.BLUE, basis, [atom], [mode], [g], [e], 2, chain, [0], [mode_index])
         psi = evolve(self, basis, operators, state_index(basis, g, 0), np.pi / (abs(reference_eta) * abs(laser.rabi_frequency(g, e, 2))))
         self.assertGreater(abs(psi[state_index(basis, e, 1)])**2, 1. - 1e-5)
 
@@ -466,12 +523,12 @@ class TestLaserSidebandsFromTrap(unittest.TestCase):
         """Mode indices pointing at modes of another frequency, or ion indices at ions of another species, are rejected."""
         atoms, chain, modes, mode_indices, basis, g, e, laser = self.setup_chain(2, [1., 0., 1.])
         with self.subTest('mode index of a different-frequency mode'), self.assertRaises(IonSimError):
-            laser.build_blue_sideband_coupling_operators_from_trap(basis, atoms, modes, [g], [e], 2, chain, [0, 1], mode_indices[::-1])
+            laser.build_sideband_coupling_operators_from_trap(SidebandType.BLUE, basis, atoms, modes, [g], [e], 2, chain, [0, 1], mode_indices[::-1])
         with self.subTest('ion of a different species'), self.assertRaises(IonSimError):
             yb_chain = IonChain.from_species('171Yb+', 2, *self.TRAP)      # Yb modes (frequencies match), Ca atoms
             yb_modes = yb_chain.build_mode_DOFs(mode_indices, self.FOCK_DIMENSION)
-            laser.build_blue_sideband_coupling_operators_from_trap(StandardBasis([*atoms, *yb_modes]), atoms, yb_modes, [g], [e], 2,
-                                                                   yb_chain, [0, 1], mode_indices)
+            laser.build_sideband_coupling_operators_from_trap(SidebandType.BLUE, StandardBasis([*atoms, *yb_modes]), atoms, yb_modes,
+                                                              [g], [e], 2, yb_chain, [0, 1], mode_indices)
 
 
 class TestLaserTargetRabiFrequency(unittest.TestCase):
@@ -480,7 +537,7 @@ class TestLaserTargetRabiFrequency(unittest.TestCase):
 
     def test_round_trip_E1(self):
         atom, g, e = Yb_s_to_p()
-        polarization = Polarization.circular(Z, '+')
+        polarization = Polarization.from_circular(Z, '+')
         target, detuning = TPI * 2e6, TPI * 10e6   # rad/s; arbitrary
         gaussian_waist = 20e-6
         lasers = {
@@ -514,7 +571,7 @@ class TestLaserTargetRabiFrequency(unittest.TestCase):
     def test_gaussian_power_consistency(self):
         """The derived power reproduces the target through the power-based constructor, and scales as Omega^2."""
         _, g, e = Yb_s_to_p()
-        polarization = Polarization.circular(Z, '+')
+        polarization = Polarization.from_circular(Z, '+')
         target, waist = TPI * 1e6, 15e-6
         laser = Laser.gaussian_from_target_rabi_frequency(target, g, e, 1, waist, Z, polarization)
         rebuilt = Laser.gaussian_from_frequency(laser.frequency, laser.power, waist, Z, polarization, 0.)
@@ -526,9 +583,9 @@ class TestLaserTargetRabiFrequency(unittest.TestCase):
     def test_undrivable_transitions_are_rejected(self):
         _, g, e = Yb_s_to_p()
         with self.subTest('polarization does not drive the transition'), self.assertRaises(IonSimError):
-            Laser.from_target_rabi_frequency(TPI * 1e6, g, e, 1, Z, Polarization.circular(Z, '-'))
+            Laser.from_target_rabi_frequency(TPI * 1e6, g, e, 1, Z, Polarization.from_circular(Z, '-'))
         with self.subTest('excited level below ground level'), self.assertRaises(IonSimError):
-            Laser.from_target_rabi_frequency(TPI * 1e6, e, g, 1, Z, Polarization.circular(Z, '+'))
+            Laser.from_target_rabi_frequency(TPI * 1e6, e, g, 1, Z, Polarization.from_circular(Z, '+'))
 
 
 class TestPhysicalDipoleCouplings(unittest.TestCase):
@@ -542,7 +599,7 @@ class TestPhysicalDipoleCouplings(unittest.TestCase):
         (I/I_sat = 2 Omega^2/Gamma^2, Gamma = 2pi x 6.065 MHz, Table 3), and effective dipole 2.989 e a0 (Table 7)."""
         rb = AtomicStructure.from_species(species='87Rb', term_symbols=['S1/2', 'P3/2'], level_names=['S1/2,2,2', 'P3/2,3,3'])
         g, e = rb.energy_levels
-        laser = Laser.from_frequency(e.energy - g.energy, Z, 0., Polarization.circular(Z, '+'), PlaneWave(1.669e-3 / 1e-4), None)
+        laser = Laser.from_frequency(e.energy - g.energy, Z, 0., Polarization.from_circular(Z, '+'), PlaneWave(1.669e-3 / 1e-4), None)
         rabi = abs(laser.rabi_frequency(g, e, 1))
         self.assertAlmostEqual(rabi / (TPI * 6.065e6 / np.sqrt(2.)), 1., delta=2e-3)    # Steck values: ~0.15% uncertainty
         dipole = rabi / laser.peak_electric_field_magnitude / self.E_A0_OVER_HBAR             # |<e|r.eps|g>| / a0
@@ -575,7 +632,7 @@ class TestPhysicalDipoleCouplings(unittest.TestCase):
             with self.subTest(transition=f'{lower} -> {upper}'):
                 yb = AtomicStructure.from_species(species='171Yb', term_symbols=[lower, upper], level_names=[f'{lower},1/2,1/2', f'{upper},3/2,3/2'])
                 g, e = yb.energy_levels
-                laser = Laser.gaussian_from_frequency(e.energy - g.energy, 1e-3, 0.5e-3, Z, Polarization.circular(Z, '+'), 0.)
+                laser = Laser.gaussian_from_frequency(e.energy - g.energy, 1e-3, 0.5e-3, Z, Polarization.from_circular(Z, '+'), 0.)
                 rabi = abs(laser.rabi_frequency(g, e, 1)) / TPI / 1e6
                 self.assertAlmostEqual(rabi / reference, 1., delta=tolerance)
 

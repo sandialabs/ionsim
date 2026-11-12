@@ -17,7 +17,7 @@ from ionsim.basis import StandardBasis
 from ionsim.named_operators import Pauli, Fock, Unitary
 from ionsim.operator import CouplingOperator
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.laser import Laser, Polarization
+from ionsim.laser import Laser, Polarization, SidebandType
 from ionsim.testing import assert_array_close
 from ionsim.ionsim_error import IonSimError
 
@@ -150,8 +150,8 @@ class TestMSGateFromLaserSidebands(unittest.TestCase):
         blue = self.laser(rabi_rate, g, e, +(self.MODE_FREQUENCY + detuning))
         red = self.laser(rabi_rate, g, e, -(self.MODE_FREQUENCY + detuning))
         etas = [[ETA], [ETA]]   # rows: atoms (target_atoms=None -> basis order), columns: [mode]
-        operators = (blue.build_blue_sideband_coupling_operators(basis, None, [mode], [g], [e], 2, etas)
-                     + red.build_red_sideband_coupling_operators(basis, None, [mode], [g], [e], 2, etas))
+        operators = (blue.build_sideband_coupling_operators(SidebandType.BLUE, basis, None, [mode], [g], [e], 2, etas)
+                     + red.build_sideband_coupling_operators(SidebandType.RED, basis, None, [mode], [g], [e], 2, etas))
         hamiltonian = Hamiltonian(basis, operators, [-state.energy for state in basis.states], sparse=False)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
