@@ -137,11 +137,11 @@ class TestMSGateFromLaserSidebands(unittest.TestCase):
         polarization = Polarization(np.array([0., 0., 1.]), self.N_HAT)
         def build(phase):
             return Laser.gaussian_from_target_rabi_frequency(rabi_rate, g, e, 2, self.WAIST, self.N_HAT, polarization,
-                                                             detuning=detuning, phase=phase)
+                                                             detuning_angular=detuning, phase=phase)
         rabi = build(0.).rabi_frequency(g, e, 2)
         self.assertAlmostEqual(abs(rabi) / rabi_rate, 1., places=10)
         laser = build(-np.pi/2 - np.angle(rabi))
-        self.assertAlmostEqual(laser.frequency, e.energy - g.energy + detuning, delta=1e-9 * laser.frequency)
+        self.assertAlmostEqual(laser.frequency_angular, e.energy - g.energy + detuning, delta=1e-9 * laser.frequency_angular)
         return laser
 
     def gate(self, mode_first: bool, theta: float = THETA):

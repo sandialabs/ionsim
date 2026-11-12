@@ -86,8 +86,8 @@ class TestLaserConstructors(unittest.TestCase):
         from_freq = Laser.gaussian_from_frequency(frequency, self.power, self.waist, Z, pol, 0.)
         from_wl = Laser.gaussian_from_wavelength(self.wavelength, self.power, self.waist, Z, pol, 0.)
         self.assertIsInstance(from_freq.beam_profile, GaussianBeam)
-        self.assertAlmostEqual(from_freq.wavelength / from_wl.wavelength, 1., places=12)
-        self.assertAlmostEqual(from_freq.beam_profile.waist, self.waist)
+        self.assertAlmostEqual(from_freq.wavelength_m / from_wl.wavelength_m, 1., places=12)
+        self.assertAlmostEqual(from_freq.beam_profile.waist_m, self.waist)
         self.assertAlmostEqual(from_freq.peak_electric_field_magnitude / from_wl.peak_electric_field_magnitude, 1., places=12)
 
     def test_peak_intensity(self):
@@ -105,7 +105,7 @@ class TestLaserConstructors(unittest.TestCase):
         self.assertAlmostEqual(laser.beam_profile.peak_electric_field_magnitude(1e-3) * 1e-3, 1.3851612653205, places=10)
         detuning = laser.detuning_from_level_transition(g, e)
         self.assertEqual(detuning, laser.detuning_from_transition_frequency(e.energy - g.energy))
-        self.assertAlmostEqual(detuning, TPI * const.c / laser.wavelength - (e.energy - g.energy), places=10)
+        self.assertAlmostEqual(detuning, TPI * const.c / laser.wavelength_m - (e.energy - g.energy), places=10)
         self.assertAlmostEqual(detuning / TPI / 1e9, -195.33742087632817, places=8)
 
 
@@ -263,12 +263,12 @@ class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
     RABI = TPI * 1e6   # rad/s; arbitrary, far below the optical frequency
 
     def laser(self, g, e, detuning=0., **kwargs):
-        return Laser.from_target_rabi_frequency(self.RABI, g, e, 1, Z, Polarization.from_circular(Z, '+'), detuning=detuning, **kwargs)
+        return Laser.from_target_rabi_frequency(self.RABI, g, e, 1, Z, Polarization.from_circular(Z, '+'), detuning_angular=detuning, **kwargs)
 
     def ground_population(self, laser, ground_first, duration, frequency_shift=0.):
         atom, g, e = Yb_s_to_p(ground_first)
         basis = StandardBasis([atom])
-        operators = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, frequency_shift=frequency_shift)
+        operators = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, frequency_shift_angular=frequency_shift)
         psi = evolve(self, basis, operators, state_index(basis, g), duration)
         return psi[state_index(basis, g)]
 
@@ -287,7 +287,7 @@ class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
         for ground_first in (True, False):
             _, g, e = Yb_s_to_p(ground_first)
             detuned = self.laser(g, e, delta)
-            modulated = self.laser(g, e, delta, modulation_functions={'frequency': lambda t: -delta})
+            modulated = self.laser(g, e, delta, frequency_modulation_function=lambda t: -delta)
             with self.subTest(ground_first=ground_first, case='uncompensated'):
                 self.assertGreater(abs(self.ground_population(detuned, ground_first, pi_time))**2, 0.1)
             with self.subTest(ground_first=ground_first, case='frequency_shift'):
@@ -308,7 +308,7 @@ class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
                     operators = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1)
                     return np.asarray(Hamiltonian(basis, operators, frame).hamiltonian_function(t))[0, 1]
                 static = self.laser(g, e, phase=phase)
-                modulated = self.laser(g, e, modulation_functions={'phase': lambda t: phase})
+                modulated = self.laser(g, e, phase_modulation_function=lambda t: phase)
                 for t in (0., 1e-9, 2.3e-9):   # s; arbitrary
                     self.assertLess(abs(coupling(modulated, t) - coupling(static, t)) / abs(coupling(static, t)), 1e-7)
 
@@ -514,7 +514,7 @@ class TestLaserSidebandsFromTrap(unittest.TestCase):
         reference_eta = chain.compute_reference_single_ion_lamb_dicke_factors(np.linalg.norm(carrier_laser.wavevector))[2]
         mode_frequency = mode.energy_levels[1].energy - mode.energy_levels[0].energy
         self.assertAlmostEqual(mode_frequency, self.TRAP[2], delta=1e-6 * self.TRAP[2])
-        laser = Laser.gaussian_from_frequency(carrier_laser.frequency + mode_frequency, self.power, self.waist, Z, Polarization(X, Z), self.phase)
+        laser = Laser.gaussian_from_frequency(carrier_laser.frequency_angular + mode_frequency, self.power, self.waist, Z, Polarization(X, Z), self.phase)
         eta = chain.get_lamb_dicke_parameters_for_ions_and_modes([0], [mode_index], laser.wavevector)[0, 0]
         self.assertAlmostEqual(abs(eta) / reference_eta, 1., places=6)
         operators = laser.build_sideband_coupling_operators_from_trap(SidebandType.BLUE, basis, [atom], [mode], [g], [e], 2, chain, [0], [mode_index])
@@ -545,14 +545,14 @@ class TestLaserTargetRabiFrequency(unittest.TestCase):
         lasers = {
             'plane wave': Laser.from_target_rabi_frequency(target, g, e, 1, Z, polarization),
             'gaussian': Laser.gaussian_from_target_rabi_frequency(target, g, e, 1, gaussian_waist, Z, polarization),
-            'plane wave, detuned': Laser.from_target_rabi_frequency(target, g, e, 1, Z, polarization, detuning=detuning),
-            'gaussian, detuned': Laser.gaussian_from_target_rabi_frequency(target, g, e, 1, gaussian_waist, Z, polarization, detuning=detuning),
+            'plane wave, detuned': Laser.from_target_rabi_frequency(target, g, e, 1, Z, polarization, detuning_angular=detuning),
+            'gaussian, detuned': Laser.gaussian_from_target_rabi_frequency(target, g, e, 1, gaussian_waist, Z, polarization, detuning_angular=detuning),
         }
         for name, laser in lasers.items():
             with self.subTest(name):
                 self.assertAlmostEqual(abs(laser.rabi_frequency(g, e, 1)) / target, 1., places=12)
                 expected_frequency = (e.energy - g.energy) + (detuning if 'detuned' in name else 0.)
-                self.assertAlmostEqual(laser.frequency / expected_frequency, 1., places=14)
+                self.assertAlmostEqual(laser.frequency_angular / expected_frequency, 1., places=14)
                 self.assertIsInstance(laser.beam_profile, GaussianBeam if 'gaussian' in name else PlaneWave)
                 # The coupling builder uses the same Rabi frequency: absorption element strength Omega / 2.
                 operator, = laser.build_carrier_coupling_operators(StandardBasis([atom]), [atom], [g], [e], 1)
@@ -566,8 +566,8 @@ class TestLaserTargetRabiFrequency(unittest.TestCase):
         gaussian_waist = 10e-6
         for detuning in (0., TPI * 1e9):
             with self.subTest(detuning=detuning):
-                for laser in (Laser.from_target_rabi_frequency(target, g, e, 2, X, polarization, detuning=detuning),
-                              Laser.gaussian_from_target_rabi_frequency(target, g, e, 2, gaussian_waist, X, polarization, detuning=detuning)):
+                for laser in (Laser.from_target_rabi_frequency(target, g, e, 2, X, polarization, detuning_angular=detuning),
+                              Laser.gaussian_from_target_rabi_frequency(target, g, e, 2, gaussian_waist, X, polarization, detuning_angular=detuning)):
                     self.assertAlmostEqual(abs(laser.rabi_frequency(g, e, 2)) / target, 1., places=12)
 
     def test_gaussian_power_consistency(self):
@@ -576,11 +576,11 @@ class TestLaserTargetRabiFrequency(unittest.TestCase):
         polarization = Polarization.from_circular(Z, '+')
         target, waist = TPI * 1e6, 15e-6
         laser = Laser.gaussian_from_target_rabi_frequency(target, g, e, 1, waist, Z, polarization)
-        rebuilt = Laser.gaussian_from_frequency(laser.frequency, laser.power, waist, Z, polarization, 0.)
+        rebuilt = Laser.gaussian_from_frequency(laser.frequency_angular, laser.power_W, waist, Z, polarization, 0.)
         self.assertAlmostEqual(abs(rebuilt.rabi_frequency(g, e, 1)) / target, 1., places=12)
         doubled = Laser.gaussian_from_target_rabi_frequency(2. * target, g, e, 1, waist, Z, polarization)
-        self.assertAlmostEqual(doubled.power / laser.power, 4., places=12)
-        self.assertAlmostEqual(laser.beam_profile.waist, waist)
+        self.assertAlmostEqual(doubled.power_W / laser.power_W, 4., places=12)
+        self.assertAlmostEqual(laser.beam_profile.waist_m, waist)
 
     def test_undrivable_transitions_are_rejected(self):
         _, g, e = Yb_s_to_p()
