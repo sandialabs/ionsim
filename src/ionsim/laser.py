@@ -277,7 +277,7 @@ class SphericalPolarization:
 class BeamProfile(ABC):
     """ Beam profile represented by a spatial envelope as well as power, peak-field relationship"""
     @abstractmethod
-    def peak_electric_field_magnitude(self, power_W: float) -> float:
+    def peak_electric_field_magnitude_V_per_m(self, power_W: float) -> float:
         """ Peak electirc field atmplitude E0 [V/m] given power in Watts. """ 
 
     @abstractmethod
@@ -303,11 +303,11 @@ class PlaneWave(BeamProfile):
 
     @classmethod
     def from_peak_electric_field_magnitude_V_per_m(cls, peak_electric_field_magnitude_V_per_m: float) -> PlaneWave:
-        """ Plane wave with peak field |E0| [V/m]: intensity I = c eps0 |E0|^2 / 2 (inverse of peak_electric_field_magnitude). """
+        """ Plane wave with peak field |E0| [V/m]: intensity I = c eps0 |E0|^2 / 2 (inverse of peak_electric_field_magnitude_V_per_m). """
         return cls(intensity_W_per_m2=0.5 * const.c * const.epsilon_0 * peak_electric_field_magnitude_V_per_m**2)
 
-    def peak_electric_field_magnitude(self, power_W: float) -> float:
-        """ Peak electric field magnitude |E0| """
+    def peak_electric_field_magnitude_V_per_m(self, power_W: float) -> float:
+        """ Peak electric field magnitude |E0| [V/m] """
         return np.sqrt(2. * self.intensity_W_per_m2 / (const.c * const.epsilon_0))
 
     def relative_envelope(self, r, n_hat, k) -> complex:
@@ -344,10 +344,10 @@ class GaussianBeam(BeamProfile):
         I0 = 2. * power_W / (np.pi * (self.waist_m ** 2)) # intensity, Watts/m^2
         return np.sqrt(2. * I0 / (const.c * const.epsilon_0))
 
-    def power_for_peak_electric_field_magnitude(self, peak_electric_field_magnitude: float) -> float:
+    def power_for_peak_electric_field_magnitude(self, peak_electric_field_magnitude_V_per_m: float) -> float:
         """ Power [W] that gives peak field |E0| [V/m] at the focus (inverse of peak_electric_field_magnitude):
             I0 = c eps0 |E0|^2 / 2,  P = pi w^2 I0 / 2. """
-        I0 = 0.5 * const.c * const.epsilon_0 * peak_electric_field_magnitude**2
+        I0 = 0.5 * const.c * const.epsilon_0 * peak_electric_field_magnitude_V_per_m**2
         return 0.5 * np.pi * self.waist_m**2 * I0
 
     def relative_envelope(self, r: Vector, n_hat: Vector, k: float) -> complex:
@@ -384,7 +384,7 @@ class Laser:
         amplitude_modulation_function, phase_modulation_function, frequency_modulation_function: optional time-dependent
             modulations of the coupling; see modulation_function.
 
-        Derived (read-only): wavelength_m, propagation_unit_vector, wavevector, peak_electric_field_magnitude, peak_intensity.
+        Derived (read-only): wavelength_m, propagation_unit_vector, wavevector, peak_electric_field_magnitude_V_per_m, peak_intensity.
     """
 
     def __init__(self, frequency_angular: float, propagation_direction: Vector, polarization: PolarizationInput,
@@ -530,7 +530,7 @@ class Laser:
         frequency_angular, peak_field = cls._frequency_and_peak_field_for_target_rabi_frequency(
             target_rabi_frequency_angular, ground_level, excited_level, multipole_order, propagation_direction, polarization,
             detuning_angular, quantization_axis)
-        profile = PlaneWave.from_peak_electric_field_magnitude(peak_field)
+        profile = PlaneWave.from_peak_electric_field_magnitude_V_per_m(peak_field)
         return cls(frequency_angular, propagation_direction, polarization, profile, phase, None,
                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
@@ -577,7 +577,7 @@ class Laser:
         frequency_angular = transition_frequency + detuning_angular
         if frequency_angular <= NUMERICAL_EQUIVALENCE_THRESHOLD:
             raise IonSimError(f"Laser frequency (transition frequency + detuning) must be positive, got {frequency_angular} rad/s.")
-        unit_field_laser = cls(frequency_angular, propagation_direction, polarization, PlaneWave.from_peak_electric_field_magnitude(1.))
+        unit_field_laser = cls(frequency_angular, propagation_direction, polarization, PlaneWave.from_peak_electric_field_magnitude_V_per_m(1.))
         rabi_per_unit_field = abs(unit_field_laser.rabi_frequency(ground_level, excited_level, multipole_order,
                                                                   quantization_axis=quantization_axis))
         if rabi_per_unit_field < SMALLEST_ENERGY_SCALE:
@@ -589,15 +589,15 @@ class Laser:
         return frequency_angular, float(target) / rabi_per_unit_field
 
     @property
-    def peak_electric_field_magnitude(self) -> float:
+    def peak_electric_field_magnitude_V_per_m(self) -> float:
         """ Peak electric field magnitude E_0 [V/m] """  
-        return self.beam_profile.peak_electric_field_magnitude(self.power_W) 
+        return self.beam_profile.peak_electric_field_magnitude_V_per_m(self.power_W) 
 
     @property
     def peak_intensity(self) -> float:
         """ Peak intensity I_0 [W/m^2] """  
         # Impedence of free space is Z0 = 1/(epsilon0 x speed of light)
-        E0 = self.peak_electric_field_magnitude
+        E0 = self.peak_electric_field_magnitude_V_per_m
         return 0.5 * const.c * const.epsilon_0 * (E0**2)
 
     @property
@@ -650,10 +650,10 @@ class Laser:
         polarization, wavenumber = self._field_polarization_and_wavenumber(counter_rotating)
         if multipole_order == 1:
             return compute_rabi_frequency_between_atomic_levels(ground_level, excited_level, polarization.dipole_components(quantization_axis),
-                                                                levels, multipole_order, self.peak_electric_field_magnitude)
+                                                                levels, multipole_order, self.peak_electric_field_magnitude_V_per_m)
         if multipole_order == 2:
             return compute_rabi_frequency_between_atomic_levels(ground_level, excited_level, polarization.quadrupole_components(self.propagation_unit_vector, quantization_axis),
-                                                                levels, multipole_order, self.peak_electric_field_magnitude,
+                                                                levels, multipole_order, self.peak_electric_field_magnitude_V_per_m,
                                                                 wavenumber=wavenumber)
         raise IonSimError(f"Multipole order must be 1 or 2 for dipole or quadrupole transitions, respectively. Got {multipole_order}.")
     

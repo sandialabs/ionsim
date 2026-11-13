@@ -90,7 +90,7 @@ class TestLaserConstructors(unittest.TestCase):
         self.assertIsInstance(from_freq.beam_profile, GaussianBeam)
         self.assertAlmostEqual(from_freq.wavelength_m / from_wl.wavelength_m, 1., places=12)
         self.assertAlmostEqual(from_freq.beam_profile.waist_m, self.waist)
-        self.assertAlmostEqual(from_freq.peak_electric_field_magnitude / from_wl.peak_electric_field_magnitude, 1., places=12)
+        self.assertAlmostEqual(from_freq.peak_electric_field_magnitude_V_per_m / from_wl.peak_electric_field_magnitude_V_per_m, 1., places=12)
 
     def test_peak_intensity(self):
         """Gaussian peak intensity I0 = 2 P / (pi w^2)."""
@@ -103,8 +103,8 @@ class TestLaserConstructors(unittest.TestCase):
         yb = AtomicStructure.from_species(species='171Yb', term_symbols=['S0', 'P1'], level_names=['S0,1/2,1/2', 'P1,3/2,3/2'])
         g, e = yb.energy_levels
         laser = Laser.gaussian_from_wavelength(556e-9, 1e-3, 0.5e-3, Z, LinearPolarization(angle=0.), np.pi)
-        self.assertAlmostEqual(laser.peak_electric_field_magnitude * 1e-3, 1.3851612653205, places=10)
-        self.assertAlmostEqual(laser.beam_profile.peak_electric_field_magnitude(1e-3) * 1e-3, 1.3851612653205, places=10)
+        self.assertAlmostEqual(laser.peak_electric_field_magnitude_V_per_m * 1e-3, 1.3851612653205, places=10)
+        self.assertAlmostEqual(laser.beam_profile.peak_electric_field_magnitude_V_per_m(1e-3) * 1e-3, 1.3851612653205, places=10)
         detuning = laser.detuning_from_level_transition(g, e)
         self.assertEqual(detuning, laser.detuning_from_transition_frequency(e.energy - g.energy))
         self.assertAlmostEqual(detuning, TPI * const.c / laser.wavelength_m - (e.energy - g.energy), places=10)
@@ -658,7 +658,7 @@ class TestPhysicalDipoleCouplings(unittest.TestCase):
         laser = Laser(e.energy - g.energy, Z, CircularPolarization('+'), PlaneWave(1.669e-3 / 1e-4))
         rabi = abs(laser.rabi_frequency(g, e, 1))
         self.assertAlmostEqual(rabi / (TPI * 6.065e6 / np.sqrt(2.)), 1., delta=2e-3)    # Steck values: ~0.15% uncertainty
-        dipole = rabi / laser.peak_electric_field_magnitude / self.E_A0_OVER_HBAR             # |<e|r.eps|g>| / a0
+        dipole = rabi / laser.peak_electric_field_magnitude_V_per_m / self.E_A0_OVER_HBAR             # |<e|r.eps|g>| / a0
         self.assertAlmostEqual(dipole / 2.989, 1., delta=1e-3)
 
     def test_reduced_elements_reproduce_config_decay_rates(self):
