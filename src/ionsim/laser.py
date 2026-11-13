@@ -17,7 +17,6 @@ import numpy as np
 from scipy import constants as const
 from scipy import integrate
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from enum import StrEnum
 from numpy.typing import NDArray
 import sympy 
@@ -269,16 +268,16 @@ class PlaneWave(BeamProfile):
 
 
 class GaussianBeam(BeamProfile):
-    """ Gaussian (TEM00) beam with 1/e^2 intensity radius waist_m [m] at the focus position focus_m [m], for wavelength_m [m]. """
+    """ Gaussian (TEM00) beam with 1/e^2 intensity radius waist_m [m] at the focus position focus_m [m]. The wavelength
+        enters only through the wavenumber k passed to relative_envelope (the laser's own). """
 
-    def __init__(self, waist_m: float, wavelength_m: float, focus_m: Vector | None = None):
-        for name, value in (('waist_m', waist_m), ('wavelength_m', wavelength_m)):
-            if not np.isfinite(value) or value <= 0.:
-                raise IonSimError(f"Gaussian beam {name} must be a positive length (m), got {value}.")
+    def __init__(self, waist_m: float, focus_m: Vector | None = None):
+        if not np.isfinite(waist_m) or waist_m <= 0.:
+            raise IonSimError(f"Gaussian beam waist_m must be a positive length (m), got {waist_m}.")
         focus_m = np.zeros(3) if focus_m is None else np.array(focus_m, dtype=float)
         if focus_m.shape != (3,):
             raise IonSimError(f"Gaussian beam focus_m must be a 3-component position (m), got shape {focus_m.shape}.")
-        self._waist_m, self._wavelength_m, self._focus_m = float(waist_m), float(wavelength_m), focus_m
+        self._waist_m, self._focus_m = float(waist_m), focus_m
 
     @property
     def waist_m(self) -> float:
@@ -286,17 +285,12 @@ class GaussianBeam(BeamProfile):
         return self._waist_m
 
     @property
-    def wavelength_m(self) -> float:
-        """ Wavelength [m]. """
-        return self._wavelength_m
-
-    @property
     def focus_m(self) -> Vector:
         """ Focus position [m]. """
         return (self._focus_m).copy()
 
     def __repr__(self):
-        return f"GaussianBeam(waist_m={self.waist_m}, wavelength_m={self.wavelength_m}, focus_m={self.focus_m})"
+        return f"GaussianBeam(waist_m={self.waist_m}, focus_m={self.focus_m})"
 
     def peak_electric_field_magnitude(self, power_W: float) -> float:
         """ Peak electric field magnitude |E0| in free space """ 
@@ -310,112 +304,128 @@ class GaussianBeam(BeamProfile):
         return 0.5 * np.pi * self.waist_m**2 * I0
 
     def relative_envelope(self, r: Vector, n_hat: Vector, k: float) -> complex:
-        dr = r - self.focus_m
-        z = np.dot(dr, n_hat)
+        """ Complex envelope at position r [m] relative to the focus, for propagation direction n_hat and wavenumber k [1/m]
+            (the plane-wave factor exp(i k.r) excluded). """
+        dr = r - self._focus_m
+        z = np.dot(dr, n_hat)                 # distance from the focus along the beam
+        rho = np.linalg.norm(dr - z * n_hat)  # distance from the beam axis
 
-        # What is rho? 
-        rho_vector = dr - z*n_hat
-        rho = np.linalg.norm(rho_vector)
-
-        n = 1. # refractive index of free space  
-        zR = np.pi * (self.waist_m**2) * n / self.wavelength_m # Rayleigh range  
-        # Beam width w(z) evaluated at beam position z: 
-        wz = self.waist_m * np.sqrt(1. + (z / zR)**2) 
+        zR = 0.5 * k * self.waist_m**2        # Rayleigh range pi w^2 / lambda (vacuum)
+        wz = self.waist_m * np.sqrt(1. + (z / zR)**2)   # beam radius at z
         gouy = np.arctan2(z, zR)
-        inv_Rz = z/(z**2 + zR**2)
+        inv_Rz = z / (z**2 + zR**2)           # wavefront curvature 1/R(z)
 
-        amp = (self.waist_m/wz) * np.exp(-(rho/wz)**2)
+        amp = (self.waist_m / wz) * np.exp(-(rho / wz)**2)
         curvature_phase = 0.5 * k * (rho**2) * inv_Rz
         return amp * np.exp(1j * (curvature_phase - gouy)) 
 
 
-@dataclass(frozen=True, eq=False)
-class Laser():
-    """ Laser class representing a single monochromatic laser beam  """ 
-    wavelength_m: float
-    propagation_vector: Vector
-    phase: float
-    frequency_angular: float
-    polarization: Polarization 
-    beam_profile: BeamProfile 
-    power_W: float | None
-    # Optional time-dependent modulations of the coupling (see modulation_function):
-    amplitude_modulation_function: Callable | None = None   # A(t): real envelope of the Rabi frequency (dimensionless)
-    phase_modulation_function: Callable | None = None       # phi(t): added to the laser phase (rad)
-    frequency_modulation_function: Callable | None = None   # delta(t): added to the laser frequency (rad/s)
+class Laser:
+    """ A single monochromatic laser beam.
 
-    def __post_init__(self):
-        # Safety checks on propagation vector  
-        if hasattr(self.propagation_vector, "__len__"):
-            if len(self.propagation_vector) != 3: 
-                raise IonSimError(f"Specify a 3-component vector for the beam pointing unit vector 'n hat'. Current input has {len(self.propagation_vector)} components.")
-        else:
-            raise IonSimError(f"Propagation vector must be a vector (numpy array), received a {type(self.propagation_vector)}.") 
-        assert len(self.propagation_vector) == 3
-        
-        if np.abs(np.linalg.norm(self.propagation_unit_vector) - 1.) > NUMERICAL_ERROR_THRESHOLD:
-            raise IonSimError(f"Propagation unit vector is not normalized! Norm = {np.linalg.norm(self.propagation_unit_vector)}")
+        frequency_angular: laser frequency omega [rad/s] (positive).
+        polarization: Polarization; its propagation direction n_hat is the laser's propagation direction.
+        beam_profile: BeamProfile (GaussianBeam or PlaneWave), giving the peak field for power_W.
+        phase: static laser phase phi [rad] of the |e><g| coupling element.
+        power_W: optical power [W]; required for a GaussianBeam, unused by a PlaneWave (which carries its intensity).
+        amplitude_modulation_function, phase_modulation_function, frequency_modulation_function: optional time-dependent
+            modulations of the coupling; see modulation_function.
 
-        if not isinstance(self.polarization, Polarization):
-            raise IonSimError(f"polarization must be a Polarization, got {type(self.polarization).__name__}.")
-        # The polarization's own propagation direction enters the E2 coupling (polarization.quadrupole_components()).
-        if np.linalg.norm(self.polarization.n_hat - self.propagation_unit_vector) > NUMERICAL_ERROR_THRESHOLD:
-            raise IonSimError(f"The polarization's propagation direction {self.polarization.n_hat} differs from the laser's "
-                              f"{self.propagation_unit_vector}.")
+        Derived (read-only): wavelength_m, propagation_unit_vector, wavevector, peak_electric_field_magnitude, peak_intensity.
+    """
 
-        # Check frequency - wavelength relationship 
-        #   Relative check: optical frequencies are ~1e15 rad/s, so an absolute tolerance would fail on floating-point roundoff.
-        light_physics_deviation = np.abs(self.frequency_angular - 2.*np.pi*const.c/self.wavelength_m) / self.frequency_angular
-        if light_physics_deviation > NUMERICAL_EQUIVALENCE_THRESHOLD: 
-            raise IonSimError(f"Laser frequency and wavelength must satisfy speed of light in vacuum. This is violated with a deviation: {light_physics_deviation}")
+    def __init__(self, frequency_angular: float, polarization: Polarization, beam_profile: BeamProfile, phase: float = 0.,
+                 power_W: float | None = None, amplitude_modulation_function: Callable | None = None,
+                 phase_modulation_function: Callable | None = None, frequency_modulation_function: Callable | None = None):
+        if not np.isfinite(frequency_angular) or frequency_angular <= 0.:
+            raise IonSimError(f"frequency_angular must be a positive number (rad/s), got {frequency_angular}.")
+        if not isinstance(polarization, Polarization):
+            raise IonSimError(f"polarization must be a Polarization, got {type(polarization).__name__}.")
+        if not isinstance(beam_profile, BeamProfile):
+            raise IonSimError(f"beam_profile must be a BeamProfile (e.g. GaussianBeam or PlaneWave), got {type(beam_profile).__name__}.")
+        if isinstance(beam_profile, GaussianBeam) and (power_W is None or not np.isfinite(power_W) or power_W <= 0.):
+            raise IonSimError(f"A Gaussian beam needs a positive power_W (W), got {power_W}.")
+        for name, func in (('amplitude', amplitude_modulation_function), ('phase', phase_modulation_function),
+                           ('frequency', frequency_modulation_function)):
+            if func is not None and not callable(func):
+                raise IonSimError(f"{name}_modulation_function must be callable, got {type(func).__name__}.")
+        self._frequency_angular = float(frequency_angular)
+        self._polarization = polarization
+        self._beam_profile = beam_profile
+        self._phase = float(phase)
+        self._power_W = None if power_W is None else float(power_W)
+        self._amplitude_modulation_function = amplitude_modulation_function
+        self._phase_modulation_function = phase_modulation_function
+        self._frequency_modulation_function = frequency_modulation_function
 
+    def __repr__(self):
+        return (f"Laser(frequency_angular={self.frequency_angular}, wavelength_m={self.wavelength_m}, polarization={self.polarization}, "
+                f"beam_profile={self.beam_profile}, phase={self.phase}, power_W={self.power_W})")
+
+    @property
+    def frequency_angular(self) -> float:
+        """ Laser frequency omega [rad/s]. """
+        return self._frequency_angular
+
+    @property
+    def polarization(self) -> Polarization:
+        return self._polarization
+
+    @property
+    def beam_profile(self) -> BeamProfile:
+        return self._beam_profile
+
+    @property
+    def phase(self) -> float:
+        """ Static laser phase [rad]. """
+        return self._phase
+
+    @property
+    def power_W(self) -> float | None:
+        """ Optical power [W] (None for a PlaneWave, which carries its intensity). """
+        return self._power_W
+
+    @property
+    def amplitude_modulation_function(self) -> Callable | None:
+        return self._amplitude_modulation_function
+
+    @property
+    def phase_modulation_function(self) -> Callable | None:
+        return self._phase_modulation_function
+
+    @property
+    def frequency_modulation_function(self) -> Callable | None:
+        return self._frequency_modulation_function
+
+    # ---- constructors ----
     @classmethod
-    def from_wavelength(cls, wavelength_m: float, propagation_vector: Vector, phase: float, polarization: Polarization,
-                        beam_profile: BeamProfile, power_W: float | None = None,
-                        amplitude_modulation_function: Callable | None = None,
+    def from_wavelength(cls, wavelength_m: float, polarization: Polarization, beam_profile: BeamProfile, phase: float = 0.,
+                        power_W: float | None = None, amplitude_modulation_function: Callable | None = None,
                         phase_modulation_function: Callable | None = None,
                         frequency_modulation_function: Callable | None = None) -> Laser:
-        """ Laser from its wavelength [m]. Modulation functions: see modulation_function. """
-        frequency_angular = 2. * np.pi * const.c / wavelength_m  # rad/s
-        return cls(wavelength_m, propagation_vector, phase, frequency_angular, polarization, beam_profile, power_W,
+        """ Laser from its vacuum wavelength [m]; other arguments as for Laser. """
+        if not np.isfinite(wavelength_m) or wavelength_m <= 0.:
+            raise IonSimError(f"wavelength_m must be a positive length (m), got {wavelength_m}.")
+        return cls(2. * np.pi * const.c / wavelength_m, polarization, beam_profile, phase, power_W,
                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
     @classmethod
-    def gaussian_from_wavelength(cls, wavelength_m: float, power_W: float, waist_m: float, propagation_vector: Vector,
-                                 polarization: Polarization, phase: float, focus_m: Vector = np.zeros(3),
-                                 amplitude_modulation_function: Callable | None = None,
+    def gaussian_from_wavelength(cls, wavelength_m: float, power_W: float, waist_m: float, polarization: Polarization,
+                                 phase: float = 0., focus_m: Vector | None = None, amplitude_modulation_function: Callable | None = None,
                                  phase_modulation_function: Callable | None = None,
                                  frequency_modulation_function: Callable | None = None) -> Laser:
-        """ Gaussian laser from its wavelength [m], power [W], waist [m] and focus position [m]. """
-        profile = GaussianBeam(waist_m, wavelength_m, focus_m)
-        return cls.from_wavelength(wavelength_m, propagation_vector, phase, polarization, profile, power_W,
+        """ Gaussian laser from its vacuum wavelength [m], power [W], waist [m] and focus position [m]. """
+        return cls.from_wavelength(wavelength_m, polarization, GaussianBeam(waist_m, focus_m), phase, power_W,
                                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
     @classmethod
-    def from_frequency(cls, frequency_angular: float, propagation_vector: Vector, phase: float, polarization: Polarization,
-                       beam_profile: BeamProfile, power_W: float | None = None,
-                       amplitude_modulation_function: Callable | None = None,
-                       phase_modulation_function: Callable | None = None,
-                       frequency_modulation_function: Callable | None = None) -> Laser:
-        """ Laser from its angular frequency [rad/s]. Modulation functions: see modulation_function. """
-        wavelength_m = 2. * np.pi * const.c / frequency_angular   # m
-        return cls(wavelength_m, propagation_vector, phase, frequency_angular, polarization, beam_profile, power_W,
-                   amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
-
-    @classmethod
-    def gaussian_from_frequency(cls, frequency_angular: float, power_W: float, waist_m: float, propagation_vector: Vector,
-                                polarization: Polarization, phase: float, focus_m: Vector = None,
-                                amplitude_modulation_function: Callable | None = None,
+    def gaussian_from_frequency(cls, frequency_angular: float, power_W: float, waist_m: float, polarization: Polarization,
+                                phase: float = 0., focus_m: Vector | None = None, amplitude_modulation_function: Callable | None = None,
                                 phase_modulation_function: Callable | None = None,
                                 frequency_modulation_function: Callable | None = None) -> Laser:
         """ Gaussian laser from its angular frequency [rad/s], power [W], waist [m] and focus position [m]. """
-        if focus_m is None: 
-            focus = np.zeros(3)
-
-        wavelength_m = 2. * np.pi * const.c / frequency_angular   # m
-        profile = GaussianBeam(waist_m, wavelength_m, focus_m)
-        return cls.from_frequency(frequency_angular, propagation_vector, phase, polarization, profile, power_W,
-                                  amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
+        return cls(frequency_angular, polarization, GaussianBeam(waist_m, focus_m), phase, power_W,
+                   amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
     # ---- constructors from a target Rabi frequency ----
     # The field is chosen so that |rabi_frequency(ground_level, excited_level, multipole_order)| equals the target at the
@@ -428,8 +438,8 @@ class Laser():
 
     @classmethod
     def from_target_rabi_frequency(cls, target_rabi_frequency_angular: float, ground_level: AtomicInternalEnergyLevel,
-                                   excited_level: AtomicInternalEnergyLevel, multipole_order: int, propagation_vector: Vector,
-                                   polarization: Polarization, detuning_angular: float = 0., phase: float = 0.,
+                                   excited_level: AtomicInternalEnergyLevel, multipole_order: int, polarization: Polarization,
+                                   detuning_angular: float = 0., phase: float = 0.,
                                    amplitude_modulation_function: Callable | None = None,
                                    phase_modulation_function: Callable | None = None,
                                    frequency_modulation_function: Callable | None = None,
@@ -443,17 +453,16 @@ class Laser():
             The beam profile is a PlaneWave with the effective intensity that gives this Rabi frequency (see above).
         """
         frequency_angular, peak_field = cls._frequency_and_peak_field_for_target_rabi_frequency(
-            target_rabi_frequency_angular, ground_level, excited_level, multipole_order, propagation_vector, polarization, detuning_angular,
-            quantization_axis)
+            target_rabi_frequency_angular, ground_level, excited_level, multipole_order, polarization, detuning_angular, quantization_axis)
         profile = PlaneWave.from_peak_electric_field_magnitude(peak_field)
-        return cls.from_frequency(frequency_angular, propagation_vector, phase, polarization, profile, None,
-                                  amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
+        return cls(frequency_angular, polarization, profile, phase, None,
+                   amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
     @classmethod
     def gaussian_from_target_rabi_frequency(cls, target_rabi_frequency_angular: float, ground_level: AtomicInternalEnergyLevel,
                                             excited_level: AtomicInternalEnergyLevel, multipole_order: int, waist_m: float,
-                                            propagation_vector: Vector, polarization: Polarization, detuning_angular: float = 0.,
-                                            phase: float = 0., focus_m: Vector = np.zeros(3),
+                                            polarization: Polarization, detuning_angular: float = 0.,
+                                            phase: float = 0., focus_m: Vector | None = None,
                                             amplitude_modulation_function: Callable | None = None,
                                             phase_modulation_function: Callable | None = None,
                                             frequency_modulation_function: Callable | None = None,
@@ -465,19 +474,17 @@ class Laser():
             that gives this Rabi frequency at the focus (see above).
         """
         frequency_angular, peak_field = cls._frequency_and_peak_field_for_target_rabi_frequency(
-            target_rabi_frequency_angular, ground_level, excited_level, multipole_order, propagation_vector, polarization, detuning_angular,
-            quantization_axis)
-        wavelength_m = 2. * np.pi * const.c / frequency_angular
-        profile = GaussianBeam(waist_m, wavelength_m, focus_m)
+            target_rabi_frequency_angular, ground_level, excited_level, multipole_order, polarization, detuning_angular, quantization_axis)
+        profile = GaussianBeam(waist_m, focus_m)
         power_W = profile.power_for_peak_electric_field_magnitude(peak_field)
-        return cls.from_frequency(frequency_angular, propagation_vector, phase, polarization, profile, power_W,
-                                  amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
+        return cls(frequency_angular, polarization, profile, phase, power_W,
+                   amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
     @classmethod
     def _frequency_and_peak_field_for_target_rabi_frequency(cls, target_rabi_frequency_angular: float, ground_level: AtomicInternalEnergyLevel,
                                                             excited_level: AtomicInternalEnergyLevel, multipole_order: int,
-                                                            propagation_vector: Vector, polarization: Polarization,
-                                                            detuning_angular: float, quantization_axis: Vector) -> tuple[float, float]:
+                                                            polarization: Polarization, detuning_angular: float,
+                                                            quantization_axis: Vector) -> tuple[float, float]:
         """ Laser frequency (rad/s) and peak field |E0| (V/m, effective) giving |Omega| = target_rabi_frequency_angular.
 
             Omega is linear in |E0|, so |E0| = target / |Omega(E0 = 1 V/m)|, evaluated with this frequency and
@@ -493,8 +500,7 @@ class Laser():
         frequency_angular = transition_frequency + detuning_angular
         if frequency_angular <= NUMERICAL_EQUIVALENCE_THRESHOLD:
             raise IonSimError(f"Laser frequency (transition frequency + detuning) must be positive, got {frequency_angular} rad/s.")
-        unit_field_laser = cls.from_frequency(frequency_angular, propagation_vector, 0., polarization,
-                                              PlaneWave.from_peak_electric_field_magnitude(1.), None)
+        unit_field_laser = cls(frequency_angular, polarization, PlaneWave.from_peak_electric_field_magnitude(1.))
         rabi_per_unit_field = abs(unit_field_laser.rabi_frequency(ground_level, excited_level, multipole_order,
                                                                   quantization_axis=quantization_axis))
         if rabi_per_unit_field < SMALLEST_ENERGY_SCALE:
@@ -516,13 +522,20 @@ class Laser():
         E0 = self.peak_electric_field_magnitude
         return 0.5 * const.c * const.epsilon_0 * (E0**2)
 
-    @property 
-    def propagation_unit_vector(self):
-        return _unit_vector(self.propagation_vector)
+    @property
+    def wavelength_m(self) -> float:
+        """ Vacuum wavelength 2 pi c / omega [m]. """
+        return 2. * np.pi * const.c / self.frequency_angular
 
     @property
-    def wavevector(self):
-        return self.propagation_unit_vector * np.pi * 2. / self.wavelength_m
+    def propagation_unit_vector(self) -> Vector:
+        """ Unit propagation direction, the polarization's n_hat. """
+        return self.polarization.n_hat
+
+    @property
+    def wavevector(self) -> Vector:
+        """ Lab-frame wavevector k = (omega / c) n_hat [1/m]. """
+        return self.propagation_unit_vector * self.frequency_angular / const.c
         
     # Helper methods for calculations / AMO simulations  
     def detuning_from_transition_frequency(self, transition_frequency: float) -> float:
@@ -567,7 +580,7 @@ class Laser():
         raise IonSimError(f"Multipole order must be 1 or 2 for dipole or quadrupole transitions, respectively. Got {multipole_order}.")
     
     def _modulation_parts(self) -> tuple[Callable | None, Callable | None]:
-        """ Validated (envelope, frequency_phase) callables from the modulation functions; either may be None.
+        """ The (envelope, frequency_phase) callables built from the modulation functions; either may be None.
 
             envelope(t) = A(t) exp(i phi(t)) multiplies the |e><g| (raising) element, like the static laser phase.
             frequency_phase(t) = exp(-i integral_0^t delta(t') dt') multiplies the coupling the same way as the laser
@@ -576,9 +589,6 @@ class Laser():
         amplitude_mod = self.amplitude_modulation_function
         phase_mod = self.phase_modulation_function
         frequency_mod = self.frequency_modulation_function
-        for name, func in (('amplitude', amplitude_mod), ('phase', phase_mod), ('frequency', frequency_mod)):
-            if func is not None and not callable(func):
-                raise IonSimError(f"{name}_modulation_function must be callable, got {type(func).__name__}.")
 
         envelope = None
         if amplitude_mod is not None or phase_mod is not None:
