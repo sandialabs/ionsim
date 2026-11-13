@@ -401,7 +401,6 @@ class Laser:
     def frequency_modulation_function(self) -> Callable | None:
         return self._frequency_modulation_function
 
-    # ---- constructors ----
     @classmethod
     def from_wavelength(cls, wavelength_m: float, polarization: Polarization, beam_profile: BeamProfile, phase: float = 0.,
                         power_W: float | None = None, amplitude_modulation_function: Callable | None = None,
@@ -431,7 +430,6 @@ class Laser:
         return cls(frequency_angular, polarization, GaussianBeam(waist_m, focus_m), phase, power_W,
                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
-    # ---- constructors from a target Rabi frequency ----
     # The field is chosen so that |rabi_frequency(ground_level, excited_level, multipole_order)| equals the target at the
     # peak field (beam focus) with modulation amplitude 1. Couplings are computed in units where the orbital reduced
     # matrix element <L||r^k||L'> = 1 a0^k, so the derived intensity or power is an effective (calibration) value that
@@ -705,7 +703,6 @@ class Laser:
     # parameters change sign, and the modulation function is the complex conjugate. Each counter-rotating coupling is a
     # separate CouplingOperator. In any frame these terms oscillate at about omega + omega_0, so they are mainly useful for
     # adiabatic elimination (Bloch-Siegert-type corrections to light shifts and Raman couplings) or low-frequency transitions.
-    # ---------------------------------------------------------------------------------------------------------------
     def build_carrier_coupling_operators(self, basis: Basis, target_atoms: list[AtomicStructure] | None, ground_levels: list[AtomicInternalEnergyLevel], 
                                                excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift_angular: float = 0.,
                                                include_counter_rotating: bool = False, quantization_axis: Vector = Z_AXIS) -> list[CouplingOperator]:
@@ -843,7 +840,6 @@ class Laser:
                                   f"match trap ion {ion_index} (mass {masses_amu[ion_index]:.10g} amu, charge {charges[ion_index]}); "
                                   f"check ion_indices_in_trap.")
 
-    # ---- helpers for the builders ----
     @staticmethod
     def _parse_sideband(sideband: SidebandType | str) -> SidebandType:
         try:
