@@ -302,9 +302,9 @@ class PlaneWave(BeamProfile):
         return f"PlaneWave(intensity_W_per_m2={self.intensity_W_per_m2})"
 
     @classmethod
-    def from_peak_electric_field_magnitude(cls, peak_electric_field_magnitude: float) -> PlaneWave:
+    def from_peak_electric_field_magnitude_V_per_m(cls, peak_electric_field_magnitude_V_per_m: float) -> PlaneWave:
         """ Plane wave with peak field |E0| [V/m]: intensity I = c eps0 |E0|^2 / 2 (inverse of peak_electric_field_magnitude). """
-        return cls(intensity_W_per_m2=0.5 * const.c * const.epsilon_0 * peak_electric_field_magnitude**2)
+        return cls(intensity_W_per_m2=0.5 * const.c * const.epsilon_0 * peak_electric_field_magnitude_V_per_m**2)
 
     def peak_electric_field_magnitude(self, power_W: float) -> float:
         """ Peak electric field magnitude |E0| """
@@ -339,7 +339,7 @@ class GaussianBeam(BeamProfile):
     def __repr__(self):
         return f"GaussianBeam(waist_m={self.waist_m}, focus_m={self.focus_m})"
 
-    def peak_electric_field_magnitude(self, power_W: float) -> float:
+    def peak_electric_field_magnitude_V_per_m(self, power_W: float) -> float:
         """ Peak electric field magnitude |E0| in free space """ 
         I0 = 2. * power_W / (np.pi * (self.waist_m ** 2)) # intensity, Watts/m^2
         return np.sqrt(2. * I0 / (const.c * const.epsilon_0))
