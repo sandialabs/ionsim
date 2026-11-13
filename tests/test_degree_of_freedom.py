@@ -98,9 +98,9 @@ class TestDegreeOfFreedom(unittest.TestCase):
         # Using this arxiv for CG coefficient tests: https://arxiv.org/pdf/2509.04416v1            
         self.assertAlmostEqual(cg_coeffs[('S0,1/2,-1/2','P1,1/2,-1/2')][0], -1/3, places = 8)
         self.assertAlmostEqual(cg_coeffs[('S0,1/2,-1/2','P1,1/2,-1/2')][1], 0., places = 8)
-        # TODO: do we need to flip the q sign convention? 
-        self.assertAlmostEqual(cg_coeffs[('S0,1/2,-1/2','P1,1/2,1/2')][-1], np.sqrt(2/9), places = 8)
-        self.assertAlmostEqual(cg_coeffs[('S0,1/2,-1/2','P1,1/2,1/2')][-1], np.sqrt(2/9), places = 8)
+        # sigma+ (q = m_e - m_g = +1): Steck's <g| r_{-1} |e> = sqrt(2/9), times (-1)^q
+        self.assertAlmostEqual(cg_coeffs[('S0,1/2,-1/2','P1,1/2,1/2')][1], -np.sqrt(2/9), places = 8)
+        self.assertAlmostEqual(cg_coeffs[('S0,1/2,-1/2','P1,1/2,1/2')][-1], 0., places = 8)
         self.assertAlmostEqual(cg_coeffs[('S0,1/2,-1/2','P1,3/2,-1/2')][0], -np.sqrt(2/9), places = 8)
 
     def test_neutral_atom_clebsch_gordan_coeffs_quadrupole(self):
@@ -140,8 +140,8 @@ class TestDegreeOfFreedom(unittest.TestCase):
                 for q in range(-2,3):
                     #cg_coeffs[(ground_level.name, excited_level.name)][q] = compute_hyperfine_clebsch_gordan_coefficient(ground_level, excited_level, q, 2) 
                     cg_coeffs[(ground_level.name, excited_level.name)][q] = compute_multipole_amplitude(ground_level, excited_level, 2, q, True) 
-                    if q == -1:
-                        self.assertAlmostEqual(cg_coeffs[(ground_level.name, excited_level.name)][q], 0.2, places=8)
+                    if q == 1:   # mJ 1/2 -> 3/2 (q = m_e - m_g); Steck's form gives +0.2 at q_Steck = -1, times (-1)^q
+                        self.assertAlmostEqual(cg_coeffs[(ground_level.name, excited_level.name)][q], -0.2, places=8)
                     else:
                         self.assertAlmostEqual(cg_coeffs[(ground_level.name, excited_level.name)][q], 0., places=8)
     

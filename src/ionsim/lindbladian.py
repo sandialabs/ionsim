@@ -142,10 +142,10 @@ class DissipatorSpontaneousEmission(Dissipator):
         One Lindblad operator sqrt(Gamma_{e->g,q}) |g><e| is created per decay path (excited level e, ground level g,
         polarization q), in every selected AtomicStructure DOF. The rate of each path is exact:
 
-            Gamma_{e->g,q} = (branching ratio of g's manifold) / (lifetime of e) * |<g| T^(k)_q |e>|^2 (2 J_e + 1) / (2 J_g + 1)
+            Gamma_{e->g,q} = (branching ratio of g's manifold) / (lifetime of e) * |<e| T^(k)_q |g>|^2 (2 J_e + 1) / (2 J_g + 1)
 
-        where <g| T^(k)_q |e> is compute_multipole_amplitude of rank k in units of <J_g||T^(k)||J_e>, and q runs over
-        -k..k. Summed over every sublevel of a ground manifold and over q, the factor after the branching ratio is
+        where <e| T^(k)_q |g> is compute_multipole_amplitude of rank k in units of <J_g||T^(k)||J_e> (same magnitude as
+        <g| T^(k)_{-q} |e>), q = m_e - m_g, and q runs over -k..k. Summed over every sublevel of a ground manifold and over q, the factor after the branching ratio is
         exactly 1 for any k, so the rates do not depend on which levels are included.
 
         The lifetime is the level's total lifetime (all decay channels, as measured), and branching ratios are fractions

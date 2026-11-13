@@ -190,7 +190,10 @@ class Polarization:
         return cls(polarization_vector, propagation_direction)
 
     def dipole_components(self, quantization_axis: Vector = Z_AXIS) -> dict[int, complex]:
-        """ Spherical (dipole) components eps_q, keyed by q = +1, 0, -1, with polarization vector = sum_q eps_q e_q. """
+        """ Spherical (dipole) components eps_q, keyed by q = +1, 0, -1, with polarization vector = sum_q eps_q e_q.
+
+            q is the change of m on absorption, q = m_excited - m_ground (sigma+ <-> q = +1, pi <-> 0, sigma- <-> -1), the
+            convention used throughout IonSim. """
         e_q = _spherical_basis_vectors(quantization_axis)
         eps_p1 = np.vdot(e_q[1], self.jones_vector)
         eps_0 = np.vdot(e_q[0], self.jones_vector)
@@ -217,7 +220,8 @@ class Polarization:
         return tensors
 
     def quadrupole_components(self, quantization_axis: Vector = Z_AXIS) -> dict[int, complex]:
-        """ Rank-2 polarization components C_q, q = -2..2, of the E2 geometry tensor eps (x) n_hat.
+        """ Rank-2 polarization components C_q, q = -2..2 (q = m_excited - m_ground, as for dipole_components), of the
+            E2 geometry tensor eps (x) n_hat.
 
             C_q = sum_ij conj(E_q)_ij eps_i n_j = sum_{m1, m2} <1 m1; 1 m2 | 2 q> eps_m1 n_m2, where eps_m and n_m are
             the spherical components of the polarization and propagation unit vectors. For an E2 coupling these play

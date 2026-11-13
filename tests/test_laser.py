@@ -671,7 +671,7 @@ class TestPhysicalDipoleCouplings(unittest.TestCase):
         _, g, e = Ca_s_to_d()
         components = Polarization(Z, X).quadrupole_components()
         k = 2. * np.pi / 729e-9
-        angular = sum(components[q] * (-1)**q * compute_multipole_amplitude(g, e, 2, -q, include_J_J_prime_matrix_element=True)
+        angular = sum(components[q] * compute_multipole_amplitude(g, e, 2, q, include_J_J_prime_matrix_element=True)
                       for q in range(-2, 3))
         previous = 2. * angular * self.E_A0_OVER_HBAR * 1j * k * const.value('Bohr radius') * np.sqrt(2. / 3.)
         coupling = compute_coupling_amplitude_between_atomic_levels(g, e, components, [g, e], 2, wavenumber=k)
