@@ -272,7 +272,7 @@ class PlaneWave(BeamProfile):
 
 
 class GaussianBeam(BeamProfile):
-    """ Gaussian (TEM00) beam with 1/e^2 intensity radius waist_m [m] at the focus position focus_m [m]. The wavelength
+    """ Gaussian beam with 1/e^2 intensity radius waist_m [m] at the focus position focus_m [m]. The wavelength
         enters only through the wavenumber k passed to relative_envelope (the laser's own). """
 
     def __init__(self, waist_m: float, focus_m: Vector | None = None):
