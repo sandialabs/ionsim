@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Callable
 import numbers
 import warnings
-
+import collections 
 import numpy as np
 from scipy import constants as const
 from scipy import integrate
@@ -947,7 +947,7 @@ class Laser:
     def _parse_motional_mode_input(basis: Basis, target_modes: list[MotionalMode]) -> list[MotionalMode]:
         """ Parses the target mode list input: a non-empty list of distinct MotionalMode DOFs of the basis,
             each with Fock levels 0, 1, ..., N-1 in order. """
-        if not isinstance(target_modes, (list, tuple)):
+        if not isinstance(target_modes, collections.abc.Sequence):
             raise IonSimError(f"target_modes must be a list of MotionalMode DOFs, got {type(target_modes).__name__}; "
                               f"wrap a single mode in a list, e.g. [mode].")
         if not target_modes:
