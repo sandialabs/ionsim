@@ -94,100 +94,44 @@ def _project_spherical(v: Vector, quantization_axis: Vector) -> dict[int, comple
     return {q: np.vdot(sph_basis[q], v) for q in (1, 0, -1)} 
 
 
+# Ways to give a Laser its polarization (PolarizationInput, defined after these classes). Each has
+#     resolve(propagation_direction) -> Polarization,
+# which the Laser calls with its own propagation direction n_hat; the Laser then checks n_hat . eps = 0.
+
 class Polarization:
-    """ Complex Cartesian polarization (Jones) vector in the lab frame, perpendicular to a propagation direction (e.g. of a laser).
+    """ Complex Cartesian polarization (Jones) vector eps in the lab frame.
 
-        polarization_vector: complex 3-component Jones vector in the lab frame (Cartesian coordinates); overall phase is kept and acts like the laser phase
-        propagation_direction: real 3-component vector 
+        polarization_vector: complex 3-component vector (Cartesian coordinates), any nonzero length; it is normalized.
+            The overall phase is kept and acts like the laser phase.
 
-        Derived, normalized attributes:
+        Derived attribute:
             jones_vector: the unit complex polarization vector, sum_i |eps_i|^2 = 1
-            n_hat: the unit light propagation direction
+
+        The propagation direction belongs to the (Laser) light, which requires n_hat dot eps = 0. Given to a Laser, a
+        Polarization resolves to itself; LinearPolarization, CircularPolarization and SphericalPolarization build one from
+        a description relative to the propagation direction or the quantization axis.
     """
 
-    def __init__(self, polarization_vector: Vector, propagation_direction: Vector):
-        direction = np.asarray(propagation_direction)
-        if direction.shape != (3,):
-            raise IonSimError(f"propagation_direction must be a 3-component vector, got shape {direction.shape}.")
-        if np.iscomplexobj(direction):
-            if np.any(np.abs(np.imag(direction)) > NUMERICAL_EQUIVALENCE_THRESHOLD):
-                raise IonSimError(f"propagation_direction must be real, got {propagation_direction}.")
-            direction = np.real(direction)
-        n_hat = _unit_vector(direction.astype(float))
-
+    def __init__(self, polarization_vector: Vector):
         vector = np.asarray(polarization_vector, dtype=complex)
         if vector.shape != (3,):
             raise IonSimError(f"polarization_vector must be a 3-component vector, got shape {vector.shape}.")
         norm = np.sqrt(np.vdot(vector, vector).real)
-        if norm < NUMERICAL_ERROR_THRESHOLD:  
+        if norm < NUMERICAL_ERROR_THRESHOLD:
             raise IonSimError(f"Cannot normalize a polarization vector with norm near zero. Computed norm {norm}")
-        jones_vector = vector / norm
-
-        projection = np.dot(jones_vector, n_hat)
-        if np.abs(projection) > NUMERICAL_ERROR_THRESHOLD:
-            raise IonSimError(f"Polarization vector is not perpendicular to the propagation direction: (normalized) dot product "
-                              f"= {projection}, should be zero.")
-
-        self._jones_vector = jones_vector
-        self._n_hat = n_hat
+        self._jones_vector = vector / norm
 
     @property
     def jones_vector(self) -> Vector:
         """ Unit complex polarization (Jones) vector in the lab frame. """
         return (self._jones_vector).copy()
 
-    @property
-    def n_hat(self) -> Vector:
-        """ Unit light propagation direction. """
-        return (self._n_hat).copy()
-
     def __repr__(self):
-        return f"Polarization(jones_vector={self.jones_vector}, n_hat={self.n_hat})"
+        return f"Polarization(jones_vector={self.jones_vector})"
 
-    @classmethod
-    def from_linear(cls, propagation_direction: Vector, angle: float = 0., ref_axis: Vector | None=None):
-        """ Linear polarization at an angle (radians) from a reference direction in the perpendicular plane. """ 
-        e1, e2 = _perpendicular_basis(propagation_direction, ref_axis)
-        polarization_vector = np.cos(angle) * e1 + np.sin(angle) * e2
-        return cls(polarization_vector, propagation_direction)
-
-    @classmethod
-    def from_circular(cls, propagation_direction: Vector, handedness: str, ref_axis: Vector | None=None):
-        """ Circular polarization built in the (e1, e2) plane perpendicular to the laser propagation direction (n hat)
-
-            - handedness is specified by '+' or '-'
-            - eps_{+/-} = (e1 +/- ie2)/sqrt(2) 
-            - '+' <==> left-circular polarization; '-' <==> right-circular polarization
-            - looks at wave from behind. 
-
-            NOTE: Corresponding with atomic raising/lowering angular momentum operators depends on quantization axis. 
-        """
-        e1, e2 = _perpendicular_basis(propagation_direction, ref_axis)
-        if handedness == '+':
-            polarization_vector = (e1 + 1j * e2)/np.sqrt(2.)
-        elif handedness == '-':
-            polarization_vector = (e1 - 1j * e2)/np.sqrt(2.)
-        else:
-            raise IonSimError("Handedness must be specified either by a string, e.g. '+' or '-'.")
-
-        return cls(polarization_vector, propagation_direction)
-
-    @classmethod
-    def from_spherical(cls, epsilon_vector: Vector, propagation_direction: Vector, quantization_axis: Vector = Z_AXIS):
-        """ Builds a Cartesian polarization vector from the specified spherical components (eps_+, eps_0, eps_-), which are 
-            relative to the specified quantization axis (defaulting to (0, 0, 1)). 
-
-            epsilon vector specified with 3 componenets: eps_+1, eps_0, eps_-1, 
-
-        """
-        # should the input vector be in a dictionary form? {+1: value, 0: value, -1: value}?
-        e_q = _spherical_basis_vectors(quantization_axis)
-        e_p1 = e_q[1]
-        e_0 = e_q[0]
-        e_m1 = e_q[-1]
-
-        polarization_vector = e_p1 * epsilon_vector[0] + e_0 * epsilon_vector[1] + e_m1 * epsilon_vector[2] 
-        return cls(polarization_vector, propagation_direction)
+    def resolve(self, propagation_direction: Vector) -> Polarization:
+        """ An explicit polarization does not depend on the propagation direction (the Laser checks transversality). """
+        return self
 
     def dipole_components(self, quantization_axis: Vector = Z_AXIS) -> dict[int, complex]:
         """ Spherical (dipole) components eps_q, keyed by q = +1, 0, -1, with polarization vector = sum_q eps_q e_q.
@@ -219,16 +163,115 @@ class Polarization:
             tensors[q] = T
         return tensors
 
-    def quadrupole_components(self, quantization_axis: Vector = Z_AXIS) -> dict[int, complex]:
+    def quadrupole_components(self, propagation_direction: Vector, quantization_axis: Vector = Z_AXIS) -> dict[int, complex]:
         """ Rank-2 polarization components C_q, q = -2..2 (q = m_excited - m_ground, as for dipole_components), of the
-            E2 geometry tensor eps (x) n_hat.
+            E2 geometry tensor eps (x) n_hat, for light with this polarization propagating along propagation_direction.
 
             C_q = sum_ij conj(E_q)_ij eps_i n_j = sum_{m1, m2} <1 m1; 1 m2 | 2 q> eps_m1 n_m2, where eps_m and n_m are
             the spherical components of the polarization and propagation unit vectors. For an E2 coupling these play
             the role eps_q plays for E1: sum_ij eps_i n_j Q_ij = sum_q C_q Q_q for a symmetric traceless tensor Q.
         """
+        n_hat = _unit_vector(np.asarray(propagation_direction, dtype=float))
         tensors = self.rank2_spherical_basis(quantization_axis)
-        return {q: complex(np.einsum('ij,i,j->', np.conj(tensors[q]), self.jones_vector, self.n_hat)) for q in range(-2, 3)}
+        return {q: complex(np.einsum('ij,i,j->', np.conj(tensors[q]), self._jones_vector, n_hat)) for q in range(-2, 3)}
+
+
+class LinearPolarization:
+    """ Linear polarization at an angle [radians] in the plane perpendicular to the propagation direction:
+            eps = cos(angle) e1 + sin(angle) e2, with (e1, e2, n_hat) right-handed. 
+        e1 is the component of ref_axis perpendicular to n_hat (if ref_axis is given),
+        otherwise the default transverse basis of _perpendicular_basis. 
+    """
+
+    def __init__(self, angle: float = 0., ref_axis: Vector | None = None):
+        if not np.isfinite(angle):
+            raise IonSimError(f"angle must be a finite number (rad), got {angle}.")
+        self._angle = float(angle)
+        self._ref_axis = None if ref_axis is None else np.array(ref_axis, dtype=float)
+
+    @property
+    def angle(self) -> float:
+        return self._angle
+
+    @property
+    def ref_axis(self) -> Vector | None:
+        return None if self._ref_axis is None else self._ref_axis.copy()
+
+    def __repr__(self):
+        return f"LinearPolarization(angle={self.angle}, ref_axis={self.ref_axis})"
+
+    def resolve(self, propagation_direction: Vector) -> Polarization:
+        e1, e2 = _perpendicular_basis(propagation_direction, self._ref_axis)
+        return Polarization(np.cos(self.angle) * e1 + np.sin(self.angle) * e2)
+
+
+class CircularPolarization:
+    """ Circular polarization in the (e1, e2) plane perpendicular to the propagation direction n_hat, (e1, e2, n_hat)
+        right-handed:
+
+            - handedness is specified by '+' or '-'
+            - eps_{+/-} = (e1 +/- ie2)/sqrt(2)
+            - '+' <==> left-circular polarization; '-' <==> right-circular polarization
+            - looks at wave from behind.
+
+        The handedness is relative to the propagation direction (helicity), not to the atom's quantization axis: '+' drives
+        sigma+ (q = +1) for light along +quantization axis and sigma- for light along -quantization axis.
+        ref_axis (optional) only sets the orientation of e1, i.e. an overall phase of eps, which acts like the laser phase
+        (it matters only for relative phases between beams).
+    """
+    HANDEDNESS = ('+', '-')
+
+    def __init__(self, handedness: str, ref_axis: Vector | None = None):
+        if handedness not in self.HANDEDNESS:
+            raise IonSimError(f"Handedness must be specified by a string, '+' or '-', got {handedness!r}.")
+        self._handedness = handedness
+        self._ref_axis = None if ref_axis is None else np.array(ref_axis, dtype=float)
+
+    @property
+    def handedness(self) -> str:
+        return self._handedness
+
+    @property
+    def ref_axis(self) -> Vector | None:
+        return None if self._ref_axis is None else self._ref_axis.copy()
+
+    def __repr__(self):
+        return f"CircularPolarization(handedness={self.handedness!r}, ref_axis={self.ref_axis})"
+
+    def resolve(self, propagation_direction: Vector) -> Polarization:
+        e1, e2 = _perpendicular_basis(propagation_direction, self._ref_axis)
+        sign = 1. if self.handedness == '+' else -1.
+        return Polarization((e1 + sign * 1j * e2) / np.sqrt(2.))
+
+
+class SphericalPolarization:
+    """ Polarization from its spherical components relative to a quantization axis, eps = sum_q eps_q e_q, with
+        components = {+1: eps_+1, 0: eps_0, -1: eps_-1} (q = m_excited - m_ground; the inverse of
+        Polarization.dipole_components). The Laser requires the resulting vector to be perpendicular to its propagation
+        direction: e.g. pure sigma+ ({+1: 1, 0: 0, -1: 0}) needs light along the quantization axis, and pi ({0: 1}) light perpendicular to it.
+        Components not given are zero. """
+
+    def __init__(self, components: dict[int, complex], quantization_axis: Vector = Z_AXIS):
+        if not isinstance(components, dict) or not set(components) <= {-1, 0, 1} or not components:
+            raise IonSimError(f"components must be a dict keyed by q in (+1, 0, -1), e.g. {{1: 1.}} for sigma+, got {components}.")
+        self._components = {q: complex(components.get(q, 0.)) for q in (1, 0, -1)}
+        self._quantization_axis = np.array(quantization_axis, dtype=float)
+        _spherical_basis_vectors(self._quantization_axis)   # validates the axis
+
+    @property
+    def components(self) -> dict[int, complex]:
+        return dict(self._components)
+
+    @property
+    def quantization_axis(self) -> Vector:
+        return self._quantization_axis.copy()
+
+    def __repr__(self):
+        return f"SphericalPolarization(components={self.components}, quantization_axis={self.quantization_axis})"
+
+    def resolve(self, propagation_direction: Vector) -> Polarization:
+        e_q = _spherical_basis_vectors(self._quantization_axis)
+        return Polarization(sum(self._components[q] * e_q[q] for q in (1, 0, -1)))
 
 
 class BeamProfile(ABC):
@@ -324,11 +367,17 @@ class GaussianBeam(BeamProfile):
         return amp * np.exp(1j * (curvature_phase - gouy)) 
 
 
+# The accepted ways for a user to give a Laser its polarization 
+PolarizationInput = Polarization | LinearPolarization | CircularPolarization | SphericalPolarization
+
 class Laser:
     """ A single monochromatic laser beam.
 
         frequency_angular: laser frequency omega [rad/s] (positive).
-        polarization: Polarization; its propagation direction n_hat is the laser's propagation direction.
+        propagation_direction: real 3-vector (any nonzero length) along which the laser propagates.
+        polarization: PolarizationInput (Polarization for an explicit vector, LinearPolarization, CircularPolarization,
+            SphericalPolarization), resolved against the propagation direction into laser.polarization, which must be
+            transverse to it (n_hat dot eps = 0).
         beam_profile: BeamProfile (GaussianBeam or PlaneWave), giving the peak field for power_W.
         phase: static laser phase phi [rad] of the |e><g| coupling element.
         power_W: optical power [W]; required for a GaussianBeam, unused by a PlaneWave (which carries its intensity).
@@ -338,15 +387,26 @@ class Laser:
         Derived (read-only): wavelength_m, propagation_unit_vector, wavevector, peak_electric_field_magnitude, peak_intensity.
     """
 
-    def __init__(self, frequency_angular: float, polarization: Polarization, beam_profile: BeamProfile, phase: float = 0.,
-                 power_W: float | None = None, amplitude_modulation_function: Callable | None = None,
-                 phase_modulation_function: Callable | None = None, frequency_modulation_function: Callable | None = None):
+    def __init__(self, frequency_angular: float, propagation_direction: Vector, polarization: PolarizationInput,
+                 beam_profile: BeamProfile, phase: float = 0., power_W: float | None = None,
+                 amplitude_modulation_function: Callable | None = None, phase_modulation_function: Callable | None = None,
+                 frequency_modulation_function: Callable | None = None):
+        # Check frequency input  
         if not np.isfinite(frequency_angular) or frequency_angular <= 0.:
             raise IonSimError(f"frequency_angular must be a positive number (rad/s), got {frequency_angular}.")
-        if not isinstance(polarization, Polarization):
-            raise IonSimError(f"polarization must be a Polarization, got {type(polarization).__name__}.")
+        # Check propagation direction input  
+        direction = np.asarray(propagation_direction)
+        if direction.shape != (3,) or np.iscomplexobj(direction) or not np.all(np.isfinite(direction)):
+            raise IonSimError(f"propagation_direction must be a real 3-component vector, got {propagation_direction}.")
+        n_hat = _unit_vector(direction.astype(float))
+        # Check polarization input  
+        if not isinstance(polarization, PolarizationInput):
+            raise IonSimError(f"polarization must be one of Polarization, LinearPolarization, CircularPolarization or "
+                              f"SphericalPolarization, got {type(polarization).__name__}.")
+
         if not isinstance(beam_profile, BeamProfile):
             raise IonSimError(f"beam_profile must be a BeamProfile (e.g. GaussianBeam or PlaneWave), got {type(beam_profile).__name__}.")
+        # Check beam profile characteristics 
         if isinstance(beam_profile, GaussianBeam) and (power_W is None or not np.isfinite(power_W) or power_W <= 0.):
             raise IonSimError(f"A Gaussian beam needs a positive power_W (W), got {power_W}.")
         for name, func in (('amplitude', amplitude_modulation_function), ('phase', phase_modulation_function),
@@ -354,7 +414,15 @@ class Laser:
             if func is not None and not callable(func):
                 raise IonSimError(f"{name}_modulation_function must be callable, got {type(func).__name__}.")
         self._frequency_angular = float(frequency_angular)
-        self._polarization = polarization
+
+        # Check polarization - propagation direction constraint 
+        _polarization = polarization.resolve(n_hat)
+        eps_dot_n = np.dot(_polarization.jones_vector, n_hat)
+        if np.abs(eps_dot_n) > NUMERICAL_ERROR_THRESHOLD:
+            raise IonSimError(f"{polarization!r} is not perpendicular to the propagation direction {n_hat}: n_hat dot eps = "
+                              f"{eps_dot_n}, should be zero.")
+        self._n_hat = n_hat
+        self._polarization = _polarization 
         self._beam_profile = beam_profile
         self._phase = float(phase)
         self._power_W = None if power_W is None else float(power_W)
@@ -373,6 +441,7 @@ class Laser:
 
     @property
     def polarization(self) -> Polarization:
+        """ The polarization resolved against this laser's propagation direction. """
         return self._polarization
 
     @property
@@ -402,32 +471,36 @@ class Laser:
         return self._frequency_modulation_function
 
     @classmethod
-    def from_wavelength(cls, wavelength_m: float, polarization: Polarization, beam_profile: BeamProfile, phase: float = 0.,
+    def from_wavelength(cls, wavelength_m: float, propagation_direction: Vector, polarization: PolarizationInput,
+                        beam_profile: BeamProfile, phase: float = 0.,
                         power_W: float | None = None, amplitude_modulation_function: Callable | None = None,
                         phase_modulation_function: Callable | None = None,
                         frequency_modulation_function: Callable | None = None) -> Laser:
         """ Laser from its vacuum wavelength [m]; other arguments as for Laser. """
         if not np.isfinite(wavelength_m) or wavelength_m <= 0.:
             raise IonSimError(f"wavelength_m must be a positive length (m), got {wavelength_m}.")
-        return cls(2. * np.pi * const.c / wavelength_m, polarization, beam_profile, phase, power_W,
+        return cls(2. * np.pi * const.c / wavelength_m, propagation_direction, polarization, beam_profile, phase, power_W,
                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
     @classmethod
-    def gaussian_from_wavelength(cls, wavelength_m: float, power_W: float, waist_m: float, polarization: Polarization,
+    def gaussian_from_wavelength(cls, wavelength_m: float, power_W: float, waist_m: float, propagation_direction: Vector,
+                                 polarization: PolarizationInput,
                                  phase: float = 0., focus_m: Vector | None = None, amplitude_modulation_function: Callable | None = None,
                                  phase_modulation_function: Callable | None = None,
                                  frequency_modulation_function: Callable | None = None) -> Laser:
         """ Gaussian laser from its vacuum wavelength [m], power [W], waist [m] and focus position [m]. """
-        return cls.from_wavelength(wavelength_m, polarization, GaussianBeam(waist_m, focus_m), phase, power_W,
+        return cls.from_wavelength(wavelength_m, propagation_direction, polarization, GaussianBeam(waist_m, focus_m), phase,
+                                   power_W,
                                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
     @classmethod
-    def gaussian_from_frequency(cls, frequency_angular: float, power_W: float, waist_m: float, polarization: Polarization,
+    def gaussian_from_frequency(cls, frequency_angular: float, power_W: float, waist_m: float, propagation_direction: Vector,
+                                polarization: PolarizationInput,
                                 phase: float = 0., focus_m: Vector | None = None, amplitude_modulation_function: Callable | None = None,
                                 phase_modulation_function: Callable | None = None,
                                 frequency_modulation_function: Callable | None = None) -> Laser:
         """ Gaussian laser from its angular frequency [rad/s], power [W], waist [m] and focus position [m]. """
-        return cls(frequency_angular, polarization, GaussianBeam(waist_m, focus_m), phase, power_W,
+        return cls(frequency_angular, propagation_direction, polarization, GaussianBeam(waist_m, focus_m), phase, power_W,
                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
     # The field is chosen so that |rabi_frequency(ground_level, excited_level, multipole_order)| equals the target at the
@@ -440,8 +513,8 @@ class Laser:
 
     @classmethod
     def from_target_rabi_frequency(cls, target_rabi_frequency_angular: float, ground_level: AtomicInternalEnergyLevel,
-                                   excited_level: AtomicInternalEnergyLevel, multipole_order: int, polarization: Polarization,
-                                   detuning_angular: float = 0., phase: float = 0.,
+                                   excited_level: AtomicInternalEnergyLevel, multipole_order: int,
+                                   propagation_direction: Vector, polarization: PolarizationInput, detuning_angular: float = 0., phase: float = 0.,
                                    amplitude_modulation_function: Callable | None = None,
                                    phase_modulation_function: Callable | None = None,
                                    frequency_modulation_function: Callable | None = None,
@@ -455,15 +528,16 @@ class Laser:
             The beam profile is a PlaneWave with the effective intensity that gives this Rabi frequency (see above).
         """
         frequency_angular, peak_field = cls._frequency_and_peak_field_for_target_rabi_frequency(
-            target_rabi_frequency_angular, ground_level, excited_level, multipole_order, polarization, detuning_angular, quantization_axis)
+            target_rabi_frequency_angular, ground_level, excited_level, multipole_order, propagation_direction, polarization,
+            detuning_angular, quantization_axis)
         profile = PlaneWave.from_peak_electric_field_magnitude(peak_field)
-        return cls(frequency_angular, polarization, profile, phase, None,
+        return cls(frequency_angular, propagation_direction, polarization, profile, phase, None,
                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
     @classmethod
     def gaussian_from_target_rabi_frequency(cls, target_rabi_frequency_angular: float, ground_level: AtomicInternalEnergyLevel,
                                             excited_level: AtomicInternalEnergyLevel, multipole_order: int, waist_m: float,
-                                            polarization: Polarization, detuning_angular: float = 0.,
+                                            propagation_direction: Vector, polarization: PolarizationInput, detuning_angular: float = 0.,
                                             phase: float = 0., focus_m: Vector | None = None,
                                             amplitude_modulation_function: Callable | None = None,
                                             phase_modulation_function: Callable | None = None,
@@ -476,16 +550,17 @@ class Laser:
             that gives this Rabi frequency at the focus (see above).
         """
         frequency_angular, peak_field = cls._frequency_and_peak_field_for_target_rabi_frequency(
-            target_rabi_frequency_angular, ground_level, excited_level, multipole_order, polarization, detuning_angular, quantization_axis)
+            target_rabi_frequency_angular, ground_level, excited_level, multipole_order, propagation_direction, polarization,
+            detuning_angular, quantization_axis)
         profile = GaussianBeam(waist_m, focus_m)
         power_W = profile.power_for_peak_electric_field_magnitude(peak_field)
-        return cls(frequency_angular, polarization, profile, phase, power_W,
+        return cls(frequency_angular, propagation_direction, polarization, profile, phase, power_W,
                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
     @classmethod
     def _frequency_and_peak_field_for_target_rabi_frequency(cls, target_rabi_frequency_angular: float, ground_level: AtomicInternalEnergyLevel,
                                                             excited_level: AtomicInternalEnergyLevel, multipole_order: int,
-                                                            polarization: Polarization, detuning_angular: float,
+                                                            propagation_direction: Vector, polarization: PolarizationInput, detuning_angular: float,
                                                             quantization_axis: Vector) -> tuple[float, float]:
         """ Laser frequency (rad/s) and peak field |E0| (V/m, effective) giving |Omega| = target_rabi_frequency_angular.
 
@@ -502,12 +577,13 @@ class Laser:
         frequency_angular = transition_frequency + detuning_angular
         if frequency_angular <= NUMERICAL_EQUIVALENCE_THRESHOLD:
             raise IonSimError(f"Laser frequency (transition frequency + detuning) must be positive, got {frequency_angular} rad/s.")
-        unit_field_laser = cls(frequency_angular, polarization, PlaneWave.from_peak_electric_field_magnitude(1.))
+        unit_field_laser = cls(frequency_angular, propagation_direction, polarization, PlaneWave.from_peak_electric_field_magnitude(1.))
         rabi_per_unit_field = abs(unit_field_laser.rabi_frequency(ground_level, excited_level, multipole_order,
                                                                   quantization_axis=quantization_axis))
         if rabi_per_unit_field < SMALLEST_ENERGY_SCALE:
-            components = (polarization.dipole_components(quantization_axis) if multipole_order == 1
-                          else polarization.quadrupole_components(quantization_axis))
+            _polarization = unit_field_laser.polarization
+            components = (_polarization.dipole_components(quantization_axis) if multipole_order == 1
+                          else _polarization.quadrupole_components(propagation_direction, quantization_axis))
             raise IonSimError(f"This polarization does not drive {ground_level.name} -> {excited_level.name} "
                               f"(multipole order {multipole_order}); polarization components: {components}.")
         return frequency_angular, float(target) / rabi_per_unit_field
@@ -531,8 +607,8 @@ class Laser:
 
     @property
     def propagation_unit_vector(self) -> Vector:
-        """ Unit propagation direction, the polarization's n_hat. """
-        return self.polarization.n_hat
+        """ Unit propagation direction n_hat (the normalized propagation_direction). """
+        return self._n_hat.copy()
 
     @property
     def wavevector(self) -> Vector:
@@ -576,7 +652,7 @@ class Laser:
             return compute_rabi_frequency_between_atomic_levels(ground_level, excited_level, polarization.dipole_components(quantization_axis),
                                                                 levels, multipole_order, self.peak_electric_field_magnitude)
         if multipole_order == 2:
-            return compute_rabi_frequency_between_atomic_levels(ground_level, excited_level, polarization.quadrupole_components(quantization_axis),
+            return compute_rabi_frequency_between_atomic_levels(ground_level, excited_level, polarization.quadrupole_components(self.propagation_unit_vector, quantization_axis),
                                                                 levels, multipole_order, self.peak_electric_field_magnitude,
                                                                 wavenumber=wavenumber)
         raise IonSimError(f"Multipole order must be 1 or 2 for dipole or quadrupole transitions, respectively. Got {multipole_order}.")
@@ -655,7 +731,7 @@ class Laser:
         k = np.linalg.norm(self.wavevector)
         if not counter_rotating:
             return self.polarization, k
-        return Polarization(np.conj(self.polarization.jones_vector), self.polarization.n_hat), -k
+        return Polarization(np.conj(self.polarization.jones_vector)), -k
 
     def _modulation_function_for_level_pair(self, ground_index: int, excited_index: int) -> Callable | None:
         """ Modulation function for the coupling operator of one (|g>, |e>) pair at these basis indices.
