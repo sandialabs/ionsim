@@ -936,8 +936,10 @@ class Laser:
             target_atoms = basis.atomic_structure_DOFs
         if not target_atoms:
             raise IonSimError("No atoms to address: the basis has no AtomicStructure degrees of freedom.")
+        # Check that atom DOF is in the basis 
+        assert(all(isinstance(atom, AtomicStructure) for atom in target_atoms))
         for atom in target_atoms:
-            if not any(atom is dof for dof in basis.atomic_structure_DOFs):
+            if atom not in basis.atomic_structure_DOFs: 
                 raise IonSimError(f"Atom {atom.name or atom} has not been included in the basis degrees of freedom.")
         return list(target_atoms)
 
