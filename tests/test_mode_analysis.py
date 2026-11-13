@@ -398,6 +398,38 @@ class TestModeAnalysisPhysics(unittest.TestCase):
             chain.build_mode_DOFs([0, 1, 2], [3, 4])
         with self.assertRaises(ValueError):
             chain.build_mode_DOFs_from_branch('w', [0], 3)
+        self.assertEqual([m.name for m in modes[:2]], ['mode 0', 'mode 1'])
+        self.assertEqual([m.name for m in branch_modes], ['mode 0', 'mode 2'])   # global indices of radial0 modes 0, 2
+        self.assertEqual([m.name for m in chain.build_mode_DOFs_from_branch('axial', [1], 2)], ['mode 7'])
+        for bad_indices in ([9], [-1], [0.5]):
+            with self.subTest(mode_indices=bad_indices), self.assertRaises(IonSimError):
+                chain.build_mode_DOFs(bad_indices, 2)
+
+    def test_global_mode_index(self):
+        """ (branch, index in branch) -> global index: x, y, z blocks of N in ascending frequency (branch_sorted). """
+        chain = IonChain(3, TPI * 3e6, TPI * 3.3e6, TPI * 0.6e6, YB_MASS, 1)
+        self.assertEqual([chain.get_global_mode_index(branch, j) for branch in BranchType for j in range(3)], list(range(9)))
+        np.testing.assert_array_equal(chain.normal_mode_frequencies[[chain.get_global_mode_index('axial', j) for j in range(3)]],
+                                      chain.get_axial_mode_frequencies())
+        with self.assertRaises(IonSimError):
+            chain.get_global_mode_index('axial', 3)
+
+    def test_lamb_dicke_parameters_for_ions_and_modes(self):
+        """ The requested sub-matrix of calculate_lamb_dicke_parameters, rows and columns in the requested order. Rows are
+            stored ion indices: with 'distance' reindexing the center ion is stored first, and ion_indices maps back. """
+        k = TPI / 729e-9 * np.array([0.3, 0.2, 0.9]) / np.linalg.norm([0.3, 0.2, 0.9])   # arbitrary lab-frame wavevector
+        crystal = TrappedIonCrystal(3, TPI * 3e6, TPI * 3.2e6, TPI * 0.5e6, [YB_MASS, BA_MASS, YB_MASS], 1)   # 'distance'
+        self.assertFalse(np.array_equal(crystal.ion_indices, np.arange(3)))
+        full = crystal.calculate_lamb_dicke_parameters(k)
+        ion_indices, mode_indices = [2, 0], [7, 1, 8, 7]                      # any order; repeats allowed
+        eta = crystal.get_lamb_dicke_parameters_for_ions_and_modes(ion_indices, mode_indices, k)
+        np.testing.assert_array_equal(eta, full[np.ix_(ion_indices, mode_indices)])
+        # the Ba+ ion (user-supplied index 1) is stored at the row where ion_indices == 1, and has the Ba+ mass
+        ba_row = int(np.flatnonzero(crystal.ion_indices == 1)[0])
+        self.assertAlmostEqual(crystal.atomic_masses[ba_row] / const.value('atomic mass constant'), BA_MASS, places=6)
+        for ions, modes in (([3], [0]), ([0], [9]), ([0.], [0]), ([[0]], [0])):
+            with self.subTest(ions=ions, modes=modes), self.assertRaises(IonSimError):
+                crystal.get_lamb_dicke_parameters_for_ions_and_modes(ions, modes, k)
 
     def test_branch_types(self):
         """ radial0 / radial1 / axial map to the x / y / z principal axes; strings and members are interchangeable. """
