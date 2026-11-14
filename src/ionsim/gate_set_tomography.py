@@ -69,6 +69,15 @@ from ionsim.custom_types import Vector
 from ionsim.io import write_results_to_file
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
+# How circuit outcome probabilities are evaluated (predict_sequence_probabilities). The prep fiducials are always applied to
+# the prep state and the measurement fiducials folded into the POVM effects (matrix-vector products); for the germ powers:
+#   'auto'         per germ, the cheaper (by operation count) of 'squaring' and 'propagation'
+#   'squaring'     G^p by repeated squaring of the germ's map (matrix-matrix products), applied to the stacked prep states
+#   'propagation'  the germ's gates applied p times to the stacked prep states (matrix-vector products)
+#   'composition'  the previous method: each circuit's full map composed as matrix products, then applied to the prep state
+# All are exact (the same products, grouped differently; they differ only by floating-point rounding).
+GERM_POWER_METHOD = 'auto'
+
 __all__ = ['GstResult', 'linear_solve_for_gate_parameters', 'mle_solve_for_gate_parameters', 'staged_mle_solve_for_gate_parameters',
            'log_likelihood', 'chi_squared', 'predict_circuit_probabilities', 'simulate_gst_data', 'gate_set_errors', 'average_gate_set_error',
            'average_gate_set_error_uncertainty', 'parameter_squared_errors', 'write_gate_set_results']
@@ -519,6 +528,125 @@ class _GstProblem:
 
     def predict_sequence_probabilities(self, theta: Vector, sequences: list) -> np.ndarray:
         """ Clipped outcome probabilities (n_sequences x n_outcomes, outcome-label order) for gate sequences at theta.
+
+            With circuit-level noise, the probabilities of each sequence are averaged over the noise realizations, with every
+            noisy gate of the sequence displaced by the same realization; sequences without noisy gates are evaluated once.
+
+            The prep state is propagated through each sequence's prep fiducial, germ^power and measurement fiducial as state
+            vectors (the measurement fiducials incorporated into the POVM effects), stacked over the sequences that share a germ, so
+            that the cost per sequence is a few matrix-vector products; germ powers by repeated squaring or by propagation,
+            whichever is cheaper (GERM_POWER_METHOD). Exact: the same products as composing each sequence's map.
+        """
+        # TODO: decide about the default  
+        if GERM_POWER_METHOD not in ('auto', 'squaring', 'propagation', 'composition'):
+            raise ValueError(f"GERM_POWER_METHOD must be 'auto', 'squaring', 'propagation' or 'composition'; got {GERM_POWER_METHOD!r}.")
+        if GERM_POWER_METHOD == 'composition':
+            return self._predict_sequence_probabilities_by_composition(theta, sequences)
+        rho_supervector, effect_matrix = self.prep_and_effects(theta)
+        gate_matrices = self.gate_process_matrices(theta)
+        probabilities = np.zeros((len(sequences), len(effect_matrix)))
+        noisy = [k for k, gates in enumerate(sequences) if self.noisy_gates.intersection(gates)]
+        noisy_set = set(noisy)
+        clean = [k for k in range(len(sequences)) if k not in noisy_set]
+        if clean:
+            probabilities[clean] = self._propagate([sequences[k] for k in clean], gate_matrices, rho_supervector, effect_matrix)
+        if noisy:
+            # Noisy gates as stacks over the realizations (K, d2, d2); the products broadcast over the stack
+            displacements, weights = self.gate_set_model.circuit_noise_realizations(theta)
+            displaced = [self.gate_process_matrices(theta, x, self.noisy_gates) for x in displacements]
+            stacked = dict(gate_matrices)
+            for gate in self.noisy_gates:
+                stacked[gate] = np.stack([matrices[gate] for matrices in displaced])
+            realized = self._propagate([sequences[k] for k in noisy], stacked, rho_supervector, effect_matrix)  # (K, n, n_outcomes)
+            probabilities[noisy] = np.einsum('k,kno->no', weights, realized)
+        return np.clip(probabilities, NUMERICAL_EQUIVALENCE_THRESHOLD, 1. - NUMERICAL_EQUIVALENCE_THRESHOLD)
+
+    def _sequence_parts(self, gates: tuple) -> tuple:
+        """ (prep, germ, power, measure) of a sequence; a sequence without a recorded structure (or whose structure does not
+            reproduce it) is all prep """
+        structure = self.sequence_structures.get(gates)
+        if structure is not None:
+            prep, germ, power, measure = structure
+            if germ and power >= 1 and tuple(prep) + tuple(germ) * power + tuple(measure) == tuple(gates):
+                return tuple(prep), tuple(germ), int(power), tuple(measure)
+        return tuple(gates), (), 0, ()
+
+    def _propagate(self, sequences: list, gate_matrices: dict, rho_supervector: np.ndarray, effect_matrix: np.ndarray) -> np.ndarray:
+        """ Unclipped outcome probabilities of the sequences, (n_sequences, n_outcomes), or (K, n_sequences, n_outcomes) when
+            some gate matrices are stacks (K, d2, d2) over circuit-noise realizations """
+        def apply(gate_sequence, states):                      # states (..., d2, n): gates applied in order
+            for gate in gate_sequence:
+                states = gate_matrices[gate] @ states
+            return states
+
+        parts = [self._sequence_parts(gates) for gates in sequences]
+        # prep fiducial states, stacked per germ (every prep fiducial that occurs with the germ); germ () = no germ
+        by_germ = {}
+        for prep, germ, power, _ in parts:
+            entry = by_germ.setdefault(germ, {'preps': {}, 'powers': set()})
+            entry['preps'].setdefault(prep, len(entry['preps']))
+            entry['powers'].add(power)
+        prep_states = {}
+        for prep in {prep for entry in by_germ.values() for prep in entry['preps']}:
+            prep_states[prep] = apply(prep, rho_supervector[:, None])                        # (..., d2, 1)
+        powered = {}                                           # (germ, power) -> stacked states (..., d2, n_preps)
+        for germ, entry in by_germ.items():
+            columns = [prep_states[prep] for prep in entry['preps']]
+            batch = np.concatenate(np.broadcast_arrays(*columns), axis=-1) if len(columns) > 1 else columns[0]
+            for power, states in self._germ_powers(germ, sorted(entry['powers']), batch, gate_matrices, apply).items():
+                powered[(germ, power)] = states
+        # measurement fiducials folded into the effects: rows E M_last ... M_first, (..., n_outcomes, d2)
+        effect_rows = {}
+        for _, _, _, measure in parts:
+            if measure not in effect_rows:
+                rows = effect_matrix
+                for gate in reversed(measure):
+                    rows = rows @ gate_matrices[gate]
+                effect_rows[measure] = rows
+        results = []
+        for prep, germ, power, measure in parts:
+            column = powered[(germ, power)][..., by_germ[germ]['preps'][prep]]                # (..., d2)
+            results.append(np.real(np.einsum('...od,...d->...o', effect_rows[measure], column)))
+        results = np.broadcast_arrays(*results)
+        return np.stack(results, axis=-2)
+
+    def _germ_powers(self, germ: tuple, powers: list, batch: np.ndarray, gate_matrices: dict, apply) -> dict:
+        """ {power: germ^power applied to the stacked states batch (..., d2, n)} for the requested powers, by repeated squaring
+            of the germ's map or by propagating the states, per GERM_POWER_METHOD ('auto': the smaller operation count) """
+        if not germ:
+            return {power: batch for power in powers}
+        d2, n_states, top = batch.shape[-2], batch.shape[-1], max(powers)
+        method = GERM_POWER_METHOD
+        if method == 'auto':
+            squarings = int(np.floor(np.log2(top))) + sum(bin(p).count('1') - 1 for p in powers)
+            cost_squaring = (len(germ) - 1 + squarings) * d2**3 + len(powers) * n_states * d2**2
+            cost_propagation = top * len(germ) * n_states * d2**2
+            method = 'squaring' if cost_squaring < cost_propagation else 'propagation'
+        if method == 'propagation':
+            out, states, wanted = {}, batch, set(powers)
+            for p in range(1, top + 1):
+                states = apply(germ, states)
+                if p in wanted:
+                    out[p] = states
+            return out
+        if method != 'squaring':
+            raise ValueError(f"GERM_POWER_METHOD must be 'auto', 'squaring', 'propagation' or 'composition'; got {method!r}.")
+        germ_map = gate_matrices[germ[0]]
+        for gate in germ[1:]:
+            germ_map = gate_matrices[gate] @ germ_map
+        squares, out = [germ_map], {}                          # squares[j] = germ_map^(2^j)
+        for p in powers:
+            bits = [j for j in range(p.bit_length()) if (p >> j) & 1]
+            while len(squares) <= bits[-1]:
+                squares.append(squares[-1] @ squares[-1])
+            power_map = squares[bits[0]]
+            for j in bits[1:]:
+                power_map = squares[j] @ power_map
+            out[p] = power_map @ batch
+        return out
+
+    def _predict_sequence_probabilities_by_composition(self, theta: Vector, sequences: list) -> np.ndarray:
+        """ The previous evaluation (GERM_POWER_METHOD = 'composition'), kept for comparison: clipped outcome probabilities (n_sequences x n_outcomes, outcome-label order) for gate sequences at theta.
 
             With circuit-level noise, the probabilities of each sequence are averaged over the noise realizations, with every
             noisy gate of the sequence displaced by the same realization; sequences without noisy gates are evaluated once.
