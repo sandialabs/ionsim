@@ -277,9 +277,9 @@ class TestPolarizationAndQuantizationAxis(unittest.TestCase):
                 self.assertEqual(coupled(laser.build_carrier_coupling_operators(basis, [yb], [g], [minus, plus], 1, quantization_axis=axis)), expected)
                 self.assertEqual(coupled(laser.build_sideband_coupling_operators(SidebandType.RED, basis, [yb], [mode], [g], [minus, plus], 1, 0.1,
                                                                                  quantization_axis=axis)), expected)
-        Laser.from_target_rabi_frequency(TPI * 1e6, g, minus, 1, Z, sigma_plus, quantization_axis=-Z)
+        Laser.from_target_rabi_frequency(TPI * 1e6, minus.energy - g.energy, g, minus, 1, Z, sigma_plus, quantization_axis=-Z)
         with self.assertRaises(IonSimError):   # sigma+ relative to z does not drive mF = 0 -> -1
-            Laser.from_target_rabi_frequency(TPI * 1e6, g, minus, 1, Z, sigma_plus)
+            Laser.from_target_rabi_frequency(TPI * 1e6, minus.energy - g.energy, g, minus, 1, Z, sigma_plus)
 
 
 class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
@@ -291,7 +291,7 @@ class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
     RABI = TPI * 1e6   # rad/s; arbitrary, far below the optical frequency
 
     def laser(self, g, e, detuning=0., **kwargs):
-        return Laser.from_target_rabi_frequency(self.RABI, g, e, 1, Z, CircularPolarization('+'), detuning_angular=detuning, **kwargs)
+        return Laser.from_target_rabi_frequency(self.RABI, e.energy - g.energy + detuning, g, e, 1, Z, CircularPolarization('+'), **kwargs)
 
     def ground_population(self, laser, ground_first, duration, frequency_shift=0.):
         atom, g, e = Yb_s_to_p(ground_first)
@@ -588,7 +588,8 @@ class TestLaserSidebandsFromTrap(unittest.TestCase):
 
 
 class TestLaserTargetRabiFrequency(unittest.TestCase):
-    """Lasers constructed from a target Rabi frequency on one transition, and Laser.rabi_frequency(). The target-Rabi
+    """Lasers constructed from a laser frequency and a target Rabi frequency on one transition or a set of them, and
+    Laser.rabi_frequency(). The target-Rabi
     constructors are also used throughout TestLaserDynamicsInInteractionPicture."""
 
     def test_round_trip_E1(self):
@@ -597,10 +598,10 @@ class TestLaserTargetRabiFrequency(unittest.TestCase):
         target, detuning = TPI * 2e6, TPI * 10e6   # rad/s; arbitrary
         gaussian_waist = 20e-6
         lasers = {
-            'plane wave': Laser.from_target_rabi_frequency(target, g, e, 1, Z, polarization),
-            'gaussian': Laser.gaussian_from_target_rabi_frequency(target, g, e, 1, gaussian_waist, Z, polarization),
-            'plane wave, detuned': Laser.from_target_rabi_frequency(target, g, e, 1, Z, polarization, detuning_angular=detuning),
-            'gaussian, detuned': Laser.gaussian_from_target_rabi_frequency(target, g, e, 1, gaussian_waist, Z, polarization, detuning_angular=detuning),
+            'plane wave': Laser.from_target_rabi_frequency(target, e.energy - g.energy, g, e, 1, Z, polarization),
+            'gaussian': Laser.gaussian_from_target_rabi_frequency(target, e.energy - g.energy, g, e, 1, gaussian_waist, Z, polarization),
+            'plane wave, detuned': Laser.from_target_rabi_frequency(target, e.energy - g.energy + detuning, g, e, 1, Z, polarization),
+            'gaussian, detuned': Laser.gaussian_from_target_rabi_frequency(target, e.energy - g.energy + detuning, g, e, 1, gaussian_waist, Z, polarization),
         }
         for name, laser in lasers.items():
             with self.subTest(name):
@@ -620,8 +621,8 @@ class TestLaserTargetRabiFrequency(unittest.TestCase):
         gaussian_waist = 10e-6
         for detuning in (0., TPI * 1e9):
             with self.subTest(detuning=detuning):
-                for laser in (Laser.from_target_rabi_frequency(target, g, e, 2, X, polarization, detuning_angular=detuning),
-                              Laser.gaussian_from_target_rabi_frequency(target, g, e, 2, gaussian_waist, X, polarization, detuning_angular=detuning)):
+                for laser in (Laser.from_target_rabi_frequency(target, e.energy - g.energy + detuning, g, e, 2, X, polarization),
+                              Laser.gaussian_from_target_rabi_frequency(target, e.energy - g.energy + detuning, g, e, 2, gaussian_waist, X, polarization)):
                     self.assertAlmostEqual(abs(laser.rabi_frequency(g, e, 2)) / target, 1., places=12)
 
     def test_gaussian_power_consistency(self):
@@ -629,19 +630,48 @@ class TestLaserTargetRabiFrequency(unittest.TestCase):
         _, g, e = Yb_s_to_p()
         polarization = CircularPolarization('+')
         target, waist = TPI * 1e6, 15e-6
-        laser = Laser.gaussian_from_target_rabi_frequency(target, g, e, 1, waist, Z, polarization)
+        laser = Laser.gaussian_from_target_rabi_frequency(target, e.energy - g.energy, g, e, 1, waist, Z, polarization)
         rebuilt = Laser.gaussian_from_frequency(laser.frequency_angular, laser.power_W, waist, Z, polarization, 0.)
         self.assertAlmostEqual(abs(rebuilt.rabi_frequency(g, e, 1)) / target, 1., places=12)
-        doubled = Laser.gaussian_from_target_rabi_frequency(2. * target, g, e, 1, waist, Z, polarization)
+        doubled = Laser.gaussian_from_target_rabi_frequency(2. * target, e.energy - g.energy, g, e, 1, waist, Z, polarization)
         self.assertAlmostEqual(doubled.power_W / laser.power_W, 4., places=12)
         self.assertAlmostEqual(laser.beam_profile.waist_m, waist)
+
+    def test_root_sum_square_over_unresolved_levels(self):
+        """ With lists of levels the target is sqrt(sum |Omega_ge|^2) over all pairs (the light-shift convention), for one
+        ground level to several excited levels (87Rb 420 nm: 5S1/2 F=2 -> 6P3/2 F'=1,2,3) and several ground levels to one
+        excited level (1013 nm: 6P3/2 F'=1,2,3 -> 53S1/2). The per-path ratios are those of a single-transition laser, a
+        one-element list equals the single level, and far from resonance sum_k |Omega_k|^2 / (4 Delta_k) is the light shift
+        Omega^2 / (4 Delta) up to the hyperfine splitting over Delta. """
+        quantum_numbers = [{'n': 5, 'l': 0, 'f': 2, 'mf': 0}, {'n': 6, 'l': 1, 'f': 1, 'mf': 1}, {'n': 6, 'l': 1, 'f': 2, 'mf': 1},
+                           {'n': 6, 'l': 1, 'f': 3, 'mf': 1}, {'n': 53, 'l': 0, 'mj': 0.5, 'mi': -0.5}]
+        rb = AtomicStructure.from_species('87Rb', term_symbols=['S1/2', '6 P3/2', '53 S1/2'], quantum_numbers=quantum_numbers,
+                                          magnetic_field=8.5)
+        g, *intermediates, r = rb.energy_levels
+        target, detuning = TPI * 237e6, -TPI * 7.8e9
+        omega_420 = intermediates[0].fine_energy - g.energy + detuning
+        laser_420 = Laser.gaussian_from_target_rabi_frequency(target, omega_420, g, intermediates, 1, 10e-6, Z, CircularPolarization('+'))
+        rabis = np.array([abs(laser_420.rabi_frequency(g, e, 1)) for e in intermediates])
+        self.assertAlmostEqual(np.sqrt(np.sum(rabis**2)) / target, 1., places=12)
+        single = Laser.from_target_rabi_frequency(1., omega_420, g, intermediates[1], 1, Z, CircularPolarization('+'))
+        np.testing.assert_allclose(rabis / rabis[1], [abs(single.rabi_frequency(g, e, 1)) for e in intermediates], rtol=1e-12)
+        light_shift = np.sum(rabis**2 / (4. * np.array([laser_420.detuning_from_level_transition(g, e) for e in intermediates])))
+        self.assertAlmostEqual(light_shift / (target**2 / (4. * detuning)), 1., delta=0.02)
+
+        laser_1013 = Laser.from_target_rabi_frequency(TPI * 303e6, r.energy - g.energy - omega_420, intermediates, r, 1, -Z,
+                                                      CircularPolarization('+'))
+        self.assertAlmostEqual(np.sqrt(sum(abs(laser_1013.rabi_frequency(e, r, 1))**2 for e in intermediates)) / (TPI * 303e6), 1.,
+                               places=12)
+        one, plain = (Laser.from_target_rabi_frequency(target, omega_420, ground, excited, 1, Z, CircularPolarization('+'))
+                      for ground, excited in (([g], [intermediates[2]]), (g, intermediates[2])))
+        self.assertEqual(one.peak_electric_field_magnitude_V_per_m, plain.peak_electric_field_magnitude_V_per_m)
 
     def test_undrivable_transitions_are_rejected(self):
         _, g, e = Yb_s_to_p()
         with self.subTest('polarization does not drive the transition'), self.assertRaises(IonSimError):
-            Laser.from_target_rabi_frequency(TPI * 1e6, g, e, 1, Z, CircularPolarization('-'))
+            Laser.from_target_rabi_frequency(TPI * 1e6, e.energy - g.energy, g, e, 1, Z, CircularPolarization('-'))
         with self.subTest('excited level below ground level'), self.assertRaises(IonSimError):
-            Laser.from_target_rabi_frequency(TPI * 1e6, e, g, 1, Z, CircularPolarization('+'))
+            Laser.from_target_rabi_frequency(TPI * 1e6, e.energy - g.energy, e, g, 1, Z, CircularPolarization('+'))
 
 
 class TestPhysicalDipoleCouplings(unittest.TestCase):

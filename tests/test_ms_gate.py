@@ -136,8 +136,8 @@ class TestMSGateFromLaserSidebands(unittest.TestCase):
             sideband raising element (Omega/2) e^{i phase} (i eta) equals that of _ms_hamiltonian, which gives MS(0, theta). """
         polarization = Polarization(np.array([0., 0., 1.]))
         def build(phase):
-            return Laser.gaussian_from_target_rabi_frequency(rabi_rate, g, e, 2, self.WAIST, self.N_HAT, polarization,
-                                                             detuning_angular=detuning, phase=phase)
+            return Laser.gaussian_from_target_rabi_frequency(rabi_rate, e.energy - g.energy + detuning, g, e, 2, self.WAIST,
+                                                             self.N_HAT, polarization, phase=phase)
         rabi = build(0.).rabi_frequency(g, e, 2)
         self.assertAlmostEqual(abs(rabi) / rabi_rate, 1., places=10)
         laser = build(-np.pi/2 - np.angle(rabi))

@@ -503,90 +503,111 @@ class Laser:
         return cls(frequency_angular, propagation_direction, polarization, GaussianBeam(waist_m, focus_m), phase, power_W,
                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
-    # The field is chosen so that |rabi_frequency(ground_level, excited_level, multipole_order)| equals the target at the
-    # peak field (beam focus) with modulation amplitude 1. Couplings are computed in units where the orbital reduced
-    # matrix element <L||r^k||L'> = 1 a0^k, so the derived intensity or power is an effective (calibration) value that
-    # absorbs the radial matrix element of this transition. Every other transition of the same L -> L' multiplet (other
-    # sublevels, hyperfine and fine-structure components) then follows correctly from the angular factors; transitions
-    # with a different radial matrix element (another multiplet) do not. Do not use the derived intensity or power for
-    # quantities that need the physical intensity.
+    # The field is chosen so that the Rabi frequency on the given transition(s) equals the target at the peak field (beam
+    # focus) with modulation amplitude 1. For several ground and/or excited levels the target is the root-sum-square over
+    # all (ground, excited) pairs, sqrt(sum |Omega_ge|^2): the light-shift convention, in which Omega^2 / (4 Delta) is the
+    # total light shift of a ground level when the detuning Delta is much larger than the splittings within the set
+    # (e.g. unresolved hyperfine levels). Its meaning therefore depends on which levels are included.
+    # Couplings are computed in units where the orbital reduced matrix element <L||r^k||L'> = 1 a0^k (unless the level
+    # carries a tabulated reduced dipole matrix element), so the derived intensity or power is an effective (calibration)
+    # value that absorbs the radial matrix element of these transitions. Every other transition of the same L -> L'
+    # multiplet (other sublevels, hyperfine and fine-structure components) then follows correctly from the angular
+    # factors; transitions with a different radial matrix element (another multiplet) do not. Do not use the derived
+    # intensity or power for quantities that need the physical intensity.
 
     @classmethod
-    def from_target_rabi_frequency(cls, target_rabi_frequency_angular: float, ground_level: AtomicInternalEnergyLevel,
-                                   excited_level: AtomicInternalEnergyLevel, multipole_order: int,
-                                   propagation_direction: Vector, polarization: PolarizationInput, detuning_angular: float = 0., phase: float = 0.,
+    def from_target_rabi_frequency(cls, rabi_frequency_angular: float, laser_frequency_angular: float,
+                                   ground_levels: AtomicInternalEnergyLevel | list[AtomicInternalEnergyLevel],
+                                   excited_levels: AtomicInternalEnergyLevel | list[AtomicInternalEnergyLevel],
+                                   multipole_order: int, propagation_direction: Vector, polarization: PolarizationInput,
+                                   phase: float = 0.,
                                    amplitude_modulation_function: Callable | None = None,
                                    phase_modulation_function: Callable | None = None,
                                    frequency_modulation_function: Callable | None = None,
                                    quantization_axis: Vector = Z_AXIS) -> Laser:
-        """ Plane-wave laser whose carrier Rabi frequency on |ground_level> -> |excited_level> has magnitude
-            target_rabi_frequency_angular.
+        """ Plane-wave laser at frequency laser_frequency_angular whose carrier Rabi frequency on ground_levels ->
+            excited_levels is rabi_frequency_angular.
 
-            target_rabi_frequency_angular: rad/s, positive number.  multipole_order: 1 (E1) or 2 (E2).
-            detuning_angular: rad/s; the laser frequency is (E_excited - E_ground) + detuning_angular.
+            rabi_frequency_angular: rad/s, positive. For one ground and one excited level, |Omega_ge|; for lists of levels,
+                the root-sum-square over all (ground, excited) pairs (see above).
+            laser_frequency_angular: laser frequency omega [rad/s]; e.g. (E_excited - E_ground) + detuning.
+                laser.detuning_from_level_transition(g, e) gives the detuning from any transition.
+            ground_levels, excited_levels: a level or a list of levels; every excited level must lie above every ground level.
+            multipole_order: 1 (E1) or 2 (E2).
             quantization_axis: the atom's quantization axis (magnetic-field direction), as for rabi_frequency.
             The beam profile is a PlaneWave with the effective intensity that gives this Rabi frequency (see above).
         """
-        frequency_angular, peak_field = cls._frequency_and_peak_field_for_target_rabi_frequency(
-            target_rabi_frequency_angular, ground_level, excited_level, multipole_order, propagation_direction, polarization,
-            detuning_angular, quantization_axis)
+        peak_field = cls._peak_field_for_target_rabi_frequency(
+            rabi_frequency_angular, laser_frequency_angular, ground_levels, excited_levels, multipole_order,
+            propagation_direction, polarization, quantization_axis)
         profile = PlaneWave.from_peak_electric_field_magnitude_V_per_m(peak_field)
-        return cls(frequency_angular, propagation_direction, polarization, profile, phase, None,
+        return cls(laser_frequency_angular, propagation_direction, polarization, profile, phase, None,
                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
     @classmethod
-    def gaussian_from_target_rabi_frequency(cls, target_rabi_frequency_angular: float, ground_level: AtomicInternalEnergyLevel,
-                                            excited_level: AtomicInternalEnergyLevel, multipole_order: int, waist_m: float,
-                                            propagation_direction: Vector, polarization: PolarizationInput, detuning_angular: float = 0.,
-                                            phase: float = 0., focus_m: Vector | None = None,
+    def gaussian_from_target_rabi_frequency(cls, rabi_frequency_angular: float, laser_frequency_angular: float,
+                                            ground_levels: AtomicInternalEnergyLevel | list[AtomicInternalEnergyLevel],
+                                            excited_levels: AtomicInternalEnergyLevel | list[AtomicInternalEnergyLevel],
+                                            multipole_order: int, waist_m: float, propagation_direction: Vector,
+                                            polarization: PolarizationInput, phase: float = 0., focus_m: Vector | None = None,
                                             amplitude_modulation_function: Callable | None = None,
                                             phase_modulation_function: Callable | None = None,
                                             frequency_modulation_function: Callable | None = None,
                                             quantization_axis: Vector = Z_AXIS) -> Laser:
-        """ Gaussian laser whose peak Rabi frequency on |ground_level> -> |excited_level> has magnitude
-            target_rabi_frequency_angular.
+        """ Gaussian laser at frequency laser_frequency_angular whose peak Rabi frequency on ground_levels ->
+            excited_levels is rabi_frequency_angular.
 
             Arguments as for from_target_rabi_frequency, plus waist_m [m] and focus_m [m]. The power is the effective power
             that gives this Rabi frequency at the focus (see above).
         """
-        frequency_angular, peak_field = cls._frequency_and_peak_field_for_target_rabi_frequency(
-            target_rabi_frequency_angular, ground_level, excited_level, multipole_order, propagation_direction, polarization,
-            detuning_angular, quantization_axis)
+        peak_field = cls._peak_field_for_target_rabi_frequency(
+            rabi_frequency_angular, laser_frequency_angular, ground_levels, excited_levels, multipole_order,
+            propagation_direction, polarization, quantization_axis)
         profile = GaussianBeam(waist_m, focus_m)
         power_W = profile.power_for_peak_electric_field_magnitude(peak_field)
-        return cls(frequency_angular, propagation_direction, polarization, profile, phase, power_W,
+        return cls(laser_frequency_angular, propagation_direction, polarization, profile, phase, power_W,
                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
     @classmethod
-    def _frequency_and_peak_field_for_target_rabi_frequency(cls, target_rabi_frequency_angular: float, ground_level: AtomicInternalEnergyLevel,
-                                                            excited_level: AtomicInternalEnergyLevel, multipole_order: int,
-                                                            propagation_direction: Vector, polarization: PolarizationInput, detuning_angular: float,
-                                                            quantization_axis: Vector) -> tuple[float, float]:
-        """ Laser frequency (rad/s) and peak field |E0| (V/m, effective) giving |Omega| = target_rabi_frequency_angular.
+    def _peak_field_for_target_rabi_frequency(cls, rabi_frequency_angular: float, laser_frequency_angular: float,
+                                              ground_levels, excited_levels, multipole_order: int,
+                                              propagation_direction: Vector, polarization: PolarizationInput,
+                                              quantization_axis: Vector) -> float:
+        """ Peak field |E0| (V/m, effective) giving a Rabi frequency (root-sum-square over the pairs) of rabi_frequency_angular.
 
-            Omega is linear in |E0|, so |E0| = target / |Omega(E0 = 1 V/m)|, evaluated with this frequency and
-            polarization (the E2 coupling also depends on |k|).
+            Every Omega_ge is linear in |E0|, so |E0| = target / sqrt(sum |Omega_ge(E0 = 1 V/m)|^2), evaluated at this
+            frequency and polarization (the E2 coupling also depends on |k|).
         """
-        target = np.asarray(target_rabi_frequency_angular)
+        target = np.asarray(rabi_frequency_angular)
         if target.ndim != 0 or np.iscomplexobj(target) or not np.isfinite(target) or target <= 0.:
-            raise IonSimError(f"target_rabi_frequency_angular must be a positive real number (rad/s), got {target_rabi_frequency_angular}.")
-        transition_frequency = excited_level.energy - ground_level.energy
-        if transition_frequency <= NUMERICAL_EQUIVALENCE_THRESHOLD:
-            raise IonSimError(f"Excited level {excited_level.name} must be above ground level {ground_level.name}; "
-                              f"transition frequency is {transition_frequency} rad/s.")
-        frequency_angular = transition_frequency + detuning_angular
-        if frequency_angular <= NUMERICAL_EQUIVALENCE_THRESHOLD:
-            raise IonSimError(f"Laser frequency (transition frequency + detuning) must be positive, got {frequency_angular} rad/s.")
-        unit_field_laser = cls(frequency_angular, propagation_direction, polarization, PlaneWave.from_peak_electric_field_magnitude_V_per_m(1.))
-        rabi_per_unit_field = abs(unit_field_laser.rabi_frequency(ground_level, excited_level, multipole_order,
-                                                                  quantization_axis=quantization_axis))
+            raise IonSimError(f"rabi_frequency_angular must be a positive real number (rad/s), got {rabi_frequency_angular}.")
+        grounds, exciteds = cls._as_level_list(ground_levels), cls._as_level_list(excited_levels)
+        for g in grounds:
+            for e in exciteds:
+                if e.energy - g.energy <= NUMERICAL_EQUIVALENCE_THRESHOLD:
+                    raise IonSimError(f"Excited level {e.name} must be above ground level {g.name}; transition frequency is "
+                                      f"{e.energy - g.energy} rad/s.")
+        unit_field_laser = cls(laser_frequency_angular, propagation_direction, polarization,
+                               PlaneWave.from_peak_electric_field_magnitude_V_per_m(1.))
+        rabi_per_unit_field = np.sqrt(sum(abs(unit_field_laser.rabi_frequency(g, e, multipole_order, quantization_axis=quantization_axis))**2
+                                          for g in grounds for e in exciteds))
         if rabi_per_unit_field < SMALLEST_ENERGY_SCALE:
             _polarization = unit_field_laser.polarization
             components = (_polarization.dipole_components(quantization_axis) if multipole_order == 1
                           else _polarization.quadrupole_components(propagation_direction, quantization_axis))
-            raise IonSimError(f"This polarization does not drive {ground_level.name} -> {excited_level.name} "
+            raise IonSimError(f"This polarization does not drive {[g.name for g in grounds]} -> {[e.name for e in exciteds]} "
                               f"(multipole order {multipole_order}); polarization components: {components}.")
-        return frequency_angular, float(target) / rabi_per_unit_field
+        return float(target) / rabi_per_unit_field
+
+    @staticmethod
+    def _as_level_list(levels) -> list[AtomicInternalEnergyLevel]:
+        """ A level or a non-empty collection of levels, as a list. """
+        if isinstance(levels, AtomicInternalEnergyLevel):
+            return [levels]
+        levels = list(levels)
+        if not levels or not all(isinstance(level, AtomicInternalEnergyLevel) for level in levels):
+            raise IonSimError(f"Expected an atomic energy level or a non-empty list of them, got {levels}.")
+        return levels
 
     @property
     def peak_electric_field_magnitude_V_per_m(self) -> float:
