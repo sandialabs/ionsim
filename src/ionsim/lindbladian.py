@@ -33,6 +33,7 @@ class Dissipator(CompositeOperator):
         Inherits from CompositeOperator parent class. Instantiation requires a basis and 
             list of operators corresponding to Lindblad operators.  
     """
+    # TODO: Fix dissipator to allow a list of composite operators (each lindblad op is a composite operator) 
     def __post_init__(self):
         super().__post_init__()
 
