@@ -84,15 +84,6 @@ def _spherical_basis_vectors(quantization_axis: Vector) -> dict[int, Vector]:
     x, y = _perpendicular_basis(z)
     return {1: -(x + 1j*y)/np.sqrt(2.), 0: z.astype(complex), -1 : (x - 1j*y)/np.sqrt(2.)}
 
-def _project_spherical(v: Vector, quantization_axis: Vector) -> dict[int, complex]:
-    """ Spherical components v_+1, v_0, v_-1 of a lab-frame vector "v", relative to the 
-        quantization axis."""
-    v = np.asarray(v, dtype=complex)
-    sph_basis = _spherical_basis_vectors(quantization_axis) 
-    # np.vdot(a,b) = sum a*_i b_i 
-    # For components via spherical basis dot product, the e_q vectors need conjugation, therefore put in first arg: 
-    return {q: np.vdot(sph_basis[q], v) for q in (1, 0, -1)} 
-
 
 # Ways to give a Laser its polarization (PolarizationInput, defined after these classes). Each has
 #     resolve(propagation_direction) -> Polarization,
