@@ -71,8 +71,7 @@ def _spherical_basis_vectors(quantization_axis: Vector) -> dict[int, Vector]:
 
 
 # Ways to give a Laser its polarization (PolarizationInput, defined after these classes). Each has
-#     resolve(propagation_direction) -> Polarization,
-# which the Laser calls with its own propagation direction n_hat; the Laser then checks n_hat . eps = 0.
+#     resolve(propagation_direction) -> Polarization, which the Laser calls with its own propagation direction n_hat; the Laser then checks n_hat . eps = 0.
 
 class Polarization:
     """ Complex Cartesian polarization (Jones) vector eps in the lab frame.

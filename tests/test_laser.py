@@ -267,6 +267,52 @@ class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
                 self.assertAlmostEqual(np.angle(amplitude), expected_phase, delta=0.05 * expected_phase)
 
 
+class TestCounterRotatingTerms(unittest.TestCase):
+    """ Include_counter_rotating=True adds the counter-rotating term of each coupling. In the frame
+            rotating_frame_energies = -E its |e><g| element is (Omega~/2) e^{-i phase} A(t) e^{-i phi(t)} e^{+i int_0^t delta} e^{+i (omega + omega_0) t} """
+
+    # Test counter-rotating term generation with modulation functions too 
+    @staticmethod
+    def modulations():
+        return dict(amplitude_modulation_function=lambda t: 0.5 + 0.3 * np.sin(2e7 * t),   # arbitrary
+                    phase_modulation_function=lambda t: 0.7 * np.cos(3e7 * t),
+                    frequency_modulation_function=lambda t: TPI * 2e6 * (1. + 1e6 * t))   # rad/s, linear chirp
+
+    def test_hamiltonian_element_for_either_level_order(self):
+        times = (0., 3.1e-9, 7.7e-9)   # s
+        for modulated, ground_first in itertools.product((False, True), (True, False)):
+            with self.subTest(modulated=modulated, ground_first=ground_first):
+                atom, g, e = Yb_s_to_p(ground_first)
+                basis = StandardBasis([atom])
+                ie, ig = state_index(basis, e), state_index(basis, g)
+                frame = [-state.energy for state in basis.states]
+                # Elliptical polarization: the conjugate polarization drives |g> -> |e> with a different strength.
+                laser = Laser.gaussian_from_wavelength(369.5e-9, 1e-3, 20e-6, Z, Polarization(X + 0.4j * Y), 0.3,
+                                                       **(self.modulations() if modulated else {}))
+                both = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, Z, include_counter_rotating=True)
+                co = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, Z)
+                self.assertEqual((len(both), len(co)), (2, 1))
+                h_both = Hamiltonian(basis, both, frame, sparse=False).hamiltonian_function
+                h_co = Hamiltonian(basis, co, frame, sparse=False).hamiltonian_function
+
+                rabi, rabi_counter = (laser.rabi_frequency(g, e, 1, Z, counter_rotating=c) for c in (False, True))
+                self.assertGreater(abs(abs(rabi_counter) / abs(rabi) - 1.), 0.1)
+                omega, omega_0 = laser.frequency_angular, e.energy - g.energy
+                mods = self.modulations()
+                for t in times:
+                    if modulated:
+                        envelope = mods['amplitude_modulation_function'](t) * np.exp(1j * mods['phase_modulation_function'](t))
+                        swept = TPI * 2e6 * (t + 0.5e6 * t**2)   # int_0^t delta
+                    else:
+                        envelope, swept = 1., 0.
+                    expected_co = 0.5 * rabi * np.exp(1j * laser.phase) * envelope * np.exp(-1j * swept) * np.exp(-1j * (omega - omega_0) * t)
+                    expected_counter = (0.5 * rabi_counter * np.exp(-1j * laser.phase) * np.conj(envelope) * np.exp(1j * swept)
+                                        * np.exp(1j * (omega + omega_0) * t))
+                    np.testing.assert_allclose(h_co(t)[ie, ig], expected_co, rtol=1e-7)
+                    np.testing.assert_allclose(h_both(t)[ie, ig] - h_co(t)[ie, ig], expected_counter, rtol=1e-7)
+                    np.testing.assert_allclose(h_both(t)[ig, ie], np.conj(h_both(t)[ie, ig]), rtol=1e-12)
+
+
 class TestLaserMultipleAtoms(unittest.TestCase):
     """Coupling operators for several atoms, including separately built (distinct but identical) atoms."""
 
