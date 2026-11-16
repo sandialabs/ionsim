@@ -39,14 +39,11 @@ class SidebandType(StrEnum):
 
 
 class BeamProfile(ABC):
-    """ Beam profile represented by a spatial envelope as well as power, peak-field relationship"""
+    """ Beam profile: the relation between power and peak electric field. The couplings use the peak field (atoms at the
+        beam peak); there is no position dependence. """
     @abstractmethod
     def peak_electric_field_magnitude_V_per_m(self, power_W: float) -> float:
-        """ Peak electirc field atmplitude E0 [V/m] given power in Watts. """ 
-
-    @abstractmethod
-    def relative_envelope(self, r: Vector, n_hat: Vector, k: float) -> complex:
-        """ Complex relative spatial envelope at position vector r. The exp(i k r) is handled explicitly in the laser class so should not be handled here. """ 
+        """ Peak electric field amplitude |E0| [V/m] given the power [W]. """
 
 
 class PlaneWave(BeamProfile):
@@ -74,34 +71,23 @@ class PlaneWave(BeamProfile):
         """ Peak electric field magnitude |E0| [V/m] """
         return np.sqrt(2. * self.intensity_W_per_m2 / (const.c * const.epsilon_0))
 
-    def relative_envelope(self, r, n_hat, k) -> complex:
-        return 1. + 0j
-
 
 class GaussianBeam(BeamProfile):
-    """ Gaussian beam with 1/e^2 intensity radius waist_m [m] at the focus position focus_m [m]. The wavelength
-        enters only through the wavenumber k passed to relative_envelope (the laser's own). """
+    """ Gaussian beam with 1/e^2 intensity radius waist_m [m] at the focus. Only the peak (on-axis, at the focus) field is
+        used, so the beam's position and wavelength do not enter. """
 
-    def __init__(self, waist_m: float, focus_m: Vector | None = None):
+    def __init__(self, waist_m: float):
         if not np.isfinite(waist_m) or waist_m <= 0.:
             raise IonSimError(f"Gaussian beam waist_m must be a positive length (m), got {waist_m}.")
-        focus_m = np.zeros(3) if focus_m is None else np.array(focus_m, dtype=float)
-        if focus_m.shape != (3,):
-            raise IonSimError(f"Gaussian beam focus_m must be a 3-component position (m), got shape {focus_m.shape}.")
-        self._waist_m, self._focus_m = float(waist_m), focus_m
+        self._waist_m = float(waist_m)
 
     @property
     def waist_m(self) -> float:
         """ 1/e^2 intensity radius at the focus [m]. """
         return self._waist_m
 
-    @property
-    def focus_m(self) -> Vector:
-        """ Focus position [m]. """
-        return (self._focus_m).copy()
-
     def __repr__(self):
-        return f"GaussianBeam(waist_m={self.waist_m}, focus_m={self.focus_m})"
+        return f"GaussianBeam(waist_m={self.waist_m})"
 
     def peak_electric_field_magnitude_V_per_m(self, power_W: float) -> float:
         """ Peak electric field magnitude |E0| in free space """ 
@@ -113,22 +99,6 @@ class GaussianBeam(BeamProfile):
             I0 = c eps0 |E0|^2 / 2,  P = pi w^2 I0 / 2. """
         I0 = 0.5 * const.c * const.epsilon_0 * peak_electric_field_magnitude_V_per_m**2
         return 0.5 * np.pi * self.waist_m**2 * I0
-
-    def relative_envelope(self, r: Vector, n_hat: Vector, k: float) -> complex:
-        """ Complex envelope at position r [m] relative to the focus, for propagation direction n_hat and wavenumber k [1/m]
-            (the plane-wave factor exp(i k.r) excluded). """
-        dr = r - self._focus_m
-        z = np.dot(dr, n_hat)                 # distance from the focus along the beam
-        rho = np.linalg.norm(dr - z * n_hat)  # distance from the beam axis
-
-        zR = 0.5 * k * self.waist_m**2        # Rayleigh range pi w^2 / lambda (vacuum)
-        wz = self.waist_m * np.sqrt(1. + (z / zR)**2)   # beam radius at z
-        gouy = np.arctan2(z, zR)
-        inv_Rz = z / (z**2 + zR**2)           # wavefront curvature 1/R(z)
-
-        amp = (self.waist_m / wz) * np.exp(-(rho / wz)**2)
-        curvature_phase = 0.5 * k * (rho**2) * inv_Rz
-        return amp * np.exp(1j * (curvature_phase - gouy)) 
 
 
 class Laser:
@@ -246,22 +216,22 @@ class Laser:
     @classmethod
     def gaussian_from_wavelength(cls, wavelength_m: float, power_W: float, waist_m: float, propagation_direction: Vector,
                                  polarization: PolarizationInput,
-                                 phase: float = 0., focus_m: Vector | None = None, amplitude_modulation_function: Callable | None = None,
+                                 phase: float = 0., amplitude_modulation_function: Callable | None = None,
                                  phase_modulation_function: Callable | None = None,
                                  frequency_modulation_function: Callable | None = None) -> Laser:
-        """ Gaussian laser from its vacuum wavelength [m], power [W], waist [m] and focus position [m]. """
-        return cls.from_wavelength(wavelength_m, propagation_direction, polarization, GaussianBeam(waist_m, focus_m), phase,
+        """ Gaussian laser from its vacuum wavelength [m], power [W] and waist [m]. """
+        return cls.from_wavelength(wavelength_m, propagation_direction, polarization, GaussianBeam(waist_m), phase,
                                    power_W,
                                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
     @classmethod
     def gaussian_from_frequency(cls, frequency_angular: float, power_W: float, waist_m: float, propagation_direction: Vector,
                                 polarization: PolarizationInput,
-                                phase: float = 0., focus_m: Vector | None = None, amplitude_modulation_function: Callable | None = None,
+                                phase: float = 0., amplitude_modulation_function: Callable | None = None,
                                 phase_modulation_function: Callable | None = None,
                                 frequency_modulation_function: Callable | None = None) -> Laser:
-        """ Gaussian laser from its angular frequency [rad/s], power [W], waist [m] and focus position [m]. """
-        return cls(frequency_angular, propagation_direction, polarization, GaussianBeam(waist_m, focus_m), phase, power_W,
+        """ Gaussian laser from its angular frequency [rad/s], power [W] and waist [m]. """
+        return cls(frequency_angular, propagation_direction, polarization, GaussianBeam(waist_m), phase, power_W,
                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
 
     # The field is chosen so that the Rabi frequency on the given transition(s) equals the target at the peak field (beam
@@ -310,20 +280,19 @@ class Laser:
                                             excited_levels: AtomicInternalEnergyLevel | list[AtomicInternalEnergyLevel],
                                             multipole_order: int, waist_m: float, propagation_direction: Vector,
                                             polarization: PolarizationInput, quantization_axis: Vector, phase: float = 0.,
-                                            focus_m: Vector | None = None,
                                             amplitude_modulation_function: Callable | None = None,
                                             phase_modulation_function: Callable | None = None,
                                             frequency_modulation_function: Callable | None = None) -> Laser:
         """ Gaussian laser at frequency laser_frequency_angular whose peak Rabi frequency on ground_levels ->
             excited_levels is rabi_frequency_angular.
 
-            Arguments as for from_target_rabi_frequency, plus waist_m [m] and focus_m [m]. The power is the effective power
+            Arguments as for from_target_rabi_frequency, plus waist_m [m]. The power is the effective power
             that gives this Rabi frequency at the focus (see above).
         """
         peak_field = cls._peak_field_for_target_rabi_frequency(
             rabi_frequency_angular, laser_frequency_angular, ground_levels, excited_levels, multipole_order,
             propagation_direction, polarization, quantization_axis)
-        profile = GaussianBeam(waist_m, focus_m)
+        profile = GaussianBeam(waist_m)
         power_W = profile.power_for_peak_electric_field_magnitude(peak_field)
         return cls(laser_frequency_angular, propagation_direction, polarization, profile, phase, power_W,
                    amplitude_modulation_function, phase_modulation_function, frequency_modulation_function)
