@@ -17,7 +17,8 @@ from ionsim.basis import StandardBasis
 from ionsim.named_operators import Pauli, Fock, Unitary
 from ionsim.operator import CouplingOperator
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.laser import Laser, Polarization
+from ionsim.laser import Laser
+from ionsim.polarization import Polarization
 from ionsim.testing import assert_array_close
 from ionsim.ionsim_error import IonSimError
 
