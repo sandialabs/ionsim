@@ -549,7 +549,8 @@ def compute_coupling_amplitude_between_atomic_levels(ground_level: AtomicInterna
     q_values = range(-multipole_order, multipole_order + 1)
     if not isinstance(polarization_components, dict) or set(polarization_components) != set(q_values):
         raise IonSimError(f"polarization_components must be a dict keyed by q = {list(q_values)} for multipole order "
-                          f"{multipole_order}, e.g. Polarization.dipole_components() or Polarization.quadrupole_components().")
+                          f"{multipole_order}, e.g. Polarization.dipole_components(quantization_axis) or "
+                          f"Polarization.quadrupole_components(propagation_direction, quantization_axis).")
 
     # E1 with a tabulated <J||er||J'>: angular amplitudes in units of <J||er||J'> (Steck), times its value in e a0.
     # Otherwise: angular amplitudes in units of the orbital reduced element <L||T^(k)||L'>, taken as 1 a0^k.

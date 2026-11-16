@@ -120,6 +120,7 @@ class TestMSGateFromLaserSidebands(unittest.TestCase):
     FOCK_DIMENSION = 6                # small-angle gate: small motional displacement
     WAIST = 10e-6                     # m
     N_HAT = np.array([1., 0., 0.])
+    QUANTIZATION_AXIS = np.array([0., 0., 1.])   # magnetic-field direction (lab z)
     QN_G, QN_E = {'n': 4, 'l': 0, 'mj': 0.5}, {'n': 3, 'l': 2, 'j': 2.5, 'mj': 1.5}
 
     def build(self, mode_first: bool):
@@ -137,8 +138,8 @@ class TestMSGateFromLaserSidebands(unittest.TestCase):
         polarization = Polarization(np.array([0., 0., 1.]))
         def build(phase):
             return Laser.gaussian_from_target_rabi_frequency(rabi_rate, e.energy - g.energy + detuning, g, e, 2, self.WAIST,
-                                                             self.N_HAT, polarization, phase=phase)
-        rabi = build(0.).rabi_frequency(g, e, 2)
+                                                             self.N_HAT, polarization, self.QUANTIZATION_AXIS, phase=phase)
+        rabi = build(0.).rabi_frequency(g, e, 2, self.QUANTIZATION_AXIS)
         self.assertAlmostEqual(abs(rabi) / rabi_rate, 1., places=10)
         laser = build(-np.pi/2 - np.angle(rabi))
         self.assertAlmostEqual(laser.frequency_angular, e.energy - g.energy + detuning, delta=1e-9 * laser.frequency_angular)
@@ -150,8 +151,8 @@ class TestMSGateFromLaserSidebands(unittest.TestCase):
         blue = self.laser(rabi_rate, g, e, +(self.MODE_FREQUENCY + detuning))
         red = self.laser(rabi_rate, g, e, -(self.MODE_FREQUENCY + detuning))
         etas = np.array([[ETA], [ETA]])   # rows: atoms (target_atoms=None -> basis order), columns: [mode]
-        operators = (blue.build_sideband_coupling_operators('blue', basis, None, [mode], [g], [e], 2, etas)
-                     + red.build_sideband_coupling_operators('red', basis, None, [mode], [g], [e], 2, etas))
+        operators = (blue.build_sideband_coupling_operators('blue', basis, None, [mode], [g], [e], 2, etas, self.QUANTIZATION_AXIS)
+                     + red.build_sideband_coupling_operators('red', basis, None, [mode], [g], [e], 2, etas, self.QUANTIZATION_AXIS))
         hamiltonian = Hamiltonian(basis, operators, [-state.energy for state in basis.states], sparse=False)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')

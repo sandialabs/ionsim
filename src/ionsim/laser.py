@@ -32,8 +32,6 @@ from ionsim.operator import Operator, CouplingOperator
 from ionsim.named_operators import Fock
 from ionsim.trapped_ion_mode_analysis import TrappedIonCrystal
 
-# Default quantization axis (the magnetic-field direction): lab z.
-Z_AXIS = np.array([0., 0., 1.])
 
 class SidebandType(StrEnum):
     """ First motional sideband of a light-atom coupling. """
@@ -124,7 +122,7 @@ class Polarization:
         """ An explicit polarization does not depend on the propagation direction (the Laser checks transversality). """
         return self
 
-    def dipole_components(self, quantization_axis: Vector = Z_AXIS) -> dict[int, complex]:
+    def dipole_components(self, quantization_axis: Vector) -> dict[int, complex]:
         """ Spherical (dipole) components eps_q, keyed by q = +1, 0, -1, with polarization vector = sum_q eps_q e_q.
 
             q is the change of m on absorption, q = m_excited - m_ground (sigma+ <-> q = +1, pi <-> 0, sigma- <-> -1), the
@@ -137,7 +135,7 @@ class Polarization:
         return dict(zip((1, 0, -1), components)) 
 
     @staticmethod
-    def rank2_spherical_basis(quantization_axis: Vector = Z_AXIS) -> dict[int, Matrix]:
+    def rank2_spherical_basis(quantization_axis: Vector) -> dict[int, Matrix]:
         """ Orthonormal rank-2 spherical basis tensors E_q = sum_{m1, m2} <1 m1; 1 m2 | 2 q> e_m1 (x) e_m2, q = -2..2.
 
             Built from the rank-1 spherical basis vectors e_m (Steck, eq. 7.188); orthonormal in the sense
@@ -154,7 +152,7 @@ class Polarization:
             tensors[q] = T
         return tensors
 
-    def quadrupole_components(self, propagation_direction: Vector, quantization_axis: Vector = Z_AXIS) -> dict[int, complex]:
+    def quadrupole_components(self, propagation_direction: Vector, quantization_axis: Vector) -> dict[int, complex]:
         """ Rank-2 polarization components C_q, q = -2..2 (q = m_excited - m_ground, as for dipole_components), of the
             E2 geometry tensor eps (x) n_hat, for light with this polarization propagating along propagation_direction.
 
@@ -242,7 +240,7 @@ class SphericalPolarization:
         direction: e.g. pure sigma+ ({+1: 1, 0: 0, -1: 0}) needs light along the quantization axis, and pi ({0: 1}) light perpendicular to it.
         Components not given are zero. """
 
-    def __init__(self, components: dict[int, complex], quantization_axis: Vector = Z_AXIS):
+    def __init__(self, components: dict[int, complex], quantization_axis: Vector):
         if not isinstance(components, dict) or not set(components) <= {-1, 0, 1} or not components:
             raise IonSimError(f"components must be a dict keyed by q in (+1, 0, -1), e.g. {{1: 1.}} for sigma+, got {components}.")
         self._components = {q: complex(components.get(q, 0.)) for q in (1, 0, -1)}
@@ -511,11 +509,10 @@ class Laser:
                                    ground_levels: AtomicInternalEnergyLevel | list[AtomicInternalEnergyLevel],
                                    excited_levels: AtomicInternalEnergyLevel | list[AtomicInternalEnergyLevel],
                                    multipole_order: int, propagation_direction: Vector, polarization: PolarizationInput,
-                                   phase: float = 0.,
+                                   quantization_axis: Vector, phase: float = 0.,
                                    amplitude_modulation_function: Callable | None = None,
                                    phase_modulation_function: Callable | None = None,
-                                   frequency_modulation_function: Callable | None = None,
-                                   quantization_axis: Vector = Z_AXIS) -> Laser:
+                                   frequency_modulation_function: Callable | None = None) -> Laser:
         """ Plane-wave laser at frequency laser_frequency_angular whose carrier Rabi frequency on ground_levels ->
             excited_levels is rabi_frequency_angular.
 
@@ -540,11 +537,11 @@ class Laser:
                                             ground_levels: AtomicInternalEnergyLevel | list[AtomicInternalEnergyLevel],
                                             excited_levels: AtomicInternalEnergyLevel | list[AtomicInternalEnergyLevel],
                                             multipole_order: int, waist_m: float, propagation_direction: Vector,
-                                            polarization: PolarizationInput, phase: float = 0., focus_m: Vector | None = None,
+                                            polarization: PolarizationInput, quantization_axis: Vector, phase: float = 0.,
+                                            focus_m: Vector | None = None,
                                             amplitude_modulation_function: Callable | None = None,
                                             phase_modulation_function: Callable | None = None,
-                                            frequency_modulation_function: Callable | None = None,
-                                            quantization_axis: Vector = Z_AXIS) -> Laser:
+                                            frequency_modulation_function: Callable | None = None) -> Laser:
         """ Gaussian laser at frequency laser_frequency_angular whose peak Rabi frequency on ground_levels ->
             excited_levels is rabi_frequency_angular.
 
@@ -640,7 +637,7 @@ class Laser:
         return self.detuning_from_transition_frequency(transition_frequency)
 
     def rabi_frequency(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel,
-                       multipole_order: int, counter_rotating: bool = False, quantization_axis: Vector = Z_AXIS) -> complex:
+                       multipole_order: int, quantization_axis: Vector, counter_rotating: bool = False) -> complex:
         """ Rabi frequency Omega (rad/s) of |ground_level> -> |excited_level> driven by this laser at its peak field (beam
             focus) with modulation amplitude 1, so that the coupling's raising element is (Omega/2) e^{i phase} |e><g|.
 
@@ -654,7 +651,8 @@ class Laser:
 
             quantization_axis: lab-frame direction of the atom's quantization axis (the magnetic-field direction), which
             defines the m (magnetic) quantum numbers of the levels; the polarization's spherical components are taken
-            relative to it. Defaults to lab z.
+            relative to it. Required (no default): the couplings depend strongly on it, so it must be stated explicitly,
+            e.g. np.array([0., 0., 1.]) for a field along lab z.
         """
         if ground_level is excited_level or ground_level.name == excited_level.name:
             raise IonSimError(f"Ground level and excited level should not be the same, got {ground_level.name}.")
@@ -792,8 +790,8 @@ class Laser:
     # separate CouplingOperator. In any frame these terms oscillate at about omega + omega_0, so they are mainly useful for
     # adiabatic elimination (Bloch-Siegert-type corrections to light shifts and Raman couplings) or low-frequency transitions.
     def build_carrier_coupling_operators(self, basis: Basis, target_atoms: list[AtomicStructure] | None, ground_levels: list[AtomicInternalEnergyLevel], 
-                                               excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift_angular: float = 0.,
-                                               include_counter_rotating: bool = False, quantization_axis: Vector = Z_AXIS) -> list[CouplingOperator]:
+                                               excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, quantization_axis: Vector,
+                                               frequency_shift_angular: float = 0., include_counter_rotating: bool = False) -> list[CouplingOperator]:
         """ Carrier couplings |g, n> <-> |e, n> (motional state unchanged) for the requested ground and excited levels.
 
             target_atoms: addressed AtomicStructure DOFs; all of the basis if None. Levels are matched by name (as for the carrier).
@@ -806,22 +804,22 @@ class Laser:
             the basis are spectators (identity); the carrier's Debye-Waller reduction exp(-eta^2/2) L_n(eta^2) is not included.
             include_counter_rotating: also return the counter-rotating couplings. 
             quantization_axis: lab-frame quantization axis (magnetic-field direction) of the atoms, which defines the m
-                quantum numbers of their levels; lab z by default. See rabi_frequency.
+                quantum numbers of their levels. See rabi_frequency.
         """
         target_atoms = self._parse_atomic_input(basis, target_atoms)
         coupling_operators = []
         for counter_rotating in self._rotation_terms(include_counter_rotating):
             for atom in target_atoms:
                 coupling_operators.extend(self._atom_coupling_operators(basis, atom, ground_levels, excited_levels, multipole_order,
-                                                                        frequency_shift_angular, counter_rotating=counter_rotating,
-                                                                        quantization_axis=quantization_axis))
+                                                                        quantization_axis, frequency_shift_angular,
+                                                                        counter_rotating=counter_rotating))
         return coupling_operators
 
     def build_sideband_coupling_operators(self, sideband: SidebandType | str, basis: Basis, target_atoms: list[AtomicStructure] | None,
                                           target_modes: list[MotionalMode], ground_levels: list[AtomicInternalEnergyLevel],
                                           excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int,
-                                          lamb_dicke_parameters: Matrix | complex, frequency_shift_angular: float = 0., debye_waller: bool = False,
-                                          include_counter_rotating: bool = False, quantization_axis: Vector = Z_AXIS) -> list[CouplingOperator]:
+                                          lamb_dicke_parameters: Matrix | complex, quantization_axis: Vector, frequency_shift_angular: float = 0.,
+                                          debye_waller: bool = False, include_counter_rotating: bool = False) -> list[CouplingOperator]:
         """ First red or blue sideband couplings of the requested levels with each requested motional mode.
 
             sideband: SidebandType.RED ('red'): |g, n> <-> |e, n-1>, resonant at omega = omega_0 - omega_mode;
@@ -863,17 +861,16 @@ class Laser:
                     signed_eta = -eta if counter_rotating else eta
                     motional_matrix = basis.enlarge_matrix(self._sideband_motional_matrix(sideband, mode, signed_eta, debye_waller), [mode])
                     coupling_operators.extend(self._atom_coupling_operators(basis, atom, ground_levels, excited_levels, multipole_order,
-                                                                            frequency_shift_angular, motional_matrix, counter_rotating=counter_rotating,
-                                                                            quantization_axis=quantization_axis))
+                                                                            quantization_axis, frequency_shift_angular, motional_matrix,
+                                                                            counter_rotating=counter_rotating))
         return coupling_operators
 
     def build_sideband_coupling_operators_from_trap(self, sideband: SidebandType | str, basis: Basis, target_atoms: list[AtomicStructure] | None,
                                                     target_modes: list[MotionalMode], ground_levels: list[AtomicInternalEnergyLevel],
                                                     excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int,
                                                     ion_trap: TrappedIonCrystal, ion_indices_in_trap: list[int], mode_indices: list[int],
-                                                    frequency_shift_angular: float = 0., debye_waller: bool = False,
-                                                    include_counter_rotating: bool = False,
-                                                    quantization_axis: Vector = Z_AXIS) -> list[CouplingOperator]:
+                                                    quantization_axis: Vector, frequency_shift_angular: float = 0., debye_waller: bool = False,
+                                                    include_counter_rotating: bool = False) -> list[CouplingOperator]:
         """ Sideband couplings as in build_sideband_coupling_operators, with the Lamb-Dicke matrix computed by the
             trapped-ion mode analysis ion_trap (e.g. an IonChain) for this laser's lab-frame wavevector:
                 eta = ion_trap.get_lamb_dicke_parameters_for_ions_and_modes(ion_indices_in_trap, mode_indices, self.wavevector)
@@ -903,8 +900,8 @@ class Laser:
         lamb_dicke_parameters = ion_trap.get_lamb_dicke_parameters_for_ions_and_modes(ion_indices_in_trap, mode_indices, self.wavevector)
         self._check_targets_match_trap(target_atoms, target_modes, ion_trap, ion_indices_in_trap, mode_indices)
         return self.build_sideband_coupling_operators(sideband, basis, target_atoms, target_modes, ground_levels, excited_levels,
-                                                      multipole_order, lamb_dicke_parameters, frequency_shift_angular, debye_waller,
-                                                      include_counter_rotating, quantization_axis)
+                                                      multipole_order, lamb_dicke_parameters, quantization_axis, frequency_shift_angular,
+                                                      debye_waller, include_counter_rotating)
 
     @staticmethod
     def _check_targets_match_trap(target_atoms: list[AtomicStructure], target_modes: list[MotionalMode], ion_trap: TrappedIonCrystal,
@@ -1047,9 +1044,9 @@ class Laser:
         return CouplingOperator.from_matrix(basis, raising_matrix + raising_matrix.conj().T, rate, modulation_function=mod_function)
 
     def _atom_coupling_operators(self, basis: Basis, atom: AtomicStructure, ground_levels: list[AtomicInternalEnergyLevel],
-                                 excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, frequency_shift_angular: float,
-                                 motional_matrix: Matrix | None = None, counter_rotating: bool = False,
-                                 quantization_axis: Vector = Z_AXIS) -> list[CouplingOperator]:
+                                 excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, quantization_axis: Vector,
+                                 frequency_shift_angular: float, motional_matrix: Matrix | None = None,
+                                 counter_rotating: bool = False) -> list[CouplingOperator]:
         """ Coupling operators for every requested (|g>, |e>) pair of one atom, built from that atom's own level objects.
 
             motional_matrix: optional operator on the full basis acting only on motional DOFs (e.g. i eta a_k for a red
@@ -1093,7 +1090,7 @@ class Laser:
 
     def build_atom_laser_ge_coupling_matrix(self, ground_level: AtomicInternalEnergyLevel, excited_level: AtomicInternalEnergyLevel, 
                                             atomic_levels: list[AtomicInternalEnergyLevel], multipole_order: int,
-                                            counter_rotating: bool = False, quantization_axis: Vector = Z_AXIS) -> Matrix: 
+                                            quantization_axis: Vector, counter_rotating: bool = False) -> Matrix: 
         """ Builds a coupling matrix representing a laser light-atom coupling within an ordered list of ground (g) and excited (e) levels.
 
             counter_rotating: the counter-rotating term, (Omega~/2) e^{-i phase} |e><g| with Omega~ from the conjugate
