@@ -91,6 +91,8 @@ class GaussianBeam(BeamProfile):
 
     def peak_electric_field_magnitude_V_per_m(self, power_W: float) -> float:
         """ Peak electric field magnitude |E0| in free space """ 
+        if power_W is None:
+            raise IonSimError("Power must be set in constructor to compute electric field magnitude when using a Gaussian beam")
         I0 = 2. * power_W / (np.pi * (self.waist_m ** 2)) # intensity, Watts/m^2
         return np.sqrt(2. * I0 / (const.c * const.epsilon_0))
 
@@ -341,8 +343,6 @@ class Laser:
     @property
     def peak_electric_field_magnitude_V_per_m(self) -> float:
         """ Peak electric field magnitude E_0 [V/m] """
-        if self.power_W is None:
-            raise IonSimError("Power must be set in constructor to compute electric field magnitude")
         return self.beam_profile.peak_electric_field_magnitude_V_per_m(self.power_W) 
 
     @property
