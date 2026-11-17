@@ -33,9 +33,10 @@ levels:
 
   - term_symbol: 'P1' # 3P_1: l = 1; j = 1
     coupling_scheme: 'ls'
-    fine_energy: 539.1950683453238e+12 # Hz 
+    fine_energy: 539.3884268412e+12 # Hz 
     hyperfine_A: 3.95785e+9 # Hz
     lifetime: 872.6e-9 # s 
+    reduced_dipole_matrix_elements: {'S0': 0.5398}  # <1S0||er||3P1>, e a0, Steck convention; Ref. [1] Table 10: 0.5398(6) (Racah-Wigner, = Steck for J_lower = 0)
     n: 6
     s: 1.0  
 
@@ -53,6 +54,7 @@ levels:
     hyperfine_A: -2.03830e+9 # Hz
     lifetime: 332.e-9 # seconds, decay from 3D_1 to the 3 P channels  
     branching_ratios: {'P2': 0.01, 'P1': 0.352, 'P0': 0.638}
+    reduced_dipole_matrix_elements: {'P0': 2.76}  # <3P0||er||3D1>, e a0, Steck convention; Ref. [1] Table 12: 2.76(7) (Racah-Wigner, = Steck for J_lower = 0)
     n: 5
     s: 1.
 
@@ -66,6 +68,9 @@ levels:
 
 # References: 
 # arxiv.org/pdf/2509.04416
+#   [1] R. M. Kroeze, S. Laguna Kristensen, S. Pucher, "171Yb Reference Data", arXiv:2509.04416v1 (2025).
+#   Reduced E1 matrix elements there are in the Racah-Wigner convention, <J||er||J'>_R = sqrt(2J+1) <J||er||J'> with J the
+#   lower level (Sec. 5.3, Eqs. 52-54). IonSim uses Steck's convention <J||er||J'>, so divide by sqrt(2 J_lower + 1).
 
 # for rydberg n = 65 state, see 
 # - Muniz et al., PRX 2025; DOI: 10.1103/PRXQuantum.6.020334 

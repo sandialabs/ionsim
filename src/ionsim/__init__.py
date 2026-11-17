@@ -28,6 +28,8 @@ from .named_operators import Pauli, Fock, Unitary
 from .process import Gate, Circuit
 from .noise import Noise
 from .zeeman_solver import ZeemanHyperfineSolver
+from .polarization import Polarization, LinearPolarization, CircularPolarization, SphericalPolarization
+from .laser import Laser
 from .composite_operator import CompositeOperator
 from .lindbladian import Dissipator, DissipatorSpontaneousEmission, Lindbladian 
 from .trapped_ion_mode_analysis import TrappedIonCrystal, IonChain

@@ -15,7 +15,7 @@ from abc import ABC
 
 from ionsim.basis import StandardBasis
 from ionsim.operator import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
-from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix, as_dense_matrix
+from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix
 from ionsim.ionsim_error import IonSimError
 from ionsim.config import SMALLEST_ENERGY_SCALE
 
