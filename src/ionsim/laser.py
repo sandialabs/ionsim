@@ -572,15 +572,24 @@ class Laser:
 
             target_atoms: addressed AtomicStructure DOFs; all of the basis (in basis order) if None. Levels are matched by
                 name (as for the carrier).
+
             target_modes: the MotionalMode DOFs to couple (required, non-empty). Each must be in the basis; a sideband
                 operator is built for every (target atom, target mode) pair.
+
+            ground_levels and excited_levels: list of atomic level objects, checked in _atom_coupling_operators() to ensure they are in the atom's structure.  
+                This function will build sideband transitions corresponding to each carrier ground <--> excited coupling combination from the lists. 
+
             lamb_dicke_parameters: Lamb-Dicke number or matrix eta[i, j] for target_atoms[i] and target_modes[j], shape
                 (len(target_atoms), len(target_modes)); real (signed) or complex, the coefficient of a_k as above.
+
             frequency_shift_angular: rad/s added to the laser frequency, as for the carrier.
+
             debye_waller: if True, use the exact Delta n = +/-1 matrix elements of exp(i (eta a + eta^* a^dag)) for this mode,
                 e^{-|eta|^2/2} L_n^1(|eta|^2) / sqrt(n+1) in place of sqrt(n+1) (Fock.debye_waller_lowering with |eta|).
+
             include_counter_rotating: also return the counter-rotating sideband couplings, (Omega~/2) e^{-i phi} (-i eta)
                 |e><g| (x) a_k (red) or (Omega~/2) e^{-i phi} (-i eta^*) |e><g| (x) a_k^dag (blue) at e^{+i omega t}. 
+
             quantization_axis: lab-frame quantization axis of the atoms, as for the carrier.
 
             The basis may order atoms and modes in any way: the kept (upper-triangle) element of each coupling and its
@@ -682,6 +691,9 @@ class Laser:
 
     @staticmethod
     def _parse_atomic_input(basis: Basis, target_atoms: list[AtomicStructure] | None) -> list[AtomicStructure]:
+        """ Parses the input list of atoms targeted by the laser. Each atom in target_atoms must match (be the same object in memory) 
+                the corresponding AtomicStructure objects found in the basis.  
+            Levels in the atom's AtomicStructure will be checked in _atom_coupling_operators(). """ 
         if target_atoms is None:
             target_atoms = basis.atomic_structure_DOFs
         if not target_atoms:
@@ -696,7 +708,10 @@ class Laser:
     @staticmethod
     def _parse_motional_mode_input(basis: Basis, target_modes: list[MotionalMode]) -> list[MotionalMode]:
         """ Parses the target mode list input: a non-empty list of distinct MotionalMode DOFs of the basis,
-            each with Fock levels 0, 1, ..., N-1 in order. """
+            each with Fock levels 0, 1, ..., N-1 in order. 
+
+            Each mode in target_modes must match (be the same object in memory) the corresponding motional mode DOFs in basis. 
+        """
         if not isinstance(target_modes, collections.abc.Sequence):
             raise IonSimError(f"target_modes must be a list of MotionalMode DOFs, got {type(target_modes).__name__}; "
                               f"wrap a single mode in a list, e.g. [mode].")
@@ -790,16 +805,21 @@ class Laser:
                                  counter_rotating: bool = False) -> list[CouplingOperator]:
         """ Coupling operators for every requested (|g>, |e>) pair of one atom, built from that atom's own level objects.
 
+            ground_levels and excited_levels: list of atomic levels, checked here by name to ensure they are in the atom's structure (check by name).  
+
             motional_matrix: optional operator on the full basis acting only on motional DOFs (e.g. i eta a_k for a red
                 sideband); the atomic raising operator is multiplied by it. Both are enlarged to the full basis separately,
                 so their product is the tensor product for any ordering of the basis DOFs.
+
             counter_rotating: build the counter-rotating couplings (the caller supplies the motional matrix with -eta).
         """
         atomic_levels = atom.energy_levels
-        level_index = {level.name: index for index, level in enumerate(atomic_levels)}
-        missing = [level.name for level in [*ground_levels, *excited_levels] if level.name not in level_index]
+        # Table of level.name --> level index in list of levels 
+        level_indices = {level.name: index for index, level in enumerate(atomic_levels)}
+        # Check to ensure the user-supplied ground and excited levels are in the atom's structure 
+        missing = [level.name for level in [*ground_levels, *excited_levels] if level.name not in level_indices]
         if missing:
-            raise IonSimError(f"Levels {missing} not found in the atomic structure {atom.name or ''} with levels {list(level_index)}.")
+            raise IonSimError(f"Levels {missing} not found in the atomic structure {atom.name or ''} with levels {list(level_indices)}.")
 
         coupling_operators = []
         # Build coupling operator for each |g>, |e> pairing
@@ -807,7 +827,7 @@ class Laser:
             for excited_name in (level.name for level in excited_levels):
                 if ground_name == excited_name:
                     raise IonSimError(f"Excited level {excited_name} matches the ground level {ground_name}.")
-                ground_index, excited_index = level_index[ground_name], level_index[excited_name]
+                ground_index, excited_index = level_indices[ground_name], level_indices[excited_name]
                 ground_level, excited_level = atomic_levels[ground_index], atomic_levels[excited_index]
 
                 coupling_matrix = self.build_atom_laser_ge_coupling_matrix(ground_level, excited_level, atomic_levels, multipole_order,
