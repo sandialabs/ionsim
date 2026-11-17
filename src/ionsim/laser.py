@@ -537,8 +537,8 @@ class Laser:
 
             target_atoms: addressed AtomicStructure DOFs; all of the basis if None. Levels are matched by name (as for the carrier).
                 Pass a single atom, e.g. [atom], for an individually addressing beam.
-            ground_levels, excited_levels: matched to each atom's own levels by name, so they may come from any one of the
-                atoms. Each atom must contain all of them. Each atom's couplings are computed from its own levels.
+            ground_levels, excited_levels: list of atomic level objects, checked in _atom_coupling_operators() to ensure they are in the atom's structure.  
+                Each atom must contain all levels from the list. Each atom's couplings are computed from its own levels.
             frequency_shift_angular: rad/s added to the laser frequency (e.g. a constant frequency shift from an AOM).
 
             The laser couples every addressed atom with the same field (its peak electric field and phase). Motional modes in
@@ -576,7 +576,7 @@ class Laser:
             target_modes: the MotionalMode DOFs to couple (required, non-empty). Each must be in the basis; a sideband
                 operator is built for every (target atom, target mode) pair.
 
-            ground_levels and excited_levels: list of atomic level objects, checked in _atom_coupling_operators() to ensure they are in the atom's structure.  
+            ground_levels, excited_levels: list of atomic level objects, checked in _atom_coupling_operators() to ensure they are in the atom's structure.  
                 This function will build sideband transitions corresponding to each carrier ground <--> excited coupling combination from the lists. 
 
             lamb_dicke_parameters: Lamb-Dicke number or matrix eta[i, j] for target_atoms[i] and target_modes[j], shape
