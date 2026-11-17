@@ -1,0 +1,151 @@
+import unittest
+
+import numpy as np
+
+from ionsim.process import Gate, Circuit
+from ionsim.degree_of_freedom import AtomicStructure
+from ionsim.basis import StandardBasis
+from ionsim.named_operators import Unitary, Pauli
+from ionsim.noise import Noise
+from ionsim.circuit_builder import CircuitBuilder
+from ionsim.qiskit_interface import HAS_QISKIT
+
+if HAS_QISKIT:
+    import qiskit
+
+
+@unittest.skipIf(not HAS_QISKIT, "QISKIT not available")
+class QiskitIntegrationTester(unittest.TestCase):
+
+    def setUp(self):
+        """Set up the necessary objects for testing."""
+        self.spin_a = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.spin_b = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        self.basis = StandardBasis([self.spin_a, self.spin_b])
+
+        xs = np.linspace(-np.pi, np.pi, 21)
+        self.phi_noise = Noise.from_named_pdf('phi', 'gaussian', {'standard_deviation': np.pi/10}, xs)
+
+        self.theta_noise = Noise.from_named_pdf('theta', 'gaussian', {'standard_deviation': np.pi/10}, xs)
+
+    def test_circuit(self):
+        # Create a qiskit circuit
+        qc = qiskit.QuantumCircuit(1)
+        qc.sx(0)
+        qc.r(theta=np.pi/2, phi=0, qubit=0)
+
+        # Convert to ionsim Circuit
+        tp = CircuitBuilder.from_qiskit(qc)
+        tp.set_basis(self.basis)
+        tp.set_gate_noise('R', self.phi_noise)
+        tp.set_circuit_noise(self.theta_noise)
+
+        ramsey = tp.build()
+
+        # Compute process fidelity
+        fidelity = ramsey.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
+
+        # Compare
+        self.assertAlmostEqual(fidelity, 0.9306176541502548, places=14)
+
+    def test_user_gates(self):
+        """Test that a user-provided function overrides the normal Unitary gate."""
+        # First test that the user-provided function is called at all
+        qc = qiskit.QuantumCircuit(1)
+        qc.sx(0)
+        qc.r(theta=np.pi/2, phi=0, qubit=0)
+        tp = CircuitBuilder.from_qiskit(qc)
+
+        def bad_gate(*args):
+            raise RuntimeError(f"Expected gate error")
+
+        tp.set_gate_function('sqrtX', bad_gate)
+        tp.set_basis(self.basis)
+        with self.assertRaises(RuntimeError):
+            tp.build()
+
+        # Now test that our function that creates a gate from a
+        # unitary produces the same result as the default processing.
+        tp = CircuitBuilder.from_qiskit(qc)
+        tp.set_basis(self.basis)
+        tp.set_gate_noise('R', self.phi_noise)
+        tp.set_circuit_noise(self.theta_noise)
+        circ0 = tp.build()
+        fidelity0 = circ0.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
+
+        def sqrtx_unitary(qubits, params, basis, noise):
+            dofs = [basis.degrees_of_freedom[i] for i in qubits]
+            return Gate.from_unitary(basis, Unitary.sqrtX, dofs)
+
+        tp = CircuitBuilder.from_qiskit(qc)
+        tp.set_gate_function('sqrtX', sqrtx_unitary)
+        tp.set_basis(self.basis)
+        tp.set_gate_noise('R', self.phi_noise)
+        tp.set_circuit_noise(self.theta_noise)
+        circ1 = tp.build()
+        fidelity1 = circ1.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
+
+        self.assertEqual(fidelity0, fidelity1)
+
+    def test_undefined_gate(self):
+        """Test providing a definition for a Qiskit gate that is not natively in Ionsim."""
+
+        qc = qiskit.QuantumCircuit(1)
+        qc.sx(0)
+        qc.r(theta=np.pi/2, phi=0, qubit=0)
+
+        cb = CircuitBuilder.from_qiskit(qc)
+        cb.set_basis(self.basis)
+        cb.set_gate_noise('R', self.phi_noise)
+        cb.set_circuit_noise(self.theta_noise)
+        circ0 = cb.build()
+        fidelity0 = circ0.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
+
+        qc = qiskit.QuantumCircuit(1)
+        qc.append(qiskit.circuit.Gate(name="unknown", num_qubits=1, params=[]), [0])
+        qc.sx(0)
+        qc.r(theta=np.pi/2, phi=0, qubit=0)
+
+        def unknown_gate(qubits, params, basis, noise):
+            dofs = [basis.degrees_of_freedom[i] for i in qubits]
+            return Gate.from_unitary(basis, Unitary.I, dofs)
+
+        cb = CircuitBuilder.from_qiskit(qc)
+        cb.set_gate_function("unknown", unknown_gate)
+        cb.set_basis(self.basis)
+        cb.set_gate_noise('R', self.phi_noise)
+        cb.set_circuit_noise(self.theta_noise)
+        circ1 = cb.build()
+        fidelity1 = circ1.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
+
+        self.assertEqual(fidelity0, fidelity1)
+
+    def test_alias_gate(self):
+        """Test renaming a qiskit gate with an alias."""
+
+        qc = qiskit.QuantumCircuit(1)
+        qc.sx(0)
+        qc.r(theta=np.pi/2, phi=0, qubit=0)
+
+        cb = CircuitBuilder.from_qiskit(qc)
+        cb.set_basis(self.basis)
+        cb.set_gate_noise('R', self.phi_noise)
+        cb.set_circuit_noise(self.theta_noise)
+        circ0 = cb.build()
+        fidelity0 = circ0.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
+
+        qc = qiskit.QuantumCircuit(1)
+        qc.sx(0)
+        qc.append(qiskit.circuit.Gate(name="rotate", num_qubits=1, params=[np.pi/2, 0]), [0])
+
+        cb = CircuitBuilder.from_qiskit(qc)
+        cb.set_basis(self.basis)
+        cb.set_gate_noise('R', self.phi_noise)
+        cb.set_circuit_noise(self.theta_noise)
+        cb.set_alias(to_name='R', from_name='rotate', parameter_map=('theta', 'phi'))
+        circ1 = cb.build()
+        fidelity1 = circ1.compute_process_fidelity(Gate.from_unitary(self.basis, Unitary.X, [self.spin_a]).process_matrix)
+
+
+if __name__ == '__main__':
+    unittest.main()

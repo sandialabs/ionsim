@@ -149,7 +149,7 @@ class TestDipoleAmplitude(unittest.TestCase):
         return np.arange(abs(j - self.I), j + self.I + 1)
 
     def _steck_closed_form(self, f, mf, jp, fp, mfp, q):
-        """Steck Eqs. 35-36: 3j x 6j, with the (2F'+1) prefactor."""
+        """Steck Eqs. 35-36: <F mF| e r_q |F' mF'> (3j x 6j, with the (2F'+1) prefactor), Steck's q = mF - mF'."""
         f, mf, jp, fp, mfp = map(_rational, (f, mf, jp, fp, mfp))
         j, i = _rational(self.J), _rational(self.I)
         three_j = (-1)**(fp - 1 + mf) * sympy.sqrt(2*f + 1) * wigner_3j(fp, 1, f, mfp, q, -mf)
@@ -166,8 +166,9 @@ class TestDipoleAmplitude(unittest.TestCase):
                                 with self.subTest(jp=jp, f=f, mf=mf, fp=fp, mfp=mfp, q=q):
                                     amplitude = compute_dipole_amplitude(self._hf(self.J, f, mf),
                                                                          self._hf(jp, fp, mfp, term_symbol, 1), q)
+                                    # IonSim's q = m_e - m_g: <e| r_q |g> = (-1)^q <g| r_{-q} |e>_Steck
                                     self.assertAlmostEqual(amplitude,
-                                                           self._steck_closed_form(f, mf, jp, fp, mfp, q), places=12)
+                                                           (-1)**q * self._steck_closed_form(f, mf, jp, fp, mfp, -q), places=12)
 
     def test_sum_rule_all_bases(self):
         """Total strength out of every ground sublevel is 1, for |F,mF>, |mJ,mI>, and mixed pairs."""
@@ -184,13 +185,13 @@ class TestDipoleAmplitude(unittest.TestCase):
                         self.assertAlmostEqual(total, 1.0, places=10)
 
     def test_d2_cycling_transition(self):
-        amplitude = compute_dipole_amplitude(self._hf(self.J, 2, 2), self._hf(1.5, 3, 3, 'P3/2', 1), -1)
+        amplitude = compute_dipole_amplitude(self._hf(self.J, 2, 2), self._hf(1.5, 3, 3, 'P3/2', 1), 1)   # sigma+
         self.assertAlmostEqual(amplitude**2, 0.5, places=12)
 
     def test_fine_structure_levels(self):
         ground = LSFineLevel(n=5, j=0.5, term_symbol='S1/2', fine_energy=0., hyperfine_A=0., l=0, s=0.5, mj=0.5)
         excited = LSFineLevel(n=5, j=1.5, term_symbol='P3/2', fine_energy=0., hyperfine_A=0., l=1, s=0.5, mj=1.5)
-        self.assertAlmostEqual(compute_dipole_amplitude(ground, excited, -1)**2, 0.5, places=12)
+        self.assertAlmostEqual(compute_dipole_amplitude(ground, excited, 1)**2, 0.5, places=12)   # sigma+
 
     def test_j1l2_uses_level_j(self):
         """171Yb+ [3/2]1/2 has J = 1/2; the old code used k + s2. S1/2 -> [3/2]1/2 sum rule must be 1."""
@@ -208,7 +209,7 @@ class TestDipoleAmplitude(unittest.TestCase):
         pb = LSPaschenBackLevel(n=5, j=0.5, term_symbol='S1/2', fine_energy=0., hyperfine_A=0., l=0, s=0.5,
                                 i=self.I, mi=0.5, ml=0, ms=0.5)
         with self.assertRaises(IonSimError):
-            compute_dipole_amplitude(pb, self._hf(1.5, 3, 3, 'P3/2', 1), -1)
+            compute_dipole_amplitude(pb, self._hf(1.5, 3, 3, 'P3/2', 1), 1)
 
 
 if __name__ == '__main__':

@@ -17,7 +17,8 @@ from ionsim.basis import StandardBasis
 from ionsim.named_operators import Pauli, Fock, Unitary
 from ionsim.operator import CouplingOperator
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.laser import Laser, Polarization
+from ionsim.laser import Laser
+from ionsim.polarization import Polarization
 from ionsim.testing import assert_array_close
 from ionsim.ionsim_error import IonSimError
 
@@ -120,6 +121,7 @@ class TestMSGateFromLaserSidebands(unittest.TestCase):
     FOCK_DIMENSION = 6                # small-angle gate: small motional displacement
     WAIST = 10e-6                     # m
     N_HAT = np.array([1., 0., 0.])
+    QUANTIZATION_AXIS = np.array([0., 0., 1.])   # magnetic-field direction (lab z)
     QN_G, QN_E = {'n': 4, 'l': 0, 'mj': 0.5}, {'n': 3, 'l': 2, 'j': 2.5, 'mj': 1.5}
 
     def build(self, mode_first: bool):
@@ -134,14 +136,14 @@ class TestMSGateFromLaserSidebands(unittest.TestCase):
     def laser(self, rabi_rate, g, e, detuning):
         """ Laser with |Omega| = rabi_rate on g -> e whose phase cancels the complex phase of Omega and adds -pi/2, so the
             sideband raising element (Omega/2) e^{i phase} (i eta) equals that of _ms_hamiltonian, which gives MS(0, theta). """
-        polarization = Polarization(np.array([0., 0., 1.]), self.N_HAT)
+        polarization = Polarization(np.array([0., 0., 1.]))
         def build(phase):
-            return Laser.gaussian_from_target_rabi_frequency(rabi_rate, g, e, 2, self.WAIST, self.N_HAT, polarization,
-                                                             detuning=detuning, phase=phase)
-        rabi = build(0.).rabi_frequency(g, e, 2)
+            return Laser.gaussian_from_target_rabi_frequency(rabi_rate, e.energy - g.energy + detuning, g, e, 2, self.WAIST,
+                                                             self.N_HAT, polarization, self.QUANTIZATION_AXIS, phase=phase)
+        rabi = build(0.).rabi_frequency(g, e, 2, self.QUANTIZATION_AXIS)
         self.assertAlmostEqual(abs(rabi) / rabi_rate, 1., places=10)
         laser = build(-np.pi/2 - np.angle(rabi))
-        self.assertAlmostEqual(laser.frequency, e.energy - g.energy + detuning, delta=1e-9 * laser.frequency)
+        self.assertAlmostEqual(laser.frequency_angular, e.energy - g.energy + detuning, delta=1e-9 * laser.frequency_angular)
         return laser
 
     def gate(self, mode_first: bool, theta: float = THETA):
@@ -149,9 +151,9 @@ class TestMSGateFromLaserSidebands(unittest.TestCase):
         detuning, rabi_rate = _ms_detuning_and_rabi_rate(theta, ETA, TAU, LOOPS)
         blue = self.laser(rabi_rate, g, e, +(self.MODE_FREQUENCY + detuning))
         red = self.laser(rabi_rate, g, e, -(self.MODE_FREQUENCY + detuning))
-        etas = [[ETA], [ETA]]   # rows: atoms (target_atoms=None -> basis order), columns: [mode]
-        operators = (blue.build_blue_sideband_coupling_operators(basis, None, [mode], [g], [e], 2, etas)
-                     + red.build_red_sideband_coupling_operators(basis, None, [mode], [g], [e], 2, etas))
+        etas = np.array([[ETA], [ETA]])   # rows: atoms (target_atoms=None -> basis order), columns: [mode]
+        operators = (blue.build_sideband_coupling_operators('blue', basis, None, [mode], [g], [e], 2, etas, self.QUANTIZATION_AXIS)
+                     + red.build_sideband_coupling_operators('red', basis, None, [mode], [g], [e], 2, etas, self.QUANTIZATION_AXIS))
         hamiltonian = Hamiltonian(basis, operators, [-state.energy for state in basis.states], sparse=False)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
