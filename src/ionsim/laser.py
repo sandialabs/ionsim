@@ -340,7 +340,9 @@ class Laser:
 
     @property
     def peak_electric_field_magnitude_V_per_m(self) -> float:
-        """ Peak electric field magnitude E_0 [V/m] """  
+        """ Peak electric field magnitude E_0 [V/m] """
+        if self.power_W is None:
+            raise IonSimError("Power must be set in constructor to compute electric field magnitude")
         return self.beam_profile.peak_electric_field_magnitude_V_per_m(self.power_W) 
 
     @property
