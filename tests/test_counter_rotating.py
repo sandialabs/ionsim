@@ -19,7 +19,8 @@ from ionsim.basis import StandardBasis
 from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.ionsim_error import IonSimError
-from ionsim.laser import Laser, Polarization
+from ionsim.laser import Laser
+from ionsim.polarization import Polarization, CircularPolarization, LinearPolarization
 
 TPI = 2. * np.pi
 X, Y, Z = np.eye(3)
@@ -41,7 +42,7 @@ class TestRealField(unittest.TestCase):
         of x, y and z polarized beams. This checks the conjugate polarization, phase, rates and both level orders
         independently of how the counter-rotating terms are built. """
 
-    POLARIZATION = Polarization(np.array([np.cos(0.4), 1j * np.sin(0.4) * np.exp(0.9j), 0.]), Z)  # elliptical, along z
+    POLARIZATION = Polarization(np.array([np.cos(0.4), 1j * np.sin(0.4) * np.exp(0.9j), 0.]))  # elliptical
     PHASE = 0.7
     TIMES = (0., 1.3e-16, 7.7e-16, 2.1e-15, 5.3e-14)  # lab frame: sample the optical phase
 
@@ -49,25 +50,30 @@ class TestRealField(unittest.TestCase):
         """ d with laser.rabi_frequency(g, e) = d . eps for any polarization eps at the same field amplitude. """
         components = []
         for pol, n_hat in ((X, Z), (Y, Z), (Z, X)):
-            basis_laser = dataclasses.replace(laser, polarization=Polarization(pol.astype(complex), n_hat), propagation_vector=n_hat)
+            #basis_laser = dataclasses.replace(laser, polarization=Polarization(pol.astype(complex)), propagation_vector=n_hat)
+            basis_laser = setattr(laser, polarization, Polarization(pol.astype(complex))) 
+            basis_laser = setattr(laser, propagation_vector, n_hat)
             components.append(basis_laser.rabi_frequency(g, e, 1))
         return np.array(components)
 
-    def check(self, reverse: bool, modulation_functions: dict | None = None):
+    def check(self, reverse: bool, amp_mod: Callable | None=None, phase_mod: Callable | None=None, frequency_mod: Callable | None=None):
         atom = yb_s_p_f1(reverse)
         basis = StandardBasis([atom])
         ground = [l for l in atom.energy_levels if l.term_symbol == 'S1/2']
         excited = [l for l in atom.energy_levels if l.term_symbol == 'P1/2']
         frequency = excited[0].energy - ground[0].energy + TPI * 3e9
-        laser = Laser.gaussian_from_frequency(frequency, 1e-6, 20e-6, Z, self.POLARIZATION, self.PHASE,
-                                              modulation_functions=modulation_functions)
-        operators = laser.build_carrier_coupling_operators(basis, [atom], ground, excited, 1, include_counter_rotating=True)
-        self.assertEqual(len(operators), 2 * len(laser.build_carrier_coupling_operators(basis, [atom], ground, excited, 1)))
+        laser = Laser.gaussian_from_frequency(frequency, 1e-6, 20e-6, Z, self.POLARIZATION, self.PHASE, 
+                        amplitude_modulation_function = amp_mod, 
+                        phase_modulation_function = phase_mod,
+                        frequency_modulation_function = frequency_mod) 
+        # Quantization axis is Z 
+        operators = laser.build_carrier_coupling_operators(basis, [atom], ground, excited, 1, quantization_axis = Z, include_counter_rotating=True)
+        self.assertEqual(len(operators), 2 * len(laser.build_carrier_coupling_operators(basis, [atom], ground, excited, 1, quantization_axis = Z)))
         H_of_t = Hamiltonian(basis, operators, [0.] * len(basis.states)).hamiltonian_function
-        amplitude = (modulation_functions or {}).get('amplitude', lambda t: 1.)
-        phase = (modulation_functions or {}).get('phase', lambda t: 0.)
-        offset = (modulation_functions or {}).get('frequency')
-        eps = self.POLARIZATION.vector
+        amplitude = amp_mod or {} 
+        phase = phase_mod or {} 
+        offset = frequency_mod or {} 
+        eps = self.POLARIZATION.jones_vector 
         checked = 0
         for g in ground:
             for e in excited:
@@ -97,9 +103,12 @@ class TestRealField(unittest.TestCase):
     def test_real_field_with_modulation(self):
         """ Amplitude, phase and frequency modulation of the real field: A(t) cos(omega t + int delta - phi - phi(t)). """
         modulations = {'amplitude': lambda t: 0.6 + 0.3 * np.sin(3e14 * t), 'phase': lambda t: 2e14 * t, 'frequency': lambda t: TPI * 40e12}
+        amp_mod = modulations['amplitude']
+        phase_mod = modulations['phase']
+        frequency_mod = modulations['frequency']
         for reverse in (False, True):
             with self.subTest(reverse=reverse):
-                self.check(reverse, modulations)
+                self.check(reverse, amp_mod, phase_mod, frequency_mod)
 
 
 class TestCounterRotatingCouplings(unittest.TestCase):
@@ -108,7 +117,7 @@ class TestCounterRotatingCouplings(unittest.TestCase):
         atom = yb_s_p_f1()
         basis = StandardBasis([atom])
         ground, excited = atom.energy_levels[:3], atom.energy_levels[3:]
-        laser = Laser.gaussian_from_frequency(excited[0].energy - ground[0].energy, 1e-6, 20e-6, Z, Polarization.circular(Z, '+'), 0.)
+        laser = Laser.gaussian_from_frequency(excited[0].energy - ground[0].energy, 1e-6, 20e-6, Z, CircularPolarization('+'), 0.)
         default = laser.build_carrier_coupling_operators(basis, [atom], ground, excited, 1)
         explicit = laser.build_carrier_coupling_operators(basis, [atom], ground, excited, 1, include_counter_rotating=False)
         self.assertEqual(len(default), len(explicit))
@@ -122,9 +131,11 @@ class TestCounterRotatingCouplings(unittest.TestCase):
         atom = yb_s_p_f1()
         basis = StandardBasis([atom])
         ground, excited = atom.energy_levels[:3], atom.energy_levels[3:]
-        laser = Laser.gaussian_from_frequency(excited[0].energy - ground[0].energy, 1e-6, 20e-6, Z, Polarization.circular(Z, '+'), 0.)
-        n_co = len(laser.build_carrier_coupling_operators(basis, [atom], ground, excited, 1))
-        operators = laser.build_carrier_coupling_operators(basis, [atom], ground, excited, 1, include_counter_rotating=True)
+        laser = Laser.gaussian_from_frequency(excited[0].energy - ground[0].energy, 1e-6, 20e-6, Z, CircularPolarization('+'), 0.)
+
+        n_co = len(laser.build_carrier_coupling_operators(basis, [atom], ground, excited, 1, Z))
+        operators = laser.build_carrier_coupling_operators(basis, [atom], ground, excited, 1, Z, include_counter_rotating=True)
+
         for index, operator in enumerate(operators):
             expected_dm = 1 if index < n_co else -1
             for coupling in operator.couplings:
@@ -133,7 +144,7 @@ class TestCounterRotatingCouplings(unittest.TestCase):
                 e = next(l for l in levels if l.term_symbol == 'P1/2')
                 self.assertEqual(round(e.mf - g.mf), expected_dm)
         # The conjugate of the sigma+ Jones vector is the sigma- one: Omega~ of sigma+ equals Omega of sigma-, pair by pair.
-        sigma_minus = dataclasses.replace(laser, polarization=Polarization.circular(Z, '-'))
+        sigma_minus = dataclasses.replace(laser, polarization=CircularPolarization('-'))
         scale = abs(laser.rabi_frequency(ground[1], excited[2], 1))
         for g in ground:
             for e in excited:
@@ -146,16 +157,16 @@ class TestCounterRotatingCouplings(unittest.TestCase):
         atom = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2', 'P1/2'], level_names=['S1/2,0,0', 'P1/2,1,0'])
         mode = MotionalMode.from_frequency(TPI * 2e6, 4)
         g, e = atom.energy_levels
-        laser = Laser.gaussian_from_frequency(e.energy - g.energy, 1e-6, 20e-6, X, Polarization.linear(X, 0., ref_axis=Z), 0.)
+        laser = Laser.gaussian_from_frequency(e.energy - g.energy, 1e-6, 20e-6, X, LinearPolarization(0., ref_axis=Z), 0.)
         for basis in (StandardBasis([atom, mode]), StandardBasis([mode, atom])):
             for builder, sign in (('carrier', 1.), ('red', -1.), ('blue', -1.)):
                 for debye_waller in (False, True):
                     if builder == 'carrier':
                         if debye_waller:
                             continue
-                        operators = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, include_counter_rotating=True)
+                        operators = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, Z, include_counter_rotating=True)
                     else:
-                        operators = laser.build_sideband_coupling_operators(builder, basis, [atom], [mode], [g], [e], 1, 0.08,
+                        operators = laser.build_sideband_coupling_operators(builder, basis, [atom], [mode], [g], [e], 1, 0.08, Z,
                                                                             debye_waller=debye_waller, include_counter_rotating=True)
                     with self.subTest(order=[d.name for d in basis.degrees_of_freedom], builder=builder, debye_waller=debye_waller):
                         self.assertEqual(len(operators), 2)
@@ -170,14 +181,14 @@ class TestCounterRotatingCouplings(unittest.TestCase):
                                           quantum_numbers=[{'n': 4, 'l': 0, 'mj': 0.5}, {'n': 3, 'l': 2, 'j': 2.5, 'mj': 1.5}])
         g, e = ca.energy_levels
         n_hat = (X + Z) / np.sqrt(2.)
-        linear = Polarization.linear(n_hat, 0.3)
+        linear = LinearPolarization(n_hat, 0.3)
         laser = Laser.gaussian_from_frequency(e.energy - g.energy, 1e-3, 20e-6, n_hat, linear, 0.)
         co, counter = laser.rabi_frequency(g, e, 2), laser.rabi_frequency(g, e, 2, counter_rotating=True)
         self.assertGreater(abs(co), 1.)
         self.assertAlmostEqual(abs(counter + co) / abs(co), 0., places=12)
-        elliptical = Polarization((np.cos(0.3) * linear.vector + 1j * np.sin(0.3) * np.cross(n_hat, linear.vector)), n_hat)
+        elliptical = Polarization(np.cos(0.3) * linear.vector + 1j * np.sin(0.3) * np.cross(n_hat, linear.vector))
         laser = dataclasses.replace(laser, polarization=elliptical)
-        conjugate = dataclasses.replace(laser, polarization=Polarization(np.conj(elliptical.vector), n_hat))
+        conjugate = dataclasses.replace(laser, polarization=Polarization(np.conj(elliptical.vector)))
         self.assertAlmostEqual(abs(laser.rabi_frequency(g, e, 2, counter_rotating=True) + conjugate.rabi_frequency(g, e, 2))
                                / abs(conjugate.rabi_frequency(g, e, 2)), 0., places=12)
 

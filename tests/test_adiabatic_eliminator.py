@@ -20,7 +20,8 @@ from ionsim.basis import StandardBasis
 from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.ionsim_error import IonSimError
-from ionsim.laser import Laser, Polarization
+from ionsim.laser import Laser
+from ionsim.polarization import LinearPolarization, CircularPolarization
 from ionsim.lindbladian import DissipatorSpontaneousEmission, Lindbladian
 from ionsim.operator import CouplingOperator
 
@@ -135,7 +136,7 @@ class TestLambdaSystem(unittest.TestCase):
 
 class TestFullVersusEffective(unittest.TestCase):
     """ Neutral 171Yb, 556 nm Raman transition between the 1S0 nuclear-spin states through 3P1, detuned by 1 GHz from
-        F' = 3/2. The 3P1 lifetime is shortened 1000x (Gamma = 2 pi x 182 MHz) so that scattering is significant within
+        F' = 3/2. The 3P1 lifetime is artifically shortened 1000x (Gamma = 2 pi x 182 MHz) so that scattering is significant within
         the simulated time and the complex denominators (Gamma/Delta ~ 0.2) are tested. """
 
     def test_master_equation_dynamics(self):
@@ -148,11 +149,11 @@ class TestFullVersusEffective(unittest.TestCase):
         frame = [-state.energy for state in basis.states]
         F32 = next(l for l in excited if l.name == 'P1,3/2,3/2')
         frequency = F32.energy - ground[0].energy + TPI * 1e9
-        sigma = Laser.gaussian_from_frequency(frequency, 0.1e-3, 20e-6, Z, Polarization.circular(Z, '+'), 0.)
-        pi = Laser.gaussian_from_frequency(frequency, 0.1e-3, 20e-6, X, Polarization.linear(X, 0., ref_axis=Z), 0.3)
+        sigma = Laser.gaussian_from_frequency(frequency, 0.1e-3, 20e-6, Z, CircularPolarization('+'), 0.)
+        pi = Laser.gaussian_from_frequency(frequency, 0.1e-3, 20e-6, X, LinearPolarization(0., ref_axis=Z), 0.3)
         operators = []
         for laser in (sigma, pi):
-            operators += laser.build_carrier_coupling_operators(basis, [atom], ground, excited, 1)
+            operators += laser.build_carrier_coupling_operators(basis, [atom], ground, excited, 1, quantization_axis = Z)
         H = Hamiltonian(basis, operators, frame)
         D = DissipatorSpontaneousEmission.from_atomic_structure_data(basis, ground, excited, frame, coherent_channels=True)
         result = H.adiabatically_eliminate(excited, D)
@@ -184,8 +185,8 @@ class TestYb355(unittest.TestCase):
         cls.basis = StandardBasis([cls.atom])
         cls.frame = [-state.energy for state in cls.basis.states]
         cls.frequency = TPI * const.c / 355e-9
-        cls.laser = Laser.gaussian_from_frequency(cls.frequency, 1., 20e-6, X, Polarization.linear(X, 0., ref_axis=Z), 0.)
-        cls.H = Hamiltonian(cls.basis, cls.laser.build_carrier_coupling_operators(cls.basis, [cls.atom], cls.ground, cls.excited, 1), cls.frame)
+        cls.laser = Laser.gaussian_from_frequency(cls.frequency, 1., 20e-6, X, LinearPolarization(0., ref_axis=Z), 0.)
+        cls.H = Hamiltonian(cls.basis, cls.laser.build_carrier_coupling_operators(cls.basis, [cls.atom], cls.ground, cls.excited, 1, quantization_axis = Z), cls.frame)
         cls.results = {}
         for coherent in (True, False):
             D = DissipatorSpontaneousEmission.from_atomic_structure_data(cls.basis, cls.ground, cls.excited, cls.frame,
@@ -195,7 +196,7 @@ class TestYb355(unittest.TestCase):
     def closed_forms(self):
         """ Scalar light shift sum_J Omega_J^2 / (12 Delta_J) and scattering rate sum_J Gamma_J Omega_J^2 / (12 Delta_J^2),
             with Omega_J = E0 <S||er||P_J> / hbar (1/3 of the line strength for pi light out of J = 1/2). """
-        E0 = self.laser.peak_electric_field_magnitude
+        E0 = self.laser.peak_electric_field_magnitude_V_per_m
         s = self.ground[0]
         shift = scatter = 0.
         for J in ('P1/2', 'P3/2'):
@@ -218,13 +219,12 @@ class TestYb355(unittest.TestCase):
         """ With counter-rotating terms the scalar shift is sum_J Omega_J^2 / 12 [1/Delta_J - 1/(omega + omega_J)]. At 355 nm
             the P1/2 and P3/2 rotating-wave terms nearly cancel, so the counter-rotating terms change the shift by a large
             factor. Scattering stays at the rotating-wave level: counter-rotating paths are dropped and reported. """
-        operators = self.laser.build_carrier_coupling_operators(self.basis, [self.atom], self.ground, self.excited, 1,
-                                                                include_counter_rotating=True)
+        operators = self.laser.build_carrier_coupling_operators(self.basis, [self.atom], self.ground, self.excited, 1, quantization_axis = Z, include_counter_rotating=True)
         H = Hamiltonian(self.basis, operators, self.frame)
         D = DissipatorSpontaneousEmission.from_atomic_structure_data(self.basis, self.ground, self.excited, self.frame, coherent_channels=True)
         result = H.adiabatically_eliminate(self.excited, D, rwa_rate_cutoff=TPI * 1e13)
         self.assertGreater(len(result.dropped_fast_terms), 0)  # co x counter-rotating cross terms near 2 omega
-        E0 = self.laser.peak_electric_field_magnitude
+        E0 = self.laser.peak_electric_field_magnitude_V_per_m
         s = self.ground[0]
         rotating_wave = counter = 0.
         for J in ('P1/2', 'P3/2'):
