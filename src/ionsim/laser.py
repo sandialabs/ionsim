@@ -486,19 +486,6 @@ class Laser:
             return self.polarization, k
         return Polarization(np.conj(self.polarization.jones_vector)), -k
 
-    def _field_polarization_and_wavenumber(self, counter_rotating: bool) -> tuple[Polarization, float]:
-        """ Polarization and signed wavenumber of the field component that drives the co- or counter-rotating term.
-
-            The real field E = (E0/2) [eps e^{i(k.r - omega t + phi)} + eps* e^{-i(k.r - omega t + phi)}] couples |g> -> |e>
-            through both parts: the co-rotating term (eps, e^{-i omega t}, e^{+i phi}, e^{+i k.r}) kept in the rotating-wave
-            approximation, and the counter-rotating term (eps*, e^{+i omega t}, e^{-i phi}, e^{-i k.r}). For E2 the field
-            gradient of the e^{-i k.r} part carries -i k, i.e. a negative wavenumber in the E2 coupling factor.
-        """
-        k = np.linalg.norm(self.wavevector)
-        if not counter_rotating:
-            return self.polarization, k
-        return Polarization(np.conj(self.polarization.vector), self.polarization.n_hat), -k
-
     def _modulation_function_for_level_pair(self, ground_index: int, excited_index: int) -> Callable | None:
         """ Modulation function for the coupling operator of one (|g>, |e>) pair at these basis indices.
 
@@ -697,13 +684,6 @@ class Laser:
             return SidebandType(sideband)
         except ValueError:
             raise IonSimError(f"sideband must be one of {[str(member) for member in SidebandType]}, got {sideband!r}.") from None
-
-    @staticmethod
-    def _rotation_terms(include_counter_rotating: bool) -> tuple[bool, ...]:
-        """ Values of counter_rotating to build: the co-rotating terms, and the counter-rotating ones if requested. """
-        if not isinstance(include_counter_rotating, (bool, np.bool_)):
-            raise IonSimError(f"include_counter_rotating must be a bool, got {type(include_counter_rotating).__name__}.")
-        return (False, True) if include_counter_rotating else (False,)
 
     @staticmethod
     def _rotation_terms(include_counter_rotating: bool) -> tuple[bool, ...]:
