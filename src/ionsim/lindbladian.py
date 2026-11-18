@@ -27,15 +27,77 @@ from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
 
 @dataclass(frozen=True, eq=False)
-class Dissipator(CompositeOperator):
+class LindbladOperator(CompositeOperator):
+    """ One Lindblad operator L(t) = prefactor * sum_k O_k(t), a composite of operators in the dissipator's rotating frame.
+
+        Each operator O_k is used as stored. A single Lindblad operator can combine terms with different rates or modulations.
+
+        prefactor: complex scalar multiplying the sum (e.g. sqrt(rate) or sqrt(kappa)), so that operators built for the
+            Hamiltonian can be reused unchanged. 
+    """
+    prefactor: complex = 1.
+
+    @cached_property
+    def lindblad_matrix_function(self) -> Callable:
+        """ L(t) as an (N x N) matrix (dense or sparse, per self.sparse). """
+        operator_sum = self.build_operator_sum_function()
+        prefactor = self.prefactor
+        if prefactor == 1.:
+            return operator_sum
+        return lambda t: operator_sum(t) * prefactor
+
+
+@dataclass(frozen=True, eq=False)
+class Dissipator:
     """Class for dissipator object which implements dissipative phenomena in the context of open quantum systems. 
 
-        Inherits from CompositeOperator parent class. Instantiation requires a basis and 
-            list of operators corresponding to Lindblad operators.  
+        D(t) rho = sum_k ( L_k(t) rho L_k(t)^dagger - 1/2 { L_k(t)^dagger L_k(t), rho } )
+
+        operators: the Lindblad operators. Each entry is one Lindblad operator L_k: either a CompositeOperator (usually a
+            LindbladOperator, a sum of operators with a prefactor) or a plain Operator, which is wrapped as a single-term
+            LindbladOperator (lindblad_operators), as in earlier versions where every operator was its own Lindblad operator.
+            The list may mix both. `operators` keeps exactly what was passed in.
+        rotating_frame_energies: the frame of the Lindblad operators. Composite entries must use the same frame.
+        sparse: whether to use sparse matrices; composite entries must use the same setting.
     """
-    # TODO: Fix dissipator to allow a list of composite operators (each lindblad op is a composite operator) 
+    basis: StandardBasis
+    operators: list[CompositeOperator | Operator]
+    rotating_frame_energies: list[float]
+    sparse: bool = False
+
     def __post_init__(self):
-        super().__post_init__()
+        # Check frame shifts are compatible 
+        if len(self.rotating_frame_energies) != self.size:
+            raise IonSimError(f"Rotating_frame_energies has {len(self.rotating_frame_energies)} entries, but the basis has {self.size} states.")
+
+        # Check Lindblad operators share the same basis  
+        frame = np.asarray(self.rotating_frame_energies, dtype=float)
+        for index, entry in enumerate(self.operators):
+            if isinstance(entry, Operator):
+                if len(entry.basis.states) != self.size:
+                    raise IonSimError(f"Lindblad operator {index} ({type(entry).__name__}) does not live in the dissipator's basis.")
+            elif isinstance(entry, CompositeOperator):
+                if entry.size != self.size:
+                    raise IonSimError(f"Lindblad operator {index} ({type(entry).__name__}) has size {entry.size}, expected {self.size}.")
+                if entry.sparse != self.sparse:
+                    raise IonSimError(f"Lindblad operator {index} has sparse={entry.sparse}, but the dissipator has sparse={self.sparse}.")
+                if not np.allclose(np.asarray(entry.rotating_frame_energies, dtype=float), frame, rtol=1e-12, atol=0.):
+                    raise IonSimError(f"Lindblad operator {index} ({type(entry).__name__}) uses a different rotating frame than "
+                                      f"the dissipator; all Lindblad operators of a dissipator must share its frame.")
+            else:
+                raise IonSimError(f"Lindblad operator {index} must be an Operator or a CompositeOperator, got {type(entry).__name__}.")
+
+    @property
+    def size(self):
+        return len(self.basis.states)
+
+    @cached_property
+    def lindblad_operators(self) -> list[CompositeOperator]:
+        """ The Lindblad operators as composites: CompositeOperator entries unchanged, each plain Operator wrapped as a
+            single-term LindbladOperator in the dissipator's frame. """
+        return [entry if isinstance(entry, CompositeOperator)
+                else LindbladOperator(self.basis, [entry], self.rotating_frame_energies, self.sparse)
+                for entry in self.operators]
 
     @staticmethod
     def lindblad_matrix_to_superoperator(L_matrix: AnyMatrix) -> AnyMatrix:
@@ -66,47 +128,25 @@ class Dissipator(CompositeOperator):
     @cached_property
     def lindblad_matrix_functions(self) -> list[Callable]:
         """Creates and stores a list of callables that return (N x N) matrices as a function of time. 
-            Each callable corresponds to a lindblad operator in the interaction picture, which may contain time-dependence as a result of frame shifting. 
+            Each callable corresponds to a lindblad operator in the interaction picture, which may contain time-dependence
+            as a result of frame shifting and modulation functions. 
 
-            Defines and returns a list of callables as a function of time"""
+            Defines and returns a list of callables as a function of time
+        """
+        return [self._matrix_function_of_lindblad_operator(lindblad_operator) for lindblad_operator in self.lindblad_operators]
 
-        lindblad_functions = []
+    @staticmethod
+    def _matrix_function_of_lindblad_operator(lindblad_operator: CompositeOperator) -> Callable:
+        if isinstance(lindblad_operator, LindbladOperator):
+            return lindblad_operator.lindblad_matrix_function
+        return lindblad_operator.build_operator_sum_function()   # operators used as stored
 
-        for lindblad_op in self.operators:
-            lindblad_functions.append(self.create_lindblad_matrix_function(lindblad_op))
-
-        return lindblad_functions
-
-    def create_lindblad_matrix_function(self, lindblad_operator: Operator) -> Callable:
-        """Converts a lindblad Operator object to a callable that returns a matrix at a given time point"""
-
-        def _lindblad_function(t: float) -> AnyMatrix:
-            if self.sparse:
-                L_matrix = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex') 
-            else:
-                L_matrix = np.zeros((self.size, self.size), dtype=complex) 
-            
-            # Static, diagonal contribution 
-            if isinstance(lindblad_operator, GeneralOperator):
-                if lindblad_operator.energy_shift_operator_contribution:
-                    L_matrix += lindblad_operator.energy_shift_operator_contribution.static_matrix
-            elif isinstance(lindblad_operator, EnergyShiftOperator):
-                L_matrix += lindblad_operator.static_matrix
-
-            if isinstance(lindblad_operator, CouplingOperator) or isinstance(lindblad_operator, GeneralOperator):
-                # Must account for frame shifts in coupling operators 
-                L_int, Rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(lindblad_operator) 
-    
-                # Element-wise multiplication, compute L * exp(-1j * Rate * t)
-                if self.sparse: 
-                    phase_factor_minus_one = Rate.multiply(-1j*t).expm1() # equivalent to exp(-1j * Rate * t) - 1
-                    Ltemp = L_int + L_int.multiply(phase_factor_minus_one) # necessary to cancel out the -1 contribution above 
-                    L_matrix += Ltemp 
-                else:
-                    L_matrix += (L_int.toarray() * np.exp(-1j * Rate.toarray() * t))
-            return L_matrix
-
-        return _lindblad_function
+ #    def create_lindblad_matrix_function(self, lindblad_operator: Operator | CompositeOperator) -> Callable:
+ #        """Converts a Lindblad operator (an Operator, wrapped as a single-term LindbladOperator in this dissipator's frame,
+ #            or a CompositeOperator) to a callable that returns its matrix at a given time point."""
+ #        if isinstance(lindblad_operator, Operator):
+ #            lindblad_operator = LindbladOperator(self.basis, [lindblad_operator], self.rotating_frame_energies, self.sparse)
+ #        return self._matrix_function_of_lindblad_operator(lindblad_operator)
             
     @cached_property
     def dissipator_matrix_function(self) -> Callable:

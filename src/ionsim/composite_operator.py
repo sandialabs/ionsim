@@ -80,25 +80,93 @@ class CompositeOperator(ABC):
             and omega_L,[ij] is an oscillation rate for the original O operator for coupling between states i and j.  
         """
         if isinstance(operator, EnergyShiftOperator):
-            ValueError('Error: Operator input should not be an EnergyShift (purely diagonal) operator.')
+            raise IonSimError('Operator input should not be an EnergyShift (purely diagonal) operator.')
+        if isinstance(operator, GeneralOperator):
+            if operator.coupling_operator_contribution is None:   # a GeneralOperator with only diagonal elements
+                return csr_matrix((self.size, self.size), dtype=complex), csr_matrix((self.size, self.size), dtype=float)
 
-        op_ints = [csr_matrix(([0], ([0], [0])), shape=(self.size, self.size))]
-        op_Rates = [csr_matrix(([0], ([0], [0])), shape=(self.size, self.size))]
-        for coupling in operator.couplings: # Ensures loop only reaches off-diagonal elements  
-            assert(np.abs(coupling.strength) >= 0) 
-            if np.abs(coupling.strength) < SMALLEST_ENERGY_SCALE: continue
-            for row, row_state in enumerate(self.basis.states):
-                for column, column_state in enumerate(self.basis.states):
-                    if (row_state, column_state) == (coupling.row_state, coupling.column_state):
-                        op_ints.append(csr_matrix(([coupling.strength], ([row], [column])), shape=(self.size, self.size)))
-                        total_rate = (
-                            + coupling.oscillation_rate
-                            + self.rotating_frame_energies[row]
-                            - self.rotating_frame_energies[column]
-                            )
-                        total_rate = total_rate if abs(total_rate) > SMALLEST_ENERGY_SCALE else 0
-                        op_Rates.append(csr_matrix(([total_rate], ([row], [column])), shape=(self.size, self.size)))
-                        ### [row, column] corresponds to phase factor next to raising operator: sigma^dagger exp[-i rate t]
-        coupling_matrix = np.sum(op_ints, axis=0)
-        Rate = np.sum(op_Rates, axis=0)
-        return coupling_matrix, Rate  
+        rows, columns, strengths, rates = [], [], [], []
+ #        op_ints = [csr_matrix(([0], ([0], [0])), shape=(self.size, self.size))]
+ #        op_Rates = [csr_matrix(([0], ([0], [0])), shape=(self.size, self.size))]
+ #        for coupling in operator.couplings: # Ensures loop only reaches off-diagonal elements  
+ #            assert(np.abs(coupling.strength) >= 0) 
+ #            if np.abs(coupling.strength) < SMALLEST_ENERGY_SCALE: continue
+ #            for row, row_state in enumerate(self.basis.states):
+ #                for column, column_state in enumerate(self.basis.states):
+ #                    if (row_state, column_state) == (coupling.row_state, coupling.column_state):
+ #                        op_ints.append(csr_matrix(([coupling.strength], ([row], [column])), shape=(self.size, self.size)))
+ #                        total_rate = (
+ #                            + coupling.oscillation_rate
+ #                            + self.rotating_frame_energies[row]
+ #                            - self.rotating_frame_energies[column]
+ #                            )
+ #                        total_rate = total_rate if abs(total_rate) > SMALLEST_ENERGY_SCALE else 0
+ #                        op_Rates.append(csr_matrix(([total_rate], ([row], [column])), shape=(self.size, self.size)))
+ #                        ### [row, column] corresponds to phase factor next to raising operator: sigma^dagger exp[-i rate t]
+        for coupling in operator.couplings:   # off-diagonal elements only
+            if np.abs(coupling.strength) < SMALLEST_ENERGY_SCALE:
+                continue
+            try:
+                row, column = self.basis.state_indices[coupling.row_state], self.basis.state_indices[coupling.column_state]
+            except KeyError:
+                raise IonSimError(f"A coupling of {type(operator).__name__} refers to a state that is not in the basis of "
+                                  f"{type(self).__name__}.") from None
+            total_rate = coupling.oscillation_rate + self.rotating_frame_energies[row] - self.rotating_frame_energies[column]
+            ### [row, column] corresponds to phase factor next to raising operator: sigma^dagger exp[-i rate t]
+            rows.append(row)
+            columns.append(column)
+            strengths.append(coupling.strength)
+            rates.append(total_rate if abs(total_rate) > SMALLEST_ENERGY_SCALE else 0.)
+ #        coupling_matrix = np.sum(op_ints, axis=0)
+ #        Rate = np.sum(op_Rates, axis=0)
+ #        return coupling_matrix, Rate  
+        shape = (self.size, self.size)
+        coupling_matrix = csr_matrix((np.array(strengths, dtype=complex), (rows, columns)), shape=shape)
+        Rate = csr_matrix((np.array(rates, dtype=float), (rows, columns)), shape=shape)
+        return coupling_matrix, Rate
+
+    # ---- Evaluation of the operator sum as stored ----
+    def build_operator_sum_function(self) -> Callable:
+        """ Function of time returning (dense or sparse) matrix as sum_k O_k(t), the operators of this composite in its rotating frame. 
+
+            Every operator is used as stored, (with no Hermitian conjugate added; pass C and adjoint(C) directly to construct Hermitian operator). 
+                energy shifts: static diagonal * f(t).
+                couplings: C * exp(-1j Rate t) * f(t).
+        """
+        diagonal_terms, coupling_terms = [], []   # (matrix, f), (matrix, Rate, f)
+        for operator in self.operators:
+            parts = [operator]
+            if isinstance(operator, GeneralOperator):
+                parts = [part for part in (operator.energy_shift_operator_contribution if operator.energy_shifts else None,
+                                           operator.coupling_operator_contribution if operator.couplings else None) if part is not None]
+            for part in parts:
+                if isinstance(part, EnergyShiftOperator):
+                    diagonal_terms.append((csr_matrix(part.static_matrix, dtype=complex), part.modulation_function))
+                elif isinstance(part, CouplingOperator):
+                    matrix, rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(part)
+                    coupling_terms.append((csr_matrix(matrix, dtype=complex), csr_matrix(rate), part.modulation_function))
+                else:
+                    raise IonSimError(f"Unsupported operator type {type(part).__name__} in {type(self).__name__}.")
+
+        if not self.sparse:
+            diagonal_terms = [(matrix.toarray(), f) for matrix, f in diagonal_terms]
+            coupling_terms = [(matrix.toarray(), rate.toarray(), f) for matrix, rate, f in coupling_terms]
+
+        def _operator_sum_function(t: float):
+            if self.sparse:
+                total = csr_matrix((self.size, self.size), dtype=complex)
+            else:
+                total = np.zeros((self.size, self.size), dtype=complex)
+            for matrix, f in diagonal_terms:
+                total = total + (matrix if f is None else matrix * f(t))
+            for matrix, rate, f in coupling_terms:
+                if self.sparse:
+                    term = matrix + matrix.multiply(rate.multiply(-1j * t).expm1())   # matrix * exp(-1j Rate t), sparsity kept
+                else:
+                    term = matrix * np.exp(-1j * rate * t)
+                if f is not None:
+                    term = term * f(t)
+                total = total + term
+            return total
+
+        return _operator_sum_function

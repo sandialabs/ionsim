@@ -33,6 +33,15 @@ def all_same(mod_functions: list):
 
 @dataclass(frozen=True, eq=False)
 class Hamiltonian(CompositeOperator):
+    """ Hamiltonian H(t) = H0 + sum_k O_k(t) in the rotating frame rotating_frame_energies (H0: the basis state energies
+        shifted by the frame).
+
+        Hermitian conjugates are added automatically: each coupling operator is read as one half of a Hermitian term. Of each
+        (i, j), (j, i) pair of its stored couplings only one is kept. 
+        So pass a CouplingOperator C (or a Hermitian matrix stored with one rate) once:
+            - passing C and adjoint(C) separately doubles the term, as does passing hermitian_contributions(C);
+            - adjoint(C) alone gives the same Hamiltonian as C.
+    """
 
     def __post_init__(self):
         super().__post_init__()

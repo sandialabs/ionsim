@@ -262,6 +262,11 @@ class StandardBasis(Basis):
             return MotionalMode(levels_to_keep, dof.name) 
         else:
             raise IonSimError(f"Levels to project must refer to levels from a motional mode or atomic structure DOF.")
+
+    @cached_property
+    def state_indices(self) -> dict:
+        """ Index of each basis state in the basis."""
+        return {state: index for index, state in enumerate(self.states)}
    
  
 @dataclass(frozen=True, eq=False)

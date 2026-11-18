@@ -123,10 +123,10 @@ class TestDissipators(unittest.TestCase):
 
                 # Dephasing with Lindblad operator L = Z on qubit 1:                 
                 lower_qubit1 = np.sqrt(decay_rate) * case['basis'].enlarge_matrix(Pauli.minus, [case['qubits'][0]]) 
-                my_coupling_operator = CouplingOperator.from_matrix(case['basis'], lower_qubit1, 0.) 
-                lindblad_op = promote_to_hermitian(my_coupling_operator)  # function that promotes to hermitian 
-                lindblad_op = HermitianOperator(my_coupling_operator)  # wrapper class that  
-                case['lindblad operators'] = []
+                #my_coupling_operator = CouplingOperator.from_matrix(case['basis'], lower_qubit1, 0.) 
+                #lindblad_op = promote_to_hermitian(my_coupling_operator)  # function that promotes to hermitian 
+                #lindblad_op = HermitianOperator(my_coupling_operator)  # wrapper class that  
+                case['lindblad operators'] = [CouplingOperator.from_matrix(case['basis'], lower_qubit1, 0.) ]
 
             if case['test name'] == 'Spin Flipping':
                 # Dephasing qubit 1 during Rabi flopping 

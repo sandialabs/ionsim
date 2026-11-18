@@ -8,7 +8,7 @@
 #***************************************************************************************************
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from scipy.sparse import csr_matrix, diags
 import numpy as np
 from typing import Callable
@@ -56,7 +56,7 @@ class Coupling(OperatorElement):
           raise IonSimError('Coupling must entail different row and column state to represent an off-diagonal element.')
 
     @classmethod
-    def from_energy_ordered_states(basis, lower_state: EnergyEigenstate, upper_state: EnergyEigenstate,
+    def from_energy_ordered_states(cls, basis, lower_state: EnergyEigenstate, upper_state: EnergyEigenstate,
                                     strength: float, rate: float):
         """ Class method to construct a coupling based on state input. 
             lower_state corresponds to an energy eigenstate that is lower in energy than upper_state. """
@@ -64,7 +64,7 @@ class Coupling(OperatorElement):
         lower_state_index = basis.states.index(lower_state)
         upper_state_index = basis.states.index(upper_state)
         if basis.states[lower_state_index].energy > basis.states[upper_state_index].energy:
-            IonSimError("Error: Lower state should be lower or equal in energy compared to upper state.")
+            raise IonSimError("Error: Lower state should be lower or equal in energy compared to upper state.")
         return cls(row_state = upper_state, column_state = lower_state, strength = strength, oscillation_rate = rate)
         
 
@@ -238,7 +238,7 @@ class EnergyShiftOperator(Operator):
         if not all(rows == cols):
             raise IonSimError('Error, cannot create Coupling (off-diagonal) element in EnergyShiftOperator class.') 
 
-        return cls.from_vector(basis, matrix.diagonal(), modulation_function)
+        return cls.from_vector(basis, matrix.diagonal(), modulation_function=modulation_function)
 
     @property
     def static_matrix(self):
@@ -257,7 +257,6 @@ class EnergyShiftOperator(Operator):
         return v 
 
 
-# Hermitian_Operator_of_C(my_coupling_operator) 
 @dataclass(frozen=True, eq=False)   
 class CouplingOperator(Operator):
     """An off-diagonal quantum operator in a basis of energy eigenstates."""
@@ -265,12 +264,12 @@ class CouplingOperator(Operator):
     def __post_init__(self):
         super().__post_init__()
         self._check_for_one_oscillation_rate() # should use inherited method 
+        self._check_all_elements_are_couplings()
 
     def _check_all_elements_are_couplings(self):
         # Check all elements are couplings
-        if all([isinstance(element, Coupling) for element in self.elements]):  
-            pass 
-        raise IonSimError('All elements of CouplingOperator must be Couplings.')
+        if not all([isinstance(element, Coupling) for element in self.elements]):  
+            raise IonSimError('All elements of CouplingOperator must be Couplings.')
 
     @property
     def couplings(self):
@@ -405,3 +404,87 @@ class GeneralOperator(Operator): # is there a better name? We avoid "DenseOperat
             column = self.basis.states.index(element.column_state)
             matrices.append(csr_matrix(([element.strength], ([row], [column])), shape=(size, size)))
         return np.sum(matrices)
+
+
+def _conjugate_modulation(modulation_function: Callable | None) -> Callable | None:
+    """ t -> conj(f(t)), or None if f is None. """
+    if modulation_function is None:
+        return None
+
+    def conjugate_modulation(t: float) -> complex:
+        return np.conj(modulation_function(t))
+
+    return conjugate_modulation
+
+
+def adjoint(operator: Operator) -> Operator:
+    """ Returns the adjoint (Hermitian conjugate) O^dagger of an operator, as an operator of the same type.
+        The frame shift of element (j, i) is the negative of that of (i, j), so in any rotating frame
+        adjoint(O) evaluates to O(t)^dagger at every time t.
+    """
+    if not isinstance(operator, Operator):
+        raise IonSimError(f"adjoint: expected an Operator, got {type(operator).__name__}.")
+    adjoint_elements = []
+    for element in operator.elements:
+        if isinstance(element, Coupling):
+            adjoint_elements.append(Coupling(row_state=element.column_state, column_state=element.row_state,
+                                             strength=np.conj(element.strength), oscillation_rate=-element.oscillation_rate))
+        elif isinstance(element, EnergyShift):
+            adjoint_elements.append(EnergyShift(row_state=element.row_state, column_state=element.column_state,
+                                                strength=np.conj(element.strength)))
+        else:
+            raise IonSimError(f"adjoint: unsupported operator element type {type(element).__name__}.")
+    return replace(operator, elements=adjoint_elements, modulation_function=_conjugate_modulation(operator.modulation_function))
+
+
+ #def hermitian_contributions(operator: Operator) -> list[Operator]:
+ #    """ Returns the operators whose sum is the Hermitian operator that a Hamiltonian builds from `operator`, explicitly.
+ #
+ #        A Hamiltonian reads each coupling operator as one half of a Hermitian term and adds the Hermitian conjugate itself.
+ #        Where nothing is added (LindbladOperator, Dissipator), the conjugate has to be passed explicitly:
+ #            - for an operator C that stores only its own elements (e.g. a raising operator |e><g|), [C, adjoint(C)];
+ #            - for an operator stored in the Hamiltonian's convention, with both elements of each (i, j), (j, i) pair and one
+ #              rate (e.g. from_matrix of a Hermitian matrix, or a laser coupling builder), [C, adjoint(C)] would count both
+ #              triangles twice with the wrong rates; hermitian_contributions keeps the half the Hamiltonian reads instead.
+ #        hermitian_contributions handles both, so its result always equals the Hamiltonian's term built from `operator`:
+ #            dissipator = Dissipator(basis, [LindbladOperator(basis, hermitian_contributions(drive), frame,
+ #                                                             prefactor=np.sqrt(kappa))], frame)
+ #        Do not pass the result to a Hamiltonian: it adds the Hermitian conjugate of each operator again (pass `operator`).
+ #
+ #        Coupling operators (CouplingOperator, or the coupling part of a GeneralOperator), with rate w and modulation f(t):
+ #            The stored couplings are read as the Hamiltonian reads them: if both elements of an (i, j), (j, i) pair are stored
+ #            (e.g. a Hermitian matrix from a laser coupling builder), only the first in row-major order (the upper triangle)
+ #            is kept, and both elements must then be complex conjugates. The kept part C is returned with its rate w and
+ #            modulation f, together with C^dagger as a second CouplingOperator with rate -w and modulation conj(f(t)): a
+ #            coupling operator has one oscillation rate and one modulation function, so C and C^dagger cannot be one operator.
+ #            In a rotating frame, C^dagger then evaluates to exactly the Hermitian conjugate of C at every time.
+ #        Energy-shift operators (EnergyShiftOperator, or the diagonal part of a GeneralOperator): returned unchanged, used once
+ #            (as in a Hamiltonian). The static diagonal must be real; the modulation function must be real for the result to be
+ #            Hermitian (not checked).
+ #
+ #        Returns a list of Operators: [diagonal part, if any] + [C, C^dagger, if there are couplings]. """
+ #    if isinstance(operator, GeneralOperator):
+ #        parts = [part for part in (operator.energy_shift_operator_contribution if operator.energy_shifts else None,
+ #                                   operator.coupling_operator_contribution if operator.couplings else None) if part is not None]
+ #        return [contribution for part in parts for contribution in hermitian_contributions(part)]
+ #
+ #    if isinstance(operator, EnergyShiftOperator):
+ #        # Checked on the elements: static_vector is a real array and would drop an imaginary part.
+ #        if any(abs(np.imag(element.strength)) > SMALLEST_ENERGY_SCALE for element in operator.elements):
+ #            raise IonSimError("hermitian_contributions: the energy shifts of a Hermitian operator must be real.")
+ #        return [operator]
+ #
+ #    if not isinstance(operator, CouplingOperator):
+ #        raise IonSimError(f"hermitian_contributions: unsupported operator type {type(operator).__name__}.")
+ #
+ #    static_matrix = csr_matrix(operator.static_matrix)
+ #    rows, columns = static_matrix.nonzero()
+ #    for row, column in zip(rows, columns):
+ #        partner = static_matrix[column, row]
+ #        if partner != 0 and abs(partner - np.conj(static_matrix[row, column])) > SMALLEST_ENERGY_SCALE:
+ #            raise IonSimError(f"hermitian_contributions: the operator stores both elements ({row}, {column}) and "
+ #                              f"({column}, {row}), but they are not complex conjugates: {static_matrix[row, column]} and {partner}.")
+ #
+ #    kept = CouplingOperator(operator.basis, operator._unique_couplings_from_hermitian_coupling_matrix(
+ #        operator.basis, static_matrix, operator.rate_matrix), operator.modulation_function)
+ #    return [kept, adjoint(kept)]
