@@ -18,7 +18,6 @@ from scipy.integrate import odeint, solve_ivp, ode
 from scipy import sparse
 from scipy.sparse import csr_matrix
 from scipy.sparse import kron as skron 
-from icecream import ic
 
 from ionsim.custom_types import Vector, AnyMatrix 
 from ionsim.ionsim_error import IonSimError

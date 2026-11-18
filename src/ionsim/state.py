@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from icecream import ic
 
 from ionsim.energy_level import EnergyEigenstate
-from ionsim.operator import Operator, CouplingOperator
+from ionsim.operators import Operator, CouplingOperator
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure, MotionalMode
 from ionsim.custom_types import Vector, Matrix

@@ -15,8 +15,8 @@ from functools import cached_property
 from icecream import ic
 
 from ionsim.basis import StandardBasis
-from ionsim.operator import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
-from ionsim.custom_types import Vector, Matrix, SparseMatrix, as_dense_matrix
+from ionsim.operators import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
+from ionsim.custom_types import Vector, Matrix, SparseMatrix
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, SMALLEST_ENERGY_SCALE
 from ionsim.custom_math import solve_time_evolution_equation
 from ionsim.composite_operator import CompositeOperator
@@ -271,7 +271,10 @@ class Hamiltonian(CompositeOperator):
                         def _hamiltonian_function(t: float):
                             Hint = np.zeros((self.size, self.size), dtype='complex')
                             for Ham, Rate, mod in zip(Hints, Rates, self.coupling_modulation_functions):
-                                Hint += Ham * np.exp(-1j * Rate * t) * mod(t)
+                                if mod is not None:
+                                    Hint += Ham * np.exp(-1j * Rate * t) * mod(t)
+                                else:
+                                    Hint += Ham * np.exp(-1j * Rate * t) 
                             Hint += Hint.conj().T
 
                             H0_shift = np.zeros_like(Hint)

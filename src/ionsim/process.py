@@ -27,7 +27,7 @@ from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.lindbladian import Lindbladian 
 from ionsim.state import State
-from ionsim.operator import Operator
+from ionsim.operators import Operator
 from ionsim.ionsim_error import IonSimError
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 

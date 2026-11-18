@@ -15,7 +15,7 @@ from scipy.sparse import kron as skron
 
 from ionsim.zeeman_solver import ZeemanHyperfineSolver 
 from ionsim.basis import StandardBasis
-from ionsim.operator import CouplingOperator, EnergyShiftOperator, GeneralOperator
+from ionsim.operators import CouplingOperator, EnergyShiftOperator, GeneralOperator
 from ionsim.named_operators import Pauli, Fock
 from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.hamiltonian import Hamiltonian

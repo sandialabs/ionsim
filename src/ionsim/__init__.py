@@ -22,12 +22,14 @@ np.kron = patched_kron
 from .basis import StandardBasis, XPauliBasis, XPauliAndFockBasis, PauliProductBasis
 from .degree_of_freedom import AtomicStructure, MotionalMode
 from .hamiltonian import Hamiltonian
-from .operator import Operator, EnergyShiftOperator, CouplingOperator, GeneralOperator, adjoint
+from .operators import Operator, EnergyShiftOperator, CouplingOperator, GeneralOperator, adjoint
 from .state import State
 from .named_operators import Pauli, Fock, Unitary
 from .process import Gate, Circuit
 from .noise import Noise
 from .zeeman_solver import ZeemanHyperfineSolver
+from .polarization import Polarization, LinearPolarization, CircularPolarization, SphericalPolarization
+from .laser import Laser
 from .composite_operator import CompositeOperator
 from .lindbladian import Dissipator, DissipatorSpontaneousEmission, Lindbladian, LindbladOperator
 from .trapped_ion_mode_analysis import TrappedIonCrystal, IonChain

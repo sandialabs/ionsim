@@ -28,6 +28,7 @@ levels:
     fine_energy: 377.1074635e+12  # Hz 
     hyperfine_A: 408.328e+6 # Hz 
     lifetime: 27.70e-9  
+    reduced_dipole_matrix_elements: {'S1/2': 2.992}  # <S1/2||er||P1/2>, e a0, Steck convention; Ref. 1, Table 7 (D1, 2.992(3))
     n: 5
     s: 0.5 
 
@@ -37,6 +38,7 @@ levels:
     hyperfine_A: 84.7185e+6 # Hz 
     hyperfine_B: 12.496537e+6 # Hz 
     lifetime: 26.24e-9  
+    reduced_dipole_matrix_elements: {'S1/2': 4.227}  # <S1/2||er||P3/2>, e a0, Steck convention; Ref. 1, Table 7 (D2, 4.227(5))
     n: 5
     s: 0.5 
 
