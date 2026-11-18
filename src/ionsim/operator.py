@@ -257,6 +257,7 @@ class EnergyShiftOperator(Operator):
         return v 
 
 
+# Hermitian_Operator_of_C(my_coupling_operator) 
 @dataclass(frozen=True, eq=False)   
 class CouplingOperator(Operator):
     """An off-diagonal quantum operator in a basis of energy eigenstates."""
