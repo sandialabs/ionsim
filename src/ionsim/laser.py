@@ -27,7 +27,7 @@ from ionsim.custom_types import Matrix, Vector
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD, SMALLEST_ENERGY_SCALE
 from ionsim.ionsim_error import IonSimError
 from ionsim.polarization import Polarization, PolarizationInput, _unit_vector
-from ionsim.operator import Operator, CouplingOperator
+from ionsim.operators import Operator, CouplingOperator
 from ionsim.named_operators import Fock
 from ionsim.trapped_ion_mode_analysis import TrappedIonCrystal
 

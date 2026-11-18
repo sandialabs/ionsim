@@ -22,7 +22,7 @@ np.kron = patched_kron
 from .basis import StandardBasis, XPauliBasis, XPauliAndFockBasis, PauliProductBasis
 from .degree_of_freedom import AtomicStructure, MotionalMode
 from .hamiltonian import Hamiltonian
-from .operator import Operator, EnergyShiftOperator, CouplingOperator, GeneralOperator
+from .operators import Operator, EnergyShiftOperator, CouplingOperator, GeneralOperator
 from .state import State
 from .named_operators import Pauli, Fock, Unitary
 from .process import Gate, Circuit

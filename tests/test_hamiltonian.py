@@ -10,7 +10,7 @@
 import unittest
 import numpy as np
 from ionsim.basis import StandardBasis
-from ionsim.operator import CouplingOperator
+from ionsim.operators import CouplingOperator
 from ionsim.named_operators import Pauli
 from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.hamiltonian import Hamiltonian
