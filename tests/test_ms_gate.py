@@ -15,7 +15,7 @@ from ionsim.process import Gate
 from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.basis import StandardBasis
 from ionsim.named_operators import Pauli, Fock, Unitary
-from ionsim.operator import CouplingOperator
+from ionsim.operators import CouplingOperator
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.laser import Laser
 from ionsim.polarization import Polarization

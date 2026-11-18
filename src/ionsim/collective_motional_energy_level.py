@@ -13,8 +13,6 @@ from abc import ABC
 from dataclasses import dataclass
 import numpy as np
 
-from icecream import ic
-
 @dataclass(frozen=True, eq=False)
 class CollectiveMotionalEnergyLevel(EnergyLevel):
     """An energy level of a normal mode of motion of an ion chain."""
