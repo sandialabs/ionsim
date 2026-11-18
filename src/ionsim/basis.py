@@ -378,6 +378,11 @@ class PauliProductBasis(Basis):
         pauli_transfer_matrix = U @ superoperator @ (U.T).conj()
         return pauli_transfer_matrix 
 
+    @property
+    def H0(self) -> Matrix:
+        """ Returns energy contributions from each energy eigenstate as a diagonal matrix """ 
+        return np.diag([state.energy for state in self.states])
+
 
 @dataclass(frozen=True, eq=False)
 class ZPauliBasis(StandardBasis):

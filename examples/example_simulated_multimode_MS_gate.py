@@ -81,6 +81,9 @@ def MS_hamiltonian(basis, modes, etas, rabi_rate, omega_b, omega_r, sparse=False
             ism.CouplingOperator.from_matrix(basis, operator_1r, omega_r, modulation_function=mod),
         ])
     interaction_frame_energies = [-state.energy for state in basis.states]
+    # Add H0 (non-interacting) contribution from the basis 
+    H0_operator = ism.EnergyShiftOperator.from_matrix(basis, basis.H0)
+    operators.append(H0_operator)
     return ism.Hamiltonian(basis, operators, interaction_frame_energies, sparse=sparse)
 
 etas = [0.1 for _ in range(num_modes)]
