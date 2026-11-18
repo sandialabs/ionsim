@@ -140,13 +140,6 @@ class Dissipator:
         if isinstance(lindblad_operator, LindbladOperator):
             return lindblad_operator.lindblad_matrix_function
         return lindblad_operator.build_operator_sum_function()   # operators used as stored
-
- #    def create_lindblad_matrix_function(self, lindblad_operator: Operator | CompositeOperator) -> Callable:
- #        """Converts a Lindblad operator (an Operator, wrapped as a single-term LindbladOperator in this dissipator's frame,
- #            or a CompositeOperator) to a callable that returns its matrix at a given time point."""
- #        if isinstance(lindblad_operator, Operator):
- #            lindblad_operator = LindbladOperator(self.basis, [lindblad_operator], self.rotating_frame_energies, self.sparse)
- #        return self._matrix_function_of_lindblad_operator(lindblad_operator)
             
     @cached_property
     def dissipator_matrix_function(self) -> Callable:

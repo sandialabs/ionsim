@@ -86,23 +86,6 @@ class CompositeOperator(ABC):
                 return csr_matrix((self.size, self.size), dtype=complex), csr_matrix((self.size, self.size), dtype=float)
 
         rows, columns, strengths, rates = [], [], [], []
- #        op_ints = [csr_matrix(([0], ([0], [0])), shape=(self.size, self.size))]
- #        op_Rates = [csr_matrix(([0], ([0], [0])), shape=(self.size, self.size))]
- #        for coupling in operator.couplings: # Ensures loop only reaches off-diagonal elements  
- #            assert(np.abs(coupling.strength) >= 0) 
- #            if np.abs(coupling.strength) < SMALLEST_ENERGY_SCALE: continue
- #            for row, row_state in enumerate(self.basis.states):
- #                for column, column_state in enumerate(self.basis.states):
- #                    if (row_state, column_state) == (coupling.row_state, coupling.column_state):
- #                        op_ints.append(csr_matrix(([coupling.strength], ([row], [column])), shape=(self.size, self.size)))
- #                        total_rate = (
- #                            + coupling.oscillation_rate
- #                            + self.rotating_frame_energies[row]
- #                            - self.rotating_frame_energies[column]
- #                            )
- #                        total_rate = total_rate if abs(total_rate) > SMALLEST_ENERGY_SCALE else 0
- #                        op_Rates.append(csr_matrix(([total_rate], ([row], [column])), shape=(self.size, self.size)))
- #                        ### [row, column] corresponds to phase factor next to raising operator: sigma^dagger exp[-i rate t]
         for coupling in operator.couplings:   # off-diagonal elements only
             if np.abs(coupling.strength) < SMALLEST_ENERGY_SCALE:
                 continue
@@ -117,9 +100,6 @@ class CompositeOperator(ABC):
             columns.append(column)
             strengths.append(coupling.strength)
             rates.append(total_rate if abs(total_rate) > SMALLEST_ENERGY_SCALE else 0.)
- #        coupling_matrix = np.sum(op_ints, axis=0)
- #        Rate = np.sum(op_Rates, axis=0)
- #        return coupling_matrix, Rate  
         shape = (self.size, self.size)
         coupling_matrix = csr_matrix((np.array(strengths, dtype=complex), (rows, columns)), shape=shape)
         Rate = csr_matrix((np.array(rates, dtype=float), (rows, columns)), shape=shape)
