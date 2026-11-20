@@ -82,7 +82,7 @@ class Dissipator:
                     raise IonSimError(f"Lindblad operator {index} ({type(entry).__name__}) has size {entry.size}, expected {self.size}.")
                 if entry.sparse != self.sparse:
                     raise IonSimError(f"Lindblad operator {index} has sparse={entry.sparse}, but the dissipator has sparse={self.sparse}.")
-                if not np.allclose(np.asarray(entry.rotating_frame_energies, dtype=float), frame, rtol=1e-12, atol=0.):
+                if not np.allclose(np.asarray(entry.rotating_frame_energies, dtype=float), frame, rtol=NUMERICAL_EQUIVALENCE_THRESHOLD, atol=0.):
                     raise IonSimError(f"Lindblad operator {index} ({type(entry).__name__}) uses a different rotating frame than "
                                       f"the dissipator; all Lindblad operators of a dissipator must share its frame.")
             else:
