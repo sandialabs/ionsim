@@ -21,6 +21,8 @@ from ionsim.basis import StandardBasis
 from ionsim.laser import Laser, SidebandType, GaussianBeam, PlaneWave
 from ionsim.polarization import Polarization, LinearPolarization, CircularPolarization, SphericalPolarization
 from ionsim.hamiltonian import Hamiltonian
+from ionsim.lindbladian import LindbladOperator
+from ionsim.operators import adjoint
 from ionsim.atomic_internal_energy_level import (compute_coupling_amplitude_between_atomic_levels, compute_multipole_amplitude,
                                                  reduced_dipole_matrix_element)
 from ionsim.ionsim_error import IonSimError
@@ -338,11 +340,12 @@ class TestLaserMultipleAtoms(unittest.TestCase):
         return indices
 
     def test_all_atoms_by_default(self):
-        """Both atoms are addressed, with the same strengths: 4 basis states of the other atom x (|g><e| and |e><g|)."""
+        """Both atoms are addressed, with the same strengths: 4 basis states of the other atom x one stored element of the
+        Hermitian pair (|g><e| or |e><g|."""
         operators = self.laser.build_carrier_coupling_operators(self.basis, None, self.ground, self.excited, 1, Z)
         self.assertEqual(sorted(self.addressed_atoms(operators)), [0, 1])
         strengths = [sorted(abs(coupling.strength) for coupling in operator.couplings) for operator in operators]
-        self.assertEqual(len(strengths[0]), 8)
+        self.assertEqual(len(strengths[0]), 4)
         np.testing.assert_allclose(strengths[0], strengths[1], rtol=1e-12)
 
     def test_selected_atom_with_levels_from_another_atom(self):
@@ -402,11 +405,10 @@ class TestLaserSidebandCouplings(unittest.TestCase):
                 operators = laser.build_sideband_coupling_operators(sideband, basis, [atom], [mode], [g], [e], 2, eta, Z)
                 raising = {}
                 for operator in operators:
-                    for coupling in operator.couplings:
-                        if e in coupling.row_state.components:
-                            n_e, n_g = (next(c.fock_number for c in s.components if hasattr(c, 'fock_number'))
-                                        for s in (coupling.row_state, coupling.column_state))
-                            raising[(n_g, n_e)] = coupling.strength
+                    for excited_state, ground_state, strength in raising_elements(operator, e):
+                        n_e, n_g = (next(c.fock_number for c in s.components if hasattr(c, 'fock_number'))
+                                    for s in (excited_state, ground_state))
+                        raising[(n_g, n_e)] = strength
                 prefactor = 1j * (np.conj(eta) if sideband == 'blue' else eta)
                 expected = {(n, n + shift): carrier_raising * prefactor * np.sqrt(max(n, n + shift))
                             for n in range(self.FOCK_DIMENSION) if 0 <= n + shift < self.FOCK_DIMENSION}
@@ -420,8 +422,8 @@ class TestLaserSidebandCouplings(unittest.TestCase):
         (atom,), mode, basis, g, e = self.build()
         laser = self.laser(e.energy - g.energy)
         def by_n(operator):
-            return {next(c.fock_number for c in coupling.column_state.components if hasattr(c, 'fock_number')): coupling.strength
-                    for coupling in operator.couplings if e in coupling.row_state.components}
+            return {next(c.fock_number for c in ground_state.components if hasattr(c, 'fock_number')): strength
+                    for excited_state, ground_state, strength in raising_elements(operator, e)}
         for eta in (0.3, 0.3 * np.exp(0.7j)):  # large enough for a visible correction
             with self.subTest(eta=eta):
                 first_order, exact = (by_n(laser.build_sideband_coupling_operators(SidebandType.BLUE, basis, [atom], [mode], [g], [e], 2,
