@@ -98,8 +98,15 @@ class CompositeOperator(ABC):
             try:
                 row, column = self.basis.state_indices[coupling.row_state], self.basis.state_indices[coupling.column_state]
             except KeyError:
-                raise IonSimError(f"A coupling of {type(operator).__name__} refers to a state that is not in the basis of "
-                                  f"{type(self).__name__}.") from None
+                msg = []
+                if coupling.row_state not in self.basis.state_indices:
+                    msg.append(f"{coupling.row_state=}")
+                if coupling.column_state not in self.basis.state_indices:
+                    msg.append(f"{coupling.column_state=}")
+                msg = ", ".join(msg)
+                raise IonSimError(f"A coupling of {type(operator).__name__} has {msg} not in the basis {self.basis}"
+                                  f" type={type(self).__name__}.") from exc
+
             total_rate = coupling.oscillation_rate + self.rotating_frame_energies[row] - self.rotating_frame_energies[column]
             ### [row, column] corresponds to phase factor next to raising operator: sigma^dagger exp[-i rate t]
             rows.append(row)
