@@ -78,14 +78,16 @@ def coupling_elements(basis, operators) -> dict:
     return elements
 
 def raising_elements(operator, excited_level):
-    """ (excited state, ground state, strength) of the raising elements |e...><g...| of a laser coupling operator. The operator
-        stores one element of each Hermitian pair, |e><g| or |g><e| depending on the basis order of the levels; for a stored
-        |g><e| the raising element is its conjugate transpose. """
+    """ List of (excited state, ground state, strength) for the raising elements |e...><g...| of a laser coupling operator.
+        The operator stores one element of each Hermitian pair: |e><g| if the excited level comes first in the basis,
+        otherwise |g><e|, whose raising element is its conjugate transpose. """
+    elements = []
     for coupling in operator.couplings:
         if excited_level in coupling.row_state.components:
-            yield coupling.row_state, coupling.column_state, coupling.strength
+            elements.append((coupling.row_state, coupling.column_state, coupling.strength))
         else:
-            yield coupling.column_state, coupling.row_state, np.conj(coupling.strength)
+            elements.append((coupling.column_state, coupling.row_state, np.conj(coupling.strength)))
+    return elements
 
 
 class TestLaserConstructors(unittest.TestCase):
@@ -404,26 +406,31 @@ class TestLaserSidebandCouplings(unittest.TestCase):
 
     def test_sideband_matrix_elements(self):
         """Raising elements are (carrier raising element) x i eta^* sqrt(n+1) on |e,n+1><g,n| (blue) and
-        (carrier raising element) x i eta sqrt(n+1) on |e,n><g,n+1| (red), and nothing else, for real and complex eta."""
-        (atom,), mode, basis, g, e = self.build()
-        laser = self.laser(e.energy - g.energy)
-        carrier_raising = laser.build_atom_laser_ge_coupling_matrix(g, e, atom.energy_levels, 2, Z)[
-            atom.energy_levels.index(e), atom.energy_levels.index(g)]
-        for (sideband, shift), eta in itertools.product((('blue', +1), ('red', -1)), (self.ETA, self.ETA * np.exp(0.7j))):
-            with self.subTest(sideband=sideband, eta=eta):
-                operators = laser.build_sideband_coupling_operators(sideband, basis, [atom], [mode], [g], [e], 2, eta, Z)
-                raising = {}
-                for operator in operators:
-                    for excited_state, ground_state, strength in raising_elements(operator, e):
-                        n_e, n_g = (next(c.fock_number for c in s.components if hasattr(c, 'fock_number'))
-                                    for s in (excited_state, ground_state))
-                        raising[(n_g, n_e)] = strength
-                prefactor = 1j * (np.conj(eta) if sideband == 'blue' else eta)
-                expected = {(n, n + shift): carrier_raising * prefactor * np.sqrt(max(n, n + shift))
-                            for n in range(self.FOCK_DIMENSION) if 0 <= n + shift < self.FOCK_DIMENSION}
-                self.assertEqual(set(raising), set(expected))
-                for key, value in expected.items():
-                    self.assertAlmostEqual(abs(raising[key] / value - 1.), 0., places=12)
+        (carrier raising element) x i eta sqrt(n+1) on |e,n><g,n+1| (red), and nothing else, for real and complex eta and
+        either level order. The stored element is |g><e| when g comes first in the basis and |e><g| otherwise."""
+        for ground_first in (True, False):
+            (atom,), mode, basis, g, e = self.build(ground_first)
+            laser = self.laser(e.energy - g.energy)
+            carrier_raising = laser.build_atom_laser_ge_coupling_matrix(g, e, atom.energy_levels, 2, Z)[
+                atom.energy_levels.index(e), atom.energy_levels.index(g)]
+            stored_row_level = g if ground_first else e
+            for (sideband, shift), eta in itertools.product((('blue', +1), ('red', -1)), (self.ETA, self.ETA * np.exp(0.7j))):
+                with self.subTest(ground_first=ground_first, sideband=sideband, eta=eta):
+                    operators = laser.build_sideband_coupling_operators(sideband, basis, [atom], [mode], [g], [e], 2, eta, Z)
+                    self.assertTrue(all(stored_row_level in coupling.row_state.components
+                                        for operator in operators for coupling in operator.couplings))
+                    raising = {}
+                    for operator in operators:
+                        for excited_state, ground_state, strength in raising_elements(operator, e):
+                            n_e, n_g = (next(c.fock_number for c in s.components if hasattr(c, 'fock_number'))
+                                        for s in (excited_state, ground_state))
+                            raising[(n_g, n_e)] = strength
+                    prefactor = 1j * (np.conj(eta) if sideband == 'blue' else eta)
+                    expected = {(n, n + shift): carrier_raising * prefactor * np.sqrt(max(n, n + shift))
+                                for n in range(self.FOCK_DIMENSION) if 0 <= n + shift < self.FOCK_DIMENSION}
+                    self.assertEqual(set(raising), set(expected))
+                    for key, value in expected.items():
+                        self.assertAlmostEqual(abs(raising[key] / value - 1.), 0., places=12)
 
     def test_debye_waller_matrix_elements(self):
         """debye_waller=True: blue element eta^* e^{-|eta|^2/2} L_n^1(|eta|^2) / sqrt(n+1) instead of eta^* sqrt(n+1), for real
