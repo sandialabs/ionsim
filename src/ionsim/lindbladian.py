@@ -132,10 +132,6 @@ class Dissipator:
         """
         return [lindblad_operator.get_matrix for lindblad_operator in self.lindblad_operators]
 
- #    @staticmethod
- #    def _matrix_function_of_lindblad_operator(lindblad_operator: CompositeOperator) -> Callable:
- #        return lindblad_operator.get_matrix 
-            
     @cached_property
     def build_superoperator_matrix_function(self) -> Callable:
         """Creates N^2 x N^2 matrix representation of each Lindblad operator's action on a N^2 x 1 superoperator (y) from NxN density matrix (rho): 
