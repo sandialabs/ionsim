@@ -351,10 +351,8 @@ class State:
         """
         # Check that observable and density matrix are compatible 
         if isinstance(observable_operator, CouplingOperator): 
-            coupligns = observable_operator.couplings
-            if observable_operator.couplings:
-                if observable_operator.couplings[0].oscillation_rate != 0.:
-                    raise IonSimError(f"Observable operator must be a static operator, but oscillation rate is {observable_operator.couplings[0].oscillation_rate}.")
+            if observable_operator.couplings and observable_operator.couplings[0].oscillation_rate != 0.:
+                raise IonSimError(f"Observable operator must be a static operator, but oscillation rate is {observable_operator.couplings[0].oscillation_rate}.")
 
         return self.compute_matrix_observable_expectation(observable_operator.static_matrix) 
 

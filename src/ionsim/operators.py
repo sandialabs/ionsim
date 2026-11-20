@@ -407,10 +407,11 @@ class GeneralOperator(Operator): # is there a better name? We avoid "DenseOperat
 
 
 def _conjugate_modulation(modulation_function: Callable | None) -> Callable | None:
-    """ t -> conj(f(t)), or None if f is None. """
+    """ t -> conj(modulation_function(t)), or None if modulation_function is None. """
     if modulation_function is None:
         return None
 
+    @functools.wraps
     def conjugate_modulation(t: float) -> complex:
         return np.conj(modulation_function(t))
 
