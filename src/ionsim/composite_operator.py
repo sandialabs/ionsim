@@ -65,10 +65,9 @@ class CompositeOperator(ABC):
                 energy_shift_ops.append(operator)
         return energy_shift_ops
 
-    @cached_property
     @abstractmethod
-    def matrix_function(self):
-        """ A callable function of time that returns the matrix representation of the operator """ 
+    def get_matrix(self, t: float) -> AnyMatrix:
+        """ A function of time that returns the matrix representation of the operator. """ 
 
     def _frame_shifted_coupling_matrix_and_rate_from_operator(self, operator: CouplingOperator | GeneralOperator):
         """Extracts the offdiagonal (coupling/interaction) matrix and oscillation rate matrix from an operator 
@@ -119,8 +118,9 @@ class CompositeOperator(ABC):
         return coupling_matrix, rate_matrix 
 
     # ---- Evaluation of the operator sum as stored ----
-    def build_operator_sum_function(self) -> Callable:
-        """ Function of time returning (dense or sparse) matrix as sum_k O_k(t), the operators of this composite in its rotating frame. 
+    @cached_property
+    def build_matrix_function(self) -> Callable:
+        """ Function of time returning (dense or sparse) matrix as an operator sum: sum_k O_k(t), the operators of this composite in its rotating frame. 
 
             Every operator is used as stored, (with no Hermitian conjugate added; pass C and adjoint(C) directly to construct Hermitian operator). 
                 energy shifts: static diagonal * f(t).

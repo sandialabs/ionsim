@@ -36,7 +36,7 @@ class TestHamiltonian(unittest.TestCase):
 
     def test_hamiltonian_matrix_function(self):
         """Test the Hamiltonian function at time t=0."""
-        H0 = self.hamiltonian.matrix_function(0)
+        H0 = self.hamiltonian.get_matrix(0)
         expected_shape = (self.hamiltonian.size, self.hamiltonian.size)
         self.assertEqual(H0.shape, expected_shape)
         self.assertTrue(np.all(np.isfinite(H0)))

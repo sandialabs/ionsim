@@ -37,14 +37,12 @@ class LindbladOperator(CompositeOperator):
     """
     prefactor: complex = 1.
 
-    @cached_property
-    def matrix_function(self) -> Callable:
+    def get_matrix(self, t: float) -> AnyMatrix:
         """ L(t) as an (N x N) matrix (dense or sparse, per self.sparse). """
-        operator_sum = self.build_operator_sum_function()
-        prefactor = self.prefactor
-        if prefactor == 1.:
-            return operator_sum
-        return lambda t: operator_sum(t) * prefactor
+        operator_sum = self.build_matrix_function
+ #        if self.prefactor == 1.:
+ #            return operator_sum(t)
+        return operator_sum(t) * self.prefactor
 
 
 @dataclass(frozen=True, eq=False)
@@ -138,12 +136,12 @@ class Dissipator:
 
     @staticmethod
     def _matrix_function_of_lindblad_operator(lindblad_operator: CompositeOperator) -> Callable:
-        if isinstance(lindblad_operator, LindbladOperator):
-            return lindblad_operator.matrix_function
-        return lindblad_operator.build_operator_sum_function()   # operators used as stored
+        #if isinstance(lindblad_operator, LindbladOperator):
+        return lindblad_operator.get_matrix
+        #return lindblad_operator.build_operator_sum_function()   # operators used as stored
             
     @cached_property
-    def dissipator_matrix_function(self) -> Callable:
+    def build_superoperator_matrix_function(self) -> Callable:
         """Creates N^2 x N^2 matrix representation of each Lindblad operator's action on a N^2 x 1 superoperator (y) from NxN density matrix (rho): 
                 Dissipator acting on supervector from Lindblad operator i (L_i): d_i(t)y <==> L_i(t) rho L†_i(t) - 1/2 { L†_i(t) L_i(t) , rho }  
 
@@ -161,6 +159,10 @@ class Dissipator:
             return d_matrix
 
         return _dissipator_matrix_function 
+
+    def get_matrix(self, t: float):
+        """ Gets matrix form of dissipator at time t. """ 
+        return self.build_superoperator_matrix_function(t)
 
 
 @dataclass(frozen=True, eq=False)
@@ -369,6 +371,10 @@ class Lindbladian:
             # Check if Hamiltonian and Dissipator have the same sparse setting.  
             if self.hamiltonian.sparse != self.dissipator.sparse: 
                 raise IonSimError('Input error: Both Hamiltonian and Dissipator should have the same setting for sparse variable. e.g. Set sparse = True when constructing the Hamiltonian and Dissipator objects.')
+            # Check if Hamiltonian and Dissipator have the same basis
+            if not (self.hamiltonian.basis).has_same_dofs(self.dissipator.basis): 
+                raise IonSimError('Both Hamiltonian and Dissipator should have the same basis. Input bases contain different degrees of freedom.')
+
         if self.hamiltonian is None and self.dissipator is None:
             raise IonSimError('Input error: Both Hamiltonian and Dissipator inputs are None')
 
@@ -383,24 +389,28 @@ class Lindbladian:
             return self.dissipator.size**2
 
     @cached_property
-    def matrix_function(self) -> Callable:
+    def build_matrix_function(self) -> Callable:
         """ Lindbladian matrix function L(t), corresponding to an N^2 x N^2 superoperator at time t. """
         if self.hamiltonian:
             super_ham = lambda t: -1j*(
-                  matrix_AYB_multiply_to_superoperator(A = self.hamiltonian.matrix_function(t), B = None) 
-                - matrix_AYB_multiply_to_superoperator(A = None, B = (self.hamiltonian.matrix_function(t)).conj().T)
+                  matrix_AYB_multiply_to_superoperator(A = self.hamiltonian.get_matrix(t), B = None) 
+                - matrix_AYB_multiply_to_superoperator(A = None, B = (self.hamiltonian.get_matrix(t)).conj().T)
                 )
         else:
             super_ham = lambda t: 0. 
 
         if self.dissipator:
-            super_dissipator = self.dissipator.dissipator_matrix_function
+            super_dissipator = self.dissipator.get_matrix
         else:
             super_dissipator = lambda t: 0. 
 
         # Lindbladian superoperator from hamiltonian and dissipation contributions: 
         lindbladian_function = lambda t: super_ham(t) + super_dissipator(t)
         return lindbladian_function
+    
+    def get_matrix(self, t):
+        """ Build Lindbladian matrix at time t. """
+        return self.build_matrix_function(t)
 
     def evolve_supervector(self, initial_supervector: Vector, duration: float, time_evals: Vector | None = None, **kwargs):
         """ Evolve a supervector by solving the time-dependent Lindblad master equation.
@@ -409,5 +419,5 @@ class Lindbladian:
         # solve_time_evolution_equation() assumes a Schrodinger equation form dy/dt = (-i*A)y, where i = sqrt(-1) and A <==> the function input, e.g. a Hamiltonian matrix. 
         # Therfore, we must compensate this form by multiplying the lindbladian by i 
         assert(self.size == len(initial_supervector))
-        dynamical_matrix = lambda t: self.matrix_function(t) * 1j
+        dynamical_matrix = lambda t: self.get_matrix(t) * 1j
         return solve_time_evolution_equation(dynamical_matrix, initial_supervector, duration, time_evals, **kwargs)

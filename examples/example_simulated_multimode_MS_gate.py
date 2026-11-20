@@ -140,7 +140,7 @@ def main():
     from matplotlib import pyplot as plt
 
     start = time.perf_counter()
-    ic(hamiltonian.matrix_function(0))
+    ic(hamiltonian.get_matrix(0))
     end = time.perf_counter()
     ic(f'Building Hamiltonian took {end - start} s.')
 

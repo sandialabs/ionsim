@@ -118,9 +118,8 @@ class Hamiltonian(CompositeOperator):
         return H0, H0_shifts, Hints, rates 
 
     @cached_property
-    def matrix_function(self) -> Callable: 
+    def build_matrix_function(self) -> Callable: 
         """A function that computes the Hamiltonian at a specified time."""
-
         sparse_H0, sparse_H0_shifts, sparse_Hints, sparse_rates = self.H0_H0Shifts_Hints_and_rates
 
         if self.sparse:
@@ -288,13 +287,18 @@ class Hamiltonian(CompositeOperator):
 
         return _hamiltonian_function
 
+    def get_matrix(self, t: float) -> AnyMatrix:
+        """ Getter for Hamiltonian matrix at time t. """ 
+        return self.build_matrix_function(t) 
+
     def evolve_wavefunction(self, initial_wavefunction: Vector, duration: float, time_evals: Vector | None = None, **kwargs):
         """Evolve a wavefunction by solving the time-dependent Schrodinger equation."""
         assert(self.size == len(initial_wavefunction))
         import time
         from icecream import ic
         start = time.perf_counter()
-        result = solve_time_evolution_equation(self.matrix_function, initial_wavefunction, duration, time_evals, **kwargs)
+        result = solve_time_evolution_equation(self.get_matrix, initial_wavefunction, duration, time_evals, **kwargs)
+        #result = solve_time_evolution_equation(self.matrix_function, initial_wavefunction, duration, time_evals, **kwargs)
         end = time.perf_counter()
         ic(f'Evolving wavefunction took {end-start} seconds.')
         return result

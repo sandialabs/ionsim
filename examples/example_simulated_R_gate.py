@@ -77,7 +77,7 @@ def main():
         tau = abs(theta)/rabi_rate
         hamiltonian = R_hamiltonian(basis, phi, rabi_rate, omega + domega, sparse=sparse, mod=amp_mod)
         start = time.perf_counter()
-        ic(hamiltonian.matrix_function(0))
+        ic(hamiltonian.get_matrix(0))
         end = time.perf_counter()
         ic(f'Building Hamiltonian took {end - start} s.')
         return sm.Gate.from_hamiltonian(basis, hamiltonian, tau)
