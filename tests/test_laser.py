@@ -21,7 +21,7 @@ from ionsim.basis import StandardBasis
 from ionsim.laser import Laser, SidebandType, GaussianBeam, PlaneWave
 from ionsim.polarization import Polarization, LinearPolarization, CircularPolarization, SphericalPolarization
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.lindbladian import LindbladOperator
+from ionsim.multi_operator import MultiOperator 
 from ionsim.operators import adjoint
 from ionsim.atomic_internal_energy_level import (compute_coupling_amplitude_between_atomic_levels, compute_multipole_amplitude,
                                                  reduced_dipole_matrix_element)

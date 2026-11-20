@@ -19,7 +19,7 @@ from ionsim.operators import Operator, Coupling, EnergyShift, GeneralOperator, E
 from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, SMALLEST_ENERGY_SCALE
 from ionsim.custom_math import solve_time_evolution_equation
-from ionsim.composite_operator import CompositeOperator
+from ionsim.multi_operator import MultiOperator
 from ionsim.ionsim_error import IonSimError
 
 def all_none(mod_functions: list):
@@ -32,7 +32,7 @@ def all_same(mod_functions: list):
 
 
 @dataclass(frozen=True, eq=False)
-class Hamiltonian(CompositeOperator):
+class Hamiltonian(MultiOperator):
     """ Hamiltonian H(t) = H0 + sum_k O_k(t) in the rotating frame rotating_frame_energies (H0: the basis state energies
         shifted by the frame).
 

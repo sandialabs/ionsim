@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from scipy.sparse import csr_matrix
 from functools import cached_property
 from typing import Callable
-from abc import ABC, abstractmethod
 
 from ionsim.basis import StandardBasis
 from ionsim.operators import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
@@ -21,13 +20,14 @@ from ionsim.ionsim_error import IonSimError
 from ionsim.config import SMALLEST_ENERGY_SCALE
 
 @dataclass(frozen=True, eq=False)
-class CompositeOperator(ABC):
-    """Abstract class for a composite operator object, which represents an operator that contains multiple bare operator contributions"""
+class MultiOperator():
+    """Class for a multi-operator (composite operator) object, which represents an operator that contains multiple bare operator contributions"""
     
     basis: StandardBasis
     operators: list[Operator] 
     rotating_frame_energies: list[float]
     sparse: bool = False
+    prefactor: complex = 1.
 
     def __post_init__(self):
         """Check that all operators belong to the same basis and have same dimensionality.""" 
@@ -65,9 +65,9 @@ class CompositeOperator(ABC):
                 energy_shift_ops.append(operator)
         return energy_shift_ops
 
-    @abstractmethod
     def get_matrix(self, t: float) -> AnyMatrix:
         """ A function of time that returns the matrix representation of the operator. """ 
+        return self.build_matrix_function(t) * self.prefactor
 
     def _frame_shifted_coupling_matrix_and_rate_from_operator(self, operator: CouplingOperator | GeneralOperator):
         """Extracts the offdiagonal (coupling/interaction) matrix and oscillation rate matrix from an operator 
@@ -163,3 +163,9 @@ class CompositeOperator(ABC):
             return total
 
         return _operator_sum_function
+
+
+def to_MultiOperator(input_operator: Operator, rotating_frame_energies: list[float] | None=None, sparse: bool=False):
+    """ Converts an Operator object to a MultiOperator object """ 
+    _rotating_frame_energies = rotating_frame_energies if rotating_frame_energies else [0.]*len(input_operator.basis.states) 
+    return MultiOperator(input_operator.basis, [input_operator], _rotating_frame_energies, sparse)

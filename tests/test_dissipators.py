@@ -20,7 +20,8 @@ from ionsim.operators import CouplingOperator, EnergyShiftOperator, GeneralOpera
 from ionsim.named_operators import Pauli, Fock
 from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.lindbladian import Dissipator, Lindbladian, LindbladOperator
+from ionsim.lindbladian import Dissipator, Lindbladian 
+from ionsim.multi_operator import MultiOperator
 from ionsim.state import State
 from ionsim.ionsim_error import IonSimError
 
@@ -265,7 +266,7 @@ class TestDissipators(unittest.TestCase):
         C_dagger = adjoint(C) 
 
         # Build Lindblad operator using drive and drive^dagger:
-        L = LindbladOperator(basis, [C, C_dagger], frame_energies, prefactor=np.sqrt(kappa))
+        L = MultiOperator(basis, [C, C_dagger], frame_energies, prefactor=np.sqrt(kappa))
         # Build the Lindbladian from the Hamiltonian and the Dissipator; dissipator takesin the Lindblad operator 
         lindbladian = Lindbladian(Hamiltonian(basis, [C], frame_energies), Dissipator(basis, [L], frame_energies))
         rho_t = State.from_coefficients(basis, [1., 0.]).propagate_using_master_equation(lindbladian, duration, times)

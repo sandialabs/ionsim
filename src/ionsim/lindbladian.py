@@ -15,32 +15,15 @@ from functools import cached_property
 
 from ionsim.basis import StandardBasis
 from ionsim.degree_of_freedom import AtomicStructure 
-from ionsim.operators import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
+from ionsim.operators import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator 
 from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix
 from ionsim.custom_math import matrix_AYB_multiply_to_superoperator, solve_time_evolution_equation
 from ionsim.ionsim_error import IonSimError
-from ionsim.composite_operator import CompositeOperator
+from ionsim.multi_operator import MultiOperator, to_MultiOperator
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, SinkLevel
 from ionsim.atomic_internal_energy_level import compute_multipole_amplitude
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
-
-
-@dataclass(frozen=True, eq=False)
-class LindbladOperator(CompositeOperator):
-    """ One Lindblad operator L(t) = prefactor * sum_k O_k(t), a composite of operators in the dissipator's rotating frame.
-
-        Each operator O_k is used as stored. A single Lindblad operator can combine terms with different rates or modulations.
-
-        prefactor: complex scalar multiplying the sum (e.g. sqrt(rate) or sqrt(kappa)), so that operators built for the
-            Hamiltonian can be reused unchanged. 
-    """
-    prefactor: complex = 1.
-
-    def get_matrix(self, t: float) -> AnyMatrix:
-        """ L(t) as an (N x N) matrix (dense or sparse, per self.sparse). """
-        operator_sum = self.build_matrix_function
-        return operator_sum(t) * self.prefactor
 
 
 @dataclass(frozen=True, eq=False)
@@ -49,15 +32,15 @@ class Dissipator:
 
         D(t) rho = sum_k ( L_k(t) rho L_k(t)^dagger - 1/2 { L_k(t)^dagger L_k(t), rho } )
 
-        operators: the Lindblad operators. Each entry is one Lindblad operator L_k: either a CompositeOperator (usually a
-            LindbladOperator, a sum of operators with a prefactor) or a plain Operator, which is wrapped as a single-term
-            LindbladOperator (lindblad_operators), as in earlier versions where every operator was its own Lindblad operator.
-            The list may mix both. `operators` keeps exactly what was passed in.
-        rotating_frame_energies: the frame of the Lindblad operators. Composite entries must use the same frame.
+        operators: the Lindblad operators. Each entry is one Lindblad operator L_k: either a MultiOperator or a plain Operator, 
+            which is wrapped as a single-term MultiOperator. 
+
+        The list of operators may mix both. `operators` keeps exactly what was passed in.
+        rotating_frame_energies: the frame of the Lindblad operators. Multi entries must use the same frame.
         sparse: whether to use sparse matrices; composite entries must use the same setting.
     """
     basis: StandardBasis
-    operators: list[CompositeOperator | Operator]
+    operators: list[MultiOperator | Operator]
     rotating_frame_energies: list[float]
     sparse: bool = False
 
@@ -73,7 +56,7 @@ class Dissipator:
                 # Check basis matching 
                 if not self.basis.has_same_dofs(entry.basis): 
                     raise IonSimError(f"Lindblad operator {index} ({type(entry).__name__}) does not live in the dissipator's basis.")
-            elif isinstance(entry, CompositeOperator):
+            elif isinstance(entry, MultiOperator):
                 if entry.size != self.size:
                     raise IonSimError(f"Lindblad operator {index} ({type(entry).__name__}) has size {entry.size}, expected {self.size}.")
                 if entry.sparse != self.sparse:
@@ -82,18 +65,20 @@ class Dissipator:
                     raise IonSimError(f"Lindblad operator {index} ({type(entry).__name__}) uses a different rotating frame than "
                                       f"the dissipator; all Lindblad operators of a dissipator must share its frame.")
             else:
-                raise IonSimError(f"Lindblad operator {index} must be an Operator or a CompositeOperator, got {type(entry).__name__}.")
+                raise IonSimError(f"Lindblad operator {index} must be an Operator or a MultiOperator, got {type(entry).__name__}.")
 
     @property
     def size(self):
         return len(self.basis.states)
 
+
     @cached_property
-    def lindblad_operators(self) -> list[CompositeOperator]:
-        """ The Lindblad operators as composites: CompositeOperator entries unchanged, each plain Operator wrapped as a
-            single-term LindbladOperator in the dissipator's frame. """
-        return [entry if isinstance(entry, CompositeOperator)
-                else LindbladOperator(self.basis, [entry], self.rotating_frame_energies, self.sparse)
+    def lindblad_operators(self) -> list[MultiOperator]:
+        """ The Lindblad operators as MultiOperator (composites): MultiOperator entries unchanged, each plain Operator wrapped as a
+            single-term MultiOperator in the dissipator's frame. 
+        """
+        return [entry if isinstance(entry, MultiOperator) else to_MultiOperator(entry, self.rotating_frame_energies, self.sparse)
+                #else MultiOperator(self.basis, [entry], self.rotating_frame_energies, self.sparse)
                 for entry in self.operators]
 
     @staticmethod
