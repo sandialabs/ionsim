@@ -66,14 +66,14 @@ class Hamiltonian(CompositeOperator):
 
     @property
     def all_rates_are_zero(self):
-        sparse_H0, sparse_H0_shifts, sparse_Hints, sparse_Rates = self.H0_H0Shifts_Hints_and_Rates
-        if all(Rate.getnnz() == 0 for Rate in sparse_Rates):
+        sparse_H0, sparse_H0_shifts, sparse_Hints, sparse_rates = self.H0_H0Shifts_Hints_and_rates
+        if all(rate_matrix.getnnz() == 0 for rate_matrix in sparse_rates):
             return True
         return False
 
     @property
     def all_ints_are_isolated(self):
-        sparse_H0, sparse_H0_shifts, sparse_Hints, sparse_Rates = self.H0_H0Shifts_Hints_and_Rates
+        sparse_H0, sparse_H0_shifts, sparse_Hints, sparse_rates = self.H0_H0Shifts_Hints_and_rates
         for Hint in sparse_Hints:
             rows, cols = Hint.nonzero()
             for Hint_p in sparse_Hints:
@@ -84,14 +84,14 @@ class Hamiltonian(CompositeOperator):
         return True
 
     @cached_property
-    def H0_H0Shifts_Hints_and_Rates(self):
+    def H0_H0Shifts_Hints_and_rates(self):
         """
             Function to compute contributions to the Hamiltonian from the user-specified operators list. 
             Returns: 
                 - The non-interacting Hamiltonian (H0), 
                 - energy shift Hamiltonians (H0_shifts) and, 
                 - the interacting Hamiltonian (Hint) for each coupling operator 
-                - Hint's corresponding oscillation rate matrix (Rate).
+                - Hint's corresponding oscillation rate matrix.
             In the constructor, GeneralOperators are decomposed into EnergyShiftOperator (diagonal) 
                 and CouplingOperator (off-diagonal) contributions.
         """
@@ -99,45 +99,45 @@ class Hamiltonian(CompositeOperator):
         H0 = csr_matrix(np.diag([energy if abs(energy) > SMALLEST_ENERGY_SCALE else 0 for energy in self.energies]))
         H0_shifts = []  
         Hints = []
-        Rates = []
+        rates = []
 
         # Extract all hamiltonian contributions from each operator 
         # Coupling operators:  
         for operator in self.coupling_operators:
             # Extract offdiagonal elements --> Hint and Oscillation rate 
-            # Build Hint, Rate from half matrices since the operators are Hermitian and will be treated as such in subsequent functions  
+            # Build Hint, rate_matrix from half matrices since the operators are Hermitian and will be treated as such in subsequent functions  
             unique_couplings = operator._unique_couplings_from_hermitian_coupling_matrix(operator.basis, operator.static_matrix, operator.rate_matrix) 
-            Hint, Rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(CouplingOperator(operator.basis, unique_couplings, operator.modulation_function))
+            Hint, rate_matrix = self._frame_shifted_coupling_matrix_and_rate_from_operator(CouplingOperator(operator.basis, unique_couplings, operator.modulation_function))
             Hints.append(Hint)
-            Rates.append(Rate)
+            rates.append(rate_matrix)
 
         # Energy shift operators:  
         for operator in self.energy_shift_operators:
             H0_shifts.append(operator.static_matrix) 
 
-        return H0, H0_shifts, Hints, Rates
+        return H0, H0_shifts, Hints, rates 
 
     @cached_property
     def matrix_function(self) -> Callable: 
         """A function that computes the Hamiltonian at a specified time."""
 
-        sparse_H0, sparse_H0_shifts, sparse_Hints, sparse_Rates = self.H0_H0Shifts_Hints_and_Rates
+        sparse_H0, sparse_H0_shifts, sparse_Hints, sparse_rates = self.H0_H0Shifts_Hints_and_rates
 
         if self.sparse:
             H0 = sparse_H0
             H0_shifts = sparse_H0_shifts
             Hints = sparse_Hints
-            Rates = sparse_Rates
+            rates = sparse_rates
         else:
             H0 = sparse_H0.toarray()
             H0_shifts = []
             for H_shift in sparse_H0_shifts:
                 H0_shifts.append(H_shift.toarray())
 
-            Hints, Rates = [], []
-            for Hint, Rate in zip(sparse_Hints, sparse_Rates):
+            Hints, rates = [], []
+            for Hint, rate_matrix in zip(sparse_Hints, sparse_rates):
                 Hints.append(Hint.toarray())
-                Rates.append(Rate.toarray())
+                rates.append(rate_matrix.toarray())
 
         if self.all_rates_are_zero:
             if self.sparse:
@@ -205,8 +205,8 @@ class Hamiltonian(CompositeOperator):
                 def _hamiltonian_function(t: float):
                     H0_shift = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex') 
                     Hint = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex') 
-                    for Ham, Rate, mod in zip(Hints, Rates, self.coupling_modulation_functions):
-                        phase_factor_minus_one = Rate.multiply(-1j*t).expm1() # equivalent to exp(-1j * Rate * t) - 1
+                    for Ham, rate_matrix, mod in zip(Hints, rates, self.coupling_modulation_functions):
+                        phase_factor_minus_one = rate_matrix.multiply(-1j*t).expm1() # equivalent to exp(-1j * rate * t) - 1
                         Htemp = Ham + Ham.multiply(phase_factor_minus_one)
                         if mod is not None:
                             Hint += Htemp.multiply(mod(t))
@@ -224,18 +224,18 @@ class Hamiltonian(CompositeOperator):
                     return H0 + H0_shift + Hint
             else:
                 if all_none(self.modulation_functions):
-                    if self.all_ints_are_isolated: # TODO: apply this check and simplification for other cases with nonzero Rates.
+                    if self.all_ints_are_isolated: # TODO: apply this check and simplification for other cases with nonzero rates.
                         Ham = np.sum(Hints, axis=0)
-                        Rate = np.sum(Rates, axis=0)
+                        rate_matrix = np.sum(rates, axis=0)
                         def _hamiltonian_function(t: float):
-                            Hint = Ham * np.exp(-1j * Rate * t)
+                            Hint = Ham * np.exp(-1j * rate_matrix * t)
                             Hint += Hint.conj().T
                             return H0 + np.sum(H0_shifts, axis=0) + Hint
                     else:
                         def _hamiltonian_function(t: float):
                             Hint = np.zeros((self.size, self.size), dtype='complex')
-                            for Ham, Rate in zip(Hints, Rates):
-                                Hint += Ham * np.exp(-1j * Rate * t)
+                            for Ham, rate_matrix in zip(Hints, rates):
+                                Hint += Ham * np.exp(-1j * rate_matrix * t)
                             Hint += Hint.conj().T
                             return H0 + np.sum(H0_shifts, axis=0) + Hint
                 else:
@@ -243,15 +243,15 @@ class Hamiltonian(CompositeOperator):
                         def _hamiltonian_function(t: float):
                             if all_same(self.coupling_modulation_functions):
                                 Ham = np.sum(Hints, axis=0)
-                                Rate = np.sum(Rates, axis=0)
-                                Hint = Ham * np.exp(-1j * Rate * t) * self.coupling_modulation_functions[0](t)
+                                rate_matrix = np.sum(rates, axis=0)
+                                Hint = Ham * np.exp(-1j * rate_matrix * t) * self.coupling_modulation_functions[0](t)
                             else:
                                 Hint = np.zeros((self.size, self.size), dtype='complex')
-                                for Ham, Rate, mod in zip(Hints, Rates, self.coupling_modulation_functions):
+                                for Ham, rate_matrix, mod in zip(Hints, rates, self.coupling_modulation_functions):
                                     if mod is not None:
-                                        Hint += Ham * np.exp(-1j * Rate * t) * mod(t)
+                                        Hint += Ham * np.exp(-1j * rate_matrix * t) * mod(t)
                                     else:
-                                        Hint += Ham * np.exp(-1j * Rate * t)
+                                        Hint += Ham * np.exp(-1j * rate_matrix * t)
                             Hint += Hint.conj().T
 
                             H0_shift = np.zeros_like(Hint)
@@ -270,11 +270,11 @@ class Hamiltonian(CompositeOperator):
                     else:
                         def _hamiltonian_function(t: float):
                             Hint = np.zeros((self.size, self.size), dtype='complex')
-                            for Ham, Rate, mod in zip(Hints, Rates, self.coupling_modulation_functions):
+                            for Ham, rate_matrix, mod in zip(Hints, rates, self.coupling_modulation_functions):
                                 if mod is not None:
-                                    Hint += Ham * np.exp(-1j * Rate * t) * mod(t)
+                                    Hint += Ham * np.exp(-1j * rate_matrix * t) * mod(t)
                                 else:
-                                    Hint += Ham * np.exp(-1j * Rate * t) 
+                                    Hint += Ham * np.exp(-1j * rate_matrix * t) 
                             Hint += Hint.conj().T
 
                             H0_shift = np.zeros_like(Hint)

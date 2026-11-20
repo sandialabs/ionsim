@@ -71,7 +71,7 @@ class CompositeOperator(ABC):
         """ A callable function of time that returns the matrix representation of the operator """ 
 
     def _frame_shifted_coupling_matrix_and_rate_from_operator(self, operator: CouplingOperator | GeneralOperator):
-        """Extracts the offdiagonal (coupling/interaction) matrix and oscillation rate matrix (Rate) from an operator 
+        """Extracts the offdiagonal (coupling/interaction) matrix and oscillation rate matrix from an operator 
             while incorporating necessary reference frame shifts. 
 
             Transform operator (O) to the interaction picture by a diagonal unitary operator U representing a frame shift: 
@@ -108,8 +108,8 @@ class CompositeOperator(ABC):
             rates.append(total_rate if abs(total_rate) > SMALLEST_ENERGY_SCALE else 0.)
         shape = (self.size, self.size)
         coupling_matrix = csr_matrix((np.array(strengths, dtype=complex), (rows, columns)), shape=shape)
-        Rate = csr_matrix((np.array(rates, dtype=float), (rows, columns)), shape=shape)
-        return coupling_matrix, Rate
+        rate_matrix = csr_matrix((np.array(rates, dtype=float), (rows, columns)), shape=shape)
+        return coupling_matrix, rate_matrix 
 
     # ---- Evaluation of the operator sum as stored ----
     def build_operator_sum_function(self) -> Callable:
@@ -117,9 +117,9 @@ class CompositeOperator(ABC):
 
             Every operator is used as stored, (with no Hermitian conjugate added; pass C and adjoint(C) directly to construct Hermitian operator). 
                 energy shifts: static diagonal * f(t).
-                couplings: C * exp(-1j Rate t) * f(t).
+                couplings: C * exp(-1j rate t) * f(t).
         """
-        diagonal_terms, coupling_terms = [], []   # (matrix, f), (matrix, Rate, f)
+        diagonal_terms, coupling_terms = [], []   # (matrix, f), (matrix, rate, f)
         for operator in self.operators:
             parts = [operator]
             if isinstance(operator, GeneralOperator):
@@ -147,7 +147,7 @@ class CompositeOperator(ABC):
                 total = total + (matrix if f is None else matrix * f(t))
             for matrix, rate, f in coupling_terms:
                 if self.sparse:
-                    term = matrix + matrix.multiply(rate.multiply(-1j * t).expm1())   # matrix * exp(-1j Rate t), sparsity kept
+                    term = matrix + matrix.multiply(rate.multiply(-1j * t).expm1())   # matrix * exp(-1j rate t), sparsity kept
                 else:
                     term = matrix * np.exp(-1j * rate * t)
                 if f is not None:
