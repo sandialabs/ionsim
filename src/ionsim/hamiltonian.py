@@ -287,10 +287,6 @@ class Hamiltonian(MultiOperator):
 
         return _hamiltonian_function
 
-    def get_matrix(self, t: float) -> AnyMatrix:
-        """ Getter for Hamiltonian matrix at time t. """ 
-        return self.build_matrix_function(t) 
-
     def evolve_wavefunction(self, initial_wavefunction: Vector, duration: float, time_evals: Vector | None = None, **kwargs):
         """Evolve a wavefunction by solving the time-dependent Schrodinger equation."""
         assert(self.size == len(initial_wavefunction))
