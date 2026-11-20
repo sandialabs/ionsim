@@ -130,13 +130,11 @@ class Dissipator:
 
             Defines and returns a list of callables as a function of time
         """
-        return [self._matrix_function_of_lindblad_operator(lindblad_operator) for lindblad_operator in self.lindblad_operators]
+        return [lindblad_operator.get_matrix for lindblad_operator in self.lindblad_operators]
 
-    @staticmethod
-    def _matrix_function_of_lindblad_operator(lindblad_operator: CompositeOperator) -> Callable:
-        #if isinstance(lindblad_operator, LindbladOperator):
-        return lindblad_operator.get_matrix
-        #return lindblad_operator.build_operator_sum_function()   # operators used as stored
+ #    @staticmethod
+ #    def _matrix_function_of_lindblad_operator(lindblad_operator: CompositeOperator) -> Callable:
+ #        return lindblad_operator.get_matrix 
             
     @cached_property
     def build_superoperator_matrix_function(self) -> Callable:
