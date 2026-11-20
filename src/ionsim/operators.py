@@ -13,7 +13,6 @@ from scipy.sparse import csr_matrix, diags
 import numpy as np
 from typing import Callable
 import functools
-from functools import reduce, wraps 
 
 from ionsim.ionsim_error import IonSimError
 from ionsim.basis import StandardBasis
@@ -413,7 +412,7 @@ def _conjugate_modulation(modulation_function: Callable | None) -> Callable | No
     if modulation_function is None:
         return None
 
-    @functools.wraps
+    @functools.wraps(modulation_function)
     def conjugate_modulation(t: float) -> complex:
         return np.conj(modulation_function(t))
 
