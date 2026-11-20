@@ -387,7 +387,7 @@ class Lindbladian:
         if self.hamiltonian:
             super_ham = lambda t: -1j*(
                   matrix_AYB_multiply_to_superoperator(A = self.hamiltonian.hamiltonian_function(t), B = None) 
-                - matrix_AYB_multiply_to_superoperator(A = None, B = self.hamiltonian.hamiltonian_function(t))
+                - matrix_AYB_multiply_to_superoperator(A = None, B = (self.hamiltonian.hamiltonian_function(t)).conj().T)
                 )
         else:
             super_ham = lambda t: 0. 
