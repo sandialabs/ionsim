@@ -31,7 +31,6 @@ from ionsim.trapped_ion_mode_analysis import IonChain
 TPI = 2. * np.pi
 X, Y, Z = np.eye(3)
 
-
 # ---- shared builders and helpers ----
 def Yb_s_to_p(ground_first: bool = True):
     """171Yb+ |S1/2, F=1, mF=0> and |P1/2, F=1, mF=1> (E1, 369.5 nm, driven by sigma+ along z), in either level order."""
@@ -77,6 +76,16 @@ def coupling_elements(basis, operators) -> dict:
             key = (basis.states.index(coupling.row_state), basis.states.index(coupling.column_state))
             elements[key] = elements.get(key, 0.) + coupling.strength
     return elements
+
+def raising_elements(operator, excited_level):
+    """ (excited state, ground state, strength) of the raising elements |e...><g...| of a laser coupling operator. The operator
+        stores one element of each Hermitian pair, |e><g| or |g><e| depending on the basis order of the levels; for a stored
+        |g><e| the raising element is its conjugate transpose. """
+    for coupling in operator.couplings:
+        if excited_level in coupling.row_state.components:
+            yield coupling.row_state, coupling.column_state, coupling.strength
+        else:
+            yield coupling.column_state, coupling.row_state, np.conj(coupling.strength)
 
 
 class TestLaserConstructors(unittest.TestCase):
