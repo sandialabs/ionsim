@@ -40,8 +40,6 @@ class LindbladOperator(CompositeOperator):
     def get_matrix(self, t: float) -> AnyMatrix:
         """ L(t) as an (N x N) matrix (dense or sparse, per self.sparse). """
         operator_sum = self.build_matrix_function
- #        if self.prefactor == 1.:
- #            return operator_sum(t)
         return operator_sum(t) * self.prefactor
 
 
