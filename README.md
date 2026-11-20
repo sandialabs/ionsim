@@ -86,6 +86,18 @@ pip install -e ionsim[tutorials]
 pip install -e ionsim
 ```
 
+### Using uv
+
+Instead of pip, users may install ionsim with `uv`. The commands largely mirror those above, but are listed here for reference.
+
+```bash
+# Create virtual environment (if needed)
+uv venv myvenv
+source myvenv/bin/activate
+
+# Install ionsim
+uv pip install -e ionsim
+```
 
 ### Example Usage
 In the IonSim project directory, navigate to the `examples` directory 
