@@ -258,7 +258,7 @@ class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
                 frame = [-state.energy for state in basis.states]
                 def coupling(laser, t):
                     operators = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, Z)
-                    return np.asarray(Hamiltonian(basis, operators, frame).hamiltonian_function(t))[0, 1]
+                    return np.asarray(Hamiltonian(basis, operators, frame).matrix_function(t))[0, 1]
                 static = self.laser(g, e, phase=phase)
                 modulated = self.laser(g, e, phase_modulation_function=lambda t: phase)
                 for t in (0., 1e-9, 2.3e-9):   # s; arbitrary
@@ -303,8 +303,8 @@ class TestCounterRotatingTerms(unittest.TestCase):
                 both = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, Z, include_counter_rotating=True)
                 co = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, Z)
                 self.assertEqual((len(both), len(co)), (2, 1))
-                h_both = Hamiltonian(basis, both, frame, sparse=False).hamiltonian_function
-                h_co = Hamiltonian(basis, co, frame, sparse=False).hamiltonian_function
+                h_both = Hamiltonian(basis, both, frame, sparse=False).matrix_function
+                h_co = Hamiltonian(basis, co, frame, sparse=False).matrix_function
 
                 rabi, rabi_counter = (laser.rabi_frequency(g, e, 1, Z, counter_rotating=c) for c in (False, True))
                 self.assertGreater(abs(abs(rabi_counter) / abs(rabi) - 1.), 0.1)

@@ -38,7 +38,7 @@ class LindbladOperator(CompositeOperator):
     prefactor: complex = 1.
 
     @cached_property
-    def lindblad_matrix_function(self) -> Callable:
+    def matrix_function(self) -> Callable:
         """ L(t) as an (N x N) matrix (dense or sparse, per self.sparse). """
         operator_sum = self.build_operator_sum_function()
         prefactor = self.prefactor
@@ -138,7 +138,7 @@ class Dissipator:
     @staticmethod
     def _matrix_function_of_lindblad_operator(lindblad_operator: CompositeOperator) -> Callable:
         if isinstance(lindblad_operator, LindbladOperator):
-            return lindblad_operator.lindblad_matrix_function
+            return lindblad_operator.matrix_function
         return lindblad_operator.build_operator_sum_function()   # operators used as stored
             
     @cached_property
@@ -386,8 +386,8 @@ class Lindbladian:
         """ Lindbladian matrix function L(t), corresponding to an N^2 x N^2 superoperator at time t. """
         if self.hamiltonian:
             super_ham = lambda t: -1j*(
-                  matrix_AYB_multiply_to_superoperator(A = self.hamiltonian.hamiltonian_function(t), B = None) 
-                - matrix_AYB_multiply_to_superoperator(A = None, B = (self.hamiltonian.hamiltonian_function(t)).conj().T)
+                  matrix_AYB_multiply_to_superoperator(A = self.hamiltonian.matrix_function(t), B = None) 
+                - matrix_AYB_multiply_to_superoperator(A = None, B = (self.hamiltonian.matrix_function(t)).conj().T)
                 )
         else:
             super_ham = lambda t: 0. 

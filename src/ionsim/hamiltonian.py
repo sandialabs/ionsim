@@ -118,7 +118,7 @@ class Hamiltonian(CompositeOperator):
         return H0, H0_shifts, Hints, Rates
 
     @cached_property
-    def hamiltonian_function(self) -> Callable: # TODO: perhaps deprecate in favor of "build_hamiltonian_function"
+    def matrix_function(self) -> Callable: 
         """A function that computes the Hamiltonian at a specified time."""
 
         sparse_H0, sparse_H0_shifts, sparse_Hints, sparse_Rates = self.H0_H0Shifts_Hints_and_Rates
@@ -294,7 +294,7 @@ class Hamiltonian(CompositeOperator):
         import time
         from icecream import ic
         start = time.perf_counter()
-        result = solve_time_evolution_equation(self.hamiltonian_function, initial_wavefunction, duration, time_evals, **kwargs)
+        result = solve_time_evolution_equation(self.matrix_function, initial_wavefunction, duration, time_evals, **kwargs)
         end = time.perf_counter()
         ic(f'Evolving wavefunction took {end-start} seconds.')
         return result

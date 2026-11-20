@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from scipy.sparse import csr_matrix
 from functools import cached_property
 from typing import Callable
-from abc import ABC
+from abc import ABC, abstractmethod
 
 from ionsim.basis import StandardBasis
 from ionsim.operators import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
@@ -64,6 +64,11 @@ class CompositeOperator(ABC):
             elif isinstance(operator, EnergyShiftOperator):
                 energy_shift_ops.append(operator)
         return energy_shift_ops
+
+    @cached_property
+    @abstractmethod
+    def matrix_function(self):
+        """ A callable function of time that returns the matrix representation of the operator """ 
 
     def _frame_shifted_coupling_matrix_and_rate_from_operator(self, operator: CouplingOperator | GeneralOperator):
         """Extracts the offdiagonal (coupling/interaction) matrix and oscillation rate matrix (Rate) from an operator 
