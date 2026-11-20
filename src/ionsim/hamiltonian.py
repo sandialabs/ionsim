@@ -298,7 +298,6 @@ class Hamiltonian(CompositeOperator):
         from icecream import ic
         start = time.perf_counter()
         result = solve_time_evolution_equation(self.get_matrix, initial_wavefunction, duration, time_evals, **kwargs)
-        #result = solve_time_evolution_equation(self.matrix_function, initial_wavefunction, duration, time_evals, **kwargs)
         end = time.perf_counter()
         ic(f'Evolving wavefunction took {end-start} seconds.')
         return result
