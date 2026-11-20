@@ -12,6 +12,8 @@ from dataclasses import dataclass, replace
 from scipy.sparse import csr_matrix, diags
 import numpy as np
 from typing import Callable
+import functools
+from functools import reduce, wraps 
 
 from ionsim.ionsim_error import IonSimError
 from ionsim.basis import StandardBasis
