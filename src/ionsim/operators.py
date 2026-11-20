@@ -37,7 +37,7 @@ class OperatorElement(ABC):
     # This abstract class serves to factor common attributes from Coupling and EnergyShift 
     column_state: EnergyEigenstate # e.g. corresponds to the column index (lower state) of the non-zero element of a raising operator
     row_state: EnergyEigenstate # e.g. corresponds to the row index (upper state) of the non-zero element of a raising operator
-    strength: float
+    strength: float | complex 
 
     # TODO: review this, is this check necessary? 
     def __post_init__(self):
@@ -249,7 +249,7 @@ class EnergyShiftOperator(Operator):
     @property
     def static_vector(self):
         """The vector representation of a static energy shift (diagonal) operator."""
-        v = np.zeros(len(self.basis.states))
+        v = np.zeros(len(self.basis.states), dtype=complex) # allows for non-Hermitian diagonal elements
         for energy_shift in self.energy_shifts:
             state_indx = self.basis.states.index(energy_shift.row_state)
             # Insert strength at appropriate index to match basis.states sorted order  
