@@ -74,7 +74,8 @@ class Dissipator:
         frame = np.asarray(self.rotating_frame_energies, dtype=float)
         for index, entry in enumerate(self.operators):
             if isinstance(entry, Operator):
-                if len(entry.basis.states) != self.size:
+                # Check basis matching 
+                if not self.basis.has_same_dofs(entry.basis): 
                     raise IonSimError(f"Lindblad operator {index} ({type(entry).__name__}) does not live in the dissipator's basis.")
             elif isinstance(entry, CompositeOperator):
                 if entry.size != self.size:
