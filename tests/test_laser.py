@@ -21,6 +21,8 @@ from ionsim.basis import StandardBasis
 from ionsim.laser import Laser, SidebandType, GaussianBeam, PlaneWave
 from ionsim.polarization import Polarization, LinearPolarization, CircularPolarization, SphericalPolarization
 from ionsim.hamiltonian import Hamiltonian
+from ionsim.multi_operator import MultiOperator 
+from ionsim.operators import adjoint
 from ionsim.atomic_internal_energy_level import (compute_coupling_amplitude_between_atomic_levels, compute_multipole_amplitude,
                                                  reduced_dipole_matrix_element)
 from ionsim.ionsim_error import IonSimError
@@ -28,7 +30,6 @@ from ionsim.trapped_ion_mode_analysis import IonChain
 
 TPI = 2. * np.pi
 X, Y, Z = np.eye(3)
-
 
 # ---- shared builders and helpers ----
 def Yb_s_to_p(ground_first: bool = True):
@@ -74,6 +75,18 @@ def coupling_elements(basis, operators) -> dict:
         for coupling in operator.couplings:
             key = (basis.states.index(coupling.row_state), basis.states.index(coupling.column_state))
             elements[key] = elements.get(key, 0.) + coupling.strength
+    return elements
+
+def raising_elements(operator, excited_level):
+    """ List of (excited state, ground state, strength) for the raising elements |e...><g...| of a laser coupling operator.
+        The operator stores one element of each Hermitian pair: |e><g| if the excited level comes first in the basis,
+        otherwise |g><e|, whose raising element is its conjugate transpose. """
+    elements = []
+    for coupling in operator.couplings:
+        if excited_level in coupling.row_state.components:
+            elements.append((coupling.row_state, coupling.column_state, coupling.strength))
+        else:
+            elements.append((coupling.column_state, coupling.row_state, np.conj(coupling.strength)))
     return elements
 
 
@@ -247,7 +260,7 @@ class TestLaserDynamicsInInteractionPicture(unittest.TestCase):
                 frame = [-state.energy for state in basis.states]
                 def coupling(laser, t):
                     operators = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, Z)
-                    return np.asarray(Hamiltonian(basis, operators, frame).hamiltonian_function(t))[0, 1]
+                    return np.asarray(Hamiltonian(basis, operators, frame).get_matrix(t))[0, 1]
                 static = self.laser(g, e, phase=phase)
                 modulated = self.laser(g, e, phase_modulation_function=lambda t: phase)
                 for t in (0., 1e-9, 2.3e-9):   # s; arbitrary
@@ -292,8 +305,8 @@ class TestCounterRotatingTerms(unittest.TestCase):
                 both = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, Z, include_counter_rotating=True)
                 co = laser.build_carrier_coupling_operators(basis, [atom], [g], [e], 1, Z)
                 self.assertEqual((len(both), len(co)), (2, 1))
-                h_both = Hamiltonian(basis, both, frame, sparse=False).hamiltonian_function
-                h_co = Hamiltonian(basis, co, frame, sparse=False).hamiltonian_function
+                h_both = Hamiltonian(basis, both, frame, sparse=False).get_matrix
+                h_co = Hamiltonian(basis, co, frame, sparse=False).get_matrix
 
                 rabi, rabi_counter = (laser.rabi_frequency(g, e, 1, Z, counter_rotating=c) for c in (False, True))
                 self.assertGreater(abs(abs(rabi_counter) / abs(rabi) - 1.), 0.1)
@@ -338,11 +351,12 @@ class TestLaserMultipleAtoms(unittest.TestCase):
         return indices
 
     def test_all_atoms_by_default(self):
-        """Both atoms are addressed, with the same strengths: 4 basis states of the other atom x (|g><e| and |e><g|)."""
+        """Both atoms are addressed, with the same strengths: 4 basis states of the other atom x one stored element of the
+        Hermitian pair (|g><e| or |e><g|."""
         operators = self.laser.build_carrier_coupling_operators(self.basis, None, self.ground, self.excited, 1, Z)
         self.assertEqual(sorted(self.addressed_atoms(operators)), [0, 1])
         strengths = [sorted(abs(coupling.strength) for coupling in operator.couplings) for operator in operators]
-        self.assertEqual(len(strengths[0]), 8)
+        self.assertEqual(len(strengths[0]), 4)
         np.testing.assert_allclose(strengths[0], strengths[1], rtol=1e-12)
 
     def test_selected_atom_with_levels_from_another_atom(self):
@@ -392,27 +406,31 @@ class TestLaserSidebandCouplings(unittest.TestCase):
 
     def test_sideband_matrix_elements(self):
         """Raising elements are (carrier raising element) x i eta^* sqrt(n+1) on |e,n+1><g,n| (blue) and
-        (carrier raising element) x i eta sqrt(n+1) on |e,n><g,n+1| (red), and nothing else, for real and complex eta."""
-        (atom,), mode, basis, g, e = self.build()
-        laser = self.laser(e.energy - g.energy)
-        carrier_raising = laser.build_atom_laser_ge_coupling_matrix(g, e, atom.energy_levels, 2, Z)[
-            atom.energy_levels.index(e), atom.energy_levels.index(g)]
-        for (sideband, shift), eta in itertools.product((('blue', +1), ('red', -1)), (self.ETA, self.ETA * np.exp(0.7j))):
-            with self.subTest(sideband=sideband, eta=eta):
-                operators = laser.build_sideband_coupling_operators(sideband, basis, [atom], [mode], [g], [e], 2, eta, Z)
-                raising = {}
-                for operator in operators:
-                    for coupling in operator.couplings:
-                        if e in coupling.row_state.components:
+        (carrier raising element) x i eta sqrt(n+1) on |e,n><g,n+1| (red), and nothing else, for real and complex eta and
+        either level order. The stored element is |g><e| when g comes first in the basis and |e><g| otherwise."""
+        for ground_first in (True, False):
+            (atom,), mode, basis, g, e = self.build(ground_first)
+            laser = self.laser(e.energy - g.energy)
+            carrier_raising = laser.build_atom_laser_ge_coupling_matrix(g, e, atom.energy_levels, 2, Z)[
+                atom.energy_levels.index(e), atom.energy_levels.index(g)]
+            stored_row_level = g if ground_first else e
+            for (sideband, shift), eta in itertools.product((('blue', +1), ('red', -1)), (self.ETA, self.ETA * np.exp(0.7j))):
+                with self.subTest(ground_first=ground_first, sideband=sideband, eta=eta):
+                    operators = laser.build_sideband_coupling_operators(sideband, basis, [atom], [mode], [g], [e], 2, eta, Z)
+                    self.assertTrue(all(stored_row_level in coupling.row_state.components
+                                        for operator in operators for coupling in operator.couplings))
+                    raising = {}
+                    for operator in operators:
+                        for excited_state, ground_state, strength in raising_elements(operator, e):
                             n_e, n_g = (next(c.fock_number for c in s.components if hasattr(c, 'fock_number'))
-                                        for s in (coupling.row_state, coupling.column_state))
-                            raising[(n_g, n_e)] = coupling.strength
-                prefactor = 1j * (np.conj(eta) if sideband == 'blue' else eta)
-                expected = {(n, n + shift): carrier_raising * prefactor * np.sqrt(max(n, n + shift))
-                            for n in range(self.FOCK_DIMENSION) if 0 <= n + shift < self.FOCK_DIMENSION}
-                self.assertEqual(set(raising), set(expected))
-                for key, value in expected.items():
-                    self.assertAlmostEqual(abs(raising[key] / value - 1.), 0., places=12)
+                                        for s in (excited_state, ground_state))
+                            raising[(n_g, n_e)] = strength
+                    prefactor = 1j * (np.conj(eta) if sideband == 'blue' else eta)
+                    expected = {(n, n + shift): carrier_raising * prefactor * np.sqrt(max(n, n + shift))
+                                for n in range(self.FOCK_DIMENSION) if 0 <= n + shift < self.FOCK_DIMENSION}
+                    self.assertEqual(set(raising), set(expected))
+                    for key, value in expected.items():
+                        self.assertAlmostEqual(abs(raising[key] / value - 1.), 0., places=12)
 
     def test_debye_waller_matrix_elements(self):
         """debye_waller=True: blue element eta^* e^{-|eta|^2/2} L_n^1(|eta|^2) / sqrt(n+1) instead of eta^* sqrt(n+1), for real
@@ -420,8 +438,8 @@ class TestLaserSidebandCouplings(unittest.TestCase):
         (atom,), mode, basis, g, e = self.build()
         laser = self.laser(e.energy - g.energy)
         def by_n(operator):
-            return {next(c.fock_number for c in coupling.column_state.components if hasattr(c, 'fock_number')): coupling.strength
-                    for coupling in operator.couplings if e in coupling.row_state.components}
+            return {next(c.fock_number for c in ground_state.components if hasattr(c, 'fock_number')): strength
+                    for excited_state, ground_state, strength in raising_elements(operator, e)}
         for eta in (0.3, 0.3 * np.exp(0.7j)):  # large enough for a visible correction
             with self.subTest(eta=eta):
                 first_order, exact = (by_n(laser.build_sideband_coupling_operators(SidebandType.BLUE, basis, [atom], [mode], [g], [e], 2,

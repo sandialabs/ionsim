@@ -94,7 +94,7 @@ class Gate(Process):
     @classmethod
     def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, duration: float,  
             parameters: dict[str, float], target_dofs: list[DegreeOfFreedom], noise: Noise | None = None):
-        """ Build a gate from a hamiltonian function and its arguments."""
+        """ Build a gate from a function that returns a Hamiltonian object and its arguments."""
         parameter_names = list(parameters.keys())
 
         @wraps(hamiltonian_function)

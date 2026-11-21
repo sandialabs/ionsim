@@ -15,11 +15,11 @@ from functools import cached_property
 
 from ionsim.basis import StandardBasis
 from ionsim.degree_of_freedom import AtomicStructure 
-from ionsim.operators import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
+from ionsim.operators import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator 
 from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix
 from ionsim.custom_math import matrix_AYB_multiply_to_superoperator, solve_time_evolution_equation
 from ionsim.ionsim_error import IonSimError
-from ionsim.composite_operator import CompositeOperator
+from ionsim.multi_operator import MultiOperator, to_MultiOperator
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, SinkLevel
 from ionsim.atomic_internal_energy_level import compute_multipole_amplitude
@@ -27,14 +27,59 @@ from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
 
 @dataclass(frozen=True, eq=False)
-class Dissipator(CompositeOperator):
+class Dissipator:
     """Class for dissipator object which implements dissipative phenomena in the context of open quantum systems. 
 
-        Inherits from CompositeOperator parent class. Instantiation requires a basis and 
-            list of operators corresponding to Lindblad operators.  
+        D(t) rho = sum_k ( L_k(t) rho L_k(t)^dagger - 1/2 { L_k(t)^dagger L_k(t), rho } )
+
+        operators: the Lindblad operators. Each entry is one Lindblad operator L_k: either a MultiOperator or a plain Operator, 
+            which is wrapped as a single-term MultiOperator. 
+
+        The list of operators may mix both. `operators` keeps exactly what was passed in.
+        rotating_frame_energies: the frame of the Lindblad operators. Multi entries must use the same frame.
+        sparse: whether to use sparse matrices; composite entries must use the same setting.
     """
+    basis: StandardBasis
+    operators: list[MultiOperator | Operator]
+    rotating_frame_energies: list[float]
+    sparse: bool = False
+
     def __post_init__(self):
-        super().__post_init__()
+        # Check frame shifts are compatible 
+        if len(self.rotating_frame_energies) != self.size:
+            raise IonSimError(f"Rotating_frame_energies has {len(self.rotating_frame_energies)} entries, but the basis has {self.size} states.")
+
+        # Check Lindblad operators share the same basis  
+        frame = np.asarray(self.rotating_frame_energies, dtype=float)
+        for index, entry in enumerate(self.operators):
+            if isinstance(entry, Operator):
+                # Check basis matching 
+                if not self.basis.has_same_dofs(entry.basis): 
+                    raise IonSimError(f"Lindblad operator {index} ({type(entry).__name__}) does not live in the dissipator's basis.")
+            elif isinstance(entry, MultiOperator):
+                if entry.size != self.size:
+                    raise IonSimError(f"Lindblad operator {index} ({type(entry).__name__}) has size {entry.size}, expected {self.size}.")
+                if entry.sparse != self.sparse:
+                    raise IonSimError(f"Lindblad operator {index} has sparse={entry.sparse}, but the dissipator has sparse={self.sparse}.")
+                if not np.allclose(np.asarray(entry.rotating_frame_energies, dtype=float), frame, rtol=NUMERICAL_EQUIVALENCE_THRESHOLD, atol=0.):
+                    raise IonSimError(f"Lindblad operator {index} ({type(entry).__name__}) uses a different rotating frame than "
+                                      f"the dissipator; all Lindblad operators of a dissipator must share its frame.")
+            else:
+                raise IonSimError(f"Lindblad operator {index} must be an Operator or a MultiOperator, got {type(entry).__name__}.")
+
+    @property
+    def size(self):
+        return len(self.basis.states)
+
+
+    @cached_property
+    def lindblad_operators(self) -> list[MultiOperator]:
+        """ The Lindblad operators as MultiOperator (composites): MultiOperator entries unchanged, each plain Operator wrapped as a
+            single-term MultiOperator in the dissipator's frame. 
+        """
+        return [entry if isinstance(entry, MultiOperator) else to_MultiOperator(entry, self.rotating_frame_energies, self.sparse)
+                #else MultiOperator(self.basis, [entry], self.rotating_frame_energies, self.sparse)
+                for entry in self.operators]
 
     @staticmethod
     def lindblad_matrix_to_superoperator(L_matrix: AnyMatrix) -> AnyMatrix:
@@ -65,50 +110,15 @@ class Dissipator(CompositeOperator):
     @cached_property
     def lindblad_matrix_functions(self) -> list[Callable]:
         """Creates and stores a list of callables that return (N x N) matrices as a function of time. 
-            Each callable corresponds to a lindblad operator in the interaction picture, which may contain time-dependence as a result of frame shifting. 
+            Each callable corresponds to a lindblad operator in the interaction picture, which may contain time-dependence
+            as a result of frame shifting and modulation functions. 
 
-            Defines and returns a list of callables as a function of time"""
+            Defines and returns a list of callables as a function of time
+        """
+        return [lindblad_operator.get_matrix for lindblad_operator in self.lindblad_operators]
 
-        lindblad_functions = []
-
-        for lindblad_op in self.operators:
-            lindblad_functions.append(self.create_lindblad_matrix_function(lindblad_op))
-
-        return lindblad_functions
-
-    def create_lindblad_matrix_function(self, lindblad_operator: Operator) -> Callable:
-        """Converts a lindblad Operator object to a callable that returns a matrix at a given time point"""
-
-        def _lindblad_function(t: float) -> AnyMatrix:
-            if self.sparse:
-                L_matrix = csr_matrix(([0], ([0], [0])), shape=(self.size, self.size), dtype='complex') 
-            else:
-                L_matrix = np.zeros((self.size, self.size), dtype=complex) 
-            
-            # Static, diagonal contribution 
-            if isinstance(lindblad_operator, GeneralOperator):
-                if lindblad_operator.energy_shift_operator_contribution:
-                    L_matrix += lindblad_operator.energy_shift_operator_contribution.static_matrix
-            elif isinstance(lindblad_operator, EnergyShiftOperator):
-                L_matrix += lindblad_operator.static_matrix
-
-            if isinstance(lindblad_operator, CouplingOperator) or isinstance(lindblad_operator, GeneralOperator):
-                # Must account for frame shifts in coupling operators 
-                L_int, Rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(lindblad_operator) 
-    
-                # Element-wise multiplication, compute L * exp(-1j * Rate * t)
-                if self.sparse: 
-                    phase_factor_minus_one = Rate.multiply(-1j*t).expm1() # equivalent to exp(-1j * Rate * t) - 1
-                    Ltemp = L_int + L_int.multiply(phase_factor_minus_one) # necessary to cancel out the -1 contribution above 
-                    L_matrix += Ltemp 
-                else:
-                    L_matrix += (L_int.toarray() * np.exp(-1j * Rate.toarray() * t))
-            return L_matrix
-
-        return _lindblad_function
-            
     @cached_property
-    def dissipator_matrix_function(self) -> Callable:
+    def build_superoperator_matrix_function(self) -> Callable:
         """Creates N^2 x N^2 matrix representation of each Lindblad operator's action on a N^2 x 1 superoperator (y) from NxN density matrix (rho): 
                 Dissipator acting on supervector from Lindblad operator i (L_i): d_i(t)y <==> L_i(t) rho L†_i(t) - 1/2 { L†_i(t) L_i(t) , rho }  
 
@@ -126,6 +136,10 @@ class Dissipator(CompositeOperator):
             return d_matrix
 
         return _dissipator_matrix_function 
+
+    def get_matrix(self, t: float):
+        """ Gets matrix form of dissipator at time t. """ 
+        return self.build_superoperator_matrix_function(t)
 
 
 @dataclass(frozen=True, eq=False)
@@ -334,6 +348,10 @@ class Lindbladian:
             # Check if Hamiltonian and Dissipator have the same sparse setting.  
             if self.hamiltonian.sparse != self.dissipator.sparse: 
                 raise IonSimError('Input error: Both Hamiltonian and Dissipator should have the same setting for sparse variable. e.g. Set sparse = True when constructing the Hamiltonian and Dissipator objects.')
+            # Check if Hamiltonian and Dissipator have the same basis
+            if not (self.hamiltonian.basis).has_same_dofs(self.dissipator.basis): 
+                raise IonSimError('Both Hamiltonian and Dissipator should have the same basis. Input bases contain different degrees of freedom.')
+
         if self.hamiltonian is None and self.dissipator is None:
             raise IonSimError('Input error: Both Hamiltonian and Dissipator inputs are None')
 
@@ -348,24 +366,28 @@ class Lindbladian:
             return self.dissipator.size**2
 
     @cached_property
-    def matrix_function(self) -> Callable:
+    def build_matrix_function(self) -> Callable:
         """ Lindbladian matrix function L(t), corresponding to an N^2 x N^2 superoperator at time t. """
         if self.hamiltonian:
             super_ham = lambda t: -1j*(
-                  matrix_AYB_multiply_to_superoperator(A = self.hamiltonian.hamiltonian_function(t), B = None) 
-                - matrix_AYB_multiply_to_superoperator(A = None, B = self.hamiltonian.hamiltonian_function(t))
+                  matrix_AYB_multiply_to_superoperator(A = self.hamiltonian.get_matrix(t), B = None) 
+                - matrix_AYB_multiply_to_superoperator(A = None, B = (self.hamiltonian.get_matrix(t)).conj().T)
                 )
         else:
             super_ham = lambda t: 0. 
 
         if self.dissipator:
-            super_dissipator = self.dissipator.dissipator_matrix_function
+            super_dissipator = self.dissipator.get_matrix
         else:
             super_dissipator = lambda t: 0. 
 
         # Lindbladian superoperator from hamiltonian and dissipation contributions: 
         lindbladian_function = lambda t: super_ham(t) + super_dissipator(t)
         return lindbladian_function
+    
+    def get_matrix(self, t):
+        """ Build Lindbladian matrix at time t. """
+        return self.build_matrix_function(t)
 
     def evolve_supervector(self, initial_supervector: Vector, duration: float, time_evals: Vector | None = None, **kwargs):
         """ Evolve a supervector by solving the time-dependent Lindblad master equation.
@@ -374,5 +396,5 @@ class Lindbladian:
         # solve_time_evolution_equation() assumes a Schrodinger equation form dy/dt = (-i*A)y, where i = sqrt(-1) and A <==> the function input, e.g. a Hamiltonian matrix. 
         # Therfore, we must compensate this form by multiplying the lindbladian by i 
         assert(self.size == len(initial_supervector))
-        dynamical_matrix = lambda t: self.matrix_function(t) * 1j
+        dynamical_matrix = lambda t: self.get_matrix(t) * 1j
         return solve_time_evolution_equation(dynamical_matrix, initial_supervector, duration, time_evals, **kwargs)
