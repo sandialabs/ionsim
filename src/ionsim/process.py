@@ -27,7 +27,7 @@ from ionsim.ionsim_error import IonSimError
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.lindbladian import Lindbladian 
 from ionsim.state import State
-from ionsim.operator import Operator
+from ionsim.operators import Operator
 from ionsim.ionsim_error import IonSimError
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
@@ -94,7 +94,7 @@ class Gate(Process):
     @classmethod
     def from_hamiltonian_function(cls, basis: StandardBasis, hamiltonian_function: Callable, duration: float,  
             parameters: dict[str, float], target_dofs: list[DegreeOfFreedom], noise: Noise | None = None):
-        """ Build a gate from a hamiltonian function and its arguments."""
+        """ Build a gate from a function that returns a Hamiltonian object and its arguments."""
         parameter_names = list(parameters.keys())
 
         @wraps(hamiltonian_function)
@@ -245,13 +245,13 @@ class Gate(Process):
         # Use general t-dependent, non-commutating Lindbladian method unless user specifies otherwise 
         if lindbladian_time_independent:
             # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
-            process_matrix = scipy.linalg.expm(lindbladian.matrix_function(0) * duration)
+            process_matrix = scipy.linalg.expm(lindbladian.get_matrix(0.) * duration)
             if projection:
                process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
 
         elif lindbladian_commutes_at_later_times:
             # Lindbladian is time dependent but commutes with itself at later times: Integrate the lindbladian matrix forward in time from t = 0 to t = duration            
-            L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
+            L_integral, err = quad_vec(lindbladian.get_matrix, 0., duration)
             process_matrix = scipy.linalg.expm(L_integral)
             if projection:
                 process_matrix = basis.project_superoperator(process_matrix, computational_indices) 

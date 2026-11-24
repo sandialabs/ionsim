@@ -21,7 +21,9 @@ from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.ionsim_error import IonSimError
 from ionsim.lindbladian import Dissipator, DissipatorSpontaneousEmission, Lindbladian
-from ionsim.operator import Coupling, CouplingOperator, EnergyShift, EnergyShiftOperator, GeneralOperator
+from ionsim.multi_operator import MultiOperator
+from ionsim.named_operators import Pauli
+from ionsim.operators import Coupling, CouplingOperator, EnergyShift, EnergyShiftOperator, GeneralOperator, adjoint
 from ionsim.process import Gate
 from ionsim.state import State
 
@@ -117,16 +119,21 @@ class TestDensityMatrixEvolution(unittest.TestCase):
         self.compare(Lindbladian(hamiltonian, dissipator), basis, rho0)
 
     def test_operator_classification(self):
-        """ Single-rate Lindblad operators are precomputed as static; operators mixing rates in the frame are not. """
+        """ Unmodulated single-rate Lindblad operators form one group (precomputed as static); operators mixing rates in
+            the frame have several groups. """
         _, hamiltonian, dissipator = build_model()
         parts = dissipator.lindblad_operator_parts
-        self.assertTrue(all(p.common_rate is not None for p in parts[:-2]))  # emission paths
-        self.assertIsNone(parts[-2].common_rate)                             # GeneralOperator with several rates
-        self.assertEqual(parts[-1].common_rate, 0.)                          # diagonal dephasing
-        # the cached parts reproduce the Lindblad matrix functions at any time
+        self.assertTrue(all(p.is_single_group and p.groups[0][0] is None for p in parts[:-2]))  # emission paths
+        self.assertEqual(len(parts[-2].groups), 2)  # GeneralOperator: diagonal element (rate 0) and couplings (2 MHz)
+        self.assertTrue(parts[-1].is_single_group)  # diagonal dephasing
+        self.assertEqual(parts[-1].groups[0][1], 0.)
+        # The cached parts reproduce the Lindblad matrix functions at any time. Elements whose rates are equal up to
+        # floating-point rounding (e.g. the decay paths |S, n><P, n| for every n: E_P - E_S from frame energies ~5e15 rad/s,
+        # equal to ~1 rad/s) share one group and one rate, so their optical phases (~1e9 rad here) agree with the per-element
+        # reference to ~(1 rad/s) t, not to machine precision.
         for t in (0., 1.7e-7):
             for p, L_of_t in zip(parts, dissipator.lindblad_matrix_functions):
-                np.testing.assert_allclose(p.matrix(t), L_of_t(t))
+                np.testing.assert_allclose(p.matrix(t), L_of_t(t), rtol=1e-5)
 
     def test_state_propagation_representations(self):
         basis, hamiltonian, dissipator = build_model(levels=SMALL_LEVELS, fock_dimension=2)
@@ -151,7 +158,8 @@ class TestDensityMatrixEvolution(unittest.TestCase):
 
 
 class TestPrecomputedSuperoperators(unittest.TestCase):
-    """ The dissipator superoperator is precomputed as S_0 + sum_w S_w e^{-iwt}, and the Lindbladian evaluates H(t) once. """
+    """ The dissipator superoperator is precomputed as S_0 + sum_c S_c f_a(t) conj(f_b(t)) e^{-i w_c t}, and the Lindbladian
+        evaluates H(t) once. """
 
     TIMES = (0., 3.7e-8, 1.9e-7, 4.4e-7)
 
@@ -164,7 +172,7 @@ class TestPrecomputedSuperoperators(unittest.TestCase):
             for t in self.TIMES:
                 with self.subTest(sparse=sparse, t=t):
                     reference = sum(Dissipator.lindblad_matrix_to_superoperator(L(t)) for L in dissipator.lindblad_matrix_functions)
-                    D = dissipator.dissipator_matrix_function(t)
+                    D = dissipator.get_matrix(t)
                     self.assertEqual(issparse(D), sparse)
                     reference = reference.toarray() if issparse(reference) else reference
                     D = D.toarray() if issparse(D) else D
@@ -175,19 +183,19 @@ class TestPrecomputedSuperoperators(unittest.TestCase):
         single_rate = Dissipator(basis, dissipator.operators[:-2] + dissipator.operators[-1:], dissipator.rotating_frame_energies)
         static, oscillating = single_rate.dissipator_superoperator_components
         self.assertEqual(oscillating, [])
-        np.testing.assert_allclose(single_rate.dissipator_matrix_function(2.3e-7), static)
+        np.testing.assert_allclose(single_rate.get_matrix(2.3e-7), static)
 
     def test_no_construction_per_evaluation(self):
         """ After the first evaluation, evaluating the Lindbladian builds no superoperators and evaluates H(t) once. """
         basis, hamiltonian, dissipator = build_model()
         lindbladian = Lindbladian(hamiltonian, dissipator)
-        lindbladian.matrix_function(0.)
+        lindbladian.get_matrix(0.)
         calls = {'pair': 0, 'H': 0}
-        hamiltonian_function = hamiltonian.hamiltonian_function
+        original_get_matrix = Hamiltonian.get_matrix
 
-        def counted_hamiltonian(t):
+        def counted_hamiltonian(self, t):
             calls['H'] += 1
-            return hamiltonian_function(t)
+            return original_get_matrix(self, t)
 
         original_pair = Dissipator.lindblad_pair_to_superoperator
 
@@ -196,12 +204,103 @@ class TestPrecomputedSuperoperators(unittest.TestCase):
             return original_pair(*args)
 
         fresh = Lindbladian(hamiltonian, dissipator)
-        with mock.patch.dict(hamiltonian.__dict__, {'hamiltonian_function': counted_hamiltonian}), \
+        with mock.patch.object(Hamiltonian, 'get_matrix', counted_hamiltonian), \
              mock.patch.object(Dissipator, 'lindblad_pair_to_superoperator', staticmethod(counted_pair)):
             for t in self.TIMES:
-                fresh.matrix_function(t)
+                fresh.get_matrix(t)
         self.assertEqual(calls['pair'], 0)
         self.assertEqual(calls['H'], len(self.TIMES))
+
+
+def build_modulated_model(sparse: bool = False):
+    """ 171Yb+ clock qubit in its interaction frame, with modulated Lindblad operators (MultiOperator, from branch 58):
+            L1 = sqrt(kappa) (C + C^dagger), C a resonant drive with amplitude and phase modulation f(t) (two groups:
+                 C with f, adjoint(C) with conj(f), so time-dependent),
+            L2 = sqrt(gamma) g(t) |0><1| (one group, modulated; its 12.6 GHz frame phase cancels in the dissipator),
+            L3 = sqrt(gamma_phi) h(t) Z (diagonal, one modulated group).
+        The Hamiltonian is the drive C + C^dagger. """
+    qubit = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+    basis = StandardBasis([qubit])
+    frame = [-state.energy for state in basis.states]
+    qubit_frequency = qubit.energy_levels[1].energy - qubit.energy_levels[0].energy
+    rabi = TPI * 1e6
+
+    def f(t):
+        return (1. + 0.3 * np.sin(TPI * 0.5e6 * t)) * np.exp(1j * 0.7 * np.sin(TPI * 0.8e6 * t))
+
+    C = CouplingOperator.from_matrix(basis, 0.5 * rabi * basis.enlarge_matrix(Pauli.plus, [qubit]), qubit_frequency, modulation_function=f)
+    hamiltonian = Hamiltonian(basis, [C, adjoint(C)], frame, sparse)
+    L1 = MultiOperator(basis, [C, adjoint(C)], frame, sparse, prefactor=np.sqrt(0.05 / rabi))
+    L2 = CouplingOperator.from_matrix(basis, np.sqrt(TPI * 0.1e6) * basis.enlarge_matrix(Pauli.minus, [qubit]), 0.,
+                                      modulation_function=lambda t: 0.5 + 0.5 * np.cos(TPI * 0.3e6 * t))
+    L3 = EnergyShiftOperator.from_matrix(basis, np.sqrt(TPI * 0.05e6) * basis.enlarge_matrix(Pauli.Z, [qubit]),
+                                         modulation_function=lambda t: np.sin(TPI * 0.2e6 * t))
+    return basis, hamiltonian, Dissipator(basis, [L1, L2, L3], frame, sparse)
+
+
+class TestModulatedLindbladOperators(unittest.TestCase):
+    """ Modulation functions and prefactors of Lindblad operators (MultiOperator) in both precomputed paths. """
+
+    TIMES = (0., 1.3e-7, 4.1e-7, 9.7e-7)
+
+    def test_parts_reproduce_lindblad_operators(self):
+        for sparse in (False, True):
+            _, _, dissipator = build_modulated_model(sparse)
+            parts = dissipator.lindblad_operator_parts
+            self.assertEqual([len(p.groups) for p in parts], [2, 1, 1])
+            for t in self.TIMES:
+                for p, L_of_t in zip(parts, dissipator.lindblad_matrix_functions):
+                    with self.subTest(sparse=sparse, t=t):
+                        L, reference = p.matrix(t), L_of_t(t)
+                        L = L.toarray() if issparse(L) else L
+                        reference = reference.toarray() if issparse(reference) else reference
+                        np.testing.assert_allclose(L, reference, atol=1e-9 * np.max(np.abs(reference)) + 1e-14)
+
+    def test_superoperator_matches_per_step_construction(self):
+        for sparse in (False, True):
+            _, _, dissipator = build_modulated_model(sparse)
+            static, components = dissipator.dissipator_superoperator_components
+            self.assertGreater(len(components), 0)
+            for t in self.TIMES:
+                with self.subTest(sparse=sparse, t=t):
+                    reference = sum(Dissipator.lindblad_matrix_to_superoperator(L(t)) for L in dissipator.lindblad_matrix_functions)
+                    D = dissipator.get_matrix(t)
+                    self.assertEqual(issparse(D), sparse)
+                    reference = reference.toarray() if issparse(reference) else reference
+                    D = D.toarray() if issparse(D) else D
+                    np.testing.assert_allclose(D, reference, atol=1e-9 * np.max(np.abs(reference)))
+
+    def test_density_matrix_matches_supervector(self):
+        times = np.linspace(0., 1e-6, 5)
+        for sparse in (False, True):
+            with self.subTest(sparse=sparse):
+                basis, hamiltonian, dissipator = build_modulated_model(sparse)
+                lindbladian = Lindbladian(hamiltonian, dissipator)
+                rho0 = mixed_density_matrix(len(basis.states))
+                _, supervectors = lindbladian.evolve_supervector(basis.compute_supervector_from_density_matrix(rho0), times[-1], times, **ACCURATE)
+                _, rhos = lindbladian.evolve_density_matrix(rho0, times[-1], times, **ACCURATE)
+                for supervector, rho in zip(supervectors, rhos):
+                    np.testing.assert_allclose(rho, basis.compute_density_matrix_from_supervector(supervector), atol=1e-8)
+                self.assertGreater(np.max(np.abs(rhos[-1] - rhos[0])), 1e-2)
+
+
+class TestGateTimeIndependentPaths(unittest.TestCase):
+    """ Gate.from_lindbladian's lindbladian_time_independent and lindbladian_commutes_at_later_times paths use
+        Lindbladian.get_matrix (they called the removed Lindbladian.matrix_function). """
+
+    def test_time_independent_paths_match_ode(self):
+        qubit = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        basis = StandardBasis([qubit])
+        frame = [-state.energy for state in basis.states]
+        qubit_frequency = qubit.energy_levels[1].energy - qubit.energy_levels[0].energy
+        C = CouplingOperator.from_matrix(basis, 0.5 * TPI * 1e6 * basis.enlarge_matrix(Pauli.plus, [qubit]), qubit_frequency)
+        decay = CouplingOperator.from_matrix(basis, np.sqrt(TPI * 0.1e6) * basis.enlarge_matrix(Pauli.minus, [qubit]), 0.)
+        lindbladian = Lindbladian(Hamiltonian(basis, [C, adjoint(C)], frame), Dissipator(basis, [decay], frame))
+        reference = Gate.from_lindbladian(basis, lindbladian, 0.4e-6, **ACCURATE).process_matrix
+        for option in ('lindbladian_time_independent', 'lindbladian_commutes_at_later_times'):
+            with self.subTest(option=option):
+                gate = Gate.from_lindbladian(basis, lindbladian, 0.4e-6, **{option: True})
+                np.testing.assert_allclose(gate.process_matrix, reference, atol=1e-7)
 
 
 class TestSolverLayer(unittest.TestCase):
