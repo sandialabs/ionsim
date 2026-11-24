@@ -25,8 +25,6 @@ from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, SinkL
 from ionsim.atomic_internal_energy_level import compute_multipole_amplitude
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
 
-REPRESENTATIONS = ('supervector', 'density_matrix')
-
 
 @dataclass(frozen=True, eq=False)
 class LindbladOperatorParts:
@@ -116,7 +114,7 @@ def _rate_tolerance(rates: list[float], rotating_frame_energies: list[float]) ->
         the (possibly much smaller) rate. """
     rate_scale = max([1.] + [abs(rate) for rate in rates])
     frame_scale = max([0.] + [abs(energy) for energy in rotating_frame_energies])
-    return max(1e-12 * rate_scale, 64. * np.finfo(float).eps * frame_scale)
+    return max(NUMERICAL_EQUIVALENCE_THRESHOLD * rate_scale, 64. * np.finfo(float).eps * frame_scale)
 
 
 class SuperoperatorComponent(NamedTuple):
