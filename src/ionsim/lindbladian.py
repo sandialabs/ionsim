@@ -181,7 +181,6 @@ class Dissipator:
             single-term MultiOperator in the dissipator's frame. 
         """
         return [entry if isinstance(entry, MultiOperator) else to_MultiOperator(entry, self.rotating_frame_energies, self.sparse)
-                #else MultiOperator(self.basis, [entry], self.rotating_frame_energies, self.sparse)
                 for entry in self.operators]
 
     @staticmethod
@@ -309,10 +308,6 @@ class Dissipator:
                                                                 modulation_a, modulation_b))
         static = static.tocsr() if self.sparse else static.toarray()
         return static, coordinate_components
-
-    def get_matrix(self, t: float):
-        """ Gets matrix form of dissipator at time t. """ 
-        return self.build_superoperator_matrix_function(t)
 
     def get_matrix(self, t: float):
         """ Gets matrix form of dissipator at time t. """ 
