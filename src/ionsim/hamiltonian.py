@@ -117,6 +117,13 @@ class Hamiltonian(MultiOperator):
 
         return H0, H0_shifts, Hints, rates 
 
+    @property
+    def rate_groups(self):
+        """ Not defined for a Hamiltonian: MultiOperator.rate_groups describes the operator sum as stored, but a Hamiltonian's
+            matrix (build_matrix_function) adds the Hermitian conjugate of its couplings and the frame energies H0. """
+        raise IonSimError("rate_groups describes a MultiOperator's operator sum as stored; a Hamiltonian's matrix adds the "
+                          "Hermitian conjugate of its couplings and H0, so it is not that sum. Use get_matrix(t).")
+
     @cached_property
     def build_matrix_function(self) -> Callable: 
         """A function that computes the Hamiltonian at a specified time."""

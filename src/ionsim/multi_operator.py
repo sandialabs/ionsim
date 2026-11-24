@@ -11,13 +11,29 @@ import numpy as np
 from dataclasses import dataclass
 from scipy.sparse import csr_matrix
 from functools import cached_property
-from typing import Callable
+from typing import Callable, NamedTuple
 
 from ionsim.basis import StandardBasis
 from ionsim.operators import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator
 from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix
 from ionsim.ionsim_error import IonSimError
-from ionsim.config import SMALLEST_ENERGY_SCALE
+from ionsim.config import SMALLEST_ENERGY_SCALE, NUMERICAL_EQUIVALENCE_THRESHOLD
+
+class RateGroup(NamedTuple):
+    """ One term f_g(t) e^{-i r_g t} A_g of a MultiOperator's rate-group decomposition (see MultiOperator.rate_groups). """
+    modulation_function: Callable | None
+    rate: float
+    matrix: csr_matrix
+
+
+def _rate_tolerance(rates: list[float], rotating_frame_energies: list[float]) -> float:
+    """ Tolerance for treating two frame-shifted rates as equal. A rate is oscillation_rate + E_row - E_column with frame
+        energies E that can be optical (~1e15 rad/s), so its floating-point error scales with the frame energies, not with
+        the (possibly much smaller) rate. """
+    rate_scale = max([1.] + [abs(rate) for rate in rates])
+    frame_scale = max([0.] + [abs(energy) for energy in rotating_frame_energies])
+    return max(NUMERICAL_EQUIVALENCE_THRESHOLD * rate_scale, 64. * np.finfo(float).eps * frame_scale)
+
 
 @dataclass(frozen=True, eq=False)
 class MultiOperator():
@@ -96,7 +112,7 @@ class MultiOperator():
                 continue
             try:
                 row, column = self.basis.state_indices[coupling.row_state], self.basis.state_indices[coupling.column_state]
-            except KeyError:
+            except KeyError as exc:
                 msg = []
                 if coupling.row_state not in self.basis.state_indices:
                     msg.append(f"{coupling.row_state=}")
@@ -117,16 +133,22 @@ class MultiOperator():
         rate_matrix = csr_matrix((np.array(rates, dtype=float), (rows, columns)), shape=shape)
         return coupling_matrix, rate_matrix 
 
-    # ---- Evaluation of the operator sum as stored ----
+    # ---- Rate-group decomposition and evaluation of the operator sum as stored ----
     @cached_property
-    def build_matrix_function(self) -> Callable:
-        """ Function of time returning (dense or sparse) matrix as an operator sum: sum_k O_k(t), the operators of this composite in its rotating frame. 
+    def rate_groups(self) -> tuple[RateGroup, ...]:
+        """ The operator sum regrouped by modulation function and frame-shifted rate:
 
-            Every operator is used as stored, (with no Hermitian conjugate added; pass C and adjoint(C) directly to construct Hermitian operator). 
-                energy shifts: static diagonal * f(t).
-                couplings: C * exp(-1j rate t) * f(t).
+                sum_k O_k(t) = sum_g f_g(t) e^{-i r_g t} A_g   (get_matrix(t) multiplies this by the prefactor)
+
+            Every nonzero element e = (part k, row i, column j) has a value, the part's modulation function f_k (None means
+            f = 1) and a frame-shifted rate r = oscillation_rate_k + E_i - E_j (0 for diagonal elements), with E the
+            rotating_frame_energies. A rate group is the set of elements with the same modulation function (the same
+            callable object) and the same rate (equal up to floating-point rounding, see _rate_tolerance); A_g is the
+            static (sparse) matrix of its elements. This is the smallest decomposition into static matrices that each
+            multiply a single scalar function of time. One operator can split into several groups (elements at different
+            frame-energy differences), and elements of several operators can share a group.
         """
-        diagonal_terms, coupling_terms = [], []   # (matrix, f), (matrix, rate, f)
+        elements = []  # (modulation function, rate, row, column, value)
         for operator in self.operators:
             parts = [operator]
             if isinstance(operator, GeneralOperator):
@@ -134,32 +156,81 @@ class MultiOperator():
                                            operator.coupling_operator_contribution if operator.couplings else None) if part is not None]
             for part in parts:
                 if isinstance(part, EnergyShiftOperator):
-                    diagonal_terms.append((csr_matrix(part.static_matrix, dtype=complex), part.modulation_function))
+                    matrix = csr_matrix(part.static_matrix, dtype=complex).tocoo()
+                    elements.extend((part.modulation_function, 0., row, column, value)
+                                    for row, column, value in zip(matrix.row, matrix.col, matrix.data))
                 elif isinstance(part, CouplingOperator):
                     matrix, rate = self._frame_shifted_coupling_matrix_and_rate_from_operator(part)
-                    coupling_terms.append((csr_matrix(matrix, dtype=complex), csr_matrix(rate), part.modulation_function))
+                    matrix, rate = csr_matrix(matrix, dtype=complex).tocoo(), csr_matrix(rate)
+                    elements.extend((part.modulation_function, float(rate[row, column]), row, column, value)
+                                    for row, column, value in zip(matrix.row, matrix.col, matrix.data))
                 else:
                     raise IonSimError(f"Unsupported operator type {type(part).__name__} in {type(self).__name__}.")
 
-        if not self.sparse:
-            diagonal_terms = [(matrix.toarray(), f) for matrix, f in diagonal_terms]
-            coupling_terms = [(matrix.toarray(), rate.toarray(), f) for matrix, rate, f in coupling_terms]
+        tolerance = _rate_tolerance([element[1] for element in elements], self.rotating_frame_energies)
+        groups = []  # [modulation function, rate, rows, columns, values]
+        for modulation, rate, row, column, value in elements:
+            if value == 0:
+                continue
+            for group in groups:
+                if group[0] is modulation and abs(group[1] - rate) <= tolerance:
+                    group[2].append(row); group[3].append(column); group[4].append(value)
+                    break
+            else:
+                groups.append([modulation, rate, [row], [column], [value]])
+        shape = (self.size, self.size)
+        return tuple(RateGroup(modulation, rate, csr_matrix((values, (rows, columns)), shape=shape, dtype=complex))
+                     for modulation, rate, rows, columns, values in groups)
+
+    def group_time_factors(self, t: float) -> list[complex]:
+        """ f_g(t) e^{-i r_g t} for every rate group (each modulation function is evaluated once). """
+        values = {}
+        factors = []
+        for group in self.rate_groups:
+            f = group.modulation_function
+            if f is None:
+                value = 1.
+            else:
+                if id(f) not in values:
+                    values[id(f)] = f(t)
+                value = values[id(f)]
+            factors.append(value * np.exp(-1j * group.rate * t))
+        return factors
+
+    def group_coefficients(self, t: float) -> list[complex]:
+        """ prefactor f_g(t) e^{-i r_g t} for every rate group: get_matrix(t) = sum_g coefficient_g A_g. """
+        return [self.prefactor * factor for factor in self.group_time_factors(t)]
+
+    @cached_property
+    def build_matrix_function(self) -> Callable:
+        """ Function of time returning (dense or sparse) matrix as an operator sum: sum_k O_k(t), the operators of this composite
+            in its rotating frame, evaluated from the rate groups as sum_g f_g(t) e^{-i r_g t} A_g (see rate_groups).
+
+            Every operator is used as stored, (with no Hermitian conjugate added; pass C and adjoint(C) directly to construct Hermitian operator).
+                energy shifts: static diagonal * f(t).
+                couplings: C * exp(-1j rate t) * f(t), with the frame-shifted rate of each element.
+            Elements whose rates are equal up to floating-point rounding share one rate, so phases at optical rates agree with
+            an element-by-element evaluation to about (rounding of the rate) * t.
+        """
+        shape = (self.size, self.size)
+        coordinates = []  # per group: (rows, columns, values) with unique (row, column)
+        for group in self.rate_groups:
+            matrix = group.matrix.tocoo()
+            matrix.sum_duplicates()
+            coordinates.append((matrix.row, matrix.col, matrix.data))
 
         def _operator_sum_function(t: float):
+            factors = self.group_time_factors(t)
             if self.sparse:
-                total = csr_matrix((self.size, self.size), dtype=complex)
-            else:
-                total = np.zeros((self.size, self.size), dtype=complex)
-            for matrix, f in diagonal_terms:
-                total = total + (matrix if f is None else matrix * f(t))
-            for matrix, rate, f in coupling_terms:
-                if self.sparse:
-                    term = matrix + matrix.multiply(rate.multiply(-1j * t).expm1())   # matrix * exp(-1j rate t), sparsity kept
-                else:
-                    term = matrix * np.exp(-1j * rate * t)
-                if f is not None:
-                    term = term * f(t)
-                total = total + term
+                if not coordinates:
+                    return csr_matrix(shape, dtype=complex)
+                rows = np.concatenate([rows for rows, _, _ in coordinates])
+                columns = np.concatenate([columns for _, columns, _ in coordinates])
+                data = np.concatenate([values * factor for (_, _, values), factor in zip(coordinates, factors)])
+                return csr_matrix((data, (rows, columns)), shape=shape, dtype=complex)
+            total = np.zeros(shape, dtype=complex)
+            for (rows, columns, values), factor in zip(coordinates, factors):
+                total[rows, columns] += values * factor
             return total
 
         return _operator_sum_function

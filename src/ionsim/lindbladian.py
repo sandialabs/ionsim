@@ -19,102 +19,11 @@ from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix
 from ionsim.custom_math import matrix_AYB_multiply_to_superoperator, solve_time_evolution_equation, solve_ode
 from ionsim.operators import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator 
 from ionsim.ionsim_error import IonSimError
-from ionsim.multi_operator import MultiOperator, to_MultiOperator
+from ionsim.multi_operator import MultiOperator, to_MultiOperator, _rate_tolerance
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel, SinkLevel
 from ionsim.atomic_internal_energy_level import compute_multipole_amplitude
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD
-
-
-@dataclass(frozen=True, eq=False)
-class LindbladOperatorParts:
-    """ A Lindblad operator (a MultiOperator in the dissipator's frame), decomposed once into
-            L(t) = prefactor * sum_g f_g(t) e^{-i R_g t} L_g,
-        the same operator as MultiOperator.get_matrix(t).
-
-        groups: tuple of (f_g, R_g, L_g): the modulation function (or None), the frame-shifted rate and a static sparse
-            matrix. Elements are grouped by (modulation function, floating-point equal rate); diagonal (energy-shift)
-            elements have rate 0. A Lindblad operator built from one coupling, e.g. one decay path, has a single group.
-    """
-    size: int
-    groups: tuple
-    prefactor: complex = 1.
-    sparse: bool = False
-
-    @classmethod
-    def from_multi_operator(cls, operator: MultiOperator) -> 'LindbladOperatorParts':
-        """ Decompose a MultiOperator, using its parts exactly as MultiOperator.build_matrix_function does. """
-        size = operator.size
-        elements = []  # (modulation function, rate, row, column, value)
-        for entry in operator.operators:
-            parts = [entry]
-            if isinstance(entry, GeneralOperator):
-                parts = [part for part in (entry.energy_shift_operator_contribution if entry.energy_shifts else None,
-                                           entry.coupling_operator_contribution if entry.couplings else None) if part is not None]
-            for part in parts:
-                if isinstance(part, EnergyShiftOperator):
-                    matrix = csr_matrix(part.static_matrix, dtype=complex).tocoo()
-                    elements.extend((part.modulation_function, 0., row, column, value)
-                                    for row, column, value in zip(matrix.row, matrix.col, matrix.data))
-                elif isinstance(part, CouplingOperator):
-                    matrix, rate = operator._frame_shifted_coupling_matrix_and_rate_from_operator(part)
-                    matrix, rate = csr_matrix(matrix, dtype=complex).tocoo(), csr_matrix(rate)
-                    elements.extend((part.modulation_function, float(rate[row, column]), row, column, value)
-                                    for row, column, value in zip(matrix.row, matrix.col, matrix.data))
-                else:
-                    raise IonSimError(f"Unsupported operator type {type(part).__name__} in a Lindblad operator.")
-
-        tolerance = _rate_tolerance([element[1] for element in elements], operator.rotating_frame_energies)
-        groups = []  # [modulation function, rate, rows, columns, values]
-        for modulation, rate, row, column, value in elements:
-            if value == 0:
-                continue
-            for group in groups:
-                if group[0] is modulation and abs(group[1] - rate) <= tolerance:
-                    group[2].append(row); group[3].append(column); group[4].append(value)
-                    break
-            else:
-                groups.append([modulation, rate, [row], [column], [value]])
-        return cls(size, tuple((modulation, rate, csr_matrix((values, (rows, columns)), shape=(size, size), dtype=complex))
-                               for modulation, rate, rows, columns, values in groups),
-                   complex(operator.prefactor), operator.sparse)
-
-    def coefficients(self, t: float) -> list[complex]:
-        """ prefactor * f_g(t) e^{-i R_g t} for every group. """
-        return [self.prefactor * (1. if modulation is None else modulation(t)) * np.exp(-1j * rate * t)
-                for modulation, rate, _ in self.groups]
-
-    @cached_property
-    def _dense_group_matrices(self) -> list[np.ndarray]:
-        return [matrix.toarray() for _, _, matrix in self.groups]
-
-    def matrix(self, t: float) -> AnyMatrix:
-        """ L(t) as an N x N matrix (sparse if self.sparse). """
-        coefficients = self.coefficients(t)
-        if self.sparse:
-            L = csr_matrix((self.size, self.size), dtype=complex)
-            for coefficient, (_, _, matrix) in zip(coefficients, self.groups):
-                L = L + coefficient * matrix
-            return L
-        L = np.zeros((self.size, self.size), dtype=complex)
-        for coefficient, matrix in zip(coefficients, self._dense_group_matrices):
-            L += coefficient * matrix
-        return L
-
-    @property
-    def is_single_group(self) -> bool:
-        """ True if L(t) = c(t) L_0 with one scalar coefficient c(t): the dissipator of L is |c(t)|^2 times that of L_0, so
-            it is static when c(t) is a pure phase (no modulation function) and scales with |prefactor f(t)|^2 otherwise. """
-        return len(self.groups) == 1
-
-
-def _rate_tolerance(rates: list[float], rotating_frame_energies: list[float]) -> float:
-    """ Tolerance for treating two frame-shifted rates as equal. A rate is oscillation_rate + E_row - E_column with frame
-        energies E that can be optical (~1e15 rad/s), so its floating-point error scales with the frame energies, not with
-        the (possibly much smaller) rate. """
-    rate_scale = max([1.] + [abs(rate) for rate in rates])
-    frame_scale = max([0.] + [abs(energy) for energy in rotating_frame_energies])
-    return max(NUMERICAL_EQUIVALENCE_THRESHOLD * rate_scale, 64. * np.finfo(float).eps * frame_scale)
 
 
 class SuperoperatorComponent(NamedTuple):
@@ -230,11 +139,6 @@ class Dissipator:
         return [lindblad_operator.get_matrix for lindblad_operator in self.lindblad_operators]
 
     @cached_property
-    def lindblad_operator_parts(self) -> list[LindbladOperatorParts]:
-        """ Every Lindblad operator decomposed once into L(t) = prefactor sum_g f_g(t) e^{-i R_g t} L_g (see LindbladOperatorParts). """
-        return [LindbladOperatorParts.from_multi_operator(operator) for operator in self.lindblad_operators]
-
-    @cached_property
     def build_superoperator_matrix_function(self) -> Callable:
         """Creates N^2 x N^2 matrix representation of each Lindblad operator's action on a N^2 x 1 superoperator (y) from NxN density matrix (rho): 
                 Dissipator acting on supervector from Lindblad operator i (L_i): d_i(t)y <==> L_i(t) rho L†_i(t) - 1/2 { L†_i(t) L_i(t) , rho }  
@@ -272,7 +176,7 @@ class Dissipator:
     def dissipator_superoperator_components(self) -> tuple:
         """ The dissipator superoperator D(t) = S_0 + sum_c S_c f_a(t) conj(f_b(t)) e^{-i w_c t}, computed once.
 
-            Each Lindblad operator L(t) = p sum_g f_g(t) e^{-i R_g t} L_g (LindbladOperatorParts) contributes
+            Each Lindblad operator L(t) = p sum_g f_g(t) e^{-i R_g t} L_g (MultiOperator.rate_groups) contributes
                 |p|^2 f_a(t) conj(f_b(t)) e^{-i (R_a - R_b) t} lindblad_pair_to_superoperator(L_a, L_b)
             for every pair (a, b) of its groups. Unmodulated pairs with equal rates (e.g. every unmodulated operator with a
             single rate, such as one decay path) give the static part S_0. The others are kept as components, one per
@@ -284,12 +188,12 @@ class Dissipator:
         n2 = self.size**2
         static = csr_matrix((n2, n2), dtype=complex)
         components = []  # [f_a, f_b, w, accumulated sparse S]
-        all_rates = [rate for parts in self.lindblad_operator_parts for _, rate, _ in parts.groups]
+        all_rates = [group.rate for operator in self.lindblad_operators for group in operator.rate_groups]
         tolerance = _rate_tolerance(all_rates, self.rotating_frame_energies)
-        for parts in self.lindblad_operator_parts:
-            weight = abs(parts.prefactor)**2
-            for modulation_a, rate_a, L_a in parts.groups:
-                for modulation_b, rate_b, L_b in parts.groups:
+        for operator in self.lindblad_operators:
+            weight = abs(operator.prefactor)**2
+            for modulation_a, rate_a, L_a in operator.rate_groups:
+                for modulation_b, rate_b, L_b in operator.rate_groups:
                     superoperator = weight * csr_matrix(self.lindblad_pair_to_superoperator(L_a, L_b), dtype=complex)
                     w = rate_a - rate_b
                     if modulation_a is None and modulation_b is None and abs(w) <= tolerance:
@@ -605,8 +509,8 @@ class Lindbladian:
     def density_matrix_right_hand_side(self) -> Callable:
         """ f(t, y) = d rho / dt for the row-major flattened density matrix y (see evolve_density_matrix).
 
-            Lindblad operators with a single group, L(t) = c(t) L_0 (LindbladOperatorParts.is_single_group, e.g. one decay
-            path), are precomputed: unmodulated ones are static (|c(t)| = |prefactor|), and modulated ones are scaled by
+            Lindblad operators with a single rate group, L(t) = c(t) L_0 (MultiOperator.rate_groups, e.g. one decay path),
+            are precomputed: unmodulated ones are static (|c(t)| = |prefactor|), and modulated ones are scaled by
             |prefactor f(t)|^2 at each time. The other operators (e.g. coherent decay channels in a rotating frame, or a
             modulated drive and its adjoint) are evaluated at each time.
         """
@@ -614,12 +518,13 @@ class Lindbladian:
         get_hamiltonian = self.hamiltonian.get_matrix if self.hamiltonian else None
         static_operators, modulated_operators, time_dependent_operators = [], [], []
         static_LdL = None
-        for parts in (self.dissipator.lindblad_operator_parts if self.dissipator else []):
-            if not parts.groups:
+        for operator in (self.dissipator.lindblad_operators if self.dissipator else []):
+            groups = operator.rate_groups
+            if not groups:
                 continue
-            if parts.is_single_group:
-                modulation, _, matrix = parts.groups[0]
-                L = parts.prefactor * (matrix if self.dissipator.sparse else matrix.toarray())
+            if len(groups) == 1:
+                modulation, _, matrix = groups[0]
+                L = operator.prefactor * (matrix if self.dissipator.sparse else matrix.toarray())
                 Ld = L.conj().T
                 if modulation is None:
                     static_operators.append((L, Ld))
@@ -627,7 +532,7 @@ class Lindbladian:
                 else:
                     modulated_operators.append((modulation, L, Ld, Ld @ L))
             else:
-                time_dependent_operators.append(parts)
+                time_dependent_operators.append(operator)
 
         def right_hand_side(t: float, y: Vector) -> Vector:
             rho = y.reshape(n, n)
@@ -643,8 +548,8 @@ class Lindbladian:
                 weight = abs(modulation(t))**2
                 drho += weight * (_right_multiply(_left_multiply(L, rho), Ld)
                                   - 0.5 * (_left_multiply(LdL, rho) + _right_multiply(rho, LdL)))
-            for parts in time_dependent_operators:
-                L = parts.matrix(t)
+            for operator in time_dependent_operators:
+                L = operator.get_matrix(t)
                 Ld = L.conj().T
                 LdL = Ld @ L
                 drho += _right_multiply(_left_multiply(L, rho), Ld) - 0.5 * (_left_multiply(LdL, rho) + _right_multiply(rho, LdL))

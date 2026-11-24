@@ -122,18 +122,12 @@ class TestDensityMatrixEvolution(unittest.TestCase):
         """ Unmodulated single-rate Lindblad operators form one group (precomputed as static); operators mixing rates in
             the frame have several groups. """
         _, hamiltonian, dissipator = build_model()
-        parts = dissipator.lindblad_operator_parts
-        self.assertTrue(all(p.is_single_group and p.groups[0][0] is None for p in parts[:-2]))  # emission paths
-        self.assertEqual(len(parts[-2].groups), 2)  # GeneralOperator: diagonal element (rate 0) and couplings (2 MHz)
-        self.assertTrue(parts[-1].is_single_group)  # diagonal dephasing
-        self.assertEqual(parts[-1].groups[0][1], 0.)
-        # The cached parts reproduce the Lindblad matrix functions at any time. Elements whose rates are equal up to
-        # floating-point rounding (e.g. the decay paths |S, n><P, n| for every n: E_P - E_S from frame energies ~5e15 rad/s,
-        # equal to ~1 rad/s) share one group and one rate, so their optical phases (~1e9 rad here) agree with the per-element
-        # reference to ~(1 rad/s) t, not to machine precision.
-        for t in (0., 1.7e-7):
-            for p, L_of_t in zip(parts, dissipator.lindblad_matrix_functions):
-                np.testing.assert_allclose(p.matrix(t), L_of_t(t), rtol=1e-5)
+        groups = [operator.rate_groups for operator in dissipator.lindblad_operators]
+        self.assertTrue(all(len(g) == 1 and g[0].modulation_function is None for g in groups[:-2]))  # emission paths
+        self.assertEqual(len(groups[-2]), 2)  # GeneralOperator: diagonal element (rate 0) and couplings (2 MHz)
+        self.assertEqual(len(groups[-1]), 1)  # diagonal dephasing
+        self.assertEqual(groups[-1][0].rate, 0.)
+        # get_matrix is evaluated from these groups; it is checked against an element-by-element evaluation in test_multi_operator.
 
     def test_state_propagation_representations(self):
         basis, hamiltonian, dissipator = build_model(levels=SMALL_LEVELS, fock_dimension=2)
@@ -239,22 +233,17 @@ def build_modulated_model(sparse: bool = False):
 
 
 class TestModulatedLindbladOperators(unittest.TestCase):
-    """ Modulation functions and prefactors of Lindblad operators (MultiOperator) in both precomputed paths. """
+    """ Modulation functions and prefactors of Lindblad operators (MultiOperator rate groups) in both precomputed paths. """
 
     TIMES = (0., 1.3e-7, 4.1e-7, 9.7e-7)
 
-    def test_parts_reproduce_lindblad_operators(self):
-        for sparse in (False, True):
-            _, _, dissipator = build_modulated_model(sparse)
-            parts = dissipator.lindblad_operator_parts
-            self.assertEqual([len(p.groups) for p in parts], [2, 1, 1])
-            for t in self.TIMES:
-                for p, L_of_t in zip(parts, dissipator.lindblad_matrix_functions):
-                    with self.subTest(sparse=sparse, t=t):
-                        L, reference = p.matrix(t), L_of_t(t)
-                        L = L.toarray() if issparse(L) else L
-                        reference = reference.toarray() if issparse(reference) else reference
-                        np.testing.assert_allclose(L, reference, atol=1e-9 * np.max(np.abs(reference)) + 1e-14)
+    def test_rate_groups(self):
+        """ L1 = sqrt(kappa) (C + adjoint(C)): two groups (f and conj(f)); L2, L3: one modulated group each. """
+        _, _, dissipator = build_modulated_model()
+        L1, L2, L3 = dissipator.lindblad_operators
+        self.assertEqual([len(L.rate_groups) for L in (L1, L2, L3)], [2, 1, 1])
+        self.assertIs(L2.rate_groups[0].modulation_function, dissipator.operators[1].modulation_function)
+        self.assertIs(L3.rate_groups[0].modulation_function, dissipator.operators[2].modulation_function)
 
     def test_superoperator_matches_per_step_construction(self):
         for sparse in (False, True):
