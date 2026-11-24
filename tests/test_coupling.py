@@ -13,7 +13,7 @@ from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.basis import StandardBasis
 from ionsim.named_operators import Pauli
-from ionsim.operator import CouplingOperator
+from ionsim.operators import CouplingOperator
 from ionsim.testing import assert_array_close
 
 class TestCouplingOperator(unittest.TestCase):

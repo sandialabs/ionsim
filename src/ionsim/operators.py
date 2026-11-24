@@ -8,10 +8,11 @@
 #***************************************************************************************************
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from scipy.sparse import csr_matrix, diags
 import numpy as np
 from typing import Callable
+import functools
 
 from ionsim.ionsim_error import IonSimError
 from ionsim.basis import StandardBasis
@@ -37,7 +38,7 @@ class OperatorElement(ABC):
     # This abstract class serves to factor common attributes from Coupling and EnergyShift 
     column_state: EnergyEigenstate # e.g. corresponds to the column index (lower state) of the non-zero element of a raising operator
     row_state: EnergyEigenstate # e.g. corresponds to the row index (upper state) of the non-zero element of a raising operator
-    strength: float
+    strength: float | complex 
 
     # TODO: review this, is this check necessary? 
     def __post_init__(self):
@@ -56,7 +57,7 @@ class Coupling(OperatorElement):
           raise IonSimError('Coupling must entail different row and column state to represent an off-diagonal element.')
 
     @classmethod
-    def from_energy_ordered_states(basis, lower_state: EnergyEigenstate, upper_state: EnergyEigenstate,
+    def from_energy_ordered_states(cls, basis, lower_state: EnergyEigenstate, upper_state: EnergyEigenstate,
                                     strength: float, rate: float):
         """ Class method to construct a coupling based on state input. 
             lower_state corresponds to an energy eigenstate that is lower in energy than upper_state. """
@@ -64,7 +65,7 @@ class Coupling(OperatorElement):
         lower_state_index = basis.states.index(lower_state)
         upper_state_index = basis.states.index(upper_state)
         if basis.states[lower_state_index].energy > basis.states[upper_state_index].energy:
-            IonSimError("Error: Lower state should be lower or equal in energy compared to upper state.")
+            raise IonSimError("Error: Lower state should be lower or equal in energy compared to upper state.")
         return cls(row_state = upper_state, column_state = lower_state, strength = strength, oscillation_rate = rate)
         
 
@@ -238,7 +239,7 @@ class EnergyShiftOperator(Operator):
         if not all(rows == cols):
             raise IonSimError('Error, cannot create Coupling (off-diagonal) element in EnergyShiftOperator class.') 
 
-        return cls.from_vector(basis, matrix.diagonal(), modulation_function)
+        return cls.from_vector(basis, matrix.diagonal(), modulation_function=modulation_function)
 
     @property
     def static_matrix(self):
@@ -251,8 +252,7 @@ class EnergyShiftOperator(Operator):
         """The vector representation of a static energy shift (diagonal) operator."""
         # Complex only if needed: Hamiltonian energy shifts are real, but diagonal Lindblad-operator elements (e.g. effective
         # Rayleigh-scattering operators) carry relative phases.
-        is_complex = any(np.iscomplexobj(shift.strength) and np.imag(shift.strength) != 0. for shift in self.energy_shifts)
-        v = np.zeros(len(self.basis.states), dtype=complex if is_complex else float)
+        v = np.zeros(len(self.basis.states), dtype=complex) 
         for energy_shift in self.energy_shifts:
             state_indx = self.basis.states.index(energy_shift.row_state)
             # Insert strength at appropriate index to match basis.states sorted order  
@@ -267,12 +267,12 @@ class CouplingOperator(Operator):
     def __post_init__(self):
         super().__post_init__()
         self._check_for_one_oscillation_rate() # should use inherited method 
+        self._check_all_elements_are_couplings()
 
     def _check_all_elements_are_couplings(self):
         # Check all elements are couplings
-        if all([isinstance(element, Coupling) for element in self.elements]):  
-            pass 
-        raise IonSimError('All elements of CouplingOperator must be Couplings.')
+        if not all([isinstance(element, Coupling) for element in self.elements]):  
+            raise IonSimError('All elements of CouplingOperator must be Couplings.')
 
     @property
     def couplings(self):
@@ -407,3 +407,35 @@ class GeneralOperator(Operator): # is there a better name? We avoid "DenseOperat
             column = self.basis.states.index(element.column_state)
             matrices.append(csr_matrix(([element.strength], ([row], [column])), shape=(size, size)))
         return np.sum(matrices)
+
+
+def _conjugate_modulation(modulation_function: Callable | None) -> Callable | None:
+    """ t -> conj(modulation_function(t)), or None if modulation_function is None. """
+    if modulation_function is None:
+        return None
+
+    @functools.wraps(modulation_function)
+    def conjugate_modulation(t: float) -> complex:
+        return np.conj(modulation_function(t))
+
+    return conjugate_modulation
+
+
+def adjoint(operator: Operator) -> Operator:
+    """ Returns the adjoint (Hermitian conjugate) O^dagger of an operator, as an operator of the same type.
+        The frame shift of element (j, i) is the negative of that of (i, j), so in any rotating frame
+        adjoint(O) evaluates to O(t)^dagger at every time t.
+    """
+    if not isinstance(operator, Operator):
+        raise IonSimError(f"adjoint: expected an Operator, got {type(operator).__name__}.")
+    adjoint_elements = []
+    for element in operator.elements:
+        if isinstance(element, Coupling):
+            adjoint_elements.append(Coupling(row_state=element.column_state, column_state=element.row_state,
+                                             strength=np.conj(element.strength), oscillation_rate=-element.oscillation_rate))
+        elif isinstance(element, EnergyShift):
+            adjoint_elements.append(EnergyShift(row_state=element.row_state, column_state=element.column_state,
+                                                strength=np.conj(element.strength)))
+        else:
+            raise IonSimError(f"adjoint: unsupported operator element type {type(element).__name__}.")
+    return replace(operator, elements=adjoint_elements, modulation_function=_conjugate_modulation(operator.modulation_function))

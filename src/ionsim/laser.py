@@ -27,7 +27,7 @@ from ionsim.custom_types import Matrix, Vector
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD, SMALLEST_ENERGY_SCALE
 from ionsim.ionsim_error import IonSimError
 from ionsim.polarization import Polarization, PolarizationInput, _unit_vector
-from ionsim.operator import Operator, CouplingOperator
+from ionsim.operators import Operator, CouplingOperator
 from ionsim.named_operators import Fock
 from ionsim.trapped_ion_mode_analysis import TrappedIonCrystal
 
@@ -771,6 +771,10 @@ class Laser:
         """ The coupling operator for the raising matrix (<excited state| . |ground state>, laser phase included) of one
             light-atom coupling in the full basis, or None if every element is below SMALLEST_ENERGY_SCALE.
 
+            The operator holds one half C of the Hermitian coupling C + C^dagger: the upper-triangle element of each
+            (|g>, |e>) pair, with its own oscillation rate and modulation function. The Hamiltonian adds C^dagger; for a
+            Lindblad operator or anything that uses the operator as stored, pass [C, adjoint(C)].
+
             counter_rotating: the raising matrix is a counter-rotating term (e^{+i omega t} on |e><g|): the oscillation
             rate of the stored element is negated and the modulation function conjugated. (The envelope A(t) e^{i phi(t)}
             enters the counter-rotating term as A(t) e^{-i phi(t)} and the frequency offset with the opposite sign, which is
@@ -800,7 +804,10 @@ class Laser:
                 co_rotating_mod = mod_function
                 def mod_function(t: float) -> complex:
                     return np.conj(co_rotating_mod(t))
-        return CouplingOperator.from_matrix(basis, raising_matrix + raising_matrix.conj().T, rate, modulation_function=mod_function)
+        # A CouplingOperator has one oscillation rate and one modulation function, so it cannot also hold the other triangle, 
+        # whose rate and modulation are the negated rate and the conjugate. 
+        stored_matrix = raising_matrix.conj().T if ground_first[0] else raising_matrix
+        return CouplingOperator.from_matrix(basis, stored_matrix, rate, modulation_function=mod_function)
 
     def _atom_coupling_operators(self, basis: Basis, atom: AtomicStructure, ground_levels: list[AtomicInternalEnergyLevel],
                                  excited_levels: list[AtomicInternalEnergyLevel], multipole_order: int, quantization_axis: Vector,

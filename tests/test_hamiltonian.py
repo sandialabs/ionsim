@@ -10,7 +10,7 @@
 import unittest
 import numpy as np
 from ionsim.basis import StandardBasis
-from ionsim.operator import CouplingOperator
+from ionsim.operators import CouplingOperator
 from ionsim.named_operators import Pauli
 from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.hamiltonian import Hamiltonian
@@ -34,9 +34,9 @@ class TestHamiltonian(unittest.TestCase):
         interaction_frame_energies = [-1 * state.energy for state in self.basis.states]
         self.hamiltonian = Hamiltonian(self.basis, [operator_a, operator_b], interaction_frame_energies, sparse=False)
 
-    def test_hamiltonian_function(self):
+    def test_hamiltonian_matrix_function(self):
         """Test the Hamiltonian function at time t=0."""
-        H0 = self.hamiltonian.hamiltonian_function(0)
+        H0 = self.hamiltonian.get_matrix(0)
         expected_shape = (self.hamiltonian.size, self.hamiltonian.size)
         self.assertEqual(H0.shape, expected_shape)
         self.assertTrue(np.all(np.isfinite(H0)))

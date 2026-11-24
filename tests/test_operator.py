@@ -13,7 +13,7 @@ import numpy as np
 from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.energy_level import EnergyEigenstate
 from ionsim.basis import StandardBasis
-from ionsim.operator import CouplingOperator, EnergyShiftOperator, GeneralOperator
+from ionsim.operators import CouplingOperator, EnergyShiftOperator, GeneralOperator
 from ionsim.testing import assert_array_close
 from ionsim.state import State
 from ionsim.hamiltonian import Hamiltonian 
