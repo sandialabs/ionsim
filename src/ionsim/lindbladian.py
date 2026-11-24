@@ -314,10 +314,6 @@ class Dissipator:
         """ Gets matrix form of dissipator at time t. """ 
         return self.build_superoperator_matrix_function(t)
 
-    def get_matrix(self, t: float):
-        """ Gets matrix form of dissipator at time t. """ 
-        return self.build_superoperator_matrix_function(t)
-
 
 @dataclass(frozen=True, eq=False)
 class DissipatorSpontaneousEmission(Dissipator):
