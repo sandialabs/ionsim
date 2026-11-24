@@ -16,7 +16,7 @@ from ionsim.degree_of_freedom import AtomicStructure
 from ionsim.basis import StandardBasis, PauliProductBasis
 from ionsim.named_operators import Unitary, Pauli
 from ionsim.noise import Noise
-from ionsim.operator import EnergyShiftOperator, CouplingOperator
+from ionsim.operators import EnergyShiftOperator, CouplingOperator
 from ionsim.hamiltonian import Hamiltonian
 from ionsim.state import State 
 from ionsim.testing import assert_array_close

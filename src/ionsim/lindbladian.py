@@ -10,16 +10,14 @@
 from dataclasses import dataclass
 import numpy as np
 from scipy.sparse import csr_matrix
-from typing import Callable
+from typing import Callable, NamedTuple
 from functools import cached_property
 
 from ionsim.basis import StandardBasis
 from ionsim.degree_of_freedom import AtomicStructure 
-from typing import NamedTuple
-
-from ionsim.operators import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator 
 from ionsim.custom_types import Vector, Matrix, SparseMatrix, AnyMatrix
 from ionsim.custom_math import matrix_AYB_multiply_to_superoperator, solve_time_evolution_equation, solve_ode
+from ionsim.operators import Operator, Coupling, EnergyShift, GeneralOperator, EnergyShiftOperator, CouplingOperator 
 from ionsim.ionsim_error import IonSimError
 from ionsim.multi_operator import MultiOperator, to_MultiOperator
 from ionsim.hamiltonian import Hamiltonian
@@ -313,6 +311,10 @@ class Dissipator:
                                                                 modulation_a, modulation_b))
         static = static.tocsr() if self.sparse else static.toarray()
         return static, coordinate_components
+
+    def get_matrix(self, t: float):
+        """ Gets matrix form of dissipator at time t. """ 
+        return self.build_superoperator_matrix_function(t)
 
     def get_matrix(self, t: float):
         """ Gets matrix form of dissipator at time t. """ 

@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from icecream import ic
 
 from ionsim.energy_level import EnergyEigenstate
-from ionsim.operator import Operator, CouplingOperator
+from ionsim.operators import Operator, CouplingOperator
 from ionsim.atomic_internal_energy_level import AtomicInternalEnergyLevel
 from ionsim.degree_of_freedom import DegreeOfFreedom, AtomicStructure, MotionalMode
 from ionsim.custom_types import Vector, Matrix
@@ -361,8 +361,9 @@ class State:
 
         """
         # Check that observable and density matrix are compatible 
-        if isinstance(observable_operator, CouplingOperator) and observable_operator.oscillation_rate != 0.:
-            raise IonSimeError(f"Observable operator must be a static operator, but oscillation rate is {observable_operator.oscillation_rate}.")
+        if isinstance(observable_operator, CouplingOperator): 
+            if observable_operator.couplings and observable_operator.couplings[0].oscillation_rate != 0.:
+                raise IonSimError(f"Observable operator must be a static operator, but oscillation rate is {observable_operator.couplings[0].oscillation_rate}.")
 
         return self.compute_matrix_observable_expectation(observable_operator.static_matrix) 
 

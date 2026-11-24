@@ -30,7 +30,6 @@ from ionsim.custom_types import Vector, Matrix
 from ionsim.named_operators import Pauli
 from ionsim.config import NUMERICAL_EQUIVALENCE_THRESHOLD, NUMERICAL_ERROR_THRESHOLD
 
-
 @dataclass(frozen=True, eq=False)
 class Basis(ABC):
     """A basis of states."""
@@ -40,6 +39,11 @@ class Basis(ABC):
     @abstractmethod
     def vectors(self):
         """Basis-state vectors."""
+
+    @property
+    def atomic_structure_DOFs(self):
+        """ Returns list of atomic structure degrees of freedom or empty list if none. """
+        return [DOF for DOF in self.degrees_of_freedom if isinstance(DOF, AtomicStructure)]
 
     @property
     def change_of_basis_matrix(self):
@@ -65,7 +69,14 @@ class Basis(ABC):
     def motional_modes(self) -> list[MotionalMode]:
         return [dof for dof in self.degrees_of_freedom if isinstance(dof, MotionalMode)]
 
-         
+    def has_same_dofs(self, other):
+        """ Check if equivalent DOFs in a different basis """ 
+        if self is other:
+            return True
+        if len(self.degrees_of_freedom) != len(other.degrees_of_freedom):
+            return False
+        return all(dof0 is dof1 for dof0, dof1 in zip(self.degrees_of_freedom, other.degrees_of_freedom))
+
     def transform_vector_to_standard_basis(self, vector: Vector):
         """Transform a vector in this basis to the standard basis."""
         return self.change_of_basis_matrix.dot(vector)
@@ -262,6 +273,11 @@ class StandardBasis(Basis):
             return MotionalMode(levels_to_keep, dof.name) 
         else:
             raise IonSimError(f"Levels to project must refer to levels from a motional mode or atomic structure DOF.")
+
+    @cached_property
+    def state_indices(self) -> dict:
+        """ Index of each basis state in the basis."""
+        return {state: index for index, state in enumerate(self.states)}
    
  
 @dataclass(frozen=True, eq=False)

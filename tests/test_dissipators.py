@@ -10,17 +10,20 @@
 import unittest
 import numpy as np
 from scipy.linalg import expm
+from scipy.integrate import solve_ivp
 from scipy.optimize import curve_fit
 from scipy.sparse import kron as skron
 
 from ionsim.zeeman_solver import ZeemanHyperfineSolver 
 from ionsim.basis import StandardBasis
-from ionsim.operator import CouplingOperator, EnergyShiftOperator, GeneralOperator
+from ionsim.operators import CouplingOperator, EnergyShiftOperator, GeneralOperator, adjoint
 from ionsim.named_operators import Pauli, Fock
 from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.hamiltonian import Hamiltonian
-from ionsim.lindbladian import Dissipator, Lindbladian
+from ionsim.lindbladian import Dissipator, Lindbladian 
+from ionsim.multi_operator import MultiOperator
 from ionsim.state import State
+from ionsim.ionsim_error import IonSimError
 
 TPI = 2*np.pi
 # Helper functions for dissipator references 
@@ -123,7 +126,8 @@ class TestDissipators(unittest.TestCase):
 
                 # Dephasing with Lindblad operator L = Z on qubit 1:                 
                 lower_qubit1 = np.sqrt(decay_rate) * case['basis'].enlarge_matrix(Pauli.minus, [case['qubits'][0]]) 
-                case['lindblad operators'] = [CouplingOperator.from_matrix(case['basis'], lower_qubit1, 0.)] 
+                case['lindblad operators'] = [CouplingOperator.from_matrix(case['basis'], lower_qubit1, 0.) ]
+
             if case['test name'] == 'Spin Flipping':
                 # Dephasing qubit 1 during Rabi flopping 
                 case['basis'] = StandardBasis([*case['qubits']])
@@ -235,6 +239,64 @@ class TestDissipators(unittest.TestCase):
                 t_decay_fit = 1./gamma_fit
     
                 self.assertAlmostEqual(t_decay_fit, test_case['characteristic time'], places=7)
+
+    def test_modulated_composite_lindblad_operator(self):
+        """ Amplitude- and phase-modulated resonant drive with white amplitude noise, Omega -> Omega (1 + xi),
+            <xi(t) xi(t')> = kappa delta(t - t'). The noise is one composite Lindblad operator sqrt(kappa) K(t) built from the
+            drive C and adjoint(C), with K(t) = (Omega/2) (f(t) |1><0| + f*(t) |0><1|) in the qubit frame. The Bloch vector from the
+            master equation is checked against a direct integration of
+                d rho/dt = -i [K, rho] + kappa (K rho K - {K^2, rho} / 2).
+        """
+        def modulation(t):
+            return (1. + 0.3 * np.sin(TPI * 50e3 * t)) * np.exp(1j * 0.7 * np.sin(TPI * 80e3 * t))
+
+        rabi_rate = TPI * 100e3
+        kappa = 2. / (rabi_rate**2 * 20e-6)   # damping time 20 µs for an unmodulated drive
+        duration = 12e-6
+        times = np.linspace(0., duration, 7)
+
+        qubit = AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+        basis = StandardBasis([qubit])
+        frame_energies = [-state.energy for state in basis.states]
+        qubit_frequency = qubit.energy_levels[1].energy - qubit.energy_levels[0].energy
+
+        # Build coupling operator for raising |g> --> |e> 
+        raising = 0.5 * rabi_rate * basis.enlarge_matrix(Pauli.plus, [qubit])
+        C = CouplingOperator.from_matrix(basis, raising, qubit_frequency, modulation_function=modulation)
+        C_dagger = adjoint(C) 
+
+        # Build Lindblad operator using drive and drive^dagger:
+        L = MultiOperator(basis, [C, C_dagger], frame_energies, prefactor=np.sqrt(kappa))
+        # Build the Lindbladian from the Hamiltonian and the Dissipator; dissipator takesin the Lindblad operator 
+        lindbladian = Lindbladian(Hamiltonian(basis, [C], frame_energies), Dissipator(basis, [L], frame_energies))
+        rho_t = State.from_coefficients(basis, [1., 0.]).propagate_using_master_equation(lindbladian, duration, times)
+
+        # Bloch-vector observables as static operators 
+        observables = [CouplingOperator.from_matrix(basis, basis.enlarge_matrix(Pauli.X, [qubit]), 0.),
+                       CouplingOperator.from_matrix(basis, basis.enlarge_matrix(Pauli.Y, [qubit]), 0.),
+                       EnergyShiftOperator.from_matrix(basis, basis.enlarge_matrix(Pauli.Z, [qubit]))]
+        bloch_ionsim = np.array([[rho.compute_operator_observable_expectation(O) for O in observables] for rho in rho_t])
+
+        # Reference: direct integration in the qubit frame, where the resonant drive has no oscillating phase 
+        def K(t):
+            f = modulation(t)
+            return 0.5 * rabi_rate * np.array([[0., np.conj(f)], [f, 0.]])
+
+        def right_hand_side(t, y):
+            rho, k = y.reshape(2, 2), K(t)
+            return (-1j * (k @ rho - rho @ k) + kappa * (k @ rho @ k - 0.5 * (k @ k @ rho + rho @ k @ k))).ravel()
+
+        rho0 = np.array([[1., 0.], [0., 0.]], dtype=complex)
+        solution = solve_ivp(right_hand_side, (0., duration), rho0.ravel(), t_eval=times, method='DOP853', rtol=1e-11, atol=1e-13)
+        paulis = [Pauli.X, Pauli.Y, Pauli.Z]
+        bloch_direct = np.array([[np.trace(P @ y.reshape(2, 2)) for P in paulis] for y in solution.y.T])
+
+        np.testing.assert_allclose(bloch_ionsim, bloch_direct, atol=1e-6)
+        self.assertGreater(np.abs(bloch_direct[-1]).max(), 0.1)   # nontrivial final state 
+
+        # An oscillating (non-static) operator is not accepted as an observable 
+        with self.assertRaises(IonSimError):
+            rho_t[-1].compute_operator_observable_expectation(C)
 
 
 if __name__ == '__main__':

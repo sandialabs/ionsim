@@ -18,6 +18,8 @@ def four_tone_hamiltonian(basis, qubit_basis, modes, spectator_modes, etas, rabi
         H(t) = hbar Omega_x sigma_x a_i exp(-i Delta t) + h.c. + hbar Omega_y sigma_y a_j exp(-i n Delta t + phi)  + h.c. 
 
         - currently sets the first MS phase to zero, accepts input for second MS phase as phi 
+        - etas: Lamb-Dicke matrix eta[i, j] for the i-th atom DOF of basis and modes[j], e.g. from
+          IonChain.get_lamb_dicke_parameters_for_ions_and_modes(trap ion indices, global mode indices, wavevector)
     ''' 
     # Hamiltonian: H = -eta * Omega/2 sum_{k} [-i sigma_+,k exp(iphi) + i sigma_-,k exp(-iphi)] (a e^i delta t + a† e^{-i delta t} )
     # Hamiltonian: H = -eta * Omega J_y (a e^i delta t + a† e^{-i delta t} ) # for phi = 0; Jy = 1/2 (sigma_y,1 + sigma_y,2)
@@ -204,9 +206,6 @@ def main():
         for _ in range(num_ions)
     ]
 
-    target_ion = qubits[0]    
-    target_ion_index = qubits.index(target_ion)
-
     qubit_basis = ism.StandardBasis([*qubits])
 
     # Use mode analysis to get motional mode information 
@@ -218,6 +217,12 @@ def main():
     print("\n")
     print(summary)
 
+    # Target ion: chosen by its stored index in the trap (for an IonChain, its position along the chain). ion_indices maps
+    # stored ions back to the order of qubit_basis, which gives the corresponding AtomicStructure DOF.
+    target_ion_trap_index = 0
+    target_ion = qubits[trap_analysis.ion_indices[target_ion_trap_index]]
+    target_ion_index = 0  # position of the target ion among the DOFs of the simulation basis below (it is the first DOF)
+
     # Truncate the Hilbert space to a single qubit with the two nearby motional modes 
     # Choose to do oprerations on the radial x tilt mode; option to include the COM as a spectator mode  
     tilt_mode_index = 0 
@@ -227,14 +232,16 @@ def main():
     branch_dir = 'radial0'
     qubit_basis = ism.StandardBasis([target_ion]) # Now reset the spin basis to just include the target ion 
     modes = trap_analysis.build_mode_DOFs_from_branch(branch_dir, [tilt_mode_index, COM_mode_index], fock_dimension)
+    mode_trap_indices = [trap_analysis.get_global_mode_index(branch_dir, i) for i in (tilt_mode_index, COM_mode_index)]
     if include_spectator_mode:
-        basis = ism.StandardBasis([qubits[target_ion_index], *modes])
+        basis = ism.StandardBasis([target_ion, *modes])
         motional_basis = ism.StandardBasis(modes)
         spectator_modes = [modes[1]]
     else:
-        basis = ism.StandardBasis([qubits[target_ion_index], modes[tilt_mode_index]])
+        basis = ism.StandardBasis([target_ion, modes[tilt_mode_index]])
         motional_basis = ism.StandardBasis([modes[tilt_mode_index]])
         modes = [modes[0]]
+        mode_trap_indices = [mode_trap_indices[0]]
         spectator_modes = [] 
 
     target_mode_index = 0 # for tilt mode in our basis 
@@ -294,7 +301,8 @@ def main():
         return magnitude*(0.42 - 0.5*np.cos(TPI * t /duration) + 0.08 * np.cos(2.*TPI*t/duration))
 
     # Retrieve lamb dicke parameters 
-    lamb_dicke_parameters = trap_analysis.get_radial_lamb_dicke_parameters(wavevector, branch_dir) # matrix of ion, mode 
+    # Rows follow the atoms of the simulation basis ([target_ion]); columns follow `modes` 
+    lamb_dicke_parameters = trap_analysis.get_lamb_dicke_parameters_for_ions_and_modes([target_ion_trap_index], mode_trap_indices, wavevector)
     eta = lamb_dicke_parameters[target_ion_index,target_mode_index]
     print(f" - |eta| for target ion, target mode: {np.abs(eta)}\n")
     print(f" - Sideband rabi rate (eta*Omega): {np.abs(eta) * rabi_rate / 1E3 / TPI} [kHz]\n")
