@@ -9,6 +9,7 @@
 
 import unittest
 import math
+import functools
 import numpy as np
 
 from ionsim.state import State
@@ -81,6 +82,21 @@ class TestState(unittest.TestCase):
             basis, spin_psi, {mode_b: mode_b_psi, self.mode: mode_psi}
         )
         assert_array_close(state.wavefunction, np.kron(np.kron(spin_psi, mode_psi), mode_b_psi))
+
+    def test_trace_out_degree_of_freedom(self):
+        """Test tracing out each DoF, including one in the middle of the basis, against a dense sum of projectors."""
+        basis = StandardBasis([self.atomic_structure_a, self.mode, self.atomic_structure_b])
+        rng = np.random.default_rng(0)
+        operator = rng.normal(size=(20, 20)) + 1j * rng.normal(size=(20, 20))
+        state = State.from_density_matrix(basis, operator)
+        dofs = basis.degrees_of_freedom
+        for k, dof in enumerate(dofs):
+            embed = lambda factor: functools.reduce(np.kron, [factor if j == k else np.eye(len(other.energy_levels)) for j, other in enumerate(dofs)])
+            expected = sum(embed(level[None, :]) @ operator @ embed(level[:, None]) for level in np.eye(len(dof.energy_levels)))
+            assert_array_close(state.compute_density_matrix_traced_over_degree_of_freedom(dof), expected)
+
+        with self.assertRaises(IonSimError):  # dof not in basis
+            state.compute_density_matrix_traced_over_degree_of_freedom(self.mode2)
 
     def test_wavefunction_with_new_component_errors(self):
         """Test that inconsistent inputs raise an IonSimError."""
