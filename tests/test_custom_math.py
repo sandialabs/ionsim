@@ -9,7 +9,7 @@
 
 import unittest
 import numpy as np
-from ionsim.custom_math import slow_trapz_for_matrix, trapz_for_matrix
+from ionsim.custom_math import slow_trapz_for_matrix, trapz_for_matrix, solve_time_evolution_equation
 from ionsim.testing import assert_array_close
 
 class TestCustomMath(unittest.TestCase):
@@ -45,6 +45,15 @@ class TestCustomMath(unittest.TestCase):
             exp = slow_trapz_for_matrix(ys, self.xs)
             act = trapz_for_matrix(ys, self.xs)
             assert_array_close(act, exp)
+
+    def test_solver_tolerances(self):
+        """Test that tolerances passed to solve_ivp and zvode reach the solver."""
+        times = np.linspace(0, 10, 5)
+        for ode_solver in ['solve_ivp', 'zvode']:
+            with self.subTest(ode_solver=ode_solver):
+                _, states = solve_time_evolution_equation(lambda t: np.array([[0, 1], [1, 0]]), np.array([1, 0], dtype=complex), times[-1], times,
+                                                          ode_solver=ode_solver, rtol=1e-12, atol=1e-12)
+                assert_array_close(states, np.array([np.cos(times), -1j * np.sin(times)]).T, atol=1e-9)
 
 if __name__ == '__main__':
     unittest.main()

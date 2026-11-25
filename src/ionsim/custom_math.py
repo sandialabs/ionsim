@@ -31,7 +31,7 @@ def matrix_AYB_multiply_to_superoperator(A: AnyMatrix | None, B: AnyMatrix | Non
         A is a matrix multiplying a matrix of interest on the left.
         B is a matrix multiplying a matrix of interest on the right.
 
-        A, Y, B are each N x N matrices, 
+        A, Y, B are each N G N matrices, 
             O is a N^2 x N^2 matrix,
             y is a column vector with N^2 entries.  
 
@@ -114,12 +114,15 @@ class OdeIntz(OdeSolver):
 @dataclass(frozen=True, eq=False)
 class SolveIvp(OdeSolver):
     """Python's solve_ivp routine."""
+    atol: float = 1e-6
+    rtol: float = 1e-3
+
     def solve(self):
         """Solves the ODE."""
         def right_hand_side(t, y):
             return self.interaction_function(t).dot(-1j * y)
         y0 = np.array(self.initial_vector, dtype='complex')
-        result = solve_ivp(right_hand_side, (0, self.duration), y0, t_eval=self.time_evals)
+        result = solve_ivp(right_hand_side, (0, self.duration), y0, t_eval=self.time_evals, atol=self.atol, rtol=self.rtol)
         return list(result['t']), [result['y'][:, i] for i in range(len(result['t']))]
 
 @dataclass(frozen=True, eq=False)
@@ -145,7 +148,7 @@ class ZVODE(OdeSolver):
         initial_state = self.initial_vector
 
         if initial_state is None:
-            initial_state = _np.zeros(n_states)
+            initial_state = np.zeros(n_states)
             initial_state[0] = 1.
 
         intermediate_states = [initial_state]

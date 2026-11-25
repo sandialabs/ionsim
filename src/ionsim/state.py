@@ -9,7 +9,6 @@
 
 import numpy as np
 from numpy.fft import ifft, fft, fft2, fftshift, ifftshift 
-from numpy.linalg import multi_dot
 from dataclasses import dataclass, replace
 from icecream import ic
 
@@ -239,18 +238,16 @@ class State:
         return np.clip(probabilities, 0., 1.)
  
     def compute_density_matrix_traced_over_degree_of_freedom(self, degree_of_freedom: DegreeOfFreedom):
-        """Compute a reduced density matrix by tracing out a degree of freedom in the basis."""
-        size = len(degree_of_freedom.energy_levels)
-        vecs = list(np.eye(size))
-        new_size = int(len(self.basis.vectors)/size)
-        small_density_matrix = np.zeros((new_size, new_size), dtype='complex')
-        for n in range(size):
-            bra = vecs[n].T
-            ket = np.array([[c] for c in vecs[n]])
-            proj_left = self.basis.enlarge_matrix(bra, [degree_of_freedom])
-            proj_right = self.basis.enlarge_matrix(ket, [degree_of_freedom])
-            small_density_matrix += multi_dot([proj_left, self.density_matrix, proj_right])
-        return small_density_matrix
+        """Compute a reduced density matrix by tracing out a degree of freedom in the basis, i.e., by summing over its index
+            of the density matrix written as a tensor with one row and one column index per degree of freedom."""
+        dofs = self.basis.degrees_of_freedom
+        matches = [i for i, dof in enumerate(dofs) if dof is degree_of_freedom]
+        if not matches:
+            raise IonSimError(f'Degree of freedom to trace out {degree_of_freedom} is not in the basis.')
+        dims = [len(dof.energy_levels) for dof in dofs]
+        new_size = int(len(self.basis.vectors)/dims[matches[0]])
+        tensor = np.asarray(self.density_matrix).reshape(dims + dims)
+        return np.trace(tensor, axis1=matches[0], axis2=matches[0] + len(dims), dtype='complex').reshape(new_size, new_size)
 
     def project_to_qubit_subspace(self, non_qubit_levels: list[AtomicInternalEnergyLevel]):
         """ Projects the state onto the qubit subspace """

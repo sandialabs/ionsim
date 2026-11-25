@@ -40,14 +40,8 @@ class Process(ABC):
     process_matrix: Matrix
         
     def compute_process_fidelity(self, target_process_matrix: Matrix):
-        """Compute the process fidelity with respect to a target process matrix."""
-        total = 0
-        for basis_state_vector in np.eye(len(self.process_matrix), dtype='complex'):
-            # TODO: is dtype='complex' necessary here? When is it?
-            final_state_vector = self.process_matrix.dot(basis_state_vector)
-            target_state_vector = target_process_matrix.dot(basis_state_vector)
-            total += np.dot(target_state_vector.conj().T, final_state_vector).real
-        return total/len(self.process_matrix)
+        """Compute the process fidelity with respect to a target process matrix T: Re Tr(T^dagger S)/d^2"""
+        return np.vdot(target_process_matrix, self.process_matrix).real/len(self.process_matrix)
 
 @dataclass(frozen=True, eq=False)
 class Gate(Process):
@@ -245,13 +239,13 @@ class Gate(Process):
         # Use general t-dependent, non-commutating Lindbladian method unless user specifies otherwise 
         if lindbladian_time_independent:
             # Major simplification for time-independent Lindbladians: Process matrix is simply e^{-L t}
-            process_matrix = scipy.linalg.expm(lindbladian.matrix_function(0) * duration)
+            process_matrix = scipy.linalg.expm(lindbladian.get_matrix(0) * duration)
             if projection:
                process_matrix = basis.project_superoperator(process_matrix, computational_indices) 
 
         elif lindbladian_commutes_at_later_times:
             # Lindbladian is time dependent but commutes with itself at later times: Integrate the lindbladian matrix forward in time from t = 0 to t = duration            
-            L_integral, err = quad_vec(lindbladian.matrix_function, 0., duration)
+            L_integral, err = quad_vec(lindbladian.get_matrix, 0., duration)
             process_matrix = scipy.linalg.expm(L_integral)
             if projection:
                 process_matrix = basis.project_superoperator(process_matrix, computational_indices) 

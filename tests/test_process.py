@@ -8,16 +8,18 @@
 #***************************************************************************************************
 
 import unittest
+from unittest import mock
 
 import numpy as np
 
 from ionsim.process import Gate, Circuit
-from ionsim.degree_of_freedom import AtomicStructure
+from ionsim.degree_of_freedom import AtomicStructure, MotionalMode
 from ionsim.basis import StandardBasis, PauliProductBasis
-from ionsim.named_operators import Unitary, Pauli
+from ionsim.named_operators import Unitary, Pauli, Fock
 from ionsim.noise import Noise
-from ionsim.operators import EnergyShiftOperator, CouplingOperator
+from ionsim.operators import EnergyShiftOperator, CouplingOperator, GeneralOperator
 from ionsim.hamiltonian import Hamiltonian
+from ionsim.lindbladian import Dissipator, Lindbladian
 from ionsim.state import State 
 from ionsim.testing import assert_array_close
 
@@ -185,6 +187,48 @@ class TestProcess(unittest.TestCase):
         for k, offdiag_element in enumerate(test_offdiag_elements):
             i, j = Pauli_2Q_basis.indices_of_pauli_transfer_matrix_from_labels(*offdiag_element)
             self.assertEqual(CZ_ptm[i, j], expected_offdiag_values[k]) 
+
+
+def _red_sideband_lindbladian(basis, coupled_spin, dephased_spin, mode, coupling_rate, decay_rate):
+    """Resonant red sideband g (e^{i phi} sigma_+ a + h.c.) on coupled_spin, dephasing sqrt(gamma) Z on dephased_spin, and motional
+        damping sqrt(gamma) a."""
+    qubit_frequency = coupled_spin.energy_levels[1].energy - coupled_spin.energy_levels[0].energy
+    mode_frequency = mode.energy_levels[1].energy - mode.energy_levels[0].energy
+    raise_spin = basis.enlarge_one_dof_matrix(Pauli.plus, coupled_spin)
+    lower_motion = basis.enlarge_one_dof_matrix(Fock.lowering(len(mode.energy_levels)), mode)
+    frame_energies = [-state.energy for state in basis.states]
+
+    coupling = CouplingOperator.from_matrix(basis, coupling_rate * np.exp(0.7j) * raise_spin @ lower_motion, qubit_frequency - mode_frequency)
+    hamiltonian = Hamiltonian(basis, [coupling], frame_energies, sparse=False)
+    lindblad_operators = [
+        GeneralOperator.from_matrix(basis, np.sqrt(decay_rate) * basis.enlarge_one_dof_matrix(Pauli.Z, dephased_spin)),
+        GeneralOperator.from_matrix(basis, np.sqrt(decay_rate) * lower_motion),
+    ]
+    dissipator = Dissipator(basis, lindblad_operators, frame_energies)
+    return hamiltonian, Lindbladian(hamiltonian=hamiltonian, dissipator=dissipator)
+
+
+class TestGateFromLindbladian(unittest.TestCase):
+
+    def setUp(self):
+        self.spins = [
+            AtomicStructure.from_species(species='171Yb+', term_symbols=['S1/2'], level_names=['S1/2,0,0', 'S1/2,1,0'])
+            for _ in range(2)
+        ]
+        self.coupling_rate, self.decay_rate, self.duration = 2*np.pi * 20e3, 5e3, 30e-6
+
+    def test_matrix_exponential_paths_match_master_equation(self):
+        """ Both matrix-exponential paths agree with the master-equation path, and solve no master equation. """
+        mode = MotionalMode.from_frequency(frequency=2*np.pi * 3e6, fock_dimension=2)  # small, since all 16 columns are solved
+        basis = StandardBasis([self.spins[0], mode])
+        _, lindbladian = _red_sideband_lindbladian(basis, self.spins[0], self.spins[0], mode, self.coupling_rate, self.decay_rate)
+        gate = Gate.from_lindbladian(basis, lindbladian, self.duration)
+        for option in ['lindbladian_time_independent', 'lindbladian_commutes_at_later_times']:
+            with self.subTest(option=option):
+                with mock.patch.object(State, 'propagate_using_master_equation') as solve:
+                    fast_gate = Gate.from_lindbladian(basis, lindbladian, self.duration, **{option: True})
+                solve.assert_not_called()
+                assert_array_close(fast_gate.process_matrix, gate.process_matrix, rtol=0, atol=1e-6)
 
 
 if __name__ == '__main__':
